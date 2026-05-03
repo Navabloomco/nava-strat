@@ -1,9 +1,8 @@
-export default function Page() {
+export default function Home() {
   return (
-    <html>
-      <body style={{ background: 'black', color: 'lime', display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh' }}>
-        <h1>Nava Strat is Alive ✅</h1>
-      </body>
-    </html>
+    <main style={{ padding: 40, fontFamily: "Arial" }}>
+      <h1>Nava Strat is live 🚛</h1>
+      <p>Fleet intelligence platform loading...</p>
+    </main>
   );
 }
