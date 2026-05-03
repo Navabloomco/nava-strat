@@ -1,16 +1,9 @@
-export default function Home() {
+export default function Page() {
   return (
-    <div style={{
-      minHeight: '100vh',
-      background: '#0a0a0a',
-      color: '#00ff88',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      fontFamily: 'monospace',
-      fontSize: '2rem'
-    }}>
-      ✅ Nava Strat is Alive
-    </div>
+    <html>
+      <body style={{ background: 'black', color: 'lime', display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh' }}>
+        <h1>Nava Strat is Alive ✅</h1>
+      </body>
+    </html>
   );
 }
