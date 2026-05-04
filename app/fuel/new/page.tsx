@@ -1,25 +1,53 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { supabase } from "../../../lib/supabase";
 
 export default function NewFuelPage() {
+  const [journeys, setJourneys] = useState<any[]>([]);
   const [truck, setTruck] = useState("");
   const [liters, setLiters] = useState("");
+  const [pricePerLiter, setPricePerLiter] = useState("");
   const [vendor, setVendor] = useState("");
   const [notes, setNotes] = useState("");
+  const [journeyId, setJourneyId] = useState("");
+
+  useEffect(() => {
+    async function loadJourneys() {
+      const { data, error } = await supabase
+        .from("journeys")
+        .select("*")
+        .eq("status", "active")
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        console.error(error);
+        return;
+      }
+
+      setJourneys(data || []);
+    }
+
+    loadJourneys();
+  }, []);
 
   async function handleSubmit(e: any) {
     e.preventDefault();
 
+    const litersNum = Number(liters);
+    const priceNum = pricePerLiter ? Number(pricePerLiter) : 0;
+
     const { error } = await supabase.from("fuel_logs").insert([
       {
         truck_text: truck,
-        liters: Number(liters),
-        vendor: vendor,
-        allocation_status: "unallocated",
+        liters: litersNum,
+        price_per_liter: priceNum,
+        total_cost: litersNum * priceNum,
+        vendor,
+        notes,
+        journey_id: journeyId || null,
+        allocation_status: journeyId ? "allocated" : "unallocated",
         fuel_source: "manual",
-        notes: notes,
       },
     ]);
 
@@ -33,14 +61,15 @@ export default function NewFuelPage() {
 
     setTruck("");
     setLiters("");
+    setPricePerLiter("");
     setVendor("");
     setNotes("");
+    setJourneyId("");
   }
 
   return (
     <main style={{ padding: 40 }}>
       <h1>Add Fuel</h1>
-      <p>Log fuel even before a trip exists.</p>
 
       <form onSubmit={handleSubmit}>
         <input
@@ -62,15 +91,34 @@ export default function NewFuelPage() {
         <br /><br />
 
         <input
-          placeholder="Vendor e.g. Shell Bonje"
+          placeholder="Price per liter e.g. 197"
+          value={pricePerLiter}
+          onChange={(e) => setPricePerLiter(e.target.value)}
+        />
+
+        <br /><br />
+
+        <input
+          placeholder="Fuel provider / station"
           value={vendor}
           onChange={(e) => setVendor(e.target.value)}
         />
 
         <br /><br />
 
+        <select value={journeyId} onChange={(e) => setJourneyId(e.target.value)}>
+          <option value="">No journey yet / unallocated fuel</option>
+          {journeys.map((j) => (
+            <option key={j.id} value={j.id}>
+              {j.client_name || "No client"} — {j.truck} — {j.from_location} → {j.to_location}
+            </option>
+          ))}
+        </select>
+
+        <br /><br />
+
         <input
-          placeholder="Notes e.g. top-up, MPesa, invoice"
+          placeholder="Notes e.g. Mpesa, invoice, top-up"
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
         />
