@@ -41,24 +41,35 @@ export default function FuelControlPage() {
   }
 
   function isDuplicateFuel(fuel: any) {
-    return fuelLogs.filter((f) => {
-      const sameTruck = f.truck_text === fuel.truck_text;
-      const sameLiters = f.liters === fuel.liters;
+    return (
+      fuelLogs.filter((f) => {
+        const sameTruck = f.truck_text === fuel.truck_text;
+        const sameLiters = f.liters === fuel.liters;
 
-      const timeDiff =
-        Math.abs(
-          new Date(f.created_at).getTime() -
-            new Date(fuel.created_at).getTime()
-        ) < 1000 * 60 * 60;
+        const timeDiff =
+          Math.abs(
+            new Date(f.created_at).getTime() -
+              new Date(fuel.created_at).getTime()
+          ) < 1000 * 60 * 60;
 
-      return sameTruck && sameLiters && timeDiff;
-    }).length > 1;
+        return sameTruck && sameLiters && timeDiff;
+      }).length > 1
+    );
+  }
+
+  function totalFuelForJourney(journeyId: string) {
+    return fuelLogs
+      .filter((f) => f.journey_id === journeyId)
+      .reduce((sum, f) => sum + Number(f.liters || 0), 0);
   }
 
   return (
     <main style={{ padding: 40 }}>
       <h1>Fuel Control</h1>
-      <p>Allocated vs unallocated fuel + duplicate detection.</p>
+      <p>
+        Allocated vs unallocated fuel, duplicate detection, and optional
+        expected fuel variance.
+      </p>
 
       <br />
 
@@ -72,6 +83,7 @@ export default function FuelControlPage() {
             <th>Client</th>
             <th>Route</th>
             <th>Status</th>
+            <th>Fuel Variance</th>
             <th>Approval</th>
             <th>Notes</th>
             <th>Date</th>
@@ -83,6 +95,15 @@ export default function FuelControlPage() {
             const journey = findJourney(fuel.journey_id);
             const duplicate = isDuplicateFuel(fuel);
 
+            const journeyFuel = journey ? totalFuelForJourney(journey.id) : 0;
+            const expected =
+              journey && journey.expected_fuel_liters !== null
+                ? Number(journey.expected_fuel_liters)
+                : null;
+
+            const variance =
+              expected !== null ? journeyFuel - expected : null;
+
             return (
               <tr
                 key={fuel.id}
@@ -91,14 +112,19 @@ export default function FuelControlPage() {
                 }}
               >
                 <td>{fuel.truck_text || "—"}</td>
+
                 <td>{fuel.liters || "—"}</td>
+
                 <td>
                   {fuel.total_cost
                     ? Number(fuel.total_cost).toLocaleString()
                     : "—"}
                 </td>
+
                 <td>{fuel.vendor || "—"}</td>
+
                 <td>{journey ? journey.client_name || "—" : "—"}</td>
+
                 <td>
                   {journey
                     ? `${journey.from_location || "—"} → ${
@@ -114,6 +140,21 @@ export default function FuelControlPage() {
                   }}
                 >
                   {fuel.journey_id ? "Allocated" : "UNALLOCATED ⚠️"}
+                </td>
+
+                <td>
+                  {variance !== null ? (
+                    <span
+                      style={{
+                        color: variance > 0 ? "red" : "green",
+                        fontWeight: "bold",
+                      }}
+                    >
+                      {variance > 0 ? `+${variance}L 🚨` : `${variance}L`}
+                    </span>
+                  ) : (
+                    "—"
+                  )}
                 </td>
 
                 <td>
