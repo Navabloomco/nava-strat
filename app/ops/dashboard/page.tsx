@@ -1,53 +1,37 @@
-import { supabase } from "@/lib/supabase";
+"use client";
 
-export default async function OpsDashboard() {
-  const { data: fuel } = await supabase
-    .from("fuel_logs")
-    .select("*")
-    .order("created_at", { ascending: false })
-    .limit(10);
+import { useEffect, useState } from "react";
+import { supabase } from "../../../lib/supabase";
 
-  const unallocated = fuel?.filter(
-    (f) => f.allocation_status === "unallocated"
-  );
+export default function Dashboard() {
+  const [fuelLogs, setFuelLogs] = useState<any[]>([]);
+
+  useEffect(() => {
+    fetchFuel();
+  }, []);
+
+  const fetchFuel = async () => {
+    const { data, error } = await supabase
+      .from("fuel_logs")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error(error);
+    } else {
+      setFuelLogs(data || []);
+    }
+  };
 
   return (
-    <main style={{ padding: 40 }}>
+    <div style={{ padding: 20 }}>
       <h1>Ops Dashboard</h1>
 
-      <h2>⚠️ Needs Attention</h2>
-
-      {!unallocated || unallocated.length === 0 ? (
-        <p>All fuel allocated ✅</p>
-      ) : (
-        unallocated.map((f) => (
-          <div
-            key={f.id}
-            style={{
-              border: "1px solid #ddd",
-              padding: 12,
-              marginBottom: 10,
-              borderRadius: 8
-            }}
-          >
-            <strong>Unallocated Fuel</strong>
-            <br />
-            Truck: {f.asset_id}
-            <br />
-            Litres: {f.litres}L
-            <br />
-            Vendor: {f.vendor || "Not entered"}
-          </div>
-        ))
-      )}
-
-      <h2>Recent Fuel Entries</h2>
-
-      {fuel?.map((f) => (
-        <div key={f.id} style={{ marginBottom: 10 }}>
-          🚛 {f.asset_id} — {f.litres}L — {f.vendor || "No vendor"}
+      {fuelLogs.map((f, i) => (
+        <div key={i} style={{ marginBottom: 10 }}>
+          {f.truck} — {f.litres}L — {f.vendor}
         </div>
       ))}
-    </main>
+    </div>
   );
 }
