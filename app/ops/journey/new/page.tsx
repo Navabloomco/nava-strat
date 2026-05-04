@@ -16,11 +16,11 @@ export default function NewJourneyPage() {
 
     const { error } = await supabase.from("journeys").insert([
       {
-        client_name: client,
-        truck,
-        driver,
-        from_location: fromLocation,
-        to_location: toLocation,
+        client_name: client.trim().toUpperCase(),
+        truck: truck.trim().toUpperCase(),
+        driver: driver.trim().toUpperCase(),
+        from_location: fromLocation.trim().toUpperCase(),
+        to_location: toLocation.trim().toUpperCase(),
         status: "active",
         expected_fuel_liters: expectedFuel ? Number(expectedFuel) : null,
       },
@@ -48,9 +48,9 @@ export default function NewJourneyPage() {
 
       <form onSubmit={handleSubmit}>
         <input
-          placeholder="Client e.g. Engaano"
+          placeholder="Client e.g. ENGAANO"
           value={client}
-          onChange={(e) => setClient(e.target.value)}
+          onChange={(e) => setClient(e.target.value.toUpperCase())}
           required
         />
 
@@ -59,32 +59,32 @@ export default function NewJourneyPage() {
         <input
           placeholder="Truck e.g. KBJ123A"
           value={truck}
-          onChange={(e) => setTruck(e.target.value)}
+          onChange={(e) => setTruck(e.target.value.toUpperCase())}
           required
         />
 
         <br /><br />
 
         <input
-          placeholder="Driver e.g. Kariuki"
+          placeholder="Driver e.g. KARIUKI"
           value={driver}
-          onChange={(e) => setDriver(e.target.value)}
+          onChange={(e) => setDriver(e.target.value.toUpperCase())}
         />
 
         <br /><br />
 
         <input
-          placeholder="From e.g. Mombasa"
+          placeholder="From e.g. MOMBASA"
           value={fromLocation}
-          onChange={(e) => setFromLocation(e.target.value)}
+          onChange={(e) => setFromLocation(e.target.value.toUpperCase())}
         />
 
         <br /><br />
 
         <input
-          placeholder="To e.g. Jinja"
+          placeholder="To e.g. JINJA"
           value={toLocation}
-          onChange={(e) => setToLocation(e.target.value)}
+          onChange={(e) => setToLocation(e.target.value.toUpperCase())}
         />
 
         <br /><br />
