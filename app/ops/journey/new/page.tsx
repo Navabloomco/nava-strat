@@ -7,7 +7,6 @@ export default function NewJourneyPage() {
   const [truck, setTruck] = useState("");
   const [driver, setDriver] = useState("");
   const [route, setRoute] = useState("");
-  const [revenue, setRevenue] = useState("");
 
   const handleSubmit = async (e: any) => {
     e.preventDefault();
@@ -17,7 +16,6 @@ export default function NewJourneyPage() {
         truck,
         driver,
         route,
-        revenue: Number(revenue),
       },
     ]);
 
@@ -29,7 +27,6 @@ export default function NewJourneyPage() {
       setTruck("");
       setDriver("");
       setRoute("");
-      setRevenue("");
     }
   };
 
@@ -53,16 +50,9 @@ export default function NewJourneyPage() {
         <br /><br />
 
         <input
-          placeholder="Route (e.g. Mombasa → Kampala)"
+          placeholder="Route"
           value={route}
           onChange={(e) => setRoute(e.target.value)}
-        />
-        <br /><br />
-
-        <input
-          placeholder="Revenue"
-          value={revenue}
-          onChange={(e) => setRevenue(e.target.value)}
         />
         <br /><br />
 
