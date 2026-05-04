@@ -31,15 +31,13 @@ export default function NewExpensePage() {
   async function handleSubmit(e: any) {
     e.preventDefault();
 
-    const cleanTruck = truck.trim().toUpperCase();
-
     const { error } = await supabase.from("expenses").insert([
       {
         journey_id: journeyId || null,
-        truck: cleanTruck,
+        truck: truck.trim().toUpperCase(),
         expense_type: type,
         amount: Number(amount),
-        vendor: vendor.toUpperCase(),
+        vendor: vendor.trim().toUpperCase(),
         reference_number: reference,
         notes,
       },
@@ -76,7 +74,7 @@ export default function NewExpensePage() {
         <br /><br />
 
         <input
-          placeholder="Amount e.g. 5000"
+          placeholder="Amount e.g. 3000"
           value={amount}
           onChange={(e) => setAmount(e.target.value)}
           required
@@ -84,14 +82,19 @@ export default function NewExpensePage() {
 
         <br /><br />
 
-        <select value={type} onChange={(e) => setType(e.target.value)}>
+        <select
+          value={type}
+          onChange={(e) => setType(e.target.value)}
+          required
+        >
           <option value="">Select expense type</option>
-          <option value="PER_DIEM">Per Diem</option>
-          <option value="CESS">Cess</option>
-          <option value="ROAD_USER">Road User</option>
-          <option value="PARKING">Parking</option>
-          <option value="REPAIR">Repair</option>
-          <option value="OTHER">Other</option>
+          <option value="per_diem">Per Diem</option>
+          <option value="toll">Toll</option>
+          <option value="maintenance">Maintenance</option>
+          <option value="salary">Salary</option>
+          <option value="insurance">Insurance</option>
+          <option value="fuel">Fuel</option>
+          <option value="other">Other</option>
         </select>
 
         <br /><br />
@@ -105,7 +108,7 @@ export default function NewExpensePage() {
         <br /><br />
 
         <input
-          placeholder="Reference (Mpesa / invoice)"
+          placeholder="Reference / Trip ID / Mpesa / invoice"
           value={reference}
           onChange={(e) => setReference(e.target.value)}
         />
@@ -117,7 +120,8 @@ export default function NewExpensePage() {
 
           {journeys.map((j) => (
             <option key={j.id} value={j.id}>
-              {j.client_name} — {j.truck} — {j.from_location} → {j.to_location}
+              {j.client_name || "NO CLIENT"} — {j.truck} —{" "}
+              {j.from_location} → {j.to_location}
             </option>
           ))}
         </select>
