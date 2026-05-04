@@ -3,14 +3,10 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../../../lib/supabase";
 
-export default function OpsDashboard() {
+export default function Dashboard() {
   const [fuelLogs, setFuelLogs] = useState<any[]>([]);
 
-  useEffect(() => {
-    fetchFuelLogs();
-  }, []);
-
-  async function fetchFuelLogs() {
+  async function fetchFuel() {
     const { data, error } = await supabase
       .from("fuel_logs")
       .select("*")
@@ -18,43 +14,45 @@ export default function OpsDashboard() {
 
     if (error) {
       console.error(error);
-      alert("Error loading fuel logs");
-      return;
+    } else {
+      setFuelLogs(data || []);
     }
-
-    setFuelLogs(data || []);
   }
+
+  useEffect(() => {
+    fetchFuel();
+  }, []);
 
   return (
     <main style={{ padding: 40 }}>
-      <h1>Ops Dashboard</h1>
-      <p>Fuel entries and operational alerts will appear here.</p>
-
-      <h2>Recent Fuel Logs</h2>
+      <h1>Fuel Logs</h1>
 
       {fuelLogs.length === 0 ? (
-        <p>No fuel logs yet.</p>
+        <p>No fuel logs yet</p>
       ) : (
-        fuelLogs.map((fuel) => (
-          <div
-            key={fuel.id}
-            style={{
-              border: "1px solid #ddd",
-              borderRadius: 8,
-              padding: 12,
-              marginBottom: 10,
-            }}
-          >
-            <strong>Truck:</strong> {fuel.truck || fuel.asset_id || "Unknown"}
-            <br />
-            <strong>Litres:</strong> {fuel.litres || "Not entered"}
-            <br />
-            <strong>Vendor:</strong> {fuel.vendor || "Not entered"}
-            <br />
-            <strong>Status:</strong>{" "}
-            {fuel.allocation_status || "unallocated"}
-          </div>
-        ))
+        <table border={1} cellPadding={10}>
+          <thead>
+            <tr>
+              <th>Truck</th>
+              <th>Liters</th>
+              <th>Vendor</th>
+              <th>Notes</th>
+              <th>Date</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            {fuelLogs.map((log) => (
+              <tr key={log.id}>
+                <td>{log.truck_text}</td>
+                <td>{log.liters}</td>
+                <td>{log.vendor}</td>
+                <td>{log.notes}</td>
+                <td>{new Date(log.created_at).toLocaleString()}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       )}
     </main>
   );
