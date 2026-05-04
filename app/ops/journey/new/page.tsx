@@ -11,11 +11,24 @@ export default function NewJourneyPage() {
   const [toLocation, setToLocation] = useState("");
   const [expectedFuel, setExpectedFuel] = useState("");
 
+  function makeTripId() {
+    const today = new Date().toISOString().slice(0, 10).replaceAll("-", "");
+
+    return `${truck}-${client}-${fromLocation}-${toLocation}-${today}`
+      .trim()
+      .toUpperCase()
+      .replace(/\s+/g, "")
+      .replace(/[^A-Z0-9-]/g, "");
+  }
+
   async function handleSubmit(e: any) {
     e.preventDefault();
 
+    const tripId = makeTripId();
+
     const { error } = await supabase.from("journeys").insert([
       {
+        internal_trip_id: tripId,
         client_name: client.trim().toUpperCase(),
         truck: truck.trim().toUpperCase(),
         driver: driver.trim().toUpperCase(),
@@ -28,11 +41,10 @@ export default function NewJourneyPage() {
 
     if (error) {
       alert(error.message);
-      console.error(error);
       return;
     }
 
-    alert("Journey saved ✅");
+    alert(`Journey saved ✅\nTrip ID: ${tripId}`);
 
     setClient("");
     setTruck("");
@@ -47,55 +59,28 @@ export default function NewJourneyPage() {
       <h1>Create Journey</h1>
 
       <form onSubmit={handleSubmit}>
-        <input
-          placeholder="Client e.g. ENGAANO"
-          value={client}
-          onChange={(e) => setClient(e.target.value.toUpperCase())}
-          required
-        />
-
+        <input placeholder="Client e.g. ENGAANO" value={client} onChange={(e) => setClient(e.target.value.toUpperCase())} required />
         <br /><br />
 
-        <input
-          placeholder="Truck e.g. KBJ123A"
-          value={truck}
-          onChange={(e) => setTruck(e.target.value.toUpperCase())}
-          required
-        />
-
+        <input placeholder="Truck e.g. KBJ123A" value={truck} onChange={(e) => setTruck(e.target.value.toUpperCase())} required />
         <br /><br />
 
-        <input
-          placeholder="Driver e.g. KARIUKI"
-          value={driver}
-          onChange={(e) => setDriver(e.target.value.toUpperCase())}
-        />
-
+        <input placeholder="Driver e.g. KARIUKI" value={driver} onChange={(e) => setDriver(e.target.value.toUpperCase())} />
         <br /><br />
 
-        <input
-          placeholder="From e.g. MOMBASA"
-          value={fromLocation}
-          onChange={(e) => setFromLocation(e.target.value.toUpperCase())}
-        />
-
+        <input placeholder="From e.g. MOMBASA" value={fromLocation} onChange={(e) => setFromLocation(e.target.value.toUpperCase())} />
         <br /><br />
 
-        <input
-          placeholder="To e.g. JINJA"
-          value={toLocation}
-          onChange={(e) => setToLocation(e.target.value.toUpperCase())}
-        />
-
+        <input placeholder="To e.g. JINJA" value={toLocation} onChange={(e) => setToLocation(e.target.value.toUpperCase())} />
         <br /><br />
 
-        <input
-          placeholder="Expected fuel optional e.g. 480"
-          value={expectedFuel}
-          onChange={(e) => setExpectedFuel(e.target.value)}
-        />
-
+        <input placeholder="Default route fuel optional e.g. 480" value={expectedFuel} onChange={(e) => setExpectedFuel(e.target.value)} />
         <br /><br />
+
+        <p>
+          Nava Eye Trip ID preview:{" "}
+          <strong>{truck && client && fromLocation && toLocation ? makeTripId() : "Fill journey details"}</strong>
+        </p>
 
         <button type="submit">Save Journey</button>
       </form>
