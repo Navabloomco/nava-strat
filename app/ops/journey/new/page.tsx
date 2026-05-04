@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { supabase } from "@/lib/supabase";
+import { supabase } from "../../../../lib/supabase";
 
 export default function NewJourneyPage() {
   const [truck, setTruck] = useState("");
@@ -9,23 +9,22 @@ export default function NewJourneyPage() {
   const [route, setRoute] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const handleSubmit = async (e: any) => {
+  async function handleSubmit(e: any) {
     e.preventDefault();
     setLoading(true);
 
-    const { data, error } = await supabase.from("journeys").insert([
+    const { error } = await supabase.from("journeys").insert([
       {
         truck,
         driver,
         route,
+        status: "active",
       },
     ]);
 
-    console.log("DATA:", data);
-    console.log("ERROR:", error);
-
     if (error) {
-      alert("Error saving journey ❌");
+      alert(error.message);
+      console.error(error);
     } else {
       alert("Journey saved ✅");
       setTruck("");
@@ -34,10 +33,10 @@ export default function NewJourneyPage() {
     }
 
     setLoading(false);
-  };
+  }
 
   return (
-    <div style={{ padding: 20 }}>
+    <main style={{ padding: 40 }}>
       <h1>Create Journey</h1>
 
       <form onSubmit={handleSubmit}>
@@ -46,6 +45,7 @@ export default function NewJourneyPage() {
           value={truck}
           onChange={(e) => setTruck(e.target.value)}
         />
+
         <br /><br />
 
         <input
@@ -53,19 +53,21 @@ export default function NewJourneyPage() {
           value={driver}
           onChange={(e) => setDriver(e.target.value)}
         />
+
         <br /><br />
 
         <input
-          placeholder="Route (e.g. Mombasa → Kampala)"
+          placeholder="Route e.g. Mombasa → Kampala"
           value={route}
           onChange={(e) => setRoute(e.target.value)}
         />
+
         <br /><br />
 
         <button type="submit" disabled={loading}>
           {loading ? "Saving..." : "Save Journey"}
         </button>
       </form>
-    </div>
+    </main>
   );
 }
