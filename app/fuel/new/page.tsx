@@ -1,4 +1,3 @@
-// redeploy trigger
 "use client";
 
 import { useState } from "react";
@@ -6,59 +5,80 @@ import { supabase } from "../../../lib/supabase";
 
 export default function NewFuelPage() {
   const [truck, setTruck] = useState("");
-  const [litres, setLitres] = useState("");
+  const [liters, setLiters] = useState("");
   const [vendor, setVendor] = useState("");
+  const [notes, setNotes] = useState("");
 
-  const handleSubmit = async (e: any) => {
+  async function handleSubmit(e: any) {
     e.preventDefault();
 
     const { error } = await supabase.from("fuel_logs").insert([
       {
-        truck,
-        litres: Number(litres),
-        vendor,
+        truck_text: truck,
+        liters: Number(liters),
+        vendor: vendor,
+        allocation_status: "unallocated",
+        fuel_source: "manual",
+        notes: notes,
       },
     ]);
 
     if (error) {
-      alert("Error saving fuel");
+      alert(error.message);
       console.error(error);
-    } else {
-      alert("Fuel saved ✅");
-      setTruck("");
-      setLitres("");
-      setVendor("");
+      return;
     }
-  };
+
+    alert("Fuel saved ✅");
+
+    setTruck("");
+    setLiters("");
+    setVendor("");
+    setNotes("");
+  }
 
   return (
-    <div style={{ padding: 20 }}>
+    <main style={{ padding: 40 }}>
       <h1>Add Fuel</h1>
+      <p>Log fuel even before a trip exists.</p>
 
       <form onSubmit={handleSubmit}>
         <input
-          placeholder="Truck"
+          placeholder="Truck e.g. KBJ123A"
           value={truck}
           onChange={(e) => setTruck(e.target.value)}
+          required
         />
+
         <br /><br />
 
         <input
-          placeholder="Litres"
-          value={litres}
-          onChange={(e) => setLitres(e.target.value)}
+          placeholder="Liters e.g. 480"
+          value={liters}
+          onChange={(e) => setLiters(e.target.value)}
+          required
         />
+
         <br /><br />
 
         <input
-          placeholder="Vendor"
+          placeholder="Vendor e.g. Shell Bonje"
           value={vendor}
           onChange={(e) => setVendor(e.target.value)}
         />
+
         <br /><br />
 
-        <button type="submit">Save</button>
+        <input
+          placeholder="Notes e.g. top-up, MPesa, invoice"
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+        />
+
+        <br /><br />
+
+        <button type="submit">Save Fuel</button>
       </form>
-    </div>
+    </main>
   );
 }
