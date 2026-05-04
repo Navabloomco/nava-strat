@@ -5,12 +5,15 @@ import { supabase } from "../../../lib/supabase";
 
 export default function NewFuelPage() {
   const [journeys, setJourneys] = useState<any[]>([]);
+  const [providers, setProviders] = useState<any[]>([]);
+
   const [truck, setTruck] = useState("");
   const [liters, setLiters] = useState("");
   const [pricePerLiter, setPricePerLiter] = useState("");
   const [vendor, setVendor] = useState("");
   const [notes, setNotes] = useState("");
   const [journeyId, setJourneyId] = useState("");
+  const [selectedProviderId, setSelectedProviderId] = useState("");
 
   useEffect(() => {
     async function loadJourneys() {
@@ -28,7 +31,22 @@ export default function NewFuelPage() {
       setJourneys(data || []);
     }
 
+    async function loadProviders() {
+      const { data, error } = await supabase
+        .from("fuel_providers")
+        .select("*")
+        .eq("is_active", true);
+
+      if (error) {
+        console.error(error);
+        return;
+      }
+
+      setProviders(data || []);
+    }
+
     loadJourneys();
+    loadProviders();
   }, []);
 
   async function handleSubmit(e: any) {
@@ -59,12 +77,14 @@ export default function NewFuelPage() {
 
     alert("Fuel saved ✅");
 
+    // reset
     setTruck("");
     setLiters("");
     setPricePerLiter("");
     setVendor("");
     setNotes("");
     setJourneyId("");
+    setSelectedProviderId("");
   }
 
   return (
@@ -72,6 +92,7 @@ export default function NewFuelPage() {
       <h1>Add Fuel</h1>
 
       <form onSubmit={handleSubmit}>
+        {/* TRUCK */}
         <input
           placeholder="Truck e.g. KBJ123A"
           value={truck}
@@ -81,6 +102,7 @@ export default function NewFuelPage() {
 
         <br /><br />
 
+        {/* LITERS */}
         <input
           placeholder="Liters e.g. 480"
           value={liters}
@@ -90,6 +112,39 @@ export default function NewFuelPage() {
 
         <br /><br />
 
+        {/* PROVIDER DROPDOWN (AUTO-FILL MAGIC) */}
+        <select
+          value={selectedProviderId}
+          onChange={(e) => {
+            const id = e.target.value;
+            setSelectedProviderId(id);
+
+            const provider = providers.find(p => p.id === id);
+
+            if (provider) {
+              setVendor(provider.name);
+
+              // 🔥 AUTO FILL PRICE
+              if (provider.current_price_per_liter) {
+                setPricePerLiter(
+                  provider.current_price_per_liter.toString()
+                );
+              }
+            }
+          }}
+        >
+          <option value="">Select fuel provider (or manual)</option>
+
+          {providers.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name} — {p.location || "No location"}
+            </option>
+          ))}
+        </select>
+
+        <br /><br />
+
+        {/* PRICE (AUTO OR MANUAL OVERRIDE) */}
         <input
           placeholder="Price per liter e.g. 197"
           value={pricePerLiter}
@@ -98,25 +153,24 @@ export default function NewFuelPage() {
 
         <br /><br />
 
-        <input
-          placeholder="Fuel provider / station"
-          value={vendor}
-          onChange={(e) => setVendor(e.target.value)}
-        />
-
-        <br /><br />
-
-        <select value={journeyId} onChange={(e) => setJourneyId(e.target.value)}>
+        {/* JOURNEY LINK */}
+        <select
+          value={journeyId}
+          onChange={(e) => setJourneyId(e.target.value)}
+        >
           <option value="">No journey yet / unallocated fuel</option>
+
           {journeys.map((j) => (
             <option key={j.id} value={j.id}>
-              {j.client_name || "No client"} — {j.truck} — {j.from_location} → {j.to_location}
+              {j.client_name || "No client"} — {j.truck} —{" "}
+              {j.from_location} → {j.to_location}
             </option>
           ))}
         </select>
 
         <br /><br />
 
+        {/* NOTES */}
         <input
           placeholder="Notes e.g. Mpesa, invoice, top-up"
           value={notes}
