@@ -1,27 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { supabase } from "../../../lib/supabase";
 
 export default function TrackingProcessorPage() {
-  const [knownLocations, setKnownLocations] = useState<any[]>([]);
   const [rawJson, setRawJson] = useState("");
   const [result, setResult] = useState("");
-
-  useEffect(() => {
-    loadKnownLocations();
-  }, []);
-
-  async function loadKnownLocations() {
-    const { data, error } = await supabase.from("known_locations").select("*");
-
-    if (error) {
-      alert(error.message);
-      return;
-    }
-
-    setKnownLocations(data || []);
-  }
 
   function getValue(obj: any, possibleFields: string[]) {
     for (const field of possibleFields) {
@@ -32,47 +16,22 @@ export default function TrackingProcessorPage() {
     return null;
   }
 
-  function distanceKm(lat1: number, lon1: number, lat2: number, lon2: number) {
-    const R = 6371;
-    const dLat = ((lat2 - lat1) * Math.PI) / 180;
-    const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  async function reverseGeocode(latitude: number, longitude: number) {
+    try {
+      const response = await fetch("/api/reverse-geocode", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ latitude, longitude }),
+      });
 
-    const a =
-      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-      Math.cos((lat1 * Math.PI) / 180) *
-        Math.cos((lat2 * Math.PI) / 180) *
-        Math.sin(dLon / 2) *
-        Math.sin(dLon / 2);
+      const data = await response.json();
 
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-
-    return R * c;
-  }
-
-  function findNearestLocation(lat: number, lng: number) {
-    if (!lat || !lng || knownLocations.length === 0) return null;
-
-    let nearest: any = null;
-    let nearestDistance = Infinity;
-
-    for (const loc of knownLocations) {
-      const dist = distanceKm(
-        lat,
-        lng,
-        Number(loc.latitude),
-        Number(loc.longitude)
-      );
-
-      if (dist < nearestDistance) {
-        nearestDistance = dist;
-        nearest = {
-          ...loc,
-          distance_km: dist,
-        };
-      }
+      return data.readable_location || data.full_location || null;
+    } catch {
+      return null;
     }
-
-    return nearest;
   }
 
   function interpretMovement(speed: number | null, ignition: any) {
@@ -83,16 +42,9 @@ export default function TrackingProcessorPage() {
     return "STOPPED";
   }
 
-  function buildRisk(
-    speed: number | null,
-    fuelLevel: number | null,
-    movement: string
-  ) {
+  function buildRisk(speed: number | null, fuelLevel: number | null) {
     if (fuelLevel !== null && fuelLevel < 15) return "medium";
     if (speed !== null && speed > 80) return "medium";
-    if (movement === "STOPPED" && fuelLevel !== null && fuelLevel <= 10) {
-      return "medium";
-    }
     return "normal";
   }
 
@@ -114,7 +66,9 @@ export default function TrackingProcessorPage() {
         vehicles = [parsed];
       }
 
-      const rows = vehicles.map((vehicle) => {
+      const rows = [];
+
+      for (const vehicle of vehicles) {
         const truck =
           getValue(vehicle, [
             "reg_no",
@@ -146,6 +100,7 @@ export default function TrackingProcessorPage() {
           "CurrentFuelLevel",
           "tank_level",
         ]);
+
         const fuelLevel = fuelRaw !== null ? Number(fuelRaw) : null;
 
         const odometerRaw = getValue(vehicle, [
@@ -154,6 +109,7 @@ export default function TrackingProcessorPage() {
           "Mileage",
           "total_distance",
         ]);
+
         const odometer = odometerRaw !== null ? Number(odometerRaw) : null;
 
         const ignition = getValue(vehicle, [
@@ -179,32 +135,34 @@ export default function TrackingProcessorPage() {
             "Location",
           ]) || null;
 
-        const nearest = findNearestLocation(latitude, longitude);
+        let interpretedLocation = providerLocation;
 
-        const interpretedLocation = nearest
-          ? `Near ${nearest.name} (${nearest.distance_km.toFixed(1)} km away)`
-          : providerLocation || "Unknown location";
+        if (!interpretedLocation && !isNaN(latitude) && !isNaN(longitude)) {
+          interpretedLocation = await reverseGeocode(latitude, longitude);
+        }
+
+        if (!interpretedLocation) {
+          interpretedLocation = "Location needs review";
+        }
 
         const movement = interpretMovement(speed, ignition);
-        const risk = buildRisk(speed, fuelLevel, movement);
+        const risk = buildRisk(speed, fuelLevel);
 
         let alert = "";
 
         if (risk === "medium") {
-          alert = "⚠️ Check this truck";
+          alert = "⚠️ Review required.";
         }
 
         if (fuelLevel !== null && fuelLevel < 15) {
-          alert = "⛽ Low fuel risk";
+          alert = "⛽ Low fuel risk.";
         }
 
-        const summary = `${truck} is ${movement.toLowerCase()} ${
-          nearest ? "near " + nearest.name : providerLocation || "on route"
-        }. Speed: ${speed ?? "unknown"} km/h. Fuel: ${
-          fuelLevel ?? "unknown"
-        }.${alert ? " " + alert : ""}`;
+        const summary = `${truck} is ${movement.toLowerCase()} near ${interpretedLocation}. Speed: ${
+          speed ?? "unknown"
+        } km/h. Fuel: ${fuelLevel ?? "unknown"}.${alert ? " " + alert : ""}`;
 
-        return {
+        rows.push({
           truck_text: truck.toString().trim().toUpperCase(),
           latitude: isNaN(latitude) ? null : latitude,
           longitude: isNaN(longitude) ? null : longitude,
@@ -214,15 +172,15 @@ export default function TrackingProcessorPage() {
           ignition_status: ignition ? String(ignition).toUpperCase() : null,
           location_text: providerLocation,
           interpreted_location: interpretedLocation,
-          nearest_town: nearest ? nearest.name : null,
+          nearest_town: interpretedLocation,
           nearest_geofence: null,
           movement_status: movement,
           risk_level: risk,
           nava_eye_summary: summary,
           recorded_at: recordedAt,
           raw_data: vehicle,
-        };
-      });
+        });
+      }
 
       const { error } = await supabase.from("tracking_points").insert(rows);
 
@@ -241,8 +199,8 @@ export default function TrackingProcessorPage() {
     <main style={{ padding: 40 }}>
       <h1>Nava Eye Tracking Processor</h1>
       <p>
-        Paste raw GPS/provider response. Nava Eye will normalize it into readable
-        truck intelligence.
+        Paste raw GPS/provider response. Nava Eye converts coordinates into
+        readable locations.
       </p>
 
       <textarea
