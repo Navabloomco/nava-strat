@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../../../lib/supabase";
 
 export default function NewFuelPage() {
   const [journeys, setJourneys] = useState<any[]>([]);
   const [providers, setProviders] = useState<any[]>([]);
 
+  const [client, setClient] = useState("");
   const [truck, setTruck] = useState("");
   const [liters, setLiters] = useState("");
   const [pricePerLiter, setPricePerLiter] = useState("");
@@ -24,42 +25,59 @@ export default function NewFuelPage() {
   }, []);
 
   async function loadJourneys() {
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from("journeys")
       .select("*")
       .eq("status", "active")
       .order("created_at", { ascending: false });
 
-    if (!error) setJourneys(data || []);
+    setJourneys(data || []);
   }
 
   async function loadProviders() {
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from("fuel_providers")
       .select("*")
       .eq("is_active", true)
       .order("created_at", { ascending: false });
 
-    if (!error) setProviders(data || []);
+    setProviders(data || []);
   }
+
+  const clients = useMemo(() => {
+    return Array.from(
+      new Set(journeys.map((j) => j.client_name).filter(Boolean))
+    );
+  }, [journeys]);
+
+  const suggestedJourneys = useMemo(() => {
+    return journeys.filter((j) => {
+      const matchesClient = client ? j.client_name === client : true;
+      const matchesTruck = truck
+        ? (j.truck || "").toUpperCase().includes(truck.toUpperCase())
+        : true;
+
+      return matchesClient && matchesTruck;
+    });
+  }, [journeys, client, truck]);
 
   async function updateFuelProfile(truckValue: string, journeyIdValue: string) {
     const cleanTruck = truckValue.trim().toUpperCase();
 
-    const { data: journey, error: journeyError } = await supabase
+    const { data: journey } = await supabase
       .from("journeys")
       .select("*")
       .eq("id", journeyIdValue)
       .single();
 
-    if (journeyError || !journey) return;
+    if (!journey) return;
 
-    const { data: fuelLogs, error: fuelError } = await supabase
+    const { data: fuelLogs } = await supabase
       .from("fuel_logs")
       .select("*")
       .eq("journey_id", journeyIdValue);
 
-    if (fuelError || !fuelLogs) return;
+    if (!fuelLogs) return;
 
     const totalFuel = fuelLogs.reduce(
       (sum, fuel) => sum + Number(fuel.liters || 0),
@@ -151,14 +169,13 @@ export default function NewFuelPage() {
         fuel_source: "manual",
         approved_extra_fuel: approved,
         approval_reason: approved ? approvalReason : null,
-        request_status: approved ? "approved" : "approved",
+        request_status: "approved",
         approval_required: approved,
       },
     ]);
 
     if (error) {
       alert(error.message);
-      console.error(error);
       return;
     }
 
@@ -168,6 +185,7 @@ export default function NewFuelPage() {
 
     alert("Fuel saved ✅");
 
+    setClient("");
     setTruck("");
     setLiters("");
     setPricePerLiter("");
@@ -184,15 +202,69 @@ export default function NewFuelPage() {
       <h1>Add Fuel</h1>
 
       <form onSubmit={handleSubmit}>
+        <select
+          value={client}
+          onChange={(e) => {
+            setClient(e.target.value);
+            setJourneyId("");
+          }}
+        >
+          <option value="">Select client optional</option>
+          {clients.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+        </select>
+
+        <br />
+        <br />
+
         <input
           placeholder="Truck e.g. KBJ123A"
           value={truck}
-          onChange={(e) => setTruck(e.target.value.toUpperCase())}
+          onChange={(e) => {
+            setTruck(e.target.value.toUpperCase());
+            setJourneyId("");
+          }}
           required
         />
 
         <br />
         <br />
+
+        <div
+          style={{
+            border: "1px solid #ddd",
+            padding: 12,
+            borderRadius: 8,
+            marginBottom: 16,
+          }}
+        >
+          <strong>Nava Eye Suggestions</strong>
+          <p>
+            {suggestedJourneys.length === 0
+              ? "No matching active journey. Fuel can be saved as unallocated."
+              : `${suggestedJourneys.length} matching active journey/journeys found.`}
+          </p>
+
+          {suggestedJourneys.length > 0 && (
+            <select
+              value={journeyId}
+              onChange={(e) => setJourneyId(e.target.value)}
+            >
+              <option value="">Choose matching journey or leave unallocated</option>
+
+              {suggestedJourneys.map((j) => (
+                <option key={j.id} value={j.id}>
+                  {j.internal_trip_id ? `${j.internal_trip_id} — ` : ""}
+                  {j.client_name || "NO CLIENT"} — {j.truck} —{" "}
+                  {j.from_location} → {j.to_location}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
 
         <input
           placeholder="Liters e.g. 480"
@@ -216,9 +288,7 @@ export default function NewFuelPage() {
               setVendor(provider.name || "");
 
               if (provider.current_price_per_liter) {
-                setPricePerLiter(
-                  provider.current_price_per_liter.toString()
-                );
+                setPricePerLiter(provider.current_price_per_liter.toString());
               }
             }
           }}
@@ -227,7 +297,7 @@ export default function NewFuelPage() {
 
           {providers.map((provider) => (
             <option key={provider.id} value={provider.id}>
-              {provider.name} — {provider.location || "No location"}
+              {provider.name} — {provider.location || "NO LOCATION"}
             </option>
           ))}
         </select>
@@ -253,30 +323,13 @@ export default function NewFuelPage() {
         <br />
         <br />
 
-        <select
-          value={journeyId}
-          onChange={(e) => setJourneyId(e.target.value)}
-        >
-          <option value="">No journey yet / unallocated fuel</option>
-
-          {journeys.map((journey) => (
-            <option key={journey.id} value={journey.id}>
-              {journey.client_name || "NO CLIENT"} — {journey.truck} —{" "}
-              {journey.from_location} → {journey.to_location}
-            </option>
-          ))}
-        </select>
-
-        <br />
-        <br />
-
         <label>
           <input
             type="checkbox"
             checked={approved}
             onChange={(e) => setApproved(e.target.checked)}
-          />
-          {" "}Approve extra fuel / second fueling
+          />{" "}
+          Approve extra fuel / second fueling
         </label>
 
         <br />
@@ -297,7 +350,7 @@ export default function NewFuelPage() {
         )}
 
         <input
-          placeholder="Notes e.g. Mpesa, invoice, top-up"
+          placeholder="Notes e.g. MPesa, invoice, top-up"
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
         />
