@@ -38,6 +38,7 @@ export default function JourneyListPage() {
         <table border={1} cellPadding={10}>
           <thead>
             <tr>
+              <th>Client</th>
               <th>Truck</th>
               <th>Driver</th>
               <th>From</th>
@@ -50,12 +51,17 @@ export default function JourneyListPage() {
           <tbody>
             {journeys.map((journey) => (
               <tr key={journey.id}>
-                <td>{journey.truck}</td>
-                <td>{journey.driver}</td>
-                <td>{journey.from_location}</td>
-                <td>{journey.to_location}</td>
-                <td>{journey.status}</td>
-                <td>{new Date(journey.created_at).toLocaleString()}</td>
+                <td>{journey.client_name || "—"}</td>
+                <td>{journey.truck || "—"}</td>
+                <td>{journey.driver || "—"}</td>
+                <td>{journey.from_location || "—"}</td>
+                <td>{journey.to_location || "—"}</td>
+                <td>{journey.status || "—"}</td>
+                <td>
+                  {journey.created_at
+                    ? new Date(journey.created_at).toLocaleString()
+                    : "—"}
+                </td>
               </tr>
             ))}
           </tbody>
