@@ -7,11 +7,13 @@ export default function NewJourneyPage() {
   const [truck, setTruck] = useState("");
   const [driver, setDriver] = useState("");
   const [route, setRoute] = useState("");
+  const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: any) => {
     e.preventDefault();
+    setLoading(true);
 
-    const { error } = await supabase.from("journeys").insert([
+    const { data, error } = await supabase.from("journeys").insert([
       {
         truck,
         driver,
@@ -19,15 +21,19 @@ export default function NewJourneyPage() {
       },
     ]);
 
+    console.log("DATA:", data);
+    console.log("ERROR:", error);
+
     if (error) {
-      alert("Error saving journey");
-      console.error(error);
+      alert("Error saving journey ❌");
     } else {
       alert("Journey saved ✅");
       setTruck("");
       setDriver("");
       setRoute("");
     }
+
+    setLoading(false);
   };
 
   return (
@@ -50,13 +56,15 @@ export default function NewJourneyPage() {
         <br /><br />
 
         <input
-          placeholder="Route"
+          placeholder="Route (e.g. Mombasa → Kampala)"
           value={route}
           onChange={(e) => setRoute(e.target.value)}
         />
         <br /><br />
 
-        <button type="submit">Save Journey</button>
+        <button type="submit" disabled={loading}>
+          {loading ? "Saving..." : "Save Journey"}
+        </button>
       </form>
     </div>
   );
