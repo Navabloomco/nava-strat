@@ -13,9 +13,7 @@ export default function TrackingProcessorPage() {
   }, []);
 
   async function loadKnownLocations() {
-    const { data, error } = await supabase
-      .from("known_locations")
-      .select("*");
+    const { data, error } = await supabase.from("known_locations").select("*");
 
     if (error) {
       alert(error.message);
@@ -54,7 +52,7 @@ export default function TrackingProcessorPage() {
   function findNearestLocation(lat: number, lng: number) {
     if (!lat || !lng || knownLocations.length === 0) return null;
 
-    let nearest = null;
+    let nearest: any = null;
     let nearestDistance = Infinity;
 
     for (const loc of knownLocations) {
@@ -78,20 +76,23 @@ export default function TrackingProcessorPage() {
   }
 
   function interpretMovement(speed: number | null, ignition: any) {
-    if (speed && speed > 5) return "MOVING";
-    if (ignition === "ON" || ignition === true || ignition === "on") return "IDLE";
+    if (speed !== null && speed > 5) return "MOVING";
+    if (ignition === "ON" || ignition === true || ignition === "on") {
+      return "IDLE";
+    }
     return "STOPPED";
   }
 
-  function buildRisk(speed: number | null, fuelLevel: number | null, movement: string) {
+  function buildRisk(
+    speed: number | null,
+    fuelLevel: number | null,
+    movement: string
+  ) {
+    if (fuelLevel !== null && fuelLevel < 15) return "medium";
+    if (speed !== null && speed > 80) return "medium";
     if (movement === "STOPPED" && fuelLevel !== null && fuelLevel <= 10) {
       return "medium";
     }
-
-    if (speed && speed > 80) {
-      return "medium";
-    }
-
     return "normal";
   }
 
@@ -182,14 +183,26 @@ export default function TrackingProcessorPage() {
 
         const interpretedLocation = nearest
           ? `Near ${nearest.name} (${nearest.distance_km.toFixed(1)} km away)`
-          : providerLocation || `${latitude}, ${longitude}`;
+          : providerLocation || "Unknown location";
 
         const movement = interpretMovement(speed, ignition);
         const risk = buildRisk(speed, fuelLevel, movement);
 
-        const summary = `${truck} is ${movement.toLowerCase()} ${interpretedLocation}. Speed: ${
-          speed ?? "unknown"
-        } km/h. Fuel: ${fuelLevel ?? "unknown"}.`;
+        let alert = "";
+
+        if (risk === "medium") {
+          alert = "⚠️ Check this truck";
+        }
+
+        if (fuelLevel !== null && fuelLevel < 15) {
+          alert = "⛽ Low fuel risk";
+        }
+
+        const summary = `${truck} is ${movement.toLowerCase()} ${
+          nearest ? "near " + nearest.name : providerLocation || "on route"
+        }. Speed: ${speed ?? "unknown"} km/h. Fuel: ${
+          fuelLevel ?? "unknown"
+        }.${alert ? " " + alert : ""}`;
 
         return {
           truck_text: truck.toString().trim().toUpperCase(),
@@ -239,11 +252,13 @@ export default function TrackingProcessorPage() {
         style={{ width: "100%", height: 220 }}
       />
 
-      <br /><br />
+      <br />
+      <br />
 
       <button onClick={processTrackingData}>Process with Nava Eye</button>
 
-      <br /><br />
+      <br />
+      <br />
 
       {result && <strong>{result}</strong>}
     </main>
