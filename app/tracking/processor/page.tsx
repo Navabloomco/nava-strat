@@ -28,9 +28,23 @@ export default function TrackingProcessorPage() {
 
       const data = await response.json();
 
-      return data.readable_location || data.full_location || null;
+      return {
+        readable: data.readable_location || data.full_location || null,
+        area: data.area || null,
+        city: data.city || null,
+        region: data.region || null,
+        country: data.country || null,
+        full: data.full_location || null,
+      };
     } catch {
-      return null;
+      return {
+        readable: null,
+        area: null,
+        city: null,
+        region: null,
+        country: null,
+        full: null,
+      };
     }
   }
 
@@ -135,15 +149,21 @@ export default function TrackingProcessorPage() {
             "Location",
           ]) || null;
 
-        let interpretedLocation = providerLocation;
+        let locationInfo = {
+          readable: providerLocation,
+          area: null as string | null,
+          city: null as string | null,
+          region: null as string | null,
+          country: null as string | null,
+          full: providerLocation,
+        };
 
-        if (!interpretedLocation && !isNaN(latitude) && !isNaN(longitude)) {
-          interpretedLocation = await reverseGeocode(latitude, longitude);
+        if (!providerLocation && !isNaN(latitude) && !isNaN(longitude)) {
+          locationInfo = await reverseGeocode(latitude, longitude);
         }
 
-        if (!interpretedLocation) {
-          interpretedLocation = "Location needs review";
-        }
+        const interpretedLocation =
+          locationInfo.readable || providerLocation || "Location needs review";
 
         const movement = interpretMovement(speed, ignition);
         const risk = buildRisk(speed, fuelLevel);
@@ -158,7 +178,7 @@ export default function TrackingProcessorPage() {
           alert = "⛽ Low fuel risk.";
         }
 
-        const summary = `${truck} is ${movement.toLowerCase()} near ${interpretedLocation}. Speed: ${
+        const summary = `${truck} is ${movement.toLowerCase()} at ${interpretedLocation}. Speed: ${
           speed ?? "unknown"
         } km/h. Fuel: ${fuelLevel ?? "unknown"}.${alert ? " " + alert : ""}`;
 
@@ -172,8 +192,12 @@ export default function TrackingProcessorPage() {
           ignition_status: ignition ? String(ignition).toUpperCase() : null,
           location_text: providerLocation,
           interpreted_location: interpretedLocation,
-          nearest_town: interpretedLocation,
+          nearest_town: locationInfo.city || interpretedLocation,
           nearest_geofence: null,
+          location_area: locationInfo.area,
+          location_city: locationInfo.city,
+          location_region: locationInfo.region,
+          location_country: locationInfo.country,
           movement_status: movement,
           risk_level: risk,
           nava_eye_summary: summary,
@@ -200,11 +224,11 @@ export default function TrackingProcessorPage() {
       <h1>Nava Eye Tracking Processor</h1>
       <p>
         Paste raw GPS/provider response. Nava Eye converts coordinates into
-        readable locations.
+        smart readable locations.
       </p>
 
       <textarea
-        placeholder='Paste raw JSON here e.g. [{"reg_no":"KBJ123A","lat":-3.396,"lng":38.556,"speed":0,"fuellevel":55}]'
+        placeholder='Paste raw JSON here e.g. [{"reg_no":"KBJ123A","lat":-1.3032,"lng":36.7073,"speed":0,"fuellevel":55}]'
         value={rawJson}
         onChange={(e) => setRawJson(e.target.value)}
         style={{ width: "100%", height: 220 }}
