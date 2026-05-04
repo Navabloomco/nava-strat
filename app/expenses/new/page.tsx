@@ -10,7 +10,9 @@ export default function NewExpensePage() {
   const [amount, setAmount] = useState("");
   const [type, setType] = useState("");
   const [vendor, setVendor] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState("");
   const [reference, setReference] = useState("");
+  const [tripReference, setTripReference] = useState("");
   const [notes, setNotes] = useState("");
   const [journeyId, setJourneyId] = useState("");
 
@@ -19,11 +21,16 @@ export default function NewExpensePage() {
   }, []);
 
   async function loadJourneys() {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("journeys")
       .select("*")
       .eq("status", "active")
       .order("created_at", { ascending: false });
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
 
     setJourneys(data || []);
   }
@@ -38,7 +45,9 @@ export default function NewExpensePage() {
         expense_type: type,
         amount: Number(amount),
         vendor: vendor.trim().toUpperCase(),
-        reference_number: reference,
+        payment_method: paymentMethod,
+        reference_number: reference.trim(),
+        trip_reference: tripReference.trim().toUpperCase(),
         notes,
       },
     ]);
@@ -54,7 +63,9 @@ export default function NewExpensePage() {
     setAmount("");
     setType("");
     setVendor("");
+    setPaymentMethod("");
     setReference("");
+    setTripReference("");
     setNotes("");
     setJourneyId("");
   }
@@ -82,11 +93,7 @@ export default function NewExpensePage() {
 
         <br /><br />
 
-        <select
-          value={type}
-          onChange={(e) => setType(e.target.value)}
-          required
-        >
+        <select value={type} onChange={(e) => setType(e.target.value)} required>
           <option value="">Select expense type</option>
           <option value="per_diem">Per Diem</option>
           <option value="toll">Toll</option>
@@ -100,23 +107,48 @@ export default function NewExpensePage() {
         <br /><br />
 
         <input
-          placeholder="Vendor / Paid to"
+          placeholder="Paid to / Vendor e.g. KARIUKI, KRA, COUNTY"
           value={vendor}
           onChange={(e) => setVendor(e.target.value.toUpperCase())}
         />
 
         <br /><br />
 
+        <select
+          value={paymentMethod}
+          onChange={(e) => setPaymentMethod(e.target.value)}
+          required
+        >
+          <option value="">Select payment method</option>
+          <option value="mpesa">M-Pesa</option>
+          <option value="bank">Bank</option>
+          <option value="cash">Cash</option>
+          <option value="fuel_card">Fuel Card</option>
+          <option value="credit">Credit</option>
+          <option value="other">Other</option>
+        </select>
+
+        <br /><br />
+
         <input
-          placeholder="Reference / Trip ID / Mpesa / invoice"
+          placeholder="Payment reference e.g. MPESA code / invoice no. / receipt no."
           value={reference}
           onChange={(e) => setReference(e.target.value)}
+          required
+        />
+
+        <br /><br />
+
+        <input
+          placeholder="Trip reference optional e.g. internal trip ID"
+          value={tripReference}
+          onChange={(e) => setTripReference(e.target.value.toUpperCase())}
         />
 
         <br /><br />
 
         <select value={journeyId} onChange={(e) => setJourneyId(e.target.value)}>
-          <option value="">No journey / unallocated</option>
+          <option value="">No journey / unallocated expense</option>
 
           {journeys.map((j) => (
             <option key={j.id} value={j.id}>
