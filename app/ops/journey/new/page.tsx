@@ -1,26 +1,25 @@
 "use client";
 
 import { useState } from "react";
-import { supabase } from "../../../../lib/supabase";
+import { supabase } from "../../../lib/supabase";
 
 export default function NewJourneyPage() {
+  const [client, setClient] = useState("");
   const [truck, setTruck] = useState("");
   const [driver, setDriver] = useState("");
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [fromLocation, setFromLocation] = useState("");
+  const [toLocation, setToLocation] = useState("");
 
-  async function handleSubmit(e: any) {
+  const handleSubmit = async (e: any) => {
     e.preventDefault();
-    setLoading(true);
 
     const { error } = await supabase.from("journeys").insert([
       {
+        client_name: client,
         truck,
         driver,
-        from_location: from,
-        to_location: to,
-        route: `${from} → ${to}`,
+        from_location: fromLocation,
+        to_location: toLocation,
         status: "active",
       },
     ]);
@@ -30,14 +29,13 @@ export default function NewJourneyPage() {
       console.error(error);
     } else {
       alert("Journey saved ✅");
+      setClient("");
       setTruck("");
       setDriver("");
-      setFrom("");
-      setTo("");
+      setFromLocation("");
+      setToLocation("");
     }
-
-    setLoading(false);
-  }
+  };
 
   return (
     <main style={{ padding: 40 }}>
@@ -45,11 +43,19 @@ export default function NewJourneyPage() {
 
       <form onSubmit={handleSubmit}>
         <input
+          placeholder="Client (e.g. Engaano)"
+          value={client}
+          onChange={(e) => setClient(e.target.value)}
+          required
+        />
+        <br /><br />
+
+        <input
           placeholder="Truck (e.g. KBJ123A)"
           value={truck}
           onChange={(e) => setTruck(e.target.value)}
+          required
         />
-
         <br /><br />
 
         <input
@@ -57,28 +63,23 @@ export default function NewJourneyPage() {
           value={driver}
           onChange={(e) => setDriver(e.target.value)}
         />
-
         <br /><br />
 
         <input
           placeholder="From (e.g. Mombasa)"
-          value={from}
-          onChange={(e) => setFrom(e.target.value)}
+          value={fromLocation}
+          onChange={(e) => setFromLocation(e.target.value)}
         />
-
         <br /><br />
 
         <input
           placeholder="To (e.g. Nairobi)"
-          value={to}
-          onChange={(e) => setTo(e.target.value)}
+          value={toLocation}
+          onChange={(e) => setToLocation(e.target.value)}
         />
-
         <br /><br />
 
-        <button type="submit" disabled={loading}>
-          {loading ? "Saving..." : "Save Journey"}
-        </button>
+        <button type="submit">Save Journey</button>
       </form>
     </main>
   );
