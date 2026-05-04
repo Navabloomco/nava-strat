@@ -21,18 +21,29 @@ export default function NewExpensePage() {
   }, []);
 
   async function loadJourneys() {
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from("journeys")
       .select("*")
       .eq("status", "active")
       .order("created_at", { ascending: false });
 
-    if (error) {
-      alert(error.message);
-      return;
-    }
-
     setJourneys(data || []);
+  }
+
+  function handleJourneySelect(id: string) {
+    setJourneyId(id);
+
+    const journey = journeys.find((j) => j.id === id);
+
+    if (journey) {
+      setTruck(journey.truck || "");
+      setTripReference(
+        journey.internal_trip_id ||
+          `${journey.truck}-${journey.client_name}-${journey.from_location}-${journey.to_location}`
+            .toUpperCase()
+            .replace(/\s+/g, "")
+      );
+    }
   }
 
   async function handleSubmit(e: any) {
@@ -75,22 +86,22 @@ export default function NewExpensePage() {
       <h1>Add Expense</h1>
 
       <form onSubmit={handleSubmit}>
-        <input
-          placeholder="Truck e.g. KBJ123A"
-          value={truck}
-          onChange={(e) => setTruck(e.target.value.toUpperCase())}
-          required
-        />
+        <select value={journeyId} onChange={(e) => handleJourneySelect(e.target.value)}>
+          <option value="">Select journey / or leave unallocated</option>
+
+          {journeys.map((j) => (
+            <option key={j.id} value={j.id}>
+              {j.internal_trip_id || "NO TRIP ID"} — {j.client_name || "NO CLIENT"} — {j.truck} — {j.from_location} → {j.to_location}
+            </option>
+          ))}
+        </select>
 
         <br /><br />
 
-        <input
-          placeholder="Amount e.g. 3000"
-          value={amount}
-          onChange={(e) => setAmount(e.target.value)}
-          required
-        />
+        <input placeholder="Truck e.g. KBJ123A" value={truck} onChange={(e) => setTruck(e.target.value.toUpperCase())} required />
+        <br /><br />
 
+        <input placeholder="Amount e.g. 3000" value={amount} onChange={(e) => setAmount(e.target.value)} required />
         <br /><br />
 
         <select value={type} onChange={(e) => setType(e.target.value)} required>
@@ -106,19 +117,10 @@ export default function NewExpensePage() {
 
         <br /><br />
 
-        <input
-          placeholder="Paid to / Vendor e.g. KARIUKI, KRA, COUNTY"
-          value={vendor}
-          onChange={(e) => setVendor(e.target.value.toUpperCase())}
-        />
-
+        <input placeholder="Paid to / Vendor e.g. KARIUKI, KRA, COUNTY" value={vendor} onChange={(e) => setVendor(e.target.value.toUpperCase())} />
         <br /><br />
 
-        <select
-          value={paymentMethod}
-          onChange={(e) => setPaymentMethod(e.target.value)}
-          required
-        >
+        <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)} required>
           <option value="">Select payment method</option>
           <option value="mpesa">M-Pesa</option>
           <option value="bank">Bank</option>
@@ -130,42 +132,13 @@ export default function NewExpensePage() {
 
         <br /><br />
 
-        <input
-          placeholder="Payment reference e.g. MPESA code / invoice no. / receipt no."
-          value={reference}
-          onChange={(e) => setReference(e.target.value)}
-          required
-        />
-
+        <input placeholder="Payment reference e.g. MPESA code / invoice no. / receipt no." value={reference} onChange={(e) => setReference(e.target.value)} required />
         <br /><br />
 
-        <input
-          placeholder="Trip reference optional e.g. internal trip ID"
-          value={tripReference}
-          onChange={(e) => setTripReference(e.target.value.toUpperCase())}
-        />
-
+        <input placeholder="Nava Eye trip ID" value={tripReference} onChange={(e) => setTripReference(e.target.value.toUpperCase())} />
         <br /><br />
 
-        <select value={journeyId} onChange={(e) => setJourneyId(e.target.value)}>
-          <option value="">No journey / unallocated expense</option>
-
-          {journeys.map((j) => (
-            <option key={j.id} value={j.id}>
-              {j.client_name || "NO CLIENT"} — {j.truck} —{" "}
-              {j.from_location} → {j.to_location}
-            </option>
-          ))}
-        </select>
-
-        <br /><br />
-
-        <input
-          placeholder="Notes"
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-        />
-
+        <input placeholder="Notes" value={notes} onChange={(e) => setNotes(e.target.value)} />
         <br /><br />
 
         <button type="submit">Save Expense</button>
