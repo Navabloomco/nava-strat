@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { supabase } from "../../../lib/supabase";
+import { supabase } from "../../../../lib/supabase";
 
 export default function NewJourneyPage() {
   const [client, setClient] = useState("");
@@ -29,6 +29,8 @@ export default function NewJourneyPage() {
       console.error(error);
     } else {
       alert("Journey saved ✅");
+
+      // reset form
       setClient("");
       setTruck("");
       setDriver("");
