@@ -36,11 +36,18 @@ export default function LiveTrackingPage() {
   }
 
   function readableLocation(point: any) {
-    if (point.nearest_town) {
-      return `Near ${point.nearest_town}`;
+    if (point.location_area && point.location_city) {
+      return `${point.location_area}, ${point.location_city}`;
     }
 
-    if (point.interpreted_location) {
+    if (point.location_city) {
+      return point.location_city;
+    }
+
+    if (
+      point.interpreted_location &&
+      !point.interpreted_location.toLowerCase().includes("unknown")
+    ) {
       return point.interpreted_location;
     }
 
@@ -48,13 +55,32 @@ export default function LiveTrackingPage() {
       return point.location_text;
     }
 
-    return "Unknown location";
+    return "Location needs review";
+  }
+
+  function smartSummary(point: any) {
+    const location = readableLocation(point);
+    const status = point.movement_status || "UNKNOWN";
+    const speed = point.speed ?? "unknown";
+    const fuel = point.fuel_level ?? "unknown";
+
+    let alert = "";
+
+    if (point.risk_level === "medium") {
+      alert = "⚠️ Review required.";
+    }
+
+    if (Number(point.fuel_level) < 15) {
+      alert = "⛽ Low fuel risk.";
+    }
+
+    return `${point.truck_text} is ${status.toLowerCase()} at ${location}. Speed: ${speed} km/h. Fuel: ${fuel}. ${alert}`;
   }
 
   return (
     <main style={{ padding: 40 }}>
       <h1>Live Tracking — Nava Eye</h1>
-      <p>Human-readable fleet intelligence. No raw GPS nonsense.</p>
+      <p>Human-readable fleet intelligence. No lazy “near” everywhere.</p>
 
       {points.length === 0 ? (
         <p>No tracking data yet.</p>
@@ -65,6 +91,7 @@ export default function LiveTrackingPage() {
               <th>Truck</th>
               <th>Status</th>
               <th>Location</th>
+              <th>City / Region</th>
               <th>Speed</th>
               <th>Fuel</th>
               <th>Risk</th>
@@ -84,6 +111,11 @@ export default function LiveTrackingPage() {
 
                 <td>{readableLocation(point)}</td>
 
+                <td>
+                  {point.location_city || "—"}
+                  {point.location_region ? ` / ${point.location_region}` : ""}
+                </td>
+
                 <td>{point.speed ?? "—"}</td>
 
                 <td>{point.fuel_level ?? "—"}</td>
@@ -102,7 +134,7 @@ export default function LiveTrackingPage() {
                   {point.risk_level || "normal"}
                 </td>
 
-                <td>{point.nava_eye_summary || "—"}</td>
+                <td>{smartSummary(point)}</td>
 
                 <td>
                   {point.recorded_at
