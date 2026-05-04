@@ -6,7 +6,8 @@ import { supabase } from "../../../../lib/supabase";
 export default function NewJourneyPage() {
   const [truck, setTruck] = useState("");
   const [driver, setDriver] = useState("");
-  const [route, setRoute] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
   const [loading, setLoading] = useState(false);
 
   async function handleSubmit(e: any) {
@@ -17,7 +18,9 @@ export default function NewJourneyPage() {
       {
         truck,
         driver,
-        route,
+        from_location: from,
+        to_location: to,
+        route: `${from} → ${to}`,
         status: "active",
       },
     ]);
@@ -29,7 +32,8 @@ export default function NewJourneyPage() {
       alert("Journey saved ✅");
       setTruck("");
       setDriver("");
-      setRoute("");
+      setFrom("");
+      setTo("");
     }
 
     setLoading(false);
@@ -41,7 +45,7 @@ export default function NewJourneyPage() {
 
       <form onSubmit={handleSubmit}>
         <input
-          placeholder="Truck"
+          placeholder="Truck (e.g. KBJ123A)"
           value={truck}
           onChange={(e) => setTruck(e.target.value)}
         />
@@ -49,7 +53,7 @@ export default function NewJourneyPage() {
         <br /><br />
 
         <input
-          placeholder="Driver"
+          placeholder="Driver (e.g. Kariuki)"
           value={driver}
           onChange={(e) => setDriver(e.target.value)}
         />
@@ -57,9 +61,17 @@ export default function NewJourneyPage() {
         <br /><br />
 
         <input
-          placeholder="Route e.g. Mombasa → Kampala"
-          value={route}
-          onChange={(e) => setRoute(e.target.value)}
+          placeholder="From (e.g. Mombasa)"
+          value={from}
+          onChange={(e) => setFrom(e.target.value)}
+        />
+
+        <br /><br />
+
+        <input
+          placeholder="To (e.g. Nairobi)"
+          value={to}
+          onChange={(e) => setTo(e.target.value)}
         />
 
         <br /><br />
