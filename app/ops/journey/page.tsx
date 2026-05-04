@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../../../lib/supabase";
 
-export default function JourneyList() {
+export default function JourneyListPage() {
   const [journeys, setJourneys] = useState<any[]>([]);
 
   async function fetchJourneys() {
@@ -12,7 +12,13 @@ export default function JourneyList() {
       .select("*")
       .order("created_at", { ascending: false });
 
-    if (!error) setJourneys(data || []);
+    if (error) {
+      alert(error.message);
+      console.error(error);
+      return;
+    }
+
+    setJourneys(data || []);
   }
 
   useEffect(() => {
@@ -22,28 +28,39 @@ export default function JourneyList() {
   return (
     <main style={{ padding: 40 }}>
       <h1>Journeys</h1>
+      <p>Saved journeys from operations.</p>
 
-      <table border={1} cellPadding={10}>
-        <thead>
-          <tr>
-            <th>Truck</th>
-            <th>Client</th>
-            <th>Route</th>
-            <th>Revenue</th>
-          </tr>
-        </thead>
+      <br />
 
-        <tbody>
-          {journeys.map((j) => (
-            <tr key={j.id}>
-              <td>{j.truck_text}</td>
-              <td>{j.client_name}</td>
-              <td>{j.from_location} → {j.to_location}</td>
-              <td>{j.revenue}</td>
+      {journeys.length === 0 ? (
+        <p>No journeys yet.</p>
+      ) : (
+        <table border={1} cellPadding={10}>
+          <thead>
+            <tr>
+              <th>Truck</th>
+              <th>Driver</th>
+              <th>From</th>
+              <th>To</th>
+              <th>Status</th>
+              <th>Created</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+
+          <tbody>
+            {journeys.map((journey) => (
+              <tr key={journey.id}>
+                <td>{journey.truck}</td>
+                <td>{journey.driver}</td>
+                <td>{journey.from_location}</td>
+                <td>{journey.to_location}</td>
+                <td>{journey.status}</td>
+                <td>{new Date(journey.created_at).toLocaleString()}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </main>
   );
 }
