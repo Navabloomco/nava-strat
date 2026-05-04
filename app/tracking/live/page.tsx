@@ -9,7 +9,7 @@ export default function LiveTrackingPage() {
   useEffect(() => {
     loadData();
 
-    const interval = setInterval(loadData, 10000); // refresh every 10s
+    const interval = setInterval(loadData, 10000);
     return () => clearInterval(interval);
   }, []);
 
@@ -24,7 +24,6 @@ export default function LiveTrackingPage() {
       return;
     }
 
-    // keep latest record per truck
     const latest: Record<string, any> = {};
 
     (data || []).forEach((row) => {
@@ -36,10 +35,26 @@ export default function LiveTrackingPage() {
     setPoints(Object.values(latest));
   }
 
+  function readableLocation(point: any) {
+    if (point.nearest_town) {
+      return `Near ${point.nearest_town}`;
+    }
+
+    if (point.interpreted_location) {
+      return point.interpreted_location;
+    }
+
+    if (point.location_text) {
+      return point.location_text;
+    }
+
+    return "Unknown location";
+  }
+
   return (
     <main style={{ padding: 40 }}>
       <h1>Live Tracking — Nava Eye</h1>
-      <p>Real-time fleet intelligence. No GPS system needed.</p>
+      <p>Human-readable fleet intelligence. No raw GPS nonsense.</p>
 
       {points.length === 0 ? (
         <p>No tracking data yet.</p>
@@ -53,45 +68,46 @@ export default function LiveTrackingPage() {
               <th>Speed</th>
               <th>Fuel</th>
               <th>Risk</th>
-              <th>Summary</th>
+              <th>Nava Eye Summary</th>
               <th>Last Update</th>
             </tr>
           </thead>
 
           <tbody>
-            {points.map((p) => (
-              <tr key={p.id}>
-                <td>{p.truck_text}</td>
+            {points.map((point) => (
+              <tr key={point.id}>
+                <td>{point.truck_text}</td>
 
                 <td>
-                  <b>{p.movement_status}</b>
+                  <strong>{point.movement_status || "UNKNOWN"}</strong>
                 </td>
 
-                <td>{p.interpreted_location}</td>
+                <td>{readableLocation(point)}</td>
 
-                <td>{p.speed ?? "-"}</td>
+                <td>{point.speed ?? "—"}</td>
 
-                <td>{p.fuel_level ?? "-"}</td>
+                <td>{point.fuel_level ?? "—"}</td>
 
                 <td
                   style={{
                     color:
-                      p.risk_level === "high"
+                      point.risk_level === "high"
                         ? "red"
-                        : p.risk_level === "medium"
+                        : point.risk_level === "medium"
                         ? "orange"
                         : "green",
+                    fontWeight: "bold",
                   }}
                 >
-                  {p.risk_level}
+                  {point.risk_level || "normal"}
                 </td>
 
-                <td>{p.nava_eye_summary}</td>
+                <td>{point.nava_eye_summary || "—"}</td>
 
                 <td>
-                  {p.recorded_at
-                    ? new Date(p.recorded_at).toLocaleString()
-                    : "-"}
+                  {point.recorded_at
+                    ? new Date(point.recorded_at).toLocaleString()
+                    : "—"}
                 </td>
               </tr>
             ))}
