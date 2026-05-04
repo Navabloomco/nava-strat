@@ -15,57 +15,144 @@ export default function NewFuelPage() {
   const [journeyId, setJourneyId] = useState("");
   const [selectedProviderId, setSelectedProviderId] = useState("");
 
+  const [approved, setApproved] = useState(false);
+  const [approvalReason, setApprovalReason] = useState("");
+
   useEffect(() => {
-    async function loadJourneys() {
-      const { data, error } = await supabase
-        .from("journeys")
-        .select("*")
-        .eq("status", "active")
-        .order("created_at", { ascending: false });
-
-      if (error) {
-        console.error(error);
-        return;
-      }
-
-      setJourneys(data || []);
-    }
-
-    async function loadProviders() {
-      const { data, error } = await supabase
-        .from("fuel_providers")
-        .select("*")
-        .eq("is_active", true);
-
-      if (error) {
-        console.error(error);
-        return;
-      }
-
-      setProviders(data || []);
-    }
-
     loadJourneys();
     loadProviders();
   }, []);
 
+  async function loadJourneys() {
+    const { data, error } = await supabase
+      .from("journeys")
+      .select("*")
+      .eq("status", "active")
+      .order("created_at", { ascending: false });
+
+    if (!error) setJourneys(data || []);
+  }
+
+  async function loadProviders() {
+    const { data, error } = await supabase
+      .from("fuel_providers")
+      .select("*")
+      .eq("is_active", true)
+      .order("created_at", { ascending: false });
+
+    if (!error) setProviders(data || []);
+  }
+
+  async function updateFuelProfile(truckValue: string, journeyIdValue: string) {
+    const cleanTruck = truckValue.trim().toUpperCase();
+
+    const { data: journey, error: journeyError } = await supabase
+      .from("journeys")
+      .select("*")
+      .eq("id", journeyIdValue)
+      .single();
+
+    if (journeyError || !journey) return;
+
+    const { data: fuelLogs, error: fuelError } = await supabase
+      .from("fuel_logs")
+      .select("*")
+      .eq("journey_id", journeyIdValue);
+
+    if (fuelError || !fuelLogs) return;
+
+    const totalFuel = fuelLogs.reduce(
+      (sum, fuel) => sum + Number(fuel.liters || 0),
+      0
+    );
+
+    const { data: existing } = await supabase
+      .from("truck_route_fuel_profiles")
+      .select("*")
+      .eq("truck", cleanTruck)
+      .eq("from_location", journey.from_location)
+      .eq("to_location", journey.to_location)
+      .maybeSingle();
+
+    if (!existing) {
+      await supabase.from("truck_route_fuel_profiles").insert([
+        {
+          truck: cleanTruck,
+          client_name: journey.client_name,
+          from_location: journey.from_location,
+          to_location: journey.to_location,
+          avg_fuel_liters: totalFuel,
+          trip_count: 1,
+        },
+      ]);
+
+      return;
+    }
+
+    const newCount = Number(existing.trip_count || 0) + 1;
+
+    const newAverage =
+      (Number(existing.avg_fuel_liters || 0) *
+        Number(existing.trip_count || 0) +
+        totalFuel) /
+      newCount;
+
+    await supabase
+      .from("truck_route_fuel_profiles")
+      .update({
+        avg_fuel_liters: newAverage,
+        trip_count: newCount,
+        last_updated: new Date().toISOString(),
+      })
+      .eq("id", existing.id);
+  }
+
   async function handleSubmit(e: any) {
     e.preventDefault();
 
+    const cleanTruck = truck.trim().toUpperCase();
     const litersNum = Number(liters);
     const priceNum = pricePerLiter ? Number(pricePerLiter) : 0;
 
+    if (!cleanTruck || !litersNum) {
+      alert("Truck and liters are required.");
+      return;
+    }
+
+    if (journeyId) {
+      const { data: existingFuel } = await supabase
+        .from("fuel_logs")
+        .select("id")
+        .eq("journey_id", journeyId);
+
+      if (existingFuel && existingFuel.length > 0 && !approved) {
+        alert(
+          "🚨 Fuel already exists for this journey. Approval is required to add more fuel."
+        );
+        return;
+      }
+
+      if (approved && !approvalReason.trim()) {
+        alert("Please enter a reason for approved extra fuel.");
+        return;
+      }
+    }
+
     const { error } = await supabase.from("fuel_logs").insert([
       {
-        truck_text: truck,
+        truck_text: cleanTruck,
         liters: litersNum,
         price_per_liter: priceNum,
         total_cost: litersNum * priceNum,
-        vendor,
+        vendor: vendor.trim().toUpperCase(),
         notes,
         journey_id: journeyId || null,
         allocation_status: journeyId ? "allocated" : "unallocated",
         fuel_source: "manual",
+        approved_extra_fuel: approved,
+        approval_reason: approved ? approvalReason : null,
+        request_status: approved ? "approved" : "approved",
+        approval_required: approved,
       },
     ]);
 
@@ -75,9 +162,12 @@ export default function NewFuelPage() {
       return;
     }
 
+    if (journeyId) {
+      await updateFuelProfile(cleanTruck, journeyId);
+    }
+
     alert("Fuel saved ✅");
 
-    // reset
     setTruck("");
     setLiters("");
     setPricePerLiter("");
@@ -85,6 +175,8 @@ export default function NewFuelPage() {
     setNotes("");
     setJourneyId("");
     setSelectedProviderId("");
+    setApproved(false);
+    setApprovalReason("");
   }
 
   return (
@@ -92,17 +184,16 @@ export default function NewFuelPage() {
       <h1>Add Fuel</h1>
 
       <form onSubmit={handleSubmit}>
-        {/* TRUCK */}
         <input
           placeholder="Truck e.g. KBJ123A"
           value={truck}
-          onChange={(e) => setTruck(e.target.value)}
+          onChange={(e) => setTruck(e.target.value.toUpperCase())}
           required
         />
 
-        <br /><br />
+        <br />
+        <br />
 
-        {/* LITERS */}
         <input
           placeholder="Liters e.g. 480"
           value={liters}
@@ -110,21 +201,20 @@ export default function NewFuelPage() {
           required
         />
 
-        <br /><br />
+        <br />
+        <br />
 
-        {/* PROVIDER DROPDOWN (AUTO-FILL MAGIC) */}
         <select
           value={selectedProviderId}
           onChange={(e) => {
             const id = e.target.value;
             setSelectedProviderId(id);
 
-            const provider = providers.find(p => p.id === id);
+            const provider = providers.find((p) => p.id === id);
 
             if (provider) {
-              setVendor(provider.name);
+              setVendor(provider.name || "");
 
-              // 🔥 AUTO FILL PRICE
               if (provider.current_price_per_liter) {
                 setPricePerLiter(
                   provider.current_price_per_liter.toString()
@@ -133,51 +223,87 @@ export default function NewFuelPage() {
             }
           }}
         >
-          <option value="">Select fuel provider (or manual)</option>
+          <option value="">Select fuel provider or type manually</option>
 
-          {providers.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name} — {p.location || "No location"}
+          {providers.map((provider) => (
+            <option key={provider.id} value={provider.id}>
+              {provider.name} — {provider.location || "No location"}
             </option>
           ))}
         </select>
 
-        <br /><br />
+        <br />
+        <br />
 
-        {/* PRICE (AUTO OR MANUAL OVERRIDE) */}
+        <input
+          placeholder="Fuel provider / station"
+          value={vendor}
+          onChange={(e) => setVendor(e.target.value.toUpperCase())}
+        />
+
+        <br />
+        <br />
+
         <input
           placeholder="Price per liter e.g. 197"
           value={pricePerLiter}
           onChange={(e) => setPricePerLiter(e.target.value)}
         />
 
-        <br /><br />
+        <br />
+        <br />
 
-        {/* JOURNEY LINK */}
         <select
           value={journeyId}
           onChange={(e) => setJourneyId(e.target.value)}
         >
           <option value="">No journey yet / unallocated fuel</option>
 
-          {journeys.map((j) => (
-            <option key={j.id} value={j.id}>
-              {j.client_name || "No client"} — {j.truck} —{" "}
-              {j.from_location} → {j.to_location}
+          {journeys.map((journey) => (
+            <option key={journey.id} value={journey.id}>
+              {journey.client_name || "NO CLIENT"} — {journey.truck} —{" "}
+              {journey.from_location} → {journey.to_location}
             </option>
           ))}
         </select>
 
-        <br /><br />
+        <br />
+        <br />
 
-        {/* NOTES */}
+        <label>
+          <input
+            type="checkbox"
+            checked={approved}
+            onChange={(e) => setApproved(e.target.checked)}
+          />
+          {" "}Approve extra fuel / second fueling
+        </label>
+
+        <br />
+        <br />
+
+        {approved && (
+          <>
+            <input
+              placeholder="Approval reason e.g. emergency top-up"
+              value={approvalReason}
+              onChange={(e) => setApprovalReason(e.target.value)}
+              required
+            />
+
+            <br />
+            <br />
+          </>
+        )}
+
         <input
           placeholder="Notes e.g. Mpesa, invoice, top-up"
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
         />
 
-        <br /><br />
+        <br />
+        <br />
 
         <button type="submit">Save Fuel</button>
       </form>
