@@ -12,26 +12,14 @@ export default function FuelControlPage() {
   }, []);
 
   async function loadData() {
-    const { data: fuelData, error: fuelError } = await supabase
+    const { data: fuelData } = await supabase
       .from("fuel_logs")
       .select("*")
       .order("created_at", { ascending: false });
 
-    if (fuelError) {
-      alert(fuelError.message);
-      console.error(fuelError);
-      return;
-    }
-
-    const { data: journeyData, error: journeyError } = await supabase
+    const { data: journeyData } = await supabase
       .from("journeys")
       .select("*");
-
-    if (journeyError) {
-      alert(journeyError.message);
-      console.error(journeyError);
-      return;
-    }
 
     setFuelLogs(fuelData || []);
     setJourneys(journeyData || []);
@@ -42,10 +30,26 @@ export default function FuelControlPage() {
     return journeys.find((j) => j.id === journeyId) || null;
   }
 
+  // 🔥 Detect duplicate fueling (same truck + same liters within 1 hour)
+  function isDuplicateFuel(fuel: any) {
+    return fuelLogs.filter((f) => {
+      const sameTruck = f.truck_text === fuel.truck_text;
+      const sameLiters = f.liters === fuel.liters;
+
+      const timeDiff =
+        Math.abs(
+          new Date(f.created_at).getTime() -
+            new Date(fuel.created_at).getTime()
+        ) < 1000 * 60 * 60; // 1 hour
+
+      return sameTruck && sameLiters && timeDiff;
+    }).length > 1;
+  }
+
   return (
     <main style={{ padding: 40 }}>
       <h1>Fuel Control</h1>
-      <p>Allocated and unallocated fuel logs.</p>
+      <p>Allocated vs unallocated fuel + duplicate detection.</p>
 
       <br />
 
@@ -58,7 +62,7 @@ export default function FuelControlPage() {
             <th>Fuel Provider</th>
             <th>Client</th>
             <th>Route</th>
-            <th>Allocation</th>
+            <th>Status</th>
             <th>Notes</th>
             <th>Date</th>
           </tr>
@@ -67,18 +71,29 @@ export default function FuelControlPage() {
         <tbody>
           {fuelLogs.map((fuel) => {
             const journey = findJourney(fuel.journey_id);
+            const duplicate = isDuplicateFuel(fuel);
 
             return (
-              <tr key={fuel.id}>
+              <tr
+                key={fuel.id}
+                style={{
+                  backgroundColor: duplicate ? "#ffcccc" : "white",
+                }}
+              >
                 <td>{fuel.truck_text || "—"}</td>
+
                 <td>{fuel.liters || "—"}</td>
+
                 <td>
                   {fuel.total_cost
                     ? Number(fuel.total_cost).toLocaleString()
                     : "—"}
                 </td>
+
                 <td>{fuel.vendor || "—"}</td>
+
                 <td>{journey ? journey.client_name || "—" : "—"}</td>
+
                 <td>
                   {journey
                     ? `${journey.from_location || "—"} → ${
@@ -86,8 +101,19 @@ export default function FuelControlPage() {
                       }`
                     : "—"}
                 </td>
-                <td>{fuel.journey_id ? "Allocated" : "Unallocated"}</td>
+
+                {/* 🔥 Allocated vs Unallocated */}
+                <td
+                  style={{
+                    color: fuel.journey_id ? "green" : "red",
+                    fontWeight: "bold",
+                  }}
+                >
+                  {fuel.journey_id ? "Allocated" : "UNALLOCATED ⚠️"}
+                </td>
+
                 <td>{fuel.notes || "—"}</td>
+
                 <td>
                   {fuel.created_at
                     ? new Date(fuel.created_at).toLocaleString()
