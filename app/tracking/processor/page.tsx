@@ -20,9 +20,7 @@ export default function TrackingProcessorPage() {
     try {
       const response = await fetch("/api/reverse-geocode", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ latitude, longitude }),
       });
 
@@ -50,9 +48,7 @@ export default function TrackingProcessorPage() {
 
   function interpretMovement(speed: number | null, ignition: any) {
     if (speed !== null && speed > 5) return "MOVING";
-    if (ignition === "ON" || ignition === true || ignition === "on") {
-      return "IDLE";
-    }
+    if (ignition === "ON" || ignition === true || ignition === "on") return "IDLE";
     return "STOPPED";
   }
 
@@ -60,6 +56,22 @@ export default function TrackingProcessorPage() {
     if (fuelLevel !== null && fuelLevel < 15) return "medium";
     if (speed !== null && speed > 80) return "medium";
     return "normal";
+  }
+
+  async function findActiveJourneyForTruck(truck: string) {
+    const cleanTruck = truck.toString().trim().toUpperCase();
+
+    const { data, error } = await supabase
+      .from("journeys")
+      .select("*")
+      .eq("truck", cleanTruck)
+      .eq("status", "active")
+      .order("created_at", { ascending: false })
+      .limit(1);
+
+    if (error || !data || data.length === 0) return null;
+
+    return data[0];
   }
 
   async function processTrackingData() {
@@ -94,6 +106,8 @@ export default function TrackingProcessorPage() {
             "name",
             "device_name",
           ]) || "UNKNOWN";
+
+        const cleanTruck = truck.toString().trim().toUpperCase();
 
         const latitude = Number(
           getValue(vehicle, ["lat", "latitude", "Latitude", "y"])
@@ -166,24 +180,41 @@ export default function TrackingProcessorPage() {
           locationInfo.readable || providerLocation || "Location needs review";
 
         const movement = interpretMovement(speed, ignition);
-        const risk = buildRisk(speed, fuelLevel);
+        const baseRisk = buildRisk(speed, fuelLevel);
 
+        const activeJourney = await findActiveJourneyForTruck(cleanTruck);
+        const journeyId = activeJourney?.id || null;
+
+        let risk = baseRisk;
         let alert = "";
 
-        if (risk === "medium") {
-          alert = "⚠️ Review required.";
+        if (!activeJourney) {
+          alert = "⚠️ No active journey linked.";
+          risk = risk === "normal" ? "medium" : risk;
         }
 
         if (fuelLevel !== null && fuelLevel < 15) {
           alert = "⛽ Low fuel risk.";
+          risk = "medium";
         }
 
-        const summary = `${truck} is ${movement.toLowerCase()} at ${interpretedLocation}. Speed: ${
+        if (speed !== null && speed > 80) {
+          alert = "⚠️ Overspeed risk.";
+          risk = "medium";
+        }
+
+        const journeyText = activeJourney
+          ? `Journey: ${activeJourney.client_name || "NO CLIENT"} — ${
+              activeJourney.from_location || "—"
+            } → ${activeJourney.to_location || "—"}.`
+          : "No active journey found.";
+
+        const summary = `${cleanTruck} is ${movement.toLowerCase()} at ${interpretedLocation}. ${journeyText} Speed: ${
           speed ?? "unknown"
         } km/h. Fuel: ${fuelLevel ?? "unknown"}.${alert ? " " + alert : ""}`;
 
         rows.push({
-          truck_text: truck.toString().trim().toUpperCase(),
+          truck_text: cleanTruck,
           latitude: isNaN(latitude) ? null : latitude,
           longitude: isNaN(longitude) ? null : longitude,
           speed,
@@ -201,6 +232,7 @@ export default function TrackingProcessorPage() {
           movement_status: movement,
           risk_level: risk,
           nava_eye_summary: summary,
+          journey_id: journeyId,
           recorded_at: recordedAt,
           raw_data: vehicle,
         });
@@ -224,7 +256,7 @@ export default function TrackingProcessorPage() {
       <h1>Nava Eye Tracking Processor</h1>
       <p>
         Paste raw GPS/provider response. Nava Eye converts coordinates into
-        smart readable locations.
+        smart readable locations and links trucks to active journeys.
       </p>
 
       <textarea
