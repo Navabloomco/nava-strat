@@ -6,6 +6,7 @@ import { supabase } from "../../../lib/supabase";
 export default function OpsDashboard() {
   const [fuelLogs, setFuelLogs] = useState<any[]>([]);
   const [journeys, setJourneys] = useState<any[]>([]);
+  const [expenses, setExpenses] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -25,93 +26,112 @@ export default function OpsDashboard() {
       .select("*")
       .order("created_at", { ascending: false });
 
+    const { data: expenseData } = await supabase
+      .from("expenses")
+      .select("*")
+      .order("created_at", { ascending: false });
+
     setFuelLogs(fuelData || []);
     setJourneys(journeyData || []);
+    setExpenses(expenseData || []);
     setLoading(false);
   }
 
   function totalFuelForJourney(journeyId: string) {
     return fuelLogs
-      .filter((f) => f.journey_id === journeyId)
-      .reduce((sum, f) => sum + Number(f.liters || 0), 0);
+      .filter((fuel) => fuel.journey_id === journeyId)
+      .reduce((sum, fuel) => sum + Number(fuel.liters || 0), 0);
   }
 
-  // 🔴 Unallocated fuel
-  const unallocatedFuel = useMemo(
-    () => fuelLogs.filter((f) => !f.journey_id),
-    [fuelLogs]
-  );
+  function totalFuelCostForJourney(journeyId: string) {
+    return fuelLogs
+      .filter((fuel) => fuel.journey_id === journeyId)
+      .reduce((sum, fuel) => sum + Number(fuel.total_cost || 0), 0);
+  }
 
-  // 🔴 Duplicate fuel (same truck + liters within 1 hour)
+  function totalExpensesForJourney(journeyId: string) {
+    return expenses
+      .filter((expense) => expense.journey_id === journeyId)
+      .reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
+  }
+
   function isDuplicateFuel(fuel: any) {
     return (
-      fuelLogs.filter((f) => {
-        const sameTruck = f.truck_text === fuel.truck_text;
-        const sameLiters = f.liters === fuel.liters;
+      fuelLogs.filter((otherFuel) => {
+        const sameTruck = otherFuel.truck_text === fuel.truck_text;
+        const sameLiters = otherFuel.liters === fuel.liters;
+
         const timeDiff =
           Math.abs(
-            new Date(f.created_at).getTime() -
+            new Date(otherFuel.created_at).getTime() -
               new Date(fuel.created_at).getTime()
           ) < 1000 * 60 * 60;
+
         return sameTruck && sameLiters && timeDiff;
       }).length > 1
     );
   }
 
-  const duplicateFuel = useMemo(
-    () => fuelLogs.filter((f) => isDuplicateFuel(f)),
+  const unallocatedFuel = useMemo(
+    () => fuelLogs.filter((fuel) => !fuel.journey_id),
     [fuelLogs]
   );
 
-  // 🔴 Needs approval (requested but not approved)
+  const duplicateFuel = useMemo(
+    () => fuelLogs.filter((fuel) => isDuplicateFuel(fuel)),
+    [fuelLogs]
+  );
+
   const pendingApprovals = useMemo(
     () =>
       fuelLogs.filter(
-        (f) =>
-          f.approval_required === true &&
-          f.request_status !== "approved"
+        (fuel) =>
+          fuel.approval_required === true &&
+          fuel.request_status !== "approved"
       ),
     [fuelLogs]
   );
 
-  // 🔴 Variance (expected vs actual)
   const varianceIssues = useMemo(() => {
     return journeys
-      .map((j) => {
-        const expected = Number(j.expected_fuel_liters || 0);
+      .map((journey) => {
+        const expected = Number(journey.expected_fuel_liters || 0);
         if (!expected) return null;
 
-        const actual = totalFuelForJourney(j.id);
+        const actual = totalFuelForJourney(journey.id);
         const variance = actual - expected;
 
         if (variance > 50) {
           return {
-            ...j,
+            ...journey,
             actual,
             expected,
             variance,
+            fuelCost: totalFuelCostForJourney(journey.id),
+            expenseTotal: totalExpensesForJourney(journey.id),
           };
         }
 
         return null;
       })
       .filter(Boolean);
-  }, [journeys, fuelLogs]);
+  }, [journeys, fuelLogs, expenses]);
 
-  // 🟢 Group: Client → Route → Trucks
   const grouped = useMemo(() => {
     const map: any = {};
 
     journeys
-      .filter((j) => j.status === "active")
-      .forEach((j) => {
-        const client = j.client_name || "No client";
-        const route = `${j.from_location || "—"} → ${j.to_location || "—"}`;
+      .filter((journey) => journey.status === "active")
+      .forEach((journey) => {
+        const client = journey.client_name || "NO CLIENT";
+        const route = `${journey.from_location || "—"} → ${
+          journey.to_location || "—"
+        }`;
 
         if (!map[client]) map[client] = {};
         if (!map[client][route]) map[client][route] = [];
 
-        map[client][route].push(j);
+        map[client][route].push(journey);
       });
 
     return map;
@@ -129,13 +149,14 @@ export default function OpsDashboard() {
     load();
   }
 
-  if (loading) return <main style={{ padding: 40 }}>Loading...</main>;
+  if (loading) {
+    return <main style={{ padding: 40 }}>Loading...</main>;
+  }
 
   return (
     <main style={{ padding: 40 }}>
       <h1>Ops Command Center</h1>
 
-      {/* 🚨 ALERTS */}
       <h2>🚨 Alerts</h2>
 
       <p>Unallocated Fuel: {unallocatedFuel.length}</p>
@@ -145,59 +166,100 @@ export default function OpsDashboard() {
 
       <br />
 
-      {/* 🔴 Pending Approvals */}
       <h3>Pending Approvals</h3>
-      {pendingApprovals.map((f) => (
-        <div key={f.id} style={{ border: "1px solid red", padding: 10 }}>
-          {f.truck_text} — {f.liters}L
-          <button onClick={() => approveFuel(f.id)}>
-            Approve
-          </button>
-        </div>
-      ))}
+
+      {pendingApprovals.length === 0 ? (
+        <p>No pending approvals.</p>
+      ) : (
+        pendingApprovals.map((fuel) => (
+          <div
+            key={fuel.id}
+            style={{
+              border: "1px solid red",
+              padding: 10,
+              marginBottom: 10,
+            }}
+          >
+            <strong>{fuel.truck_text}</strong> — {fuel.liters}L
+            <br />
+            Reason: {fuel.approval_reason || "No reason entered"}
+            <br />
+            <button onClick={() => approveFuel(fuel.id)}>Approve</button>
+          </div>
+        ))
+      )}
 
       <br />
 
-      {/* 🔴 Variance */}
       <h3>Fuel Variance</h3>
-      {varianceIssues.map((j: any) => (
-        <div key={j.id} style={{ border: "1px solid orange", padding: 10 }}>
-          {j.truck} — {j.client_name}
-          <br />
-          Expected: {j.expected}L | Actual: {j.actual}L
-          <br />
-          <b style={{ color: "red" }}>
-            +{j.variance}L 🚨
-          </b>
-        </div>
-      ))}
+
+      {varianceIssues.length === 0 ? (
+        <p>No major fuel variance issues.</p>
+      ) : (
+        varianceIssues.map((journey: any) => (
+          <div
+            key={journey.id}
+            style={{
+              border: "1px solid orange",
+              padding: 10,
+              marginBottom: 10,
+            }}
+          >
+            <strong>
+              {journey.truck} — {journey.client_name}
+            </strong>
+            <br />
+            Route: {journey.from_location} → {journey.to_location}
+            <br />
+            Expected Fuel: {journey.expected}L | Actual Fuel: {journey.actual}L
+            <br />
+            <strong style={{ color: "red" }}>
+              Variance: +{journey.variance}L 🚨
+            </strong>
+            <br />
+            Fuel Cost: {Number(journey.fuelCost || 0).toLocaleString()}
+            <br />
+            Expenses: {Number(journey.expenseTotal || 0).toLocaleString()}
+          </div>
+        ))
+      )}
 
       <br />
 
-      {/* 🟢 ACTIVE OPS */}
       <h2>Active Operations</h2>
 
-      {Object.keys(grouped).map((client) => (
-        <div key={client}>
-          <h3>{client}</h3>
+      {Object.keys(grouped).length === 0 ? (
+        <p>No active journeys.</p>
+      ) : (
+        Object.keys(grouped).map((client) => (
+          <div key={client}>
+            <h3>{client}</h3>
 
-          {Object.keys(grouped[client]).map((route) => (
-            <div key={route} style={{ marginLeft: 20 }}>
-              <b>
-                {route} ({grouped[client][route].length} trucks)
-              </b>
+            {Object.keys(grouped[client]).map((route) => (
+              <div key={route} style={{ marginLeft: 20 }}>
+                <strong>
+                  {route} ({grouped[client][route].length} trucks)
+                </strong>
 
-              <ul>
-                {grouped[client][route].map((j: any) => (
-                  <li key={j.id}>
-                    {j.truck} — {j.driver || "No driver"}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ))}
-        </div>
-      ))}
+                <ul>
+                  {grouped[client][route].map((journey: any) => {
+                    const fuelCost = totalFuelCostForJourney(journey.id);
+                    const expenseTotal = totalExpensesForJourney(journey.id);
+
+                    return (
+                      <li key={journey.id}>
+                        {journey.truck} — {journey.driver || "NO DRIVER"} | Fuel
+                        Cost: {fuelCost.toLocaleString()} | Expenses:{" "}
+                        {expenseTotal.toLocaleString()}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            ))}
+          </div>
+        ))
+      )}
     </main>
   );
 }
