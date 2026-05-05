@@ -172,6 +172,66 @@ export default function TrackingProcessorPage() {
     return data[0];
   }
 
+  async function getPreviousTrackingPoint(truck: string) {
+    const { data } = await supabase
+      .from("tracking_points")
+      .select("*")
+      .eq("truck_text", truck)
+      .order("recorded_at", { ascending: false })
+      .limit(1);
+
+    if (!data || data.length === 0) return null;
+
+    return data[0];
+  }
+
+  async function saveFuelDropEvent(params: {
+    truck: string;
+    journeyId: string | null;
+    previousFuel: number;
+    currentFuel: number;
+    drop: number;
+    speed: number | null;
+    ignitionStatus: string;
+    locationText: string;
+    interpretedLocation: string;
+    nearestGeofence: string | null;
+    recordedAt: string;
+  }) {
+    let risk = "medium";
+
+    if (
+      params.drop >= 5 &&
+      (params.speed === null || params.speed <= 5) &&
+      (params.ignitionStatus === "OFF" || params.ignitionStatus === "UNKNOWN")
+    ) {
+      risk = "high";
+    }
+
+    const summary =
+      risk === "high"
+        ? `${params.truck} possible staged siphoning: fuel dropped by ${params.drop}L while stationary/off. Location: ${params.interpretedLocation}.`
+        : `${params.truck} fuel drop detected: ${params.drop}L. Location: ${params.interpretedLocation}. Review for slant, sensor noise, or siphoning.`;
+
+    await supabase.from("fuel_drop_events").insert([
+      {
+        truck_text: params.truck,
+        journey_id: params.journeyId,
+        previous_fuel_level: params.previousFuel,
+        current_fuel_level: params.currentFuel,
+        drop_liters: params.drop,
+        speed: params.speed,
+        ignition_status: params.ignitionStatus,
+        location_text: params.locationText,
+        interpreted_location: params.interpretedLocation,
+        nearest_geofence: params.nearestGeofence,
+        risk_level: risk,
+        nava_eye_summary: summary,
+        recorded_at: params.recordedAt,
+      },
+    ]);
+  }
+
   async function processTrackingData() {
     try {
       const parsed = JSON.parse(rawJson);
@@ -191,6 +251,7 @@ export default function TrackingProcessorPage() {
       }
 
       const rows = [];
+      let fuelDropCount = 0;
 
       for (const vehicle of vehicles) {
         const truck =
@@ -288,6 +349,39 @@ export default function TrackingProcessorPage() {
         const activeJourney = await findActiveJourneyForTruck(cleanTruck);
         const journeyId = activeJourney?.id || null;
 
+        const previousPoint = await getPreviousTrackingPoint(cleanTruck);
+
+        let fuelDropAlert = "";
+
+        if (
+          previousPoint &&
+          previousPoint.fuel_level !== null &&
+          fuelLevel !== null
+        ) {
+          const previousFuel = Number(previousPoint.fuel_level);
+          const drop = previousFuel - fuelLevel;
+
+          if (drop >= 3 && drop <= 15) {
+            fuelDropCount += 1;
+
+            fuelDropAlert = `Possible micro fuel drop: -${drop}L.`;
+
+            await saveFuelDropEvent({
+              truck: cleanTruck,
+              journeyId,
+              previousFuel,
+              currentFuel: fuelLevel,
+              drop,
+              speed,
+              ignitionStatus,
+              locationText: providerLocation || "",
+              interpretedLocation,
+              nearestGeofence: geofence?.name || null,
+              recordedAt,
+            });
+          }
+        }
+
         const movement = interpretMovement(speed, ignitionStatus);
         let risk = buildRisk(speed, fuelLevel, ignitionStatus, !!activeJourney);
 
@@ -311,6 +405,11 @@ export default function TrackingProcessorPage() {
 
         if (geofence && geofence.type === "fuel") {
           alert = alert || "⛽ At fuel location.";
+        }
+
+        if (fuelDropAlert) {
+          alert = fuelDropAlert;
+          risk = "high";
         }
 
         const journeyText = activeJourney
@@ -360,7 +459,9 @@ export default function TrackingProcessorPage() {
         return;
       }
 
-      setResult(`Processed ${rows.length} tracking point(s) ✅`);
+      setResult(
+        `Processed ${rows.length} tracking point(s) ✅ Fuel drop events detected: ${fuelDropCount}`
+      );
     } catch (err: any) {
       alert(err.message || "Invalid JSON");
     }
@@ -370,12 +471,12 @@ export default function TrackingProcessorPage() {
     <main style={{ padding: 40 }}>
       <h1>Nava Eye Processor</h1>
       <p>
-        Paste raw GPS/provider response. Nava Eye detects location, geofences,
-        ignition, risks, and active journeys.
+        Paste raw GPS/provider response. Nava Eye detects geofences, ignition,
+        active journeys, and possible micro fuel drops.
       </p>
 
       <textarea
-        placeholder='Paste raw JSON here e.g. [{"reg_no":"KBJ123A","lat":-1.3032,"lng":36.7073,"speed":0,"fuellevel":55,"ignition":"ON"}]'
+        placeholder='Paste raw JSON here e.g. [{"reg_no":"KBJ123A","lat":-1.3032,"lng":36.7073,"speed":0,"fuellevel":55,"ignition":"OFF"}]'
         value={rawJson}
         onChange={(e) => setRawJson(e.target.value)}
         style={{ width: "100%", height: 220 }}
