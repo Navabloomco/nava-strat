@@ -1,25 +1,78 @@
 import { NextResponse } from "next/server";
 
-function suggestRadius(placeName: string, typeGuess: string) {
-  const text = `${placeName} ${typeGuess}`.toLowerCase();
+function smartSuggestion(query: string, osmClass: string, osmType: string, displayName: string) {
+  const text = `${query} ${osmClass} ${osmType} ${displayName}`.toLowerCase();
 
-  if (text.includes("shell") || text.includes("total") || text.includes("rubis") || text.includes("station")) {
+  if (
+    text.includes("shell") ||
+    text.includes("total") ||
+    text.includes("rubis") ||
+    text.includes("petrol") ||
+    text.includes("fuel") ||
+    text.includes("gas station") ||
+    osmType.includes("fuel")
+  ) {
     return { type: "fuel", radius: 150, confidence: "high" };
   }
 
-  if (text.includes("border") || text.includes("malaba") || text.includes("busia")) {
-    return { type: "border", radius: 1500, confidence: "medium" };
+  if (
+    text.includes("border") ||
+    text.includes("malaba") ||
+    text.includes("busia") ||
+    text.includes("namanga")
+  ) {
+    return { type: "border", radius: 1500, confidence: "high" };
   }
 
-  if (text.includes("yard") || text.includes("depot") || text.includes("garage")) {
-    return { type: "yard", radius: 500, confidence: "medium" };
-  }
-
-  if (text.includes("port") || text.includes("mombasa port")) {
+  if (
+    text.includes("port") ||
+    text.includes("harbour") ||
+    text.includes("mombasa port") ||
+    text.includes("icd") ||
+    text.includes("container depot")
+  ) {
     return { type: "depot", radius: 1200, confidence: "medium" };
   }
 
-  return { type: "client", radius: 300, confidence: "medium" };
+  if (
+    text.includes("mall") ||
+    text.includes("shopping") ||
+    text.includes("centre") ||
+    text.includes("center") ||
+    osmType.includes("mall")
+  ) {
+    return { type: "client", radius: 500, confidence: "medium" };
+  }
+
+  if (
+    text.includes("warehouse") ||
+    text.includes("factory") ||
+    text.includes("plant") ||
+    text.includes("mill") ||
+    text.includes("logistics")
+  ) {
+    return { type: "client", radius: 600, confidence: "medium" };
+  }
+
+  if (
+    text.includes("yard") ||
+    text.includes("garage") ||
+    text.includes("workshop") ||
+    text.includes("depot")
+  ) {
+    return { type: "yard", radius: 600, confidence: "medium" };
+  }
+
+  if (
+    osmClass === "amenity" ||
+    osmClass === "shop" ||
+    osmClass === "office" ||
+    osmClass === "building"
+  ) {
+    return { type: "client", radius: 300, confidence: "medium" };
+  }
+
+  return { type: "client", radius: 300, confidence: "low" };
 }
 
 export async function POST(req: Request) {
@@ -27,10 +80,7 @@ export async function POST(req: Request) {
     const { query } = await req.json();
 
     if (!query) {
-      return NextResponse.json(
-        { error: "Search query required" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Search query required" }, { status: 400 });
     }
 
     const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(
@@ -39,7 +89,7 @@ export async function POST(req: Request) {
 
     const response = await fetch(url, {
       headers: {
-        "User-Agent": "NavaStrat/1.0 contact@navabloom.co",
+        "User-Agent": "NavaStrat/1.0 contact@navabloomco.com",
       },
     });
 
@@ -47,13 +97,21 @@ export async function POST(req: Request) {
 
     if (!results || results.length === 0) {
       return NextResponse.json(
-        { error: "No location found" },
+        {
+          error: "Location not found. Try adding town/country, e.g. Shell Bonje Mombasa Kenya.",
+        },
         { status: 404 }
       );
     }
 
     const place = results[0];
-    const suggestion = suggestRadius(query, place.type || place.class || "");
+
+    const suggestion = smartSuggestion(
+      query,
+      place.class || "",
+      place.type || "",
+      place.display_name || ""
+    );
 
     return NextResponse.json({
       name: query,
@@ -64,6 +122,8 @@ export async function POST(req: Request) {
       suggested_radius: suggestion.radius,
       confidence: suggestion.confidence,
       source: "openstreetmap",
+      osm_class: place.class || null,
+      osm_type: place.type || null,
       raw: place,
     });
   } catch (error: any) {
