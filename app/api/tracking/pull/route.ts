@@ -1,23 +1,26 @@
+export const dynamic = "force-dynamic";
+
 import { supabase } from "../../../../lib/supabase";
 import { NextResponse } from "next/server";
 
 export async function GET() {
-  const { data: trucks, error: truckError } = await supabase
+  console.log("🚀 RUNNING TRACKING PULL");
+
+  const { data: trucks, error } = await supabase
     .from("trucks")
     .select(`
-      id, 
-      truck, 
-      external_vehicle_id, 
+      id,
+      external_vehicle_id,
       tracking_providers (
-        fleet_url, 
-        api_key, 
+        fleet_url,
+        api_key,
         field_mapping
       )
     `);
 
-  if (truckError) {
-    console.error("DB ERROR:", truckError);
-    return NextResponse.json({ error: truckError.message });
+  if (error) {
+    console.error("DB ERROR:", error);
+    return NextResponse.json({ error: error.message });
   }
 
   const results = [];
@@ -27,7 +30,12 @@ export async function GET() {
       ? truck.tracking_providers[0]
       : truck.tracking_providers;
 
-    if (!provider || !provider.fleet_url) continue;
+    if (!provider) {
+      console.log("❌ NO PROVIDER FOR TRUCK:", truck.id);
+      continue;
+    }
+
+    console.log("🌍 FETCHING FROM:", provider.fleet_url);
 
     try {
       const res = await fetch(provider.fleet_url, {
@@ -37,32 +45,27 @@ export async function GET() {
       });
 
       const raw = await res.json();
-
-      // 🔥 PRINT DATA (VERY IMPORTANT)
-      console.log("BLUETRAX RESPONSE:", JSON.stringify(raw).slice(0, 500));
+      console.log("📦 RAW RESPONSE:", raw);
 
       const list = Array.isArray(raw)
         ? raw
-        : raw.data?.vehicles || raw.data || [];
+        : raw.data || [];
 
-      const mapping = provider.field_mapping || {};
+      console.log("🚚 VEHICLES FOUND:", list.length);
 
-      // 🔥 SMART MATCH (fix your problem)
-      const normalize = (v: any) =>
-        String(v || "")
-          .toLowerCase()
-          .replace(/[^a-z0-9]/g, "");
+      const mapping = provider.field_mapping;
 
       const vehicle = list.find(
         (v: any) =>
-          normalize(v[mapping.truck]) ===
-          normalize(truck.external_vehicle_id)
+          String(v[mapping.truck]) === String(truck.external_vehicle_id)
       );
 
       if (!vehicle) {
-        console.warn("NO MATCH FOUND FOR:", truck.external_vehicle_id);
+        console.log("❌ NO MATCH FOR:", truck.external_vehicle_id);
         continue;
       }
+
+      console.log("✅ MATCH FOUND:", vehicle);
 
       await supabase.from("tracking_logs").insert({
         truck_id: truck.id,
@@ -70,14 +73,13 @@ export async function GET() {
         longitude: vehicle[mapping.longitude],
         speed: vehicle[mapping.speed] || 0,
         fuel_level: vehicle[mapping.fuel_level] || null,
-        recorded_at:
-          vehicle[mapping.recorded_at] || new Date().toISOString(),
+        recorded_at: vehicle[mapping.recorded_at] || new Date().toISOString(),
       });
 
-      results.push({ truck: truck.truck, status: "success" });
+      results.push({ truck: truck.external_vehicle_id, status: "success" });
 
     } catch (err) {
-      console.error("ERROR:", err);
+      console.error("🔥 FETCH ERROR:", err);
     }
   }
 
