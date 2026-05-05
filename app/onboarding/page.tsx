@@ -3,630 +3,252 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../../lib/supabase";
 
-export default function OnboardingPage() {
-  const [userEmail, setUserEmail] = useState("");
+export default function Onboarding() {
+  const [step, setStep] = useState(1);
   const [tenantId, setTenantId] = useState("");
   const [message, setMessage] = useState("");
 
   const [trucks, setTrucks] = useState<any[]>([]);
   const [geofences, setGeofences] = useState<any[]>([]);
-  const [trackingProviders, setTrackingProviders] = useState<any[]>([]);
-  const [rateRules, setRateRules] = useState<any[]>([]);
+  const [rules, setRules] = useState<any[]>([]);
 
   const [truck, setTruck] = useState("");
   const [driver, setDriver] = useState("");
 
   const [geoName, setGeoName] = useState("");
-  const [geoType, setGeoType] = useState("client");
-  const [mapsLink, setMapsLink] = useState("");
-  const [latitude, setLatitude] = useState("");
-  const [longitude, setLongitude] = useState("");
-  const [radius, setRadius] = useState("300");
+  const [lat, setLat] = useState("");
+  const [lng, setLng] = useState("");
 
-  const [providerName, setProviderName] = useState("");
-  const [providerType, setProviderType] = useState("GPS");
-  const [authType, setAuthType] = useState("api_key");
-  const [loginUrl, setLoginUrl] = useState("");
-  const [fleetUrl, setFleetUrl] = useState("");
-  const [apiKey, setApiKey] = useState("");
-  const [apiHash, setApiHash] = useState("");
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-
-  const [clientName, setClientName] = useState("");
-  const [fromLocation, setFromLocation] = useState("");
-  const [toLocation, setToLocation] = useState("");
-  const [rateType, setRateType] = useState("per_tonne");
-  const [billingUnit, setBillingUnit] = useState("tonne");
-  const [rateAmount, setRateAmount] = useState("");
-  const [rateCurrency, setRateCurrency] = useState("KES");
-  const [fxRate, setFxRate] = useState("1");
+  const [client, setClient] = useState("");
+  const [rate, setRate] = useState("");
 
   useEffect(() => {
-    initialize();
+    init();
   }, []);
 
-  async function initialize() {
-    const { data: userData } = await supabase.auth.getUser();
+  async function init() {
+    const { data: user } = await supabase.auth.getUser();
 
-    if (!userData.user) {
-      setMessage("Please login first.");
+    if (!user.user) {
       window.location.href = "/login";
       return;
     }
 
-    setUserEmail(userData.user.email || "");
+    const { data: tenant } = await supabase.rpc("current_tenant_id");
 
-    const { data: tenantResult, error: tenantError } = await supabase.rpc(
-      "current_tenant_id"
-    );
-
-    if (tenantError || !tenantResult) {
-      setMessage("No tenant found for this user. Link user to tenant first.");
+    if (!tenant) {
+      setMessage("Tenant not linked.");
       return;
     }
 
-    setTenantId(tenantResult);
+    setTenantId(tenant);
+
+    const { data: tenantData } = await supabase
+      .from("tenants")
+      .select("onboarding_step")
+      .eq("id", tenant)
+      .single();
+
+    if (tenantData?.onboarding_step) {
+      setStep(tenantData.onboarding_step);
+    }
+
     loadData();
   }
 
   async function loadData() {
-    const { data: truckData } = await supabase
-      .from("trucks")
-      .select("*")
-      .order("created_at", { ascending: false });
+    const { data: t } = await supabase.from("trucks").select("*");
+    const { data: g } = await supabase.from("geofences").select("*");
+    const { data: r } = await supabase.from("client_rate_rules").select("*");
 
-    const { data: geofenceData } = await supabase
-      .from("geofences")
-      .select("*")
-      .order("created_at", { ascending: false });
-
-    const { data: providerData } = await supabase
-      .from("tracking_providers")
-      .select("*")
-      .order("created_at", { ascending: false });
-
-    const { data: ruleData } = await supabase
-      .from("client_rate_rules")
-      .select("*")
-      .order("created_at", { ascending: false });
-
-    setTrucks(truckData || []);
-    setGeofences(geofenceData || []);
-    setTrackingProviders(providerData || []);
-    setRateRules(ruleData || []);
+    setTrucks(t || []);
+    setGeofences(g || []);
+    setRules(r || []);
   }
 
-  function suggestRadius(type: string) {
-    if (type === "fuel") return "150";
-    if (type === "border") return "1500";
-    if (type === "yard") return "500";
-    if (type === "depot") return "500";
-    if (type === "client") return "300";
-    return "300";
+  async function nextStep() {
+    const next = step + 1;
+
+    await supabase
+      .from("tenants")
+      .update({ onboarding_step: next })
+      .eq("id", tenantId);
+
+    setStep(next);
   }
 
-  function handleGeoTypeChange(value: string) {
-    setGeoType(value);
-    setRadius(suggestRadius(value));
-  }
-
-  function extractLatLngFromGoogleMaps(link: string) {
-    const atMatch = link.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/);
-
-    if (atMatch) {
-      setLatitude(atMatch[1]);
-      setLongitude(atMatch[2]);
-      return;
-    }
-
-    const queryMatch = link.match(/[?&]q=(-?\d+\.\d+),(-?\d+\.\d+)/);
-
-    if (queryMatch) {
-      setLatitude(queryMatch[1]);
-      setLongitude(queryMatch[2]);
-      return;
-    }
-
-    alert("Could not extract coordinates. Paste latitude/longitude manually.");
-  }
-
+  // STEP 1 — TRUCKS
   async function addTruck(e: any) {
     e.preventDefault();
 
-    const cleanTruck = truck.trim().toUpperCase();
-
-    if (!cleanTruck) {
-      alert("Truck is required.");
-      return;
-    }
-
-    const { error } = await supabase.from("trucks").insert([
+    await supabase.from("trucks").insert([
       {
         tenant_id: tenantId,
-        truck: cleanTruck,
-        driver: driver.trim().toUpperCase() || null,
-        status: "active",
+        truck: truck.toUpperCase(),
+        driver: driver.toUpperCase(),
       },
     ]);
-
-    if (error) {
-      alert(error.message);
-      return;
-    }
 
     setTruck("");
     setDriver("");
     loadData();
   }
 
+  // STEP 2 — GEOFENCE
   async function addGeofence(e: any) {
     e.preventDefault();
 
-    const lat = Number(latitude);
-    const lng = Number(longitude);
-
-    if (!geoName || isNaN(lat) || isNaN(lng)) {
-      alert("Name, latitude, and longitude are required.");
-      return;
-    }
-
-    const { error } = await supabase.from("geofences").insert([
+    await supabase.from("geofences").insert([
       {
         tenant_id: tenantId,
-        name: geoName.trim(),
-        type: geoType,
-        latitude: lat,
-        longitude: lng,
-        radius_meters: Number(radius || 300),
+        name: geoName,
+        latitude: Number(lat),
+        longitude: Number(lng),
+        radius_meters: 300,
       },
     ]);
-
-    if (error) {
-      alert(error.message);
-      return;
-    }
 
     setGeoName("");
-    setMapsLink("");
-    setLatitude("");
-    setLongitude("");
-    setRadius(suggestRadius(geoType));
+    setLat("");
+    setLng("");
     loadData();
   }
 
-  async function addTrackingProvider(e: any) {
+  // STEP 3 — PRICING
+  async function addRule(e: any) {
     e.preventDefault();
 
-    if (!providerName) {
-      alert("Provider name required.");
-      return;
-    }
-
-    const { error } = await supabase.from("tracking_providers").insert([
+    await supabase.from("client_rate_rules").insert([
       {
         tenant_id: tenantId,
-        provider_name: providerName.trim().toUpperCase(),
-        provider_type: providerType.trim().toUpperCase(),
-        auth_type: authType,
-        login_url: loginUrl.trim() || null,
-        fleet_url: fleetUrl.trim() || null,
-        api_key: apiKey.trim() || null,
-        api_hash: apiHash.trim() || null,
-        username: username.trim() || null,
-        password: password.trim() || null,
+        client_name: client.toUpperCase(),
+        rate_type: "per_tonne",
+        billing_unit: "tonne",
+        rate_amount: Number(rate),
+        rate_currency: "KES",
+        fx_rate: 1,
+        valid_from: new Date().toISOString().slice(0, 10),
         is_active: true,
-        token_refresh_required: true,
       },
     ]);
 
-    if (error) {
-      alert(error.message);
-      return;
-    }
-
-    setProviderName("");
-    setLoginUrl("");
-    setFleetUrl("");
-    setApiKey("");
-    setApiHash("");
-    setUsername("");
-    setPassword("");
+    setClient("");
+    setRate("");
     loadData();
-  }
-
-  async function addRateRule(e: any) {
-    e.preventDefault();
-
-    if (!clientName || !rateAmount) {
-      alert("Client and rate are required.");
-      return;
-    }
-
-    const { error } = await supabase.from("client_rate_rules").insert([
-      {
-        tenant_id: tenantId,
-        client_name: clientName.trim().toUpperCase(),
-        from_location: fromLocation.trim().toUpperCase() || null,
-        to_location: toLocation.trim().toUpperCase() || null,
-        rate_type: rateType,
-        billing_unit: billingUnit,
-        rate_amount: Number(rateAmount || 0),
-        rate_currency: rateCurrency,
-        fx_rate: rateCurrency === "KES" ? 1 : Number(fxRate || 1),
-      },
-    ]);
-
-    if (error) {
-      alert(error.message);
-      return;
-    }
-
-    setClientName("");
-    setFromLocation("");
-    setToLocation("");
-    setRateAmount("");
-    loadData();
-  }
-
-  async function finishOnboarding() {
-    const { error } = await supabase
-      .from("tenants")
-      .update({ onboarding_completed: true })
-      .eq("id", tenantId);
-
-    if (error) {
-      alert(error.message);
-      return;
-    }
-
-    alert("Onboarding completed ✅");
-    window.location.href = "/ops/dashboard";
   }
 
   return (
     <main style={{ padding: 40 }}>
-      <h1>Nava Setup</h1>
-      <p>
-        Logged in as <strong>{userEmail}</strong>
-      </p>
+      <h1>Setup Nava</h1>
 
-      {message && (
-        <pre style={{ background: "#f4f4f4", padding: 12 }}>{message}</pre>
-      )}
+      <p>Step {step} of 3</p>
 
-      <hr />
+      {message && <pre>{message}</pre>}
 
-      <h2>1. Add Trucks</h2>
+      {/* STEP 1 */}
+      {step === 1 && (
+        <>
+          <h2>Add your trucks</h2>
 
-      <form onSubmit={addTruck}>
-        <input
-          placeholder="Truck e.g. KBJ123A"
-          value={truck}
-          onChange={(e) => setTruck(e.target.value.toUpperCase())}
-          required
-        />
-
-        <br />
-        <br />
-
-        <input
-          placeholder="Driver optional e.g. Kariuki"
-          value={driver}
-          onChange={(e) => setDriver(e.target.value.toUpperCase())}
-        />
-
-        <br />
-        <br />
-
-        <button type="submit">Add Truck</button>
-      </form>
-
-      <p>Saved trucks: {trucks.length}</p>
-
-      {trucks.length > 0 && (
-        <ul>
-          {trucks.slice(0, 5).map((t) => (
-            <li key={t.id}>
-              {t.truck} {t.driver ? `— ${t.driver}` : ""}
-            </li>
-          ))}
-        </ul>
-      )}
-
-      <hr />
-
-      <h2>2. Add Business Locations / Geofences</h2>
-      <p>Nava Eye uses these to understand yards, clients, borders, and fuel stations.</p>
-
-      <form onSubmit={addGeofence}>
-        <input
-          placeholder="Name e.g. Shell Bonje / GBHL Mombasa"
-          value={geoName}
-          onChange={(e) => setGeoName(e.target.value)}
-          required
-        />
-
-        <br />
-        <br />
-
-        <select value={geoType} onChange={(e) => handleGeoTypeChange(e.target.value)}>
-          <option value="client">Client Site</option>
-          <option value="fuel">Fuel Station</option>
-          <option value="yard">Yard</option>
-          <option value="depot">Depot</option>
-          <option value="border">Border</option>
-          <option value="other">Other</option>
-        </select>
-
-        <br />
-        <br />
-
-        <input
-          placeholder="Paste Google Maps link optional"
-          value={mapsLink}
-          onChange={(e) => setMapsLink(e.target.value)}
-        />
-
-        <button
-          type="button"
-          onClick={() => extractLatLngFromGoogleMaps(mapsLink)}
-        >
-          Extract Coordinates
-        </button>
-
-        <br />
-        <br />
-
-        <input
-          placeholder="Latitude"
-          value={latitude}
-          onChange={(e) => setLatitude(e.target.value)}
-          required
-        />
-
-        <br />
-        <br />
-
-        <input
-          placeholder="Longitude"
-          value={longitude}
-          onChange={(e) => setLongitude(e.target.value)}
-          required
-        />
-
-        <br />
-        <br />
-
-        <input
-          placeholder="Radius meters"
-          value={radius}
-          onChange={(e) => setRadius(e.target.value)}
-          required
-        />
-
-        <br />
-        <br />
-
-        <button type="submit">Add Geofence</button>
-      </form>
-
-      <p>Saved geofences: {geofences.length}</p>
-
-      <hr />
-
-      <h2>3. Connect Tracking Provider</h2>
-      <p>
-        For now, save provider details. Auto-ingestion will use these later.
-      </p>
-
-      <form onSubmit={addTrackingProvider}>
-        <input
-          placeholder="Provider e.g. BLUETRAX / MEITRACK / FLEETTRACK"
-          value={providerName}
-          onChange={(e) => setProviderName(e.target.value.toUpperCase())}
-          required
-        />
-
-        <br />
-        <br />
-
-        <input
-          placeholder="Provider type e.g. GPS / CANBUS / FUEL_ROD"
-          value={providerType}
-          onChange={(e) => setProviderType(e.target.value.toUpperCase())}
-        />
-
-        <br />
-        <br />
-
-        <select value={authType} onChange={(e) => setAuthType(e.target.value)}>
-          <option value="api_key">API Key</option>
-          <option value="username_key">Username + Key</option>
-          <option value="email_password">Email + Password</option>
-          <option value="api_hash">API Hash</option>
-          <option value="bearer_token">Bearer Token</option>
-        </select>
-
-        <br />
-        <br />
-
-        <input
-          placeholder="Login URL optional"
-          value={loginUrl}
-          onChange={(e) => setLoginUrl(e.target.value)}
-        />
-
-        <br />
-        <br />
-
-        <input
-          placeholder="Fleet/current location URL"
-          value={fleetUrl}
-          onChange={(e) => setFleetUrl(e.target.value)}
-        />
-
-        <br />
-        <br />
-
-        <input
-          placeholder="Username / Email"
-          value={username}
-          onChange={(e) => setUsername(e.target.value)}
-        />
-
-        <br />
-        <br />
-
-        <input
-          placeholder="Password"
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-        />
-
-        <br />
-        <br />
-
-        <input
-          placeholder="API Key"
-          value={apiKey}
-          onChange={(e) => setApiKey(e.target.value)}
-        />
-
-        <br />
-        <br />
-
-        <input
-          placeholder="API Hash"
-          value={apiHash}
-          onChange={(e) => setApiHash(e.target.value)}
-        />
-
-        <br />
-        <br />
-
-        <button type="submit">Save Tracking Provider</button>
-      </form>
-
-      <p>Saved tracking providers: {trackingProviders.length}</p>
-
-      <hr />
-
-      <h2>4. Add Client Pricing Rule</h2>
-      <p>Set the rate once. Nava uses it later to calculate journey revenue.</p>
-
-      <form onSubmit={addRateRule}>
-        <input
-          placeholder="Client e.g. ENGAANO"
-          value={clientName}
-          onChange={(e) => setClientName(e.target.value.toUpperCase())}
-          required
-        />
-
-        <br />
-        <br />
-
-        <input
-          placeholder="From optional e.g. MOMBASA"
-          value={fromLocation}
-          onChange={(e) => setFromLocation(e.target.value.toUpperCase())}
-        />
-
-        <br />
-        <br />
-
-        <input
-          placeholder="To optional e.g. JINJA"
-          value={toLocation}
-          onChange={(e) => setToLocation(e.target.value.toUpperCase())}
-        />
-
-        <br />
-        <br />
-
-        <select value={rateType} onChange={(e) => setRateType(e.target.value)}>
-          <option value="per_tonne">Per Tonne</option>
-          <option value="per_truck">Per Truck</option>
-          <option value="per_box">Per Box</option>
-          <option value="per_bag">Per Bag</option>
-          <option value="per_crate">Per Crate</option>
-          <option value="per_pallet">Per Pallet</option>
-          <option value="per_litre">Per Litre</option>
-          <option value="per_km">Per KM</option>
-          <option value="custom">Custom Unit</option>
-        </select>
-
-        <br />
-        <br />
-
-        <input
-          placeholder="Billing unit e.g. tonne, box, truck"
-          value={billingUnit}
-          onChange={(e) => setBillingUnit(e.target.value)}
-        />
-
-        <br />
-        <br />
-
-        <input
-          placeholder="Rate amount e.g. 45"
-          value={rateAmount}
-          onChange={(e) => setRateAmount(e.target.value)}
-          required
-        />
-
-        <br />
-        <br />
-
-        <select
-          value={rateCurrency}
-          onChange={(e) => {
-            setRateCurrency(e.target.value);
-            if (e.target.value === "KES") setFxRate("1");
-          }}
-        >
-          <option value="KES">KES</option>
-          <option value="USD">USD</option>
-          <option value="UGX">UGX</option>
-          <option value="TZS">TZS</option>
-          <option value="RWF">RWF</option>
-          <option value="EUR">EUR</option>
-          <option value="GBP">GBP</option>
-          <option value="ZAR">ZAR</option>
-        </select>
-
-        <br />
-        <br />
-
-        {rateCurrency !== "KES" && (
-          <>
+          <form onSubmit={addTruck}>
             <input
-              placeholder="FX to KES e.g. 129"
-              value={fxRate}
-              onChange={(e) => setFxRate(e.target.value)}
+              placeholder="Truck e.g KBJ123A"
+              value={truck}
+              onChange={(e) => setTruck(e.target.value)}
+              required
             />
+            <br /><br />
+            <input
+              placeholder="Driver optional"
+              value={driver}
+              onChange={(e) => setDriver(e.target.value)}
+            />
+            <br /><br />
+            <button>Add Truck</button>
+          </form>
 
-            <br />
-            <br />
-          </>
-        )}
+          <p>{trucks.length} trucks added</p>
 
-        <button type="submit">Save Pricing Rule</button>
-      </form>
+          {trucks.length > 0 && (
+            <button onClick={nextStep}>Next → Locations</button>
+          )}
+        </>
+      )}
 
-      <p>Saved pricing rules: {rateRules.length}</p>
+      {/* STEP 2 */}
+      {step === 2 && (
+        <>
+          <h2>Add key locations</h2>
 
-      <hr />
+          <form onSubmit={addGeofence}>
+            <input
+              placeholder="Name e.g Mombasa Yard"
+              value={geoName}
+              onChange={(e) => setGeoName(e.target.value)}
+              required
+            />
+            <br /><br />
+            <input
+              placeholder="Latitude"
+              value={lat}
+              onChange={(e) => setLat(e.target.value)}
+              required
+            />
+            <br /><br />
+            <input
+              placeholder="Longitude"
+              value={lng}
+              onChange={(e) => setLng(e.target.value)}
+              required
+            />
+            <br /><br />
+            <button>Add Location</button>
+          </form>
 
-      <h2>Finish</h2>
+          <p>{geofences.length} locations added</p>
 
-      <p>
-        Minimum recommended setup: trucks + at least one geofence + pricing rule.
-        Tracking provider can be completed later if API details are not ready.
-      </p>
+          {geofences.length > 0 && (
+            <button onClick={nextStep}>Next → Pricing</button>
+          )}
+        </>
+      )}
 
-      <button onClick={finishOnboarding}>Finish Setup</button>
+      {/* STEP 3 */}
+      {step === 3 && (
+        <>
+          <h2>Set your first client rate</h2>
+
+          <form onSubmit={addRule}>
+            <input
+              placeholder="Client e.g ENGAANO"
+              value={client}
+              onChange={(e) => setClient(e.target.value)}
+              required
+            />
+            <br /><br />
+            <input
+              placeholder="Rate per tonne e.g 45"
+              value={rate}
+              onChange={(e) => setRate(e.target.value)}
+              required
+            />
+            <br /><br />
+            <button>Save Rate</button>
+          </form>
+
+          <p>{rules.length} pricing rules added</p>
+
+          {rules.length > 0 && (
+            <button
+              onClick={() => {
+                window.location.href = "/ops/dashboard";
+              }}
+            >
+              Finish → Dashboard
+            </button>
+          )}
+        </>
+      )}
     </main>
   );
 }
