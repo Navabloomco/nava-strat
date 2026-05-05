@@ -1,11 +1,8 @@
-import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs";
-import { cookies } from "next/headers";
+import { supabase } from "../../../../lib/supabase";
 import { NextResponse } from "next/server";
 
 export async function GET() {
-  const supabase = createRouteHandlerClient({ cookies });
-
-  // 1. Fetch trucks and their associated provider
+  // 1. Fetch trucks and their associated provider mapping
   const { data: trucks, error: truckError } = await supabase
     .from("trucks")
     .select(`
@@ -19,16 +16,20 @@ export async function GET() {
       )
     `);
 
-  if (truckError) return NextResponse.json({ error: truckError.message }, { status: 500 });
+  if (truckError) {
+    console.error("Database Fetch Error:", truckError);
+    return NextResponse.json({ error: truckError.message }, { status: 500 });
+  }
 
   const results = [];
 
   for (const truck of trucks || []) {
-    // FIX: Supabase joins return an array. We must grab the first item.
+    // FIX: Safely handle Supabase relational array return
     const provider = Array.isArray(truck.tracking_providers)
       ? truck.tracking_providers[0]
       : truck.tracking_providers;
 
+    // Safety check for provider configuration
     if (!provider || !provider.fleet_url) continue;
 
     try {
@@ -36,28 +37,38 @@ export async function GET() {
         headers: {
           Authorization: provider.api_key || "",
         },
+        cache: "no-store", // Prevents stale data caching
       });
 
       const raw = await res.json();
 
-      // Handle different API list formats safely
+      // Normalize API structures: Handles arrays or nested 'data' objects
       const list = Array.isArray(raw)
         ? raw
         : raw.data?.vehicles || raw.data || [];
 
-      const mapping = provider.field_mapping || {};
+      // Fallback mapping to prevent crashes
+      const mapping = provider.field_mapping || {
+        truck: "reg_no",
+        latitude: "lat",
+        longitude: "lng",
+        speed: "speed",
+        fuel_level: "fuel_level",
+        recorded_at: "time",
+      };
 
-      // DYNAMIC MAPPING: Find the vehicle using the key defined in your UI
+      // DYNAMIC MAPPING: Find the vehicle by its external ID
       const vehicle = list.find(
         (v: any) => String(v[mapping.truck]) === String(truck.external_vehicle_id)
       );
 
-      if (!vehicle) {
-        console.warn(`Vehicle ${truck.reg_no} not found in provider data`);
+      // Validate vehicle data exists and contains coordinates
+      if (!vehicle || !vehicle[mapping.latitude] || !vehicle[mapping.longitude]) {
+        console.warn(`Skipping ${truck.reg_no}: Missing data or coordinates.`);
         continue;
       }
 
-      // INGESTION: Map the raw API fields to Nava's database schema
+      // INGESTION: Dynamic mapping into our standard tracking_logs schema
       const { error: logError } = await supabase.from("tracking_logs").insert({
         truck_id: truck.id,
         latitude: vehicle[mapping.latitude],
@@ -71,10 +82,14 @@ export async function GET() {
       results.push({ truck: truck.reg_no, status: "success" });
 
     } catch (err) {
-      console.error(`Tracking pull error for ${truck.reg_no}:`, err);
+      console.error(`Ingestion failure for ${truck.reg_no}:`, err);
       results.push({ truck: truck.reg_no, status: "error", message: String(err) });
     }
   }
 
-  return NextResponse.json({ processed: results.length, details: results });
+  return NextResponse.json({ 
+    success: true, 
+    processed: results.length, 
+    details: results 
+  });
 }
