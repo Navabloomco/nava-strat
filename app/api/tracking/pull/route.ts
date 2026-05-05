@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server"
 import { createClient } from "@supabase/supabase-js"
 
-// 🔑 ENV (make sure these exist in Vercel)
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
@@ -9,24 +8,15 @@ const supabase = createClient(
 
 export async function GET() {
   try {
-    // 1. Get trucks with providers
-    const { data: trucks, error } = await supabase
+    const { data: trucks } = await supabase
       .from("trucks")
       .select("*")
-
-    if (error) {
-      return NextResponse.json({ error: error.message })
-    }
 
     let results: any[] = []
 
     for (const truck of trucks || []) {
-      // 🚨 skip if not linked
-      if (!truck.tracking_provider_id || !truck.external_vehicle_id) {
-        continue
-      }
+      if (!truck.tracking_provider_id || !truck.external_vehicle_id) continue
 
-      // 2. Get provider
       const { data: provider } = await supabase
         .from("tracking_providers")
         .select("*")
@@ -35,54 +25,67 @@ export async function GET() {
 
       if (!provider) continue
 
-      // 3. Call Bluetrax API (POST!)
-      const response = await fetch(provider.base_url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": provider.api_key,
-        },
-      })
+      // 🔥 STEP 1: LOGIN → GET TOKEN
+      const loginRes = await fetch(
+        "https://public-api.bluetrax.co.ke/api/Login/Login",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            user_name: provider.username,
+            key: provider.api_key,
+          }),
+        }
+      )
 
-      const data = await response.json()
+      const loginData = await loginRes.json()
 
-      console.log("🔥 BLUETRAX RAW:", JSON.stringify(data, null, 2))
+      if (!loginData.token) {
+        console.log("❌ LOGIN FAILED:", loginData)
+        continue
+      }
 
-      // 4. Extract vehicles array
-      const vehicles = data?.data || data || []
+      const token = loginData.token
 
-      // normalize function
+      // 🔥 STEP 2: FETCH FLEET WITH TOKEN
+      const fleetRes = await fetch(
+        "https://public-api.bluetrax.co.ke/api/Public/fleet_current_locations",
+        {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${token}`,
+          },
+        }
+      )
+
+      const fleetData = await fleetRes.json()
+
+      console.log("🔥 BLUETRAX RAW:", JSON.stringify(fleetData, null, 2))
+
+      const vehicles = fleetData?.data || fleetData || []
+
       const normalize = (val: string) =>
         val?.toLowerCase().replace(/\s+/g, "")
 
-      // 5. Match truck
       const match = vehicles.find(
         (v: any) =>
           normalize(v.reg_no) === normalize(truck.external_vehicle_id)
       )
 
       if (!match) {
-        console.log("❌ No match for:", truck.external_vehicle_id)
+        console.log("❌ No match:", truck.external_vehicle_id)
         continue
       }
 
-      console.log("✅ MATCH FOUND:", match)
+      console.log("✅ MATCH:", match)
 
-      // 6. Save tracking point
-      const { error: insertError } = await supabase
-        .from("tracking_points")
-        .insert({
-          truck_id: truck.id,
-          latitude: match.lat,
-          longitude: match.lng,
-          speed: match.speed,
-          recorded_at: match.fixtime,
-        })
-
-      if (insertError) {
-        console.log("❌ Insert error:", insertError.message)
-        continue
-      }
+      await supabase.from("tracking_points").insert({
+        truck_id: truck.id,
+        latitude: match.lat,
+        longitude: match.lng,
+        speed: match.speed,
+        recorded_at: match.fixtime,
+      })
 
       results.push(match)
     }
