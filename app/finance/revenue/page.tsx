@@ -5,14 +5,13 @@ import { supabase } from "../../../lib/supabase";
 
 export default function RevenuePage() {
   const [journeys, setJourneys] = useState<any[]>([]);
-
   const [client, setClient] = useState("");
   const [route, setRoute] = useState("");
 
-  const [rateAmount, setRateAmount] = useState("");
-  const [rateCurrency, setRateCurrency] = useState("USD");
   const [rateType, setRateType] = useState("per_tonne");
-  const [fxRate, setFxRate] = useState("129");
+  const [rateAmount, setRateAmount] = useState("");
+  const [rateCurrency, setRateCurrency] = useState("KES");
+  const [fxRate, setFxRate] = useState("1");
 
   useEffect(() => {
     loadJourneys();
@@ -51,29 +50,33 @@ export default function RevenuePage() {
 
   const selectedJourneys = journeys.filter((j) => {
     const journeyRoute = `${j.from_location} → ${j.to_location}`;
+
     return (
       (client ? j.client_name === client : true) &&
       (route ? journeyRoute === route : true)
     );
   });
 
-  function calculateRevenue(journey: any) {
-    const rate = Number(rateAmount || 0);
-    const fx = rateCurrency === "KES" ? 1 : Number(fxRate || 1);
+  function calculatePreview(journey: any) {
+    const rate = Number(rateAmount || journey.rate_amount || 0);
+    const fx = rateCurrency === "KES" ? 1 : Number(fxRate || journey.fx_rate || 1);
+    const qty = Number(journey.offloaded_quantity || 0);
 
-    if (rateType === "per_tonne") {
-      const tonnes = Number(journey.offloaded_tonnage || 0);
-      return rate * tonnes * fx;
-    }
+    let revenueOriginal = 0;
 
     if (rateType === "per_truck") {
-      return rate * fx;
+      revenueOriginal = rate;
+    } else {
+      revenueOriginal = rate * qty;
     }
 
-    return 0;
+    return {
+      revenueOriginal,
+      revenueKes: rateCurrency === "KES" ? revenueOriginal : revenueOriginal * fx,
+    };
   }
 
-  async function saveRateToSelectedJourneys(e: any) {
+  async function applyRateToSelected(e: any) {
     e.preventDefault();
 
     if (!client || !route) {
@@ -82,23 +85,18 @@ export default function RevenuePage() {
     }
 
     if (!rateAmount) {
-      alert("Enter rate.");
+      alert("Enter rate amount.");
       return;
     }
 
     for (const journey of selectedJourneys) {
-      const revenueKes = calculateRevenue(journey);
-
       const { error } = await supabase
         .from("journeys")
         .update({
-          rate_amount: Number(rateAmount),
-          rate_currency: rateCurrency, // ✅ FIXED
           rate_type: rateType,
+          rate_amount: Number(rateAmount),
+          rate_currency: rateCurrency,
           fx_rate: rateCurrency === "KES" ? 1 : Number(fxRate || 1),
-          revenue: revenueKes,
-          revenue_kes: revenueKes,
-          revenue_notes: `Auto: ${rateCurrency} ${rateAmount} ${rateType}`,
         })
         .eq("id", journey.id);
 
@@ -108,36 +106,28 @@ export default function RevenuePage() {
       }
     }
 
-    alert(`Applied to ${selectedJourneys.length} journeys ✅`);
+    alert(`Rate applied to ${selectedJourneys.length} journey/journeys ✅`);
     loadJourneys();
   }
 
-  async function updateTonnage(
-    journeyId: string,
-    loaded: string,
-    offloaded: string
-  ) {
-    const journey = journeys.find((j) => j.id === journeyId);
+  async function saveQuantities(journeyId: string) {
+    const loadedInput = document.getElementById(
+      `loaded-${journeyId}`
+    ) as HTMLInputElement;
 
-    const updated = {
-      ...journey,
-      loaded_tonnage: Number(loaded || 0),
-      offloaded_tonnage: Number(offloaded || 0),
-    };
-
-    const revenueKes = calculateRevenue(updated);
+    const offloadedInput = document.getElementById(
+      `offloaded-${journeyId}`
+    ) as HTMLInputElement;
 
     const { error } = await supabase
       .from("journeys")
       .update({
-        loaded_tonnage: Number(loaded || 0),
-        offloaded_tonnage: Number(offloaded || 0),
-        rate_amount: Number(rateAmount || journey.rate_amount || 0),
-        rate_currency: rateCurrency, // ✅ FIXED
+        loaded_quantity: Number(loadedInput.value || 0),
+        offloaded_quantity: Number(offloadedInput.value || 0),
         rate_type: rateType,
+        rate_amount: Number(rateAmount || 0),
+        rate_currency: rateCurrency,
         fx_rate: rateCurrency === "KES" ? 1 : Number(fxRate || 1),
-        revenue: revenueKes,
-        revenue_kes: revenueKes,
       })
       .eq("id", journeyId);
 
@@ -146,33 +136,40 @@ export default function RevenuePage() {
       return;
     }
 
+    alert("Quantity saved ✅");
     loadJourneys();
   }
 
   return (
     <main style={{ padding: 40 }}>
-      <h1>Revenue Setup</h1>
+      <h1>Revenue Engine</h1>
+      <p>Set pricing by client/route, then enter loaded/offloaded quantity per truck.</p>
 
-      <form onSubmit={saveRateToSelectedJourneys}>
+      <form onSubmit={applyRateToSelected}>
         <select
           value={client}
           onChange={(e) => {
             setClient(e.target.value);
             setRoute("");
           }}
+          required
         >
           <option value="">Select client</option>
           {clients.map((c) => (
-            <option key={c}>{c}</option>
+            <option key={c} value={c}>
+              {c}
+            </option>
           ))}
         </select>
 
         <br /><br />
 
-        <select value={route} onChange={(e) => setRoute(e.target.value)}>
+        <select value={route} onChange={(e) => setRoute(e.target.value)} required>
           <option value="">Select route</option>
           {routes.map((r) => (
-            <option key={r}>{r}</option>
+            <option key={r} value={r}>
+              {r}
+            </option>
           ))}
         </select>
 
@@ -181,24 +178,41 @@ export default function RevenuePage() {
         <select value={rateType} onChange={(e) => setRateType(e.target.value)}>
           <option value="per_tonne">Per Tonne</option>
           <option value="per_truck">Per Truck</option>
+          <option value="per_box">Per Box</option>
+          <option value="per_bag">Per Bag</option>
+          <option value="per_crate">Per Crate</option>
+          <option value="per_pallet">Per Pallet</option>
+          <option value="per_litre">Per Litre</option>
+          <option value="per_km">Per KM</option>
+          <option value="custom">Custom Unit</option>
         </select>
 
         <br /><br />
 
         <input
-          placeholder="Rate"
+          placeholder="Rate amount e.g. 45"
           value={rateAmount}
           onChange={(e) => setRateAmount(e.target.value)}
+          required
         />
 
         <br /><br />
 
         <select
           value={rateCurrency}
-          onChange={(e) => setRateCurrency(e.target.value)}
+          onChange={(e) => {
+            setRateCurrency(e.target.value);
+            if (e.target.value === "KES") setFxRate("1");
+          }}
         >
-          <option value="USD">USD</option>
           <option value="KES">KES</option>
+          <option value="USD">USD</option>
+          <option value="UGX">UGX</option>
+          <option value="TZS">TZS</option>
+          <option value="RWF">RWF</option>
+          <option value="EUR">EUR</option>
+          <option value="GBP">GBP</option>
+          <option value="ZAR">ZAR</option>
         </select>
 
         <br /><br />
@@ -206,73 +220,76 @@ export default function RevenuePage() {
         {rateCurrency !== "KES" && (
           <>
             <input
-              placeholder="FX rate"
+              placeholder="FX rate to KES e.g. 129"
               value={fxRate}
               onChange={(e) => setFxRate(e.target.value)}
+              required
             />
             <br /><br />
           </>
         )}
 
-        <button type="submit">Apply Rate</button>
+        <button type="submit">Apply Rate to Client/Route</button>
       </form>
 
       <br /><br />
 
-      <h2>Trips</h2>
+      <h2>Matching Active Journeys</h2>
 
       {selectedJourneys.length === 0 ? (
-        <p>Select client + route</p>
+        <p>Select client and route.</p>
       ) : (
         <table border={1} cellPadding={10}>
           <thead>
             <tr>
               <th>Truck</th>
-              <th>Loaded</th>
-              <th>Offloaded</th>
+              <th>Driver</th>
+              <th>Loaded Quantity</th>
+              <th>Offloaded Quantity</th>
+              <th>Rate</th>
               <th>Revenue</th>
-              <th>Save</th>
+              <th>Save Quantity</th>
             </tr>
           </thead>
 
           <tbody>
             {selectedJourneys.map((j) => {
-              const revenue = calculateRevenue(j);
+              const preview = calculatePreview(j);
 
               return (
                 <tr key={j.id}>
                   <td>{j.truck}</td>
+                  <td>{j.driver || "—"}</td>
 
                   <td>
                     <input
-                      defaultValue={j.loaded_tonnage || ""}
-                      id={`l-${j.id}`}
+                      id={`loaded-${j.id}`}
+                      defaultValue={j.loaded_quantity || ""}
+                      placeholder="Loaded"
                     />
                   </td>
 
                   <td>
                     <input
-                      defaultValue={j.offloaded_tonnage || ""}
-                      id={`o-${j.id}`}
+                      id={`offloaded-${j.id}`}
+                      defaultValue={j.offloaded_quantity || ""}
+                      placeholder="Offloaded"
                     />
                   </td>
 
-                  <td>{revenue.toLocaleString()} KES</td>
+                  <td>
+                    {rateCurrency} {rateAmount || j.rate_amount || 0} /{" "}
+                    {rateType.replace("per_", "")}
+                  </td>
 
                   <td>
-                    <button
-                      onClick={() => {
-                        const l = (document.getElementById(
-                          `l-${j.id}`
-                        ) as HTMLInputElement).value;
+                    {preview.revenueOriginal.toLocaleString()} {rateCurrency}
+                    <br />
+                    <strong>{preview.revenueKes.toLocaleString()} KES</strong>
+                  </td>
 
-                        const o = (document.getElementById(
-                          `o-${j.id}`
-                        ) as HTMLInputElement).value;
-
-                        updateTonnage(j.id, l, o);
-                      }}
-                    >
+                  <td>
+                    <button type="button" onClick={() => saveQuantities(j.id)}>
                       Save
                     </button>
                   </td>
