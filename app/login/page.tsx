@@ -4,7 +4,7 @@ import { useState } from "react";
 import { supabase } from "../../lib/supabase";
 
 export default function LoginPage() {
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState("contact@navabloomco.com");
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
 
@@ -23,16 +23,21 @@ export default function LoginPage() {
     }
 
     if (data.session) {
-      setMessage("Login successful ✅ Redirecting...");
+      setMessage(`Logged in as ${data.user.email} ✅`);
       window.location.href = "/ops/dashboard";
     }
   }
 
   async function checkUser() {
-    const { data } = await supabase.auth.getUser();
+    const { data, error } = await supabase.auth.getUser();
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
 
     if (!data.user) {
-      setMessage("No user logged in.");
+      setMessage("No logged-in user found.");
       return;
     }
 
@@ -47,28 +52,27 @@ export default function LoginPage() {
   return (
     <main style={{ padding: 40, maxWidth: 500 }}>
       <h1>Nava Strat Login</h1>
-      <p>Log in before enabling strict RLS.</p>
 
       <form onSubmit={login}>
         <input
-          placeholder="Email"
           type="email"
+          placeholder="Email"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
-          required
           style={{ width: "100%", padding: 10 }}
+          required
         />
 
         <br />
         <br />
 
         <input
-          placeholder="Password"
           type="password"
+          placeholder="Password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
-          required
           style={{ width: "100%", padding: 10 }}
+          required
         />
 
         <br />
@@ -90,13 +94,7 @@ export default function LoginPage() {
       <br />
 
       {message && (
-        <pre
-          style={{
-            whiteSpace: "pre-wrap",
-            background: "#f4f4f4",
-            padding: 12,
-          }}
-        >
+        <pre style={{ background: "#f4f4f4", padding: 12 }}>
           {message}
         </pre>
       )}
