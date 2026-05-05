@@ -8,6 +8,7 @@ export default function RevenuePage() {
 
   const [client, setClient] = useState("");
   const [route, setRoute] = useState("");
+
   const [rateAmount, setRateAmount] = useState("");
   const [rateCurrency, setRateCurrency] = useState("USD");
   const [rateType, setRateType] = useState("per_tonne");
@@ -50,7 +51,6 @@ export default function RevenuePage() {
 
   const selectedJourneys = journeys.filter((j) => {
     const journeyRoute = `${j.from_location} → ${j.to_location}`;
-
     return (
       (client ? j.client_name === client : true) &&
       (route ? journeyRoute === route : true)
@@ -82,7 +82,7 @@ export default function RevenuePage() {
     }
 
     if (!rateAmount) {
-      alert("Enter rate amount.");
+      alert("Enter rate.");
       return;
     }
 
@@ -93,12 +93,12 @@ export default function RevenuePage() {
         .from("journeys")
         .update({
           rate_amount: Number(rateAmount),
-          rate_currency: rateCurrency,
+          rate_currency: rateCurrency, // ✅ FIXED
           rate_type: rateType,
           fx_rate: rateCurrency === "KES" ? 1 : Number(fxRate || 1),
           revenue: revenueKes,
           revenue_kes: revenueKes,
-          revenue_notes: `Auto-calculated from ${rateCurrency} ${rateAmount} ${rateType}`,
+          revenue_notes: `Auto: ${rateCurrency} ${rateAmount} ${rateType}`,
         })
         .eq("id", journey.id);
 
@@ -108,7 +108,7 @@ export default function RevenuePage() {
       }
     }
 
-    alert(`Revenue rules applied to ${selectedJourneys.length} journey/journeys ✅`);
+    alert(`Applied to ${selectedJourneys.length} journeys ✅`);
     loadJourneys();
   }
 
@@ -119,13 +119,13 @@ export default function RevenuePage() {
   ) {
     const journey = journeys.find((j) => j.id === journeyId);
 
-    const updatedJourney = {
+    const updated = {
       ...journey,
       loaded_tonnage: Number(loaded || 0),
       offloaded_tonnage: Number(offloaded || 0),
     };
 
-    const revenueKes = calculateRevenue(updatedJourney);
+    const revenueKes = calculateRevenue(updated);
 
     const { error } = await supabase
       .from("journeys")
@@ -133,7 +133,7 @@ export default function RevenuePage() {
         loaded_tonnage: Number(loaded || 0),
         offloaded_tonnage: Number(offloaded || 0),
         rate_amount: Number(rateAmount || journey.rate_amount || 0),
-        rate_currency,
+        rate_currency: rateCurrency, // ✅ FIXED
         rate_type: rateType,
         fx_rate: rateCurrency === "KES" ? 1 : Number(fxRate || 1),
         revenue: revenueKes,
@@ -151,11 +151,7 @@ export default function RevenuePage() {
 
   return (
     <main style={{ padding: 40 }}>
-      <h1>Revenue Rules</h1>
-      <p>
-        Set revenue once per client/route. Nava calculates revenue per truck
-        using offloaded tonnage or per-truck rate.
-      </p>
+      <h1>Revenue Setup</h1>
 
       <form onSubmit={saveRateToSelectedJourneys}>
         <select
@@ -164,24 +160,19 @@ export default function RevenuePage() {
             setClient(e.target.value);
             setRoute("");
           }}
-          required
         >
           <option value="">Select client</option>
           {clients.map((c) => (
-            <option key={c} value={c}>
-              {c}
-            </option>
+            <option key={c}>{c}</option>
           ))}
         </select>
 
         <br /><br />
 
-        <select value={route} onChange={(e) => setRoute(e.target.value)} required>
+        <select value={route} onChange={(e) => setRoute(e.target.value)}>
           <option value="">Select route</option>
           {routes.map((r) => (
-            <option key={r} value={r}>
-              {r}
-            </option>
+            <option key={r}>{r}</option>
           ))}
         </select>
 
@@ -195,10 +186,9 @@ export default function RevenuePage() {
         <br /><br />
 
         <input
-          placeholder="Rate e.g. 45"
+          placeholder="Rate"
           value={rateAmount}
           onChange={(e) => setRateAmount(e.target.value)}
-          required
         />
 
         <br /><br />
@@ -213,10 +203,10 @@ export default function RevenuePage() {
 
         <br /><br />
 
-        {rateCurrency === "USD" && (
+        {rateCurrency !== "KES" && (
           <>
             <input
-              placeholder="FX rate e.g. 129"
+              placeholder="FX rate"
               value={fxRate}
               onChange={(e) => setFxRate(e.target.value)}
             />
@@ -224,27 +214,24 @@ export default function RevenuePage() {
           </>
         )}
 
-        <button type="submit">
-          Apply Revenue Rule to Selected Client/Route
-        </button>
+        <button type="submit">Apply Rate</button>
       </form>
 
       <br /><br />
 
-      <h2>Matching Trips</h2>
+      <h2>Trips</h2>
 
       {selectedJourneys.length === 0 ? (
-        <p>Select client and route to see trips.</p>
+        <p>Select client + route</p>
       ) : (
         <table border={1} cellPadding={10}>
           <thead>
             <tr>
               <th>Truck</th>
-              <th>Driver</th>
-              <th>Loaded Tonnage</th>
-              <th>Offloaded Tonnage</th>
-              <th>Calculated Revenue</th>
-              <th>Save Tonnage</th>
+              <th>Loaded</th>
+              <th>Offloaded</th>
+              <th>Revenue</th>
+              <th>Save</th>
             </tr>
           </thead>
 
@@ -255,45 +242,35 @@ export default function RevenuePage() {
               return (
                 <tr key={j.id}>
                   <td>{j.truck}</td>
-                  <td>{j.driver || "—"}</td>
 
                   <td>
                     <input
                       defaultValue={j.loaded_tonnage || ""}
-                      id={`loaded-${j.id}`}
-                      placeholder="Loaded T"
+                      id={`l-${j.id}`}
                     />
                   </td>
 
                   <td>
                     <input
                       defaultValue={j.offloaded_tonnage || ""}
-                      id={`offloaded-${j.id}`}
-                      placeholder="Offloaded T"
+                      id={`o-${j.id}`}
                     />
                   </td>
 
-                  <td>
-                    {revenue.toLocaleString()} KES
-                  </td>
+                  <td>{revenue.toLocaleString()} KES</td>
 
                   <td>
                     <button
-                      type="button"
                       onClick={() => {
-                        const loadedInput = document.getElementById(
-                          `loaded-${j.id}`
-                        ) as HTMLInputElement;
+                        const l = (document.getElementById(
+                          `l-${j.id}`
+                        ) as HTMLInputElement).value;
 
-                        const offloadedInput = document.getElementById(
-                          `offloaded-${j.id}`
-                        ) as HTMLInputElement;
+                        const o = (document.getElementById(
+                          `o-${j.id}`
+                        ) as HTMLInputElement).value;
 
-                        updateTonnage(
-                          j.id,
-                          loadedInput.value,
-                          offloadedInput.value
-                        );
+                        updateTonnage(j.id, l, o);
                       }}
                     >
                       Save
