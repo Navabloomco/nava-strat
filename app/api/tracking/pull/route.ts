@@ -1,91 +1,101 @@
-export const dynamic = "force-dynamic";
+import { NextResponse } from "next/server"
+import { createClient } from "@supabase/supabase-js"
 
-import { supabase } from "../../../../lib/supabase";
-import { NextResponse } from "next/server";
+// 🔑 ENV (make sure these exist in Vercel)
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+)
 
 export async function GET() {
-  console.log("🚀 RUNNING PULL");
+  try {
+    // 1. Get trucks with providers
+    const { data: trucks, error } = await supabase
+      .from("trucks")
+      .select("*")
 
-  const { data: trucks, error } = await supabase
-    .from("trucks")
-    .select(`
-      id,
-      external_vehicle_id,
-      tracking_providers (
-        fleet_url,
-        api_key,
-        field_mapping
-      )
-    `);
-
-  console.log("🚚 TRUCKS:", trucks);
-
-  if (error) {
-    console.error("❌ DB ERROR:", error);
-    return NextResponse.json({ error: error.message });
-  }
-
-  const results = [];
-
-  for (const truck of trucks || []) {
-    console.log("➡️ TRUCK:", truck);
-
-    const provider = Array.isArray(truck.tracking_providers)
-      ? truck.tracking_providers[0]
-      : truck.tracking_providers;
-
-    if (!provider) {
-      console.log("❌ NO PROVIDER");
-      continue;
+    if (error) {
+      return NextResponse.json({ error: error.message })
     }
 
-    try {
-      const res = await fetch(provider.fleet_url, {
+    let results: any[] = []
+
+    for (const truck of trucks || []) {
+      // 🚨 skip if not linked
+      if (!truck.tracking_provider_id || !truck.external_vehicle_id) {
+        continue
+      }
+
+      // 2. Get provider
+      const { data: provider } = await supabase
+        .from("tracking_providers")
+        .select("*")
+        .eq("id", truck.tracking_provider_id)
+        .single()
+
+      if (!provider) continue
+
+      // 3. Call Bluetrax API (POST!)
+      const response = await fetch(provider.base_url, {
+        method: "POST",
         headers: {
-          Authorization: provider.api_key || "",
+          "Content-Type": "application/json",
+          "Authorization": provider.api_key,
         },
-      });
+      })
 
-      const raw = await res.json();
-      console.log("📦 RAW:", raw);
+      const data = await response.json()
 
-      const list = Array.isArray(raw)
-        ? raw
-        : raw.data || [];
+      console.log("🔥 BLUETRAX RAW:", JSON.stringify(data, null, 2))
 
-      console.log("🚛 VEHICLES:", list.length);
+      // 4. Extract vehicles array
+      const vehicles = data?.data || data || []
 
-      const mapping = provider.field_mapping;
+      // normalize function
+      const normalize = (val: string) =>
+        val?.toLowerCase().replace(/\s+/g, "")
 
-      const vehicle = list.find(
+      // 5. Match truck
+      const match = vehicles.find(
         (v: any) =>
-          String(v[mapping.truck]).toLowerCase().replace(/\s/g, "") ===
-          String(truck.external_vehicle_id).toLowerCase().replace(/\s/g, "")
-      );
+          normalize(v.reg_no) === normalize(truck.external_vehicle_id)
+      )
 
-      console.log("🔍 MATCH:", vehicle);
+      if (!match) {
+        console.log("❌ No match for:", truck.external_vehicle_id)
+        continue
+      }
 
-      if (!vehicle) continue;
+      console.log("✅ MATCH FOUND:", match)
 
-      await supabase.from("tracking_logs").insert({
-        truck_id: truck.id,
-        latitude: vehicle[mapping.latitude],
-        longitude: vehicle[mapping.longitude],
-        speed: vehicle[mapping.speed] || 0,
-        fuel_level: vehicle[mapping.fuel_level] || null,
-        recorded_at: vehicle[mapping.recorded_at] || new Date().toISOString(),
-      });
+      // 6. Save tracking point
+      const { error: insertError } = await supabase
+        .from("tracking_points")
+        .insert({
+          truck_id: truck.id,
+          latitude: match.lat,
+          longitude: match.lng,
+          speed: match.speed,
+          recorded_at: match.fixtime,
+        })
 
-      results.push({ truck: truck.external_vehicle_id, status: "success" });
+      if (insertError) {
+        console.log("❌ Insert error:", insertError.message)
+        continue
+      }
 
-    } catch (err) {
-      console.error("🔥 ERROR:", err);
+      results.push(match)
     }
-  }
 
-  return NextResponse.json({
-    success: true,
-    processed: results.length,
-    details: results,
-  });
+    return NextResponse.json({
+      success: true,
+      processed: results.length,
+      details: results,
+    })
+  } catch (err: any) {
+    return NextResponse.json({
+      success: false,
+      error: err.message,
+    })
+  }
 }
