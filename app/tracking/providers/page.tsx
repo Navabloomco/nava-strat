@@ -1,20 +1,8 @@
-The error is from this bad import:
-
-import { createClient } from "@/lib/supabase/client";
-
-You do not have that file. Your project uses:
-
-import { supabase } from "../../../lib/supabase";
-
-Replace the full file:
-
-app/tracking/providers/page.tsx
-
-with the correct Nava Pulse version here:
-
 "use client";
+
 import { useEffect, useState } from "react";
 import { supabase } from "../../../lib/supabase";
+
 const PROVIDER_TEMPLATES = [
   {
     name: "Nava Pulse",
@@ -94,56 +82,72 @@ const PROVIDER_TEMPLATES = [
     },
   },
 ];
+
 export default function TrackingProvidersPage() {
   const [tenantId, setTenantId] = useState("");
   const [providers, setProviders] = useState<any[]>([]);
   const [message, setMessage] = useState("");
+
   const [providerName, setProviderName] = useState("");
   const [providerSlug, setProviderSlug] = useState("");
   const [providerType, setProviderType] = useState("api");
   const [isNavaPulse, setIsNavaPulse] = useState(false);
+
   const [baseUrl, setBaseUrl] = useState("");
   const [loginUrl, setLoginUrl] = useState("");
   const [fleetUrl, setFleetUrl] = useState("");
+
   const [authType, setAuthType] = useState("api_key");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [apiHash, setApiHash] = useState("");
   const [bearerToken, setBearerToken] = useState("");
+
   const [tokenExpiryMinutes, setTokenExpiryMinutes] = useState("1440");
   const [tokenRefreshRequired, setTokenRefreshRequired] = useState(false);
+
   const [fieldMapping, setFieldMapping] = useState(
     JSON.stringify(PROVIDER_TEMPLATES[3].field_mapping, null, 2)
   );
+
   useEffect(() => {
     init();
   }, []);
+
   async function init() {
     const { data: userData } = await supabase.auth.getUser();
+
     if (!userData.user) {
       window.location.href = "/login";
       return;
     }
+
     const { data: tenant } = await supabase.rpc("current_tenant_id");
+
     if (!tenant) {
       setMessage("No tenant linked to this user.");
       return;
     }
+
     setTenantId(tenant);
     loadProviders();
   }
+
   async function loadProviders() {
     const { data, error } = await supabase
       .from("tracking_providers")
       .select("*")
       .order("created_at", { ascending: false });
+
     if (error) {
       setMessage(error.message);
       return;
     }
+
     setProviders(data || []);
   }
+
   function selectTemplate(template: any) {
     setProviderName(template.name);
     setProviderSlug(template.slug);
@@ -156,6 +160,7 @@ export default function TrackingProvidersPage() {
     setFieldMapping(JSON.stringify(template.field_mapping || {}, null, 2));
     setMessage(`${template.name} selected. Confirm details and save.`);
   }
+
   function resetForm() {
     setProviderName("");
     setProviderSlug("");
@@ -174,19 +179,24 @@ export default function TrackingProvidersPage() {
     setIsNavaPulse(false);
     setFieldMapping(JSON.stringify(PROVIDER_TEMPLATES[3].field_mapping, null, 2));
   }
+
   async function saveProvider(e: any) {
     e.preventDefault();
+
     if (!tenantId) {
       setMessage("Tenant missing. Login again.");
       return;
     }
+
     let parsedMapping = {};
+
     try {
       parsedMapping = JSON.parse(fieldMapping || "{}");
     } catch {
       setMessage("Field mapping must be valid JSON.");
       return;
     }
+
     const { error } = await supabase.from("tracking_providers").insert([
       {
         tenant_id: tenantId,
@@ -210,14 +220,17 @@ export default function TrackingProvidersPage() {
         is_nava_pulse: isNavaPulse,
       },
     ]);
+
     if (error) {
       setMessage(error.message);
       return;
     }
+
     setMessage("Tracking provider saved ✅");
     resetForm();
     loadProviders();
   }
+
   async function testProvider(provider: any) {
     if (provider.is_nava_pulse) {
       await supabase
@@ -228,11 +241,14 @@ export default function TrackingProvidersPage() {
           last_test_at: new Date().toISOString(),
         })
         .eq("id", provider.id);
+
       setMessage("Nava Pulse ready ✅");
       loadProviders();
       return;
     }
+
     setMessage(`Testing ${provider.provider_name}...`);
+
     const response = await fetch("/api/tracking/test-provider", {
       method: "POST",
       headers: {
@@ -240,7 +256,9 @@ export default function TrackingProvidersPage() {
       },
       body: JSON.stringify(provider),
     });
+
     const result = await response.json();
+
     await supabase
       .from("tracking_providers")
       .update({
@@ -249,16 +267,20 @@ export default function TrackingProvidersPage() {
         last_test_at: new Date().toISOString(),
       })
       .eq("id", provider.id);
+
     setMessage(result.ok ? `Connected ✅` : `Failed ❌ ${result.message}`);
     loadProviders();
   }
+
   async function toggleProvider(provider: any) {
     await supabase
       .from("tracking_providers")
       .update({ is_active: !provider.is_active })
       .eq("id", provider.id);
+
     loadProviders();
   }
+
   return (
     <main style={{ padding: 40 }}>
       <h1>Tracking Providers</h1>
@@ -266,10 +288,13 @@ export default function TrackingProvidersPage() {
         Connect GPS systems or activate Nava Pulse. Nava translates tracking,
         fuel, CANBUS, and sensor data into Nava Eye intelligence.
       </p>
+
       {message && (
         <pre style={{ background: "#f4f4f4", padding: 12 }}>{message}</pre>
       )}
+
       <h2>Connect Your Tracking System</h2>
+
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
         {PROVIDER_TEMPLATES.map((template) => (
           <button
@@ -289,10 +314,13 @@ export default function TrackingProvidersPage() {
           </button>
         ))}
       </div>
+
       <br />
       <hr />
       <br />
+
       <h2>Connection Details</h2>
+
       <form onSubmit={saveProvider}>
         <input
           placeholder="Provider name"
@@ -300,13 +328,17 @@ export default function TrackingProvidersPage() {
           onChange={(e) => setProviderName(e.target.value)}
           required
         />
+
         <br /><br />
+
         <select value={providerType} onChange={(e) => setProviderType(e.target.value)}>
           <option value="api">API</option>
           <option value="csv_upload">CSV Upload</option>
           <option value="manual">Manual</option>
         </select>
+
         <br /><br />
+
         <select value={authType} onChange={(e) => setAuthType(e.target.value)}>
           <option value="api_key">API Key</option>
           <option value="username_key">Username + Key</option>
@@ -316,13 +348,16 @@ export default function TrackingProvidersPage() {
           <option value="basic">Basic Auth</option>
           <option value="none">No Auth / Public Endpoint</option>
         </select>
+
         <br /><br />
+
         <input placeholder="Base URL" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
         <br /><br />
         <input placeholder="Login URL optional" value={loginUrl} onChange={(e) => setLoginUrl(e.target.value)} />
         <br /><br />
         <input placeholder="Fleet/current location URL" value={fleetUrl} onChange={(e) => setFleetUrl(e.target.value)} />
         <br /><br />
+
         {(authType === "username_key" || authType === "email_password" || authType === "basic") && (
           <>
             <input placeholder="Username / Email" value={username} onChange={(e) => setUsername(e.target.value)} />
@@ -331,30 +366,36 @@ export default function TrackingProvidersPage() {
             <br /><br />
           </>
         )}
+
         {(authType === "api_key" || authType === "username_key") && (
           <>
             <input placeholder="API Key" value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
             <br /><br />
           </>
         )}
+
         {authType === "api_hash" && (
           <>
             <input placeholder="API Hash" value={apiHash} onChange={(e) => setApiHash(e.target.value)} />
             <br /><br />
           </>
         )}
+
         {authType === "bearer_token" && (
           <>
             <input placeholder="Bearer Token" value={bearerToken} onChange={(e) => setBearerToken(e.target.value)} />
             <br /><br />
           </>
         )}
+
         <label>
           Token expiry minutes
           <br />
           <input value={tokenExpiryMinutes} onChange={(e) => setTokenExpiryMinutes(e.target.value)} />
         </label>
+
         <br /><br />
+
         <label>
           <input
             type="checkbox"
@@ -363,7 +404,9 @@ export default function TrackingProvidersPage() {
           />
           Token refresh required
         </label>
+
         <br /><br />
+
         <label>
           <input
             type="checkbox"
@@ -372,20 +415,27 @@ export default function TrackingProvidersPage() {
           />
           Nava Pulse connection
         </label>
+
         <br /><br />
+
         <h3>Field Mapping</h3>
         <textarea
           value={fieldMapping}
           onChange={(e) => setFieldMapping(e.target.value)}
           style={{ width: "100%", height: 180 }}
         />
+
         <br /><br />
+
         <button type="submit">Save Provider</button>
       </form>
+
       <br />
       <hr />
       <br />
+
       <h2>Saved Providers</h2>
+
       {providers.length === 0 ? (
         <p>No tracking providers saved yet.</p>
       ) : (
@@ -434,5 +484,3 @@ export default function TrackingProvidersPage() {
     </main>
   );
 }
-
-Then deploy. This fixes the missing module error.
