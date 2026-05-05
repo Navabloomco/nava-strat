@@ -4,7 +4,7 @@ import { supabase } from "../../../../lib/supabase";
 import { NextResponse } from "next/server";
 
 export async function GET() {
-  console.log("🚀 RUNNING TRACKING PULL");
+  console.log("🚀 RUNNING PULL");
 
   const { data: trucks, error } = await supabase
     .from("trucks")
@@ -18,24 +18,26 @@ export async function GET() {
       )
     `);
 
+  console.log("🚚 TRUCKS:", trucks);
+
   if (error) {
-    console.error("DB ERROR:", error);
+    console.error("❌ DB ERROR:", error);
     return NextResponse.json({ error: error.message });
   }
 
   const results = [];
 
   for (const truck of trucks || []) {
+    console.log("➡️ TRUCK:", truck);
+
     const provider = Array.isArray(truck.tracking_providers)
       ? truck.tracking_providers[0]
       : truck.tracking_providers;
 
     if (!provider) {
-      console.log("❌ NO PROVIDER FOR TRUCK:", truck.id);
+      console.log("❌ NO PROVIDER");
       continue;
     }
-
-    console.log("🌍 FETCHING FROM:", provider.fleet_url);
 
     try {
       const res = await fetch(provider.fleet_url, {
@@ -45,27 +47,25 @@ export async function GET() {
       });
 
       const raw = await res.json();
-      console.log("📦 RAW RESPONSE:", raw);
+      console.log("📦 RAW:", raw);
 
       const list = Array.isArray(raw)
         ? raw
         : raw.data || [];
 
-      console.log("🚚 VEHICLES FOUND:", list.length);
+      console.log("🚛 VEHICLES:", list.length);
 
       const mapping = provider.field_mapping;
 
       const vehicle = list.find(
         (v: any) =>
-          String(v[mapping.truck]) === String(truck.external_vehicle_id)
+          String(v[mapping.truck]).toLowerCase().replace(/\s/g, "") ===
+          String(truck.external_vehicle_id).toLowerCase().replace(/\s/g, "")
       );
 
-      if (!vehicle) {
-        console.log("❌ NO MATCH FOR:", truck.external_vehicle_id);
-        continue;
-      }
+      console.log("🔍 MATCH:", vehicle);
 
-      console.log("✅ MATCH FOUND:", vehicle);
+      if (!vehicle) continue;
 
       await supabase.from("tracking_logs").insert({
         truck_id: truck.id,
@@ -79,7 +79,7 @@ export async function GET() {
       results.push({ truck: truck.external_vehicle_id, status: "success" });
 
     } catch (err) {
-      console.error("🔥 FETCH ERROR:", err);
+      console.error("🔥 ERROR:", err);
     }
   }
 
