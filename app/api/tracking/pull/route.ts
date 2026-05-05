@@ -1,14 +1,15 @@
 import { supabase } from "../../../../lib/supabase";
 import { NextResponse } from "next/server";
 
+// 🔥 normalize helper (fix spacing + casing issues)
 function normalize(val: any) {
   return String(val || "")
-    .replace(/\s+/g, "") // remove spaces
-    .toUpperCase();      // make uppercase
+    .replace(/\s+/g, "")
+    .toUpperCase();
 }
 
 export async function GET() {
-  // 1. Fetch trucks + provider
+  // 1. Fetch trucks + providers
   const { data: trucks, error: truckError } = await supabase
     .from("trucks")
     .select(`
@@ -24,25 +25,24 @@ export async function GET() {
     .not("tracking_provider_id", "is", null);
 
   if (truckError) {
-    console.error("DB ERROR:", truckError);
+    console.error("❌ DB ERROR:", truckError);
     return NextResponse.json({ error: truckError.message }, { status: 500 });
   }
 
   const results = [];
 
   for (const truck of trucks || []) {
-    // ⚠️ Supabase returns array for joins
     const provider = Array.isArray(truck.tracking_providers)
       ? truck.tracking_providers[0]
       : truck.tracking_providers;
 
     if (!provider || !provider.fleet_url) {
-      console.warn(`Skipping ${truck.truck}: No provider`);
+      console.warn(`⚠️ Skipping ${truck.truck}: No provider`);
       continue;
     }
 
     try {
-      // 2. Fetch provider data
+      // 2. Fetch provider API
       const res = await fetch(provider.fleet_url, {
         headers: {
           Authorization: provider.api_key || "",
@@ -51,10 +51,16 @@ export async function GET() {
 
       const raw = await res.json();
 
-      // 3. Normalize response structure
+      // 🔥 DEBUG LOGGING (THIS IS WHAT WE ADDED)
+      console.log("🚨 RAW API RESPONSE:", JSON.stringify(raw).slice(0, 500));
+
+      // 3. Normalize API structure
       const list = Array.isArray(raw)
         ? raw
         : raw.data?.vehicles || raw.data || [];
+
+      console.log("📦 LIST SAMPLE:", list?.[0]);
+      console.log("🚚 LOOKING FOR:", truck.external_vehicle_id);
 
       const mapping = provider.field_mapping || {
         truck: "reg_no",
@@ -65,7 +71,9 @@ export async function GET() {
         recorded_at: "time",
       };
 
-      // 🔥 KEY FIX: smart matching (spaces + casing)
+      console.log("🧠 MAPPING:", mapping);
+
+      // 4. Match vehicle (normalized)
       const vehicle = list.find(
         (v: any) =>
           normalize(v[mapping.truck]) ===
@@ -73,11 +81,13 @@ export async function GET() {
       );
 
       if (!vehicle) {
-        console.warn(`❌ No match for ${truck.truck}`);
+        console.warn(`❌ NO MATCH for ${truck.truck}`);
         continue;
       }
 
-      // 4. Insert tracking log
+      console.log("✅ MATCH FOUND:", vehicle);
+
+      // 5. Insert into tracking_logs
       const { error: logError } = await supabase
         .from("tracking_logs")
         .insert({
