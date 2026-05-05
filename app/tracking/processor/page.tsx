@@ -143,17 +143,15 @@ export default function TrackingProcessorPage() {
     return speed !== null && speed <= 5 ? "STOPPED" : "UNKNOWN";
   }
 
-  function buildRisk(
-    speed: number | null,
-    fuelLevel: number | null,
-    ignitionStatus: string,
-    journeyLinked: boolean
-  ) {
-    if (fuelLevel !== null && fuelLevel < 15) return "medium";
-    if (speed !== null && speed > 80) return "medium";
-    if (!journeyLinked) return "medium";
-    if (ignitionStatus === "ON" && speed !== null && speed <= 5) return "medium";
-    return "normal";
+  function isHistoricalPing(recordedAt: string) {
+    const pingTime = new Date(recordedAt).getTime();
+    const now = new Date().getTime();
+
+    if (isNaN(pingTime)) return false;
+
+    const ageMinutes = (now - pingTime) / (1000 * 60);
+
+    return ageMinutes > 15;
   }
 
   async function findActiveJourneyForTruck(truck: string) {
@@ -185,51 +183,172 @@ export default function TrackingProcessorPage() {
     return data[0];
   }
 
-  async function saveFuelDropEvent(params: {
+  async function getPendingFuelDropEvent(truck: string) {
+    const { data } = await supabase
+      .from("fuel_drop_events")
+      .select("*")
+      .eq("truck_text", truck)
+      .eq("status", "pending")
+      .order("recorded_at", { ascending: false })
+      .limit(1);
+
+    if (!data || data.length === 0) return null;
+
+    return data[0];
+  }
+
+  async function handleFuelSmoothing(params: {
     truck: string;
     journeyId: string | null;
     previousFuel: number;
     currentFuel: number;
-    drop: number;
     speed: number | null;
     ignitionStatus: string;
     locationText: string;
     interpretedLocation: string;
     nearestGeofence: string | null;
     recordedAt: string;
+    isHistorical: boolean;
   }) {
-    let risk = "medium";
-
-    if (
-      params.drop >= 5 &&
-      (params.speed === null || params.speed <= 5) &&
-      (params.ignitionStatus === "OFF" || params.ignitionStatus === "UNKNOWN")
-    ) {
-      risk = "high";
+    if (params.isHistorical) {
+      return {
+        alert: "",
+        risk: "normal",
+        eventDetected: false,
+      };
     }
 
-    const summary =
-      risk === "high"
-        ? `${params.truck} possible staged siphoning: fuel dropped by ${params.drop}L while stationary/off. Location: ${params.interpretedLocation}.`
-        : `${params.truck} fuel drop detected: ${params.drop}L. Location: ${params.interpretedLocation}. Review for slant, sensor noise, or siphoning.`;
+    const drop = params.previousFuel - params.currentFuel;
 
-    await supabase.from("fuel_drop_events").insert([
-      {
-        truck_text: params.truck,
-        journey_id: params.journeyId,
-        previous_fuel_level: params.previousFuel,
-        current_fuel_level: params.currentFuel,
-        drop_liters: params.drop,
-        speed: params.speed,
-        ignition_status: params.ignitionStatus,
-        location_text: params.locationText,
-        interpreted_location: params.interpretedLocation,
-        nearest_geofence: params.nearestGeofence,
-        risk_level: risk,
-        nava_eye_summary: summary,
-        recorded_at: params.recordedAt,
-      },
-    ]);
+    if (drop < 3) {
+      return {
+        alert: "",
+        risk: "normal",
+        eventDetected: false,
+      };
+    }
+
+    if (params.speed !== null && params.speed > 5) {
+      return {
+        alert: "",
+        risk: "normal",
+        eventDetected: false,
+      };
+    }
+
+    const pendingEvent = await getPendingFuelDropEvent(params.truck);
+
+    if (!pendingEvent) {
+      await supabase.from("fuel_drop_events").insert([
+        {
+          truck_text: params.truck,
+          journey_id: params.journeyId,
+          previous_fuel_level: params.previousFuel,
+          current_fuel_level: params.currentFuel,
+          drop_liters: drop,
+          speed: params.speed,
+          ignition_status: params.ignitionStatus,
+          location_text: params.locationText,
+          interpreted_location: params.interpretedLocation,
+          nearest_geofence: params.nearestGeofence,
+          risk_level: "medium",
+          status: "pending",
+          confirmation_count: 1,
+          initial_drop_level: params.currentFuel,
+          current_stable_level: params.currentFuel,
+          recovery_detected: false,
+          is_historical: false,
+          nava_eye_summary: `${params.truck} is under fuel drop investigation: ${drop}L drop detected at ${params.interpretedLocation}. Waiting for confirmation.`,
+          recorded_at: params.recordedAt,
+        },
+      ]);
+
+      return {
+        alert: `Fuel drop investigation started: -${drop}L. Waiting for confirmation.`,
+        risk: "medium",
+        eventDetected: true,
+      };
+    }
+
+    const initialDropLevel = Number(
+      pendingEvent.initial_drop_level || pendingEvent.current_fuel_level || 0
+    );
+
+    const previousFuelBeforeDrop = Number(
+      pendingEvent.previous_fuel_level || params.previousFuel
+    );
+
+    const recovered = params.currentFuel >= previousFuelBeforeDrop - 1;
+
+    if (recovered) {
+      await supabase
+        .from("fuel_drop_events")
+        .update({
+          status: "false_alarm",
+          recovery_detected: true,
+          false_alarm_reason:
+            "Fuel level recovered. Likely tilt, sloshing, or slope effect.",
+          current_stable_level: params.currentFuel,
+          risk_level: "normal",
+          nava_eye_summary: `${params.truck} fuel drop false alarm: fuel recovered after suspected drop. Likely tilt or sloshing.`,
+        })
+        .eq("id", pendingEvent.id);
+
+      return {
+        alert: "Fuel drop false alarm: level recovered.",
+        risk: "normal",
+        eventDetected: false,
+      };
+    }
+
+    const stillLow = params.currentFuel <= initialDropLevel + 1;
+
+    if (stillLow) {
+      const newConfirmationCount =
+        Number(pendingEvent.confirmation_count || 1) + 1;
+
+      const confirmed = newConfirmationCount >= 3;
+
+      await supabase
+        .from("fuel_drop_events")
+        .update({
+          confirmation_count: newConfirmationCount,
+          current_stable_level: params.currentFuel,
+          status: confirmed ? "confirmed" : "pending",
+          risk_level: confirmed ? "high" : "medium",
+          nava_eye_summary: confirmed
+            ? `${params.truck} confirmed possible fuel siphoning: fuel stayed low after ${newConfirmationCount} readings. Estimated loss: ${Number(
+                pendingEvent.drop_liters || drop
+              )}L at ${params.interpretedLocation}.`
+            : `${params.truck} fuel drop still under investigation. Reading ${newConfirmationCount}/3 stayed low.`,
+        })
+        .eq("id", pendingEvent.id);
+
+      return {
+        alert: confirmed
+          ? `Confirmed possible siphoning: -${Number(
+              pendingEvent.drop_liters || drop
+            )}L.`
+          : `Fuel drop still under investigation (${newConfirmationCount}/3).`,
+        risk: confirmed ? "high" : "medium",
+        eventDetected: true,
+      };
+    }
+
+    await supabase
+      .from("fuel_drop_events")
+      .update({
+        confirmation_count: Number(pendingEvent.confirmation_count || 1) + 1,
+        current_stable_level: params.currentFuel,
+        nava_eye_summary: `${params.truck} fuel level remains abnormal but not confirmed yet. Continue monitoring.`,
+      })
+      .eq("id", pendingEvent.id);
+
+    return {
+      alert: "Fuel level abnormal. Continue monitoring.",
+      risk: "medium",
+      eventDetected: true,
+    };
   }
 
   async function processTrackingData() {
@@ -250,8 +369,21 @@ export default function TrackingProcessorPage() {
         vehicles = [parsed];
       }
 
+      vehicles.sort((a, b) => {
+        const aTime =
+          getValue(a, ["timestamp", "time", "fixtime", "CurrentTime", "recorded_at"]) ||
+          new Date().toISOString();
+
+        const bTime =
+          getValue(b, ["timestamp", "time", "fixtime", "CurrentTime", "recorded_at"]) ||
+          new Date().toISOString();
+
+        return new Date(aTime).getTime() - new Date(bTime).getTime();
+      });
+
       const rows = [];
-      let fuelDropCount = 0;
+      let fuelDropEvents = 0;
+      let historicalCount = 0;
 
       for (const vehicle of vehicles) {
         const truck =
@@ -319,6 +451,10 @@ export default function TrackingProcessorPage() {
             "recorded_at",
           ]) || new Date().toISOString();
 
+        const isHistorical = isHistoricalPing(recordedAt);
+
+        if (isHistorical) historicalCount += 1;
+
         const providerLocation =
           getValue(vehicle, [
             "location",
@@ -349,67 +485,67 @@ export default function TrackingProcessorPage() {
         const activeJourney = await findActiveJourneyForTruck(cleanTruck);
         const journeyId = activeJourney?.id || null;
 
-        const previousPoint = await getPreviousTrackingPoint(cleanTruck);
+        const movement = interpretMovement(speed, ignitionStatus);
 
-        let fuelDropAlert = "";
+        let risk = "normal";
+        let alert = "";
+
+        if (!activeJourney && !isHistorical) {
+          alert = "⚠️ No active journey linked.";
+          risk = "medium";
+        }
+
+        if (fuelLevel !== null && fuelLevel < 15 && !isHistorical) {
+          alert = "⛽ Low fuel risk.";
+          risk = "medium";
+        }
+
+        if (speed !== null && speed > 80 && !isHistorical) {
+          alert = "⚠️ Overspeed risk.";
+          risk = "medium";
+        }
+
+        if (
+          ignitionStatus === "ON" &&
+          speed !== null &&
+          speed <= 5 &&
+          !isHistorical
+        ) {
+          alert = "⚠️ Ignition on while stationary.";
+          risk = "medium";
+        }
+
+        if (geofence && geofence.type === "fuel" && !isHistorical) {
+          alert = alert || "⛽ At fuel location.";
+        }
+
+        const previousPoint = await getPreviousTrackingPoint(cleanTruck);
 
         if (
           previousPoint &&
           previousPoint.fuel_level !== null &&
           fuelLevel !== null
         ) {
-          const previousFuel = Number(previousPoint.fuel_level);
-          const drop = previousFuel - fuelLevel;
+          const smoothing = await handleFuelSmoothing({
+            truck: cleanTruck,
+            journeyId,
+            previousFuel: Number(previousPoint.fuel_level),
+            currentFuel: fuelLevel,
+            speed,
+            ignitionStatus,
+            locationText: providerLocation || "",
+            interpretedLocation,
+            nearestGeofence: geofence?.name || null,
+            recordedAt,
+            isHistorical,
+          });
 
-          if (drop >= 3 && drop <= 15) {
-            fuelDropCount += 1;
+          if (smoothing.eventDetected) fuelDropEvents += 1;
 
-            fuelDropAlert = `Possible micro fuel drop: -${drop}L.`;
-
-            await saveFuelDropEvent({
-              truck: cleanTruck,
-              journeyId,
-              previousFuel,
-              currentFuel: fuelLevel,
-              drop,
-              speed,
-              ignitionStatus,
-              locationText: providerLocation || "",
-              interpretedLocation,
-              nearestGeofence: geofence?.name || null,
-              recordedAt,
-            });
+          if (smoothing.alert) {
+            alert = smoothing.alert;
+            risk = smoothing.risk;
           }
-        }
-
-        const movement = interpretMovement(speed, ignitionStatus);
-        let risk = buildRisk(speed, fuelLevel, ignitionStatus, !!activeJourney);
-
-        let alert = "";
-
-        if (!activeJourney) {
-          alert = "⚠️ No active journey linked.";
-        }
-
-        if (fuelLevel !== null && fuelLevel < 15) {
-          alert = "⛽ Low fuel risk.";
-        }
-
-        if (speed !== null && speed > 80) {
-          alert = "⚠️ Overspeed risk.";
-        }
-
-        if (ignitionStatus === "ON" && speed !== null && speed <= 5) {
-          alert = "⚠️ Ignition on while stationary.";
-        }
-
-        if (geofence && geofence.type === "fuel") {
-          alert = alert || "⛽ At fuel location.";
-        }
-
-        if (fuelDropAlert) {
-          alert = fuelDropAlert;
-          risk = "high";
         }
 
         const journeyText = activeJourney
@@ -423,9 +559,13 @@ export default function TrackingProcessorPage() {
             ? "Ignition: unknown."
             : `Ignition: ${ignitionStatus}.`;
 
+        const historicalText = isHistorical
+          ? " Historical data stored without live alerts."
+          : "";
+
         const summary = `${cleanTruck} is ${movement.toLowerCase()} at ${interpretedLocation}. ${journeyText} ${ignitionText} Speed: ${
           speed ?? "unknown"
-        } km/h. Fuel: ${fuelLevel ?? "unknown"}.${alert ? " " + alert : ""}`;
+        } km/h. Fuel: ${fuelLevel ?? "unknown"}.${alert ? " " + alert : ""}${historicalText}`;
 
         rows.push({
           truck_text: cleanTruck,
@@ -448,6 +588,7 @@ export default function TrackingProcessorPage() {
           nava_eye_summary: summary,
           journey_id: journeyId,
           recorded_at: recordedAt,
+          is_historical: isHistorical,
           raw_data: vehicle,
         });
       }
@@ -460,7 +601,7 @@ export default function TrackingProcessorPage() {
       }
 
       setResult(
-        `Processed ${rows.length} tracking point(s) ✅ Fuel drop events detected: ${fuelDropCount}`
+        `Processed ${rows.length} tracking point(s) ✅ Historical stored without live alerts: ${historicalCount}. Fuel investigations/updates: ${fuelDropEvents}.`
       );
     } catch (err: any) {
       alert(err.message || "Invalid JSON");
@@ -471,8 +612,9 @@ export default function TrackingProcessorPage() {
     <main style={{ padding: 40 }}>
       <h1>Nava Eye Processor</h1>
       <p>
-        Paste raw GPS/provider response. Nava Eye detects geofences, ignition,
-        active journeys, and possible micro fuel drops.
+        Paste raw GPS/provider response. Nava Eye smooths fuel readings, ignores
+        stale data for live alerts, detects geofences, ignition, and active
+        journeys.
       </p>
 
       <textarea
