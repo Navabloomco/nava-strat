@@ -7,11 +7,9 @@ const PROVIDER_TEMPLATES = [
   {
     name: "Nava Pulse",
     slug: "nava_pulse",
-    description: "Nava-native tracking, fuel, CANBUS, and sensor intelligence.",
+    status: "BETA",
+    description: "Proprietary sensor intelligence for high-security logistics. Exclusive to Nava Strat.",
     auth_type: "api_key",
-    base_url: "",
-    login_url: "",
-    fleet_url: "",
     is_nava_pulse: true,
     field_mapping: {
       truck: "truck",
@@ -19,19 +17,18 @@ const PROVIDER_TEMPLATES = [
       longitude: "longitude",
       speed: "speed",
       fuel_level: "fuel_level",
-      ignition: "ignition",
       recorded_at: "recorded_at",
     },
   },
   {
     name: "Bluetrax",
     slug: "bluetrax",
+    status: "ACTIVE",
     description: "Popular fleet tracking provider in Kenya.",
     auth_type: "username_key",
     base_url: "https://public-api.bluetrax.co.ke",
     login_url: "https://public-api.bluetrax.co.ke/api/Login/Login",
-    fleet_url:
-      "https://public-api.bluetrax.co.ke/api/Public/fleet_current_locations",
+    fleet_url: "https://public-api.bluetrax.co.ke/api/Public/fleet_current_locations",
     is_nava_pulse: false,
     field_mapping: {
       truck: "reg_no",
@@ -39,45 +36,36 @@ const PROVIDER_TEMPLATES = [
       longitude: "lng",
       speed: "speed",
       fuel_level: "fuellevel",
-      ignition: "ignition",
       recorded_at: "fixtime",
     },
   },
   {
     name: "FleetTrack",
     slug: "fleettrack",
+    status: "ACTIVE",
     description: "Widely used logistics GPS system.",
     auth_type: "api_hash",
     base_url: "https://fleettrack.africa/api",
-    login_url: "",
     fleet_url: "https://fleettrack.africa/api/get_devices",
     is_nava_pulse: false,
     field_mapping: {
       truck: "name",
       latitude: "lat",
       longitude: "lng",
-      speed: "speed",
-      fuel_level: "fuel",
-      ignition: "ignition",
       recorded_at: "time",
     },
   },
   {
-    name: "Other GPS Provider",
+    name: "Custom GPS",
     slug: "custom",
-    description: "Connect any supported GPS provider using API details.",
+    status: "ACTIVE",
+    description: "Connect any white-label GPS provider using API details.",
     auth_type: "api_key",
-    base_url: "",
-    login_url: "",
-    fleet_url: "",
     is_nava_pulse: false,
     field_mapping: {
       truck: "reg_no",
       latitude: "lat",
       longitude: "lng",
-      speed: "speed",
-      fuel_level: "fuel_level",
-      ignition: "ignition",
       recorded_at: "time",
     },
   },
@@ -87,137 +75,78 @@ export default function TrackingProvidersPage() {
   const [tenantId, setTenantId] = useState("");
   const [providers, setProviders] = useState<any[]>([]);
   const [message, setMessage] = useState("");
-
-  const [providerName, setProviderName] = useState("");
   const [providerSlug, setProviderSlug] = useState("");
-  const [providerType, setProviderType] = useState("api");
-  const [isNavaPulse, setIsNavaPulse] = useState(false);
 
+  // Form State
+  const [providerName, setProviderName] = useState("");
+  const [authType, setAuthType] = useState("api_key");
   const [baseUrl, setBaseUrl] = useState("");
   const [loginUrl, setLoginUrl] = useState("");
   const [fleetUrl, setFleetUrl] = useState("");
-
-  const [authType, setAuthType] = useState("api_key");
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
   const [apiKey, setApiKey] = useState("");
-  const [apiHash, setApiHash] = useState("");
-  const [bearerToken, setBearerToken] = useState("");
-
-  const [tokenExpiryMinutes, setTokenExpiryMinutes] = useState("1440");
-  const [tokenRefreshRequired, setTokenRefreshRequired] = useState(false);
-
-  const [fieldMapping, setFieldMapping] = useState(
-    JSON.stringify(PROVIDER_TEMPLATES[3].field_mapping, null, 2)
-  );
+  const [fieldMapping, setFieldMapping] = useState("");
 
   useEffect(() => {
     init();
   }, []);
 
   async function init() {
-    const { data: userData } = await supabase.auth.getUser();
-
-    if (!userData.user) {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
       window.location.href = "/login";
       return;
     }
-
     const { data: tenant } = await supabase.rpc("current_tenant_id");
-
-    if (!tenant) {
-      setMessage("No tenant linked to this user.");
-      return;
-    }
-
     setTenantId(tenant);
     loadProviders();
   }
 
   async function loadProviders() {
-    const { data, error } = await supabase
-      .from("tracking_providers")
-      .select("*")
-      .order("created_at", { ascending: false });
-
-    if (error) {
-      setMessage(error.message);
-      return;
-    }
-
+    const { data } = await supabase.from("tracking_providers").select("*").order("created_at", { ascending: false });
     setProviders(data || []);
   }
 
   function selectTemplate(template: any) {
+    // Positioning logic: Still block the card UI, but keep it selectable for internal setup
+    if (template.slug === "nava_pulse") {
+      setMessage("Nava Pulse is currently in private Beta. Securely mapping internal sensor nodes...");
+    }
     setProviderName(template.name);
     setProviderSlug(template.slug);
-    setProviderType("api");
     setAuthType(template.auth_type);
     setBaseUrl(template.base_url || "");
     setLoginUrl(template.login_url || "");
     setFleetUrl(template.fleet_url || "");
-    setIsNavaPulse(template.is_nava_pulse || false);
-    setFieldMapping(JSON.stringify(template.field_mapping || {}, null, 2));
-    setMessage(`${template.name} selected. Confirm details and save.`);
+    setFieldMapping(JSON.stringify(template.field_mapping, null, 2));
   }
 
-  function resetForm() {
-    setProviderName("");
-    setProviderSlug("");
-    setProviderType("api");
-    setBaseUrl("");
-    setLoginUrl("");
-    setFleetUrl("");
-    setAuthType("api_key");
-    setUsername("");
-    setPassword("");
-    setApiKey("");
-    setApiHash("");
-    setBearerToken("");
-    setTokenExpiryMinutes("1440");
-    setTokenRefreshRequired(false);
-    setIsNavaPulse(false);
-    setFieldMapping(JSON.stringify(PROVIDER_TEMPLATES[3].field_mapping, null, 2));
-  }
-
-  async function saveProvider(e: any) {
-    e.preventDefault();
-
+  async function saveProvider() {
     if (!tenantId) {
-      setMessage("Tenant missing. Login again.");
+      setMessage("Tenant missing. Refresh page.");
       return;
     }
 
     let parsedMapping = {};
-
     try {
       parsedMapping = JSON.parse(fieldMapping || "{}");
     } catch {
-      setMessage("Field mapping must be valid JSON.");
+      setMessage("Error: Invalid JSON mapping");
       return;
     }
 
     const { error } = await supabase.from("tracking_providers").insert([
       {
         tenant_id: tenantId,
-        provider_name: providerName.trim().toUpperCase(),
+        provider_name: providerName.toUpperCase(),
         provider_slug: providerSlug || "custom",
-        provider_type: providerType,
-        base_url: baseUrl.trim() || null,
-        login_url: loginUrl.trim() || null,
-        fleet_url: fleetUrl.trim() || null,
+        base_url: baseUrl || null,
+        login_url: loginUrl || null,
+        fleet_url: fleetUrl || null,
         auth_type: authType,
-        username: username.trim() || null,
-        password: password.trim() || null,
-        api_key: apiKey.trim() || null,
-        api_hash: apiHash.trim() || null,
-        bearer_token: bearerToken.trim() || null,
-        token_expiry_minutes: Number(tokenExpiryMinutes || 1440),
-        token_refresh_required: tokenRefreshRequired,
+        api_key: apiKey || null,
         field_mapping: parsedMapping,
-        last_test_status: "not_tested",
+        is_nava_pulse: providerSlug === "nava_pulse",
         is_active: true,
-        is_nava_pulse: isNavaPulse,
       },
     ]);
 
@@ -226,261 +155,114 @@ export default function TrackingProvidersPage() {
       return;
     }
 
-    setMessage("Tracking provider saved ✅");
-    resetForm();
-    loadProviders();
-  }
-
-  async function testProvider(provider: any) {
-    if (provider.is_nava_pulse) {
-      await supabase
-        .from("tracking_providers")
-        .update({
-          last_test_status: "connected",
-          last_test_message: "Nava Pulse connection is ready.",
-          last_test_at: new Date().toISOString(),
-        })
-        .eq("id", provider.id);
-
-      setMessage("Nava Pulse ready ✅");
-      loadProviders();
-      return;
-    }
-
-    setMessage(`Testing ${provider.provider_name}...`);
-
-    const response = await fetch("/api/tracking/test-provider", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(provider),
-    });
-
-    const result = await response.json();
-
-    await supabase
-      .from("tracking_providers")
-      .update({
-        last_test_status: result.ok ? "connected" : "failed",
-        last_test_message: result.message || "No message",
-        last_test_at: new Date().toISOString(),
-      })
-      .eq("id", provider.id);
-
-    setMessage(result.ok ? `Connected ✅` : `Failed ❌ ${result.message}`);
-    loadProviders();
-  }
-
-  async function toggleProvider(provider: any) {
-    await supabase
-      .from("tracking_providers")
-      .update({ is_active: !provider.is_active })
-      .eq("id", provider.id);
-
+    setMessage("Connection saved successfully ✅");
     loadProviders();
   }
 
   return (
-    <main style={{ padding: 40 }}>
-      <h1>Tracking Providers</h1>
-      <p>
-        Connect GPS systems or activate Nava Pulse. Nava translates tracking,
-        fuel, CANBUS, and sensor data into Nava Eye intelligence.
-      </p>
+    <main style={{ padding: 40, fontFamily: "sans-serif", maxWidth: 1200, margin: "0 auto" }}>
+      <header style={{ marginBottom: 40 }}>
+        <h1 style={{ fontSize: "2rem", fontWeight: "bold", marginBottom: 8 }}>Tracking Providers</h1>
+        <p style={{ color: "#666" }}>
+          Connect third-party GPS systems or activate <strong>Nava Pulse</strong> sensor intelligence.
+        </p>
+      </header>
 
       {message && (
-        <pre style={{ background: "#f4f4f4", padding: 12 }}>{message}</pre>
+        <div style={{ padding: 16, borderRadius: 8, background: "#f0f7ff", border: "1px solid #0070f3", color: "#0070f3", marginBottom: 24 }}>
+          {message}
+        </div>
       )}
 
-      <h2>Connect Your Tracking System</h2>
-
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
-        {PROVIDER_TEMPLATES.map((template) => (
-          <button
-            key={template.slug}
-            onClick={() => selectTemplate(template)}
+      <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))", gap: 20, marginBottom: 40 }}>
+        {PROVIDER_TEMPLATES.map((t) => (
+          <div
+            key={t.slug}
+            onClick={() => selectTemplate(t)}
             style={{
-              textAlign: "left",
-              padding: 16,
-              border: "1px solid #ddd",
-              background: providerSlug === template.slug ? "#f4f4f4" : "white",
+              padding: 24,
+              borderRadius: 12,
+              border: t.slug === providerSlug ? "2px solid #0070f3" : "1px solid #e2e8f0",
+              background: t.slug === "nava_pulse" ? "#f8fbff" : "white",
               cursor: "pointer",
+              position: "relative",
+              boxShadow: t.slug === providerSlug ? "0 4px 12px rgba(0,112,243,0.1)" : "none"
             }}
           >
-            <strong>{template.name}</strong>
-            <br />
-            <small>{template.description}</small>
-          </button>
+            <span style={{
+              position: "absolute",
+              top: 12,
+              right: 12,
+              fontSize: "0.7rem",
+              fontWeight: "bold",
+              padding: "4px 8px",
+              borderRadius: "20px",
+              background: t.status === "BETA" ? "#0070f3" : "#e2e8f0",
+              color: t.status === "BETA" ? "white" : "#475569"
+            }}>
+              {t.status}
+            </span>
+            <h3 style={{ marginTop: 0, marginBottom: 8 }}>{t.name}</h3>
+            <p style={{ fontSize: "0.9rem", color: "#64748b", lineHeight: "1.4" }}>{t.description}</p>
+          </div>
         ))}
-      </div>
+      </section>
 
-      <br />
-      <hr />
-      <br />
-
-      <h2>Connection Details</h2>
-
-      <form onSubmit={saveProvider}>
-        <input
-          placeholder="Provider name"
-          value={providerName}
-          onChange={(e) => setProviderName(e.target.value)}
-          required
-        />
-
-        <br /><br />
-
-        <select value={providerType} onChange={(e) => setProviderType(e.target.value)}>
-          <option value="api">API</option>
-          <option value="csv_upload">CSV Upload</option>
-          <option value="manual">Manual</option>
-        </select>
-
-        <br /><br />
-
-        <select value={authType} onChange={(e) => setAuthType(e.target.value)}>
-          <option value="api_key">API Key</option>
-          <option value="username_key">Username + Key</option>
-          <option value="email_password">Email + Password</option>
-          <option value="api_hash">API Hash</option>
-          <option value="bearer_token">Bearer Token</option>
-          <option value="basic">Basic Auth</option>
-          <option value="none">No Auth / Public Endpoint</option>
-        </select>
-
-        <br /><br />
-
-        <input placeholder="Base URL" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
-        <br /><br />
-        <input placeholder="Login URL optional" value={loginUrl} onChange={(e) => setLoginUrl(e.target.value)} />
-        <br /><br />
-        <input placeholder="Fleet/current location URL" value={fleetUrl} onChange={(e) => setFleetUrl(e.target.value)} />
-        <br /><br />
-
-        {(authType === "username_key" || authType === "email_password" || authType === "basic") && (
-          <>
-            <input placeholder="Username / Email" value={username} onChange={(e) => setUsername(e.target.value)} />
-            <br /><br />
-            <input placeholder="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
-            <br /><br />
-          </>
-        )}
-
-        {(authType === "api_key" || authType === "username_key") && (
-          <>
-            <input placeholder="API Key" value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
-            <br /><br />
-          </>
-        )}
-
-        {authType === "api_hash" && (
-          <>
-            <input placeholder="API Hash" value={apiHash} onChange={(e) => setApiHash(e.target.value)} />
-            <br /><br />
-          </>
-        )}
-
-        {authType === "bearer_token" && (
-          <>
-            <input placeholder="Bearer Token" value={bearerToken} onChange={(e) => setBearerToken(e.target.value)} />
-            <br /><br />
-          </>
-        )}
-
-        <label>
-          Token expiry minutes
-          <br />
-          <input value={tokenExpiryMinutes} onChange={(e) => setTokenExpiryMinutes(e.target.value)} />
-        </label>
-
-        <br /><br />
-
-        <label>
-          <input
-            type="checkbox"
-            checked={tokenRefreshRequired}
-            onChange={(e) => setTokenRefreshRequired(e.target.checked)}
+      <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 32 }}>
+        <h2 style={{ marginTop: 0 }}>Connection Details</h2>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
+          <input 
+            placeholder="Provider Name (e.g. Bluetrax)" 
+            value={providerName} 
+            onChange={(e) => setProviderName(e.target.value)}
+            style={{ padding: 12, borderRadius: 6, border: "1px solid #cbd5e1" }}
           />
-          Token refresh required
-        </label>
-
-        <br /><br />
-
-        <label>
-          <input
-            type="checkbox"
-            checked={isNavaPulse}
-            onChange={(e) => setIsNavaPulse(e.target.checked)}
+          <input 
+            placeholder="API Key / Auth Token" 
+            value={apiKey} 
+            type="password"
+            onChange={(e) => setApiKey(e.target.value)}
+            style={{ padding: 12, borderRadius: 6, border: "1px solid #cbd5e1" }}
           />
-          Nava Pulse connection
-        </label>
-
-        <br /><br />
-
-        <h3>Field Mapping</h3>
-        <textarea
+        </div>
+        <textarea 
+          placeholder="Field Mapping JSON"
           value={fieldMapping}
           onChange={(e) => setFieldMapping(e.target.value)}
-          style={{ width: "100%", height: 180 }}
+          style={{ width: "100%", marginTop: 20, height: 120, padding: 12, borderRadius: 6, border: "1px solid #cbd5e1", fontFamily: "monospace" }}
         />
+        <button 
+          onClick={saveProvider}
+          style={{ 
+            marginTop: 24, 
+            padding: "12px 24px", 
+            background: "#0f172a", 
+            color: "white", 
+            border: "none", 
+            borderRadius: 6, 
+            fontWeight: "bold",
+            cursor: "pointer"
+          }}
+        >
+          Save Connection
+        </button>
+      </div>
 
-        <br /><br />
-
-        <button type="submit">Save Provider</button>
-      </form>
-
-      <br />
-      <hr />
-      <br />
-
-      <h2>Saved Providers</h2>
-
-      {providers.length === 0 ? (
-        <p>No tracking providers saved yet.</p>
-      ) : (
-        <table border={1} cellPadding={10}>
-          <thead>
-            <tr>
-              <th>Status</th>
-              <th>Provider</th>
-              <th>Auth</th>
-              <th>Fleet URL</th>
-              <th>Last Test</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {providers.map((provider) => (
-              <tr key={provider.id}>
-                <td>{provider.is_active ? "Active" : "Inactive"}</td>
-                <td>
-                  {provider.provider_name}
-                  {provider.is_nava_pulse && (
-                    <>
-                      <br />
-                      <strong>Nava Pulse</strong>
-                    </>
-                  )}
-                </td>
-                <td>{provider.auth_type}</td>
-                <td>{provider.fleet_url || "—"}</td>
-                <td>
-                  {provider.last_test_status || "not_tested"}
-                  <br />
-                  <small>{provider.last_test_message || ""}</small>
-                </td>
-                <td>
-                  <button onClick={() => testProvider(provider)}>Test Connection</button>{" "}
-                  <button onClick={() => toggleProvider(provider)}>
-                    {provider.is_active ? "Deactivate" : "Activate"}
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+      <section style={{ marginTop: 40 }}>
+        <h2>Active Tracking Connections</h2>
+        {providers.length === 0 ? <p>No connections configured yet.</p> : (
+           <div style={{ display: 'grid', gap: 10 }}>
+             {providers.map(p => (
+               <div key={p.id} style={{ padding: 15, border: '1px solid #ddd', borderRadius: 8, display: 'flex', justifyContent: 'space-between' }}>
+                 <div>
+                   <strong>{p.provider_name}</strong> {p.is_nava_pulse && <span style={{ color: '#0070f3' }}>(Nava Pulse)</span>}
+                 </div>
+                 <div>{p.is_active ? "🟢 Connected" : "⚪ Inactive"}</div>
+               </div>
+             ))}
+           </div>
+        )}
+      </section>
     </main>
   );
 }
