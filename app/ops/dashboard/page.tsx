@@ -70,15 +70,15 @@ export default function OpsDashboard() {
   }
 
   function marginForJourney(journey: any) {
-    const revenue = Number(journey.revenue || 0);
+    const revenueKes = Number(journey.revenue_kes || journey.revenue || 0);
     const fuelCost = totalFuelCostForJourney(journey.id);
     const expenseTotal = totalExpensesForJourney(journey.id);
     const totalCost = fuelCost + expenseTotal;
-    const margin = revenue - totalCost;
-    const marginPct = revenue > 0 ? (margin / revenue) * 100 : null;
+    const margin = revenueKes - totalCost;
+    const marginPct = revenueKes > 0 ? (margin / revenueKes) * 100 : null;
 
     return {
-      revenue,
+      revenueKes,
       fuelCost,
       expenseTotal,
       totalCost,
@@ -104,8 +104,11 @@ export default function OpsDashboard() {
   function isDuplicateFuel(fuel: any) {
     return (
       fuelLogs.filter((otherFuel) => {
-        const sameTruck = otherFuel.truck_text === fuel.truck_text;
-        const sameLiters = otherFuel.liters === fuel.liters;
+        const sameTruck =
+          (otherFuel.truck_text || "").toUpperCase() ===
+          (fuel.truck_text || "").toUpperCase();
+
+        const sameLiters = Number(otherFuel.liters || 0) === Number(fuel.liters || 0);
 
         const timeDiff =
           Math.abs(
@@ -117,6 +120,11 @@ export default function OpsDashboard() {
       }).length > 1
     );
   }
+
+  const activeJourneys = useMemo(
+    () => journeys.filter((journey) => journey.status === "active"),
+    [journeys]
+  );
 
   const unallocatedFuel = useMemo(
     () => fuelLogs.filter((fuel) => !fuel.journey_id),
@@ -139,7 +147,7 @@ export default function OpsDashboard() {
   );
 
   const varianceIssues = useMemo(() => {
-    return journeys
+    return activeJourneys
       .map((journey) => {
         const expected = Number(journey.expected_fuel_liters || 0);
         if (!expected) return null;
@@ -159,34 +167,32 @@ export default function OpsDashboard() {
         return null;
       })
       .filter(Boolean);
-  }, [journeys, fuelLogs]);
+  }, [activeJourneys, fuelLogs]);
 
   const lossMakingJourneys = useMemo(() => {
-    return journeys.filter((journey) => {
+    return activeJourneys.filter((journey) => {
       const m = marginForJourney(journey);
-      return m.revenue > 0 && m.margin < 0;
+      return m.revenueKes > 0 && m.margin < 0;
     });
-  }, [journeys, fuelLogs, expenses]);
+  }, [activeJourneys, fuelLogs, expenses]);
 
   const grouped = useMemo(() => {
     const map: any = {};
 
-    journeys
-      .filter((journey) => journey.status === "active")
-      .forEach((journey) => {
-        const client = journey.client_name || "NO CLIENT";
-        const route = `${journey.from_location || "—"} → ${
-          journey.to_location || "—"
-        }`;
+    activeJourneys.forEach((journey) => {
+      const client = journey.client_name || "NO CLIENT";
+      const route = `${journey.from_location || "—"} → ${
+        journey.to_location || "—"
+      }`;
 
-        if (!map[client]) map[client] = {};
-        if (!map[client][route]) map[client][route] = [];
+      if (!map[client]) map[client] = {};
+      if (!map[client][route]) map[client][route] = [];
 
-        map[client][route].push(journey);
-      });
+      map[client][route].push(journey);
+    });
 
     return map;
-  }, [journeys]);
+  }, [activeJourneys]);
 
   async function approveFuel(id: string) {
     await supabase
@@ -207,7 +213,7 @@ export default function OpsDashboard() {
   return (
     <main style={{ padding: 40 }}>
       <h1>Ops Command Center</h1>
-      <p>Fuel, tracking, expenses, and contribution margin.</p>
+      <p>Fuel, tracking, expenses, revenue, and contribution margin.</p>
 
       <h2>🚨 Nava Eye Alerts</h2>
 
@@ -243,13 +249,13 @@ export default function OpsDashboard() {
               <br />
               Route: {journey.from_location} → {journey.to_location}
               <br />
-              Revenue: {m.revenue.toLocaleString()}
+              Revenue: {m.revenueKes.toLocaleString()} KES
               <br />
               Fuel: {m.fuelCost.toLocaleString()} | Expenses:{" "}
               {m.expenseTotal.toLocaleString()}
               <br />
               <strong style={{ color: "red" }}>
-                Margin: {m.margin.toLocaleString()} (
+                Margin: {m.margin.toLocaleString()} KES (
                 {m.marginPct?.toFixed(1)}%)
               </strong>
             </div>
@@ -294,10 +300,14 @@ export default function OpsDashboard() {
               Expenses: {m.expenseTotal.toLocaleString()}
               <br />
               Revenue:{" "}
-              {m.revenue ? m.revenue.toLocaleString() : "Pending finance"}
+              {m.revenueKes
+                ? `${m.revenueKes.toLocaleString()} KES`
+                : "Pending finance"}
               <br />
               Margin:{" "}
-              {m.revenue ? m.margin.toLocaleString() : "Pending revenue"}
+              {m.revenueKes
+                ? `${m.margin.toLocaleString()} KES`
+                : "Pending revenue"}
             </div>
           );
         })
@@ -354,8 +364,8 @@ export default function OpsDashboard() {
                     let marginLabel = "Revenue pending";
                     let marginColor = "black";
 
-                    if (m.revenue > 0) {
-                      marginLabel = `${m.margin.toLocaleString()} (${m.marginPct?.toFixed(
+                    if (m.revenueKes > 0) {
+                      marginLabel = `${m.margin.toLocaleString()} KES (${m.marginPct?.toFixed(
                         1
                       )}%)`;
 
@@ -380,10 +390,17 @@ export default function OpsDashboard() {
                         {" | "}
                         Risk: {latest?.risk_level || "normal"}
                         <br />
+                        Loaded: {journey.loaded_quantity || 0} | Offloaded:{" "}
+                        {journey.offloaded_quantity || 0}
+                        <br />
+                        Rate: {journey.rate_currency || "KES"}{" "}
+                        {Number(journey.rate_amount || 0).toLocaleString()} /{" "}
+                        {(journey.rate_type || "per_unit").replace("per_", "")}
+                        <br />
                         Fuel Cost: {m.fuelCost.toLocaleString()} | Expenses:{" "}
                         {m.expenseTotal.toLocaleString()} | Revenue:{" "}
-                        {m.revenue
-                          ? m.revenue.toLocaleString()
+                        {m.revenueKes
+                          ? `${m.revenueKes.toLocaleString()} KES`
                           : "Pending finance"}
                         <br />
                         Margin:{" "}
