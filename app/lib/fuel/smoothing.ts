@@ -9,15 +9,15 @@ export function smoothFuelReadings(readings: any[]) {
     let count = 0;
 
     for (let j = i - windowSize; j <= i + windowSize; j++) {
-      if (readings[j]) {
-        sum += readings[j].fuel_level || 0;
+      if (readings[j] && readings[j].fuel_level != null) {
+        sum += readings[j].fuel_level;
         count++;
       }
     }
 
     smoothed.push({
       ...readings[i],
-      smoothed_fuel: sum / count,
+      smoothed_fuel: count > 0 ? sum / count : readings[i].fuel_level,
     });
   }
 
