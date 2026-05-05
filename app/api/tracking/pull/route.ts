@@ -1,32 +1,23 @@
 import { supabase } from "../../../../lib/supabase";
 import { NextResponse } from "next/server";
 
-// 🔥 normalize helper (fix spacing + casing issues)
-function normalize(val: any) {
-  return String(val || "")
-    .replace(/\s+/g, "")
-    .toUpperCase();
-}
-
 export async function GET() {
-  // 1. Fetch trucks + providers
   const { data: trucks, error: truckError } = await supabase
     .from("trucks")
     .select(`
-      id,
-      truck,
-      external_vehicle_id,
+      id, 
+      truck, 
+      external_vehicle_id, 
       tracking_providers (
-        fleet_url,
-        api_key,
+        fleet_url, 
+        api_key, 
         field_mapping
       )
-    `)
-    .not("tracking_provider_id", "is", null);
+    `);
 
   if (truckError) {
-    console.error("❌ DB ERROR:", truckError);
-    return NextResponse.json({ error: truckError.message }, { status: 500 });
+    console.error("DB ERROR:", truckError);
+    return NextResponse.json({ error: truckError.message });
   }
 
   const results = [];
@@ -36,13 +27,9 @@ export async function GET() {
       ? truck.tracking_providers[0]
       : truck.tracking_providers;
 
-    if (!provider || !provider.fleet_url) {
-      console.warn(`⚠️ Skipping ${truck.truck}: No provider`);
-      continue;
-    }
+    if (!provider || !provider.fleet_url) continue;
 
     try {
-      // 2. Fetch provider API
       const res = await fetch(provider.fleet_url, {
         headers: {
           Authorization: provider.api_key || "",
@@ -51,29 +38,21 @@ export async function GET() {
 
       const raw = await res.json();
 
-      // 🔥 DEBUG LOGGING (THIS IS WHAT WE ADDED)
-      console.log("🚨 RAW API RESPONSE:", JSON.stringify(raw).slice(0, 500));
+      // 🔥 PRINT DATA (VERY IMPORTANT)
+      console.log("BLUETRAX RESPONSE:", JSON.stringify(raw).slice(0, 500));
 
-      // 3. Normalize API structure
       const list = Array.isArray(raw)
         ? raw
         : raw.data?.vehicles || raw.data || [];
 
-      console.log("📦 LIST SAMPLE:", list?.[0]);
-      console.log("🚚 LOOKING FOR:", truck.external_vehicle_id);
+      const mapping = provider.field_mapping || {};
 
-      const mapping = provider.field_mapping || {
-        truck: "reg_no",
-        latitude: "lat",
-        longitude: "lng",
-        speed: "speed",
-        fuel_level: "fuel_level",
-        recorded_at: "time",
-      };
+      // 🔥 SMART MATCH (fix your problem)
+      const normalize = (v: any) =>
+        String(v || "")
+          .toLowerCase()
+          .replace(/[^a-z0-9]/g, "");
 
-      console.log("🧠 MAPPING:", mapping);
-
-      // 4. Match vehicle (normalized)
       const vehicle = list.find(
         (v: any) =>
           normalize(v[mapping.truck]) ===
@@ -81,40 +60,24 @@ export async function GET() {
       );
 
       if (!vehicle) {
-        console.warn(`❌ NO MATCH for ${truck.truck}`);
+        console.warn("NO MATCH FOUND FOR:", truck.external_vehicle_id);
         continue;
       }
 
-      console.log("✅ MATCH FOUND:", vehicle);
-
-      // 5. Insert into tracking_logs
-      const { error: logError } = await supabase
-        .from("tracking_logs")
-        .insert({
-          truck_id: truck.id,
-          latitude: vehicle[mapping.latitude],
-          longitude: vehicle[mapping.longitude],
-          speed: vehicle[mapping.speed] || 0,
-          fuel_level: vehicle[mapping.fuel_level] || null,
-          recorded_at:
-            vehicle[mapping.recorded_at] ||
-            new Date().toISOString(),
-        });
-
-      if (logError) throw logError;
-
-      results.push({
-        truck: truck.truck,
-        status: "success",
+      await supabase.from("tracking_logs").insert({
+        truck_id: truck.id,
+        latitude: vehicle[mapping.latitude],
+        longitude: vehicle[mapping.longitude],
+        speed: vehicle[mapping.speed] || 0,
+        fuel_level: vehicle[mapping.fuel_level] || null,
+        recorded_at:
+          vehicle[mapping.recorded_at] || new Date().toISOString(),
       });
+
+      results.push({ truck: truck.truck, status: "success" });
 
     } catch (err) {
-      console.error(`🔥 ERROR for ${truck.truck}:`, err);
-      results.push({
-        truck: truck.truck,
-        status: "error",
-        message: String(err),
-      });
+      console.error("ERROR:", err);
     }
   }
 
