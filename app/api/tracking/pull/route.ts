@@ -20,10 +20,7 @@ export async function GET() {
       .eq("is_active", true);
 
     if (providerError) {
-      return Response.json({
-        success: false,
-        error: providerError.message
-      });
+      return Response.json({ success: false, error: providerError.message });
     }
 
     // ============================================
@@ -34,10 +31,7 @@ export async function GET() {
       .select("*");
 
     if (truckError) {
-      return Response.json({
-        success: false,
-        error: truckError.message
-      });
+      return Response.json({ success: false, error: truckError.message });
     }
 
     let inserted: any[] = [];
@@ -47,14 +41,15 @@ export async function GET() {
     // ============================================
     for (const provider of providers || []) {
       try {
+        // Fetch Mapping for this specific provider
+        const mapping = provider.field_mapping || {};
+
         // ============================================
-        // 4. LOGIN HANDSHAKE (Universal)
+        // 4. UNIVERSAL LOGIN HANDSHAKE
         // ============================================
         const loginResponse = await fetch(provider.login_url, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             user_name: provider.username,
             key: provider.api_key
@@ -62,22 +57,14 @@ export async function GET() {
         });
 
         const loginData = await loginResponse.json();
-
-        console.log("PROVIDER LOGIN RESPONSE:", loginData);
-
-        const token =
-          loginData.token ||
-          loginData.access_token ||
-          loginData.data?.token ||
-          null;
+        const token = loginData.token || loginData.access_token || loginData.data?.token || null;
 
         if (!token) {
           inserted.push({
             provider: provider.provider_name,
             success: false,
             stage: "LOGIN",
-            error: "No token received",
-            raw_response: loginData
+            error: "No token received"
           });
           continue;
         }
@@ -87,23 +74,19 @@ export async function GET() {
         // ============================================
         const fleetResponse = await fetch(provider.fleet_url, {
           method: "POST",
-          headers: {
-            "Authorization": `Bearer ${token}`
-          },
+          headers: { "Authorization": `Bearer ${token}` },
           cache: "no-store"
         });
 
         const fleetData = await fleetResponse.json();
-
-        const vehicles = Array.isArray(fleetData)
-          ? fleetData
-          : fleetData?.data || [];
+        const vehicles = Array.isArray(fleetData) ? fleetData : fleetData?.data || [];
 
         // ============================================
-        // 6. PROCESS VEHICLES
+        // 6. PROCESS VEHICLES (TRUE UNIVERSALITY)
         // ============================================
         for (const vehicle of vehicles) {
-          const reg = vehicle.reg_no?.trim();
+          // Dynamic Mapping applied here
+          const reg = vehicle[mapping.truck]?.trim();
           if (!reg) continue;
 
           // ============================================
@@ -114,123 +97,94 @@ export async function GET() {
           );
 
           if (!matchedTruck) {
-            inserted.push({
-              truck: reg,
-              success: false,
-              stage: "MATCHING",
-              error: "Truck not found"
-            });
+            inserted.push({ truck: reg, success: false, stage: "MATCHING", error: "Not found" });
             continue;
           }
 
           // ============================================
-          // 8. UPSERT TRACKING LOG (Duplicate Prevention via onConflict)
+          // 8. UPSERT TRACKING LOG
           // ============================================
           const { error: upsertError } = await supabase
             .from("tracking_logs")
             .upsert({
               truck_id: matchedTruck.id,
-              latitude: vehicle.latitude,
-              longitude: vehicle.longitude,
-              speed: vehicle.speed,
-              fuel_level: vehicle.fuellevel || null,
-              recorded_at: vehicle.fixtime
+              latitude: vehicle[mapping.latitude],
+              longitude: vehicle[mapping.longitude],
+              speed: vehicle[mapping.speed],
+              fuel_level: vehicle[mapping.fuel_level] || null,
+              recorded_at: vehicle[mapping.recorded_at]
             }, {
               onConflict: "truck_id,recorded_at"
             });
 
           // =========================================
-          // 9. SMART LOW FUEL ALERT ENGINE
+          // 9. SMART AGNOSTIC ALERT ENGINE
           // =========================================
-          if (
-            vehicle.fuellevel !== undefined &&
-            vehicle.fuellevel !== null
-          ) {
-            const fuelLevel = Number(vehicle.fuellevel);
+          const currentFuel = vehicle[mapping.fuel_level] !== undefined ? Number(vehicle[mapping.fuel_level]) : null;
+          const currentSpeed = vehicle[mapping.speed] !== undefined ? Number(vehicle[mapping.speed]) : 0;
 
+          if (currentFuel !== null) {
+            
             // -------------------------------------
-            // LOW FUEL ALERT
+            // LOW FUEL ALERT (Cooldown: 6 Hours)
             // -------------------------------------
-            if (fuelLevel < 20) {
-              // CHECK FOR RECENT ALERT (6-hour window)
+            if (currentFuel < 20) {
               const { data: existingAlert } = await supabase
                 .from("tracking_alerts")
-                .select("id, created_at")
+                .select("id")
                 .eq("truck_id", matchedTruck.id)
                 .eq("alert_type", "low_fuel")
-                .gte(
-                  "created_at",
-                  new Date(Date.now() - 1000 * 60 * 60 * 6).toISOString()
-                )
+                .gte("created_at", new Date(Date.now() - 1000 * 60 * 60 * 6).toISOString())
                 .limit(1)
                 .single();
 
-              // ONLY INSERT IF NO RECENT ALERT
               if (!existingAlert) {
                 let severity = "medium";
+                if (currentFuel < 10) severity = "critical";
+                else if (currentFuel < 15) severity = "high";
 
-                if (fuelLevel < 10) {
-                  severity = "critical";
-                } else if (fuelLevel < 15) {
-                  severity = "high";
-                }
-
-                await supabase
-                  .from("tracking_alerts")
-                  .insert({
-                    truck_id: matchedTruck.id,
-                    alert_type: "low_fuel",
-                    severity,
-                    title: "Low Fuel Alert",
-                    description: `${matchedTruck.truck || reg} fuel level is at ${fuelLevel}%`,
-                    metadata: {
-                      fuel_level: fuelLevel,
-                      provider: provider.provider_name,
-                      location: {
-                        lat: vehicle.latitude,
-                        lng: vehicle.longitude
-                      }
-                    },
-                    status: "active"
-                  });
+                await supabase.from("tracking_alerts").insert({
+                  truck_id: matchedTruck.id,
+                  alert_type: "low_fuel",
+                  severity,
+                  title: "Low Fuel Alert",
+                  description: `${matchedTruck.truck || reg} fuel is at ${currentFuel}%`,
+                  metadata: {
+                    fuel_level: currentFuel,
+                    location: { lat: vehicle[mapping.latitude], lng: vehicle[mapping.longitude] }
+                  },
+                  status: "active"
+                });
               }
             }
 
             // -------------------------------------
-            // CRITICAL FUEL THEFT DETECTION
+            // FUEL THEFT DETECTION (Cooldown: 12 Hours)
             // -------------------------------------
-            if (
-              fuelLevel < 10 &&
-              Number(vehicle.speed || 0) < 5
-            ) {
+            if (currentFuel < 10 && currentSpeed < 5) {
               const { data: theftAlert } = await supabase
                 .from("tracking_alerts")
                 .select("id")
                 .eq("truck_id", matchedTruck.id)
                 .eq("alert_type", "possible_fuel_theft")
-                .gte(
-                  "created_at",
-                  new Date(Date.now() - 1000 * 60 * 60 * 12).toISOString()
-                )
+                .gte("created_at", new Date(Date.now() - 1000 * 60 * 60 * 12).toISOString())
                 .limit(1)
                 .single();
 
               if (!theftAlert) {
-                await supabase
-                  .from("tracking_alerts")
-                  .insert({
-                    truck_id: matchedTruck.id,
-                    alert_type: "possible_fuel_theft",
-                    severity: "critical",
-                    title: "Possible Fuel Theft",
-                    description: `${matchedTruck.truck || reg} has critically low fuel while stationary`,
-                    metadata: {
-                      fuel_level: fuelLevel,
-                      speed: vehicle.speed,
-                      provider: provider.provider_name
-                    },
-                    status: "active"
-                  });
+                await supabase.from("tracking_alerts").insert({
+                  truck_id: matchedTruck.id,
+                  alert_type: "possible_fuel_theft",
+                  severity: "critical",
+                  title: "Possible Fuel Theft",
+                  description: `${matchedTruck.truck || reg} critical fuel drop while stationary`,
+                  metadata: {
+                    fuel_level: currentFuel,
+                    speed: currentSpeed,
+                    location: { lat: vehicle[mapping.latitude], lng: vehicle[mapping.longitude] }
+                  },
+                  status: "active"
+                });
               }
             }
           }
@@ -245,25 +199,19 @@ export async function GET() {
         inserted.push({
           provider: provider.provider_name,
           success: false,
-          stage: "PROVIDER",
+          stage: "PROVIDER_FAIL",
           error: providerError.message
         });
       }
     }
 
-    // ============================================
-    // 10. RETURN RESULTS
-    // ============================================
     return Response.json({
       success: true,
-      inserted_count: inserted.filter((i) => i.success).length,
+      processed: inserted.length,
       inserted
     });
 
   } catch (err: any) {
-    return Response.json({
-      success: false,
-      error: err.message
-    });
+    return Response.json({ success: false, error: err.message });
   }
 }
