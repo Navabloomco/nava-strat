@@ -49,7 +49,7 @@ export async function GET() {
     let inserted: any[] = [];
 
     // ============================================
-    // 3. LOOP THROUGH PROVIDERS
+    // 3. LOOP PROVIDERS
     // ============================================
 
     for (const provider of providers || []) {
@@ -159,6 +159,44 @@ export async function GET() {
               onConflict: "truck_id,recorded_at"
             });
 
+          // ============================================
+          // 9. SIMPLE LOW FUEL ALERT
+          // ============================================
+
+          if (
+            vehicle.fuellevel !== undefined &&
+            vehicle.fuellevel !== null &&
+            Number(vehicle.fuellevel) < 20
+          ) {
+
+            await supabase
+              .from("tracking_alerts")
+              .insert({
+
+                truck_id: matchedTruck.id,
+
+                alert_type: "low_fuel",
+
+                severity: "high",
+
+                title: "Low Fuel Level",
+
+                description:
+                  `${reg} fuel level dropped below 20%`,
+
+                metadata: {
+                  fuel_level: vehicle.fuellevel,
+                  speed: vehicle.speed,
+                  location: {
+                    latitude: vehicle.latitude,
+                    longitude: vehicle.longitude
+                  }
+                }
+
+              });
+
+          }
+
           inserted.push({
             truck: reg,
             success: !error,
@@ -181,7 +219,7 @@ export async function GET() {
     }
 
     // ============================================
-    // 9. RETURN RESULTS
+    // 10. RETURN RESULTS
     // ============================================
 
     return Response.json({
