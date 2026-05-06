@@ -20,59 +20,79 @@ export async function GET() {
     if (providerError) return Response.json({ success: false, error: providerError.message });
 
     // 2. GET CURRENT KNOWN TRUCKS
-    const { data: trucks } = await supabase.from("trucks").select("*");
+    const { data: trucksData } = await supabase.from("trucks").select("*");
+    let trucks = trucksData || [];
 
     let results: any[] = [];
 
-    // 3. LOOP PROVIDERS
+    // 3. LOOP PROVIDERS (ISOLATION)
     for (const provider of providers || []) {
       let vehiclesProcessed = 0;
       
       try {
         const mapping = provider.field_mapping || {};
 
-        // 4. UNIVERSAL LOGIN
+        // 4. UNIVERSAL LOGIN WITH JSON VALIDATION
         const loginResponse = await fetch(provider.login_url, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ user_name: provider.username, key: provider.api_key })
         });
 
-        const loginData = await loginResponse.json();
+        let loginData: any = {};
+        try {
+          loginData = await loginResponse.json();
+        } catch {
+          loginData = { error: "Invalid JSON from provider login" };
+        }
+
         const token = loginData.token || loginData.access_token || loginData.data?.token || null;
 
         if (!token) {
-          // LOG LOGIN FAILURE
           await supabase.from("tracking_sync_logs").insert({
             provider_id: provider.id,
             provider_name: provider.provider_name,
             status: "error",
             stage: "LOGIN",
-            message: loginData.message || "No token received",
+            message: loginData.error || loginData.message || "No token received",
             vehicles_processed: 0
           });
-
           results.push({ provider: provider.provider_name, success: false, stage: "LOGIN", error: "Auth Failed" });
           continue;
         }
 
-        // 5. FETCH LIVE FLEET
+        // 5. FETCH LIVE FLEET WITH JSON VALIDATION
         const fleetResponse = await fetch(provider.fleet_url, {
           method: "POST",
           headers: { "Authorization": `Bearer ${token}` },
           cache: "no-store"
         });
 
-        const fleetData = await fleetResponse.json();
+        let fleetData: any = {};
+        try {
+          fleetData = await fleetResponse.json();
+        } catch {
+          fleetData = { error: "Invalid JSON from fleet fetch" };
+        }
+
         const vehicles = Array.isArray(fleetData) ? fleetData : fleetData?.data || [];
 
         // 6. PROCESS VEHICLES
         for (const vehicle of vehicles) {
           const reg = vehicle[mapping.truck]?.trim();
-          if (!reg) continue;
+          
+          // FIX 3: REQUIRED VALIDATION
+          if (
+            !reg || 
+            !vehicle[mapping.latitude] || 
+            !vehicle[mapping.longitude] || 
+            !vehicle[mapping.recorded_at]
+          ) {
+            continue; 
+          }
 
           // 7. MATCH OR AUTO-CREATE TRUCK
-          let matchedTruck = trucks?.find(t => t.external_vehicle_id?.trim() === reg);
+          let matchedTruck = trucks.find(t => t.external_vehicle_id?.trim() === reg);
           
           if (!matchedTruck) {
             const { data: newTruck } = await supabase
@@ -88,7 +108,8 @@ export async function GET() {
             
             if (newTruck) {
               matchedTruck = newTruck;
-              trucks?.push(newTruck); 
+              // FIX 1: AVOID MEMORY MUTATION
+              trucks = [...trucks, newTruck];
             }
           }
 
@@ -120,7 +141,6 @@ export async function GET() {
         results.push({ provider: provider.provider_name, success: true, processed: vehiclesProcessed });
 
       } catch (err: any) {
-        // LOG SYSTEM CRASH FOR THIS PROVIDER
         await supabase.from("tracking_sync_logs").insert({
           provider_id: provider.id,
           provider_name: provider.provider_name,
@@ -129,7 +149,6 @@ export async function GET() {
           message: err.message,
           vehicles_processed: vehiclesProcessed
         });
-
         results.push({ provider: provider.provider_name, success: false, error: err.message });
       }
     }
