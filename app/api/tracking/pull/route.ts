@@ -10,115 +10,185 @@ const supabase = createClient(
 );
 
 export async function GET() {
+
   try {
 
-    // =========================
-    // 1. GET PROVIDERS
-    // =========================
-    const { data: providers } = await supabase
-      .from("tracking_providers")
-      .select("*")
-      .eq("is_active", true);
+    // ============================================
+    // 1. GET ACTIVE PROVIDERS
+    // ============================================
 
-    // =========================
+    const { data: providers, error: providerError } =
+      await supabase
+        .from("tracking_providers")
+        .select("*")
+        .eq("is_active", true);
+
+    if (providerError) {
+      return Response.json({
+        success: false,
+        error: providerError.message
+      });
+    }
+
+    // ============================================
     // 2. GET TRUCKS
-    // =========================
-    const { data: trucks } = await supabase
-      .from("trucks")
-      .select("*");
+    // ============================================
 
-    let inserted = [];
+    const { data: trucks, error: truckError } =
+      await supabase
+        .from("trucks")
+        .select("*");
+
+    if (truckError) {
+      return Response.json({
+        success: false,
+        error: truckError.message
+      });
+    }
+
+    let inserted: any[] = [];
+
+    // ============================================
+    // 3. LOOP THROUGH PROVIDERS
+    // ============================================
 
     for (const provider of providers || []) {
 
-      // =========================
-      // 3. LOGIN
-      // =========================
-      const loginResponse = await fetch(
-        provider.login_url,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            user_name: provider.username,
-            key: provider.api_key
-          }),
-          cache: "no-store"
-        }
-      );
+      try {
 
-      const loginData = await loginResponse.json();
+        // ============================================
+        // 4. LOGIN TO PROVIDER
+        // ============================================
 
-      if (!loginData.token) {
-        continue;
-      }
-
-      // =========================
-      // 4. FETCH FLEET
-      // =========================
-      const fleetResponse = await fetch(
-        provider.fleet_url,
-        {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${loginData.token}`
-          },
-          cache: "no-store"
-        }
-      );
-
-      const fleetData = await fleetResponse.json();
-
-      const vehicles = Array.isArray(fleetData)
-        ? fleetData
-        : fleetData?.data || [];
-
-      // =========================
-      // 5. LOOP VEHICLES
-      // =========================
-      for (const vehicle of vehicles) {
-
-        const reg = vehicle.reg_no?.trim();
-
-        if (!reg) continue;
-
-        // MATCH TRUCK
-        const matchedTruck = trucks?.find(
-          (t: any) =>
-            t.external_vehicle_id?.trim() === reg
+        const loginResponse = await fetch(
+          provider.login_url,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              user_name: provider.username,
+              key: provider.api_key
+            }),
+            cache: "no-store"
+          }
         );
 
-        if (!matchedTruck) continue;
+        const loginData = await loginResponse.json();
 
-        // =========================
-        // 6. INSERT TRACKING LOG
-        // =========================
-        const { error } = await supabase
-          .from("tracking_logs")
-          .insert({
-            truck_id: matchedTruck.id,
-            latitude: vehicle.latitude,
-            longitude: vehicle.longitude,
-            speed: vehicle.speed,
-            fuel_level: vehicle.fuellevel || null,
-            recorded_at: vehicle.fixtime
+        if (!loginData.token) {
+
+          inserted.push({
+            provider: provider.provider_name,
+            success: false,
+            stage: "LOGIN",
+            error: "No token received"
           });
 
+          continue;
+        }
+
+        // ============================================
+        // 5. FETCH LIVE FLEET
+        // ============================================
+
+        const fleetResponse = await fetch(
+          provider.fleet_url,
+          {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${loginData.token}`
+            },
+            cache: "no-store"
+          }
+        );
+
+        const fleetData = await fleetResponse.json();
+
+        const vehicles = Array.isArray(fleetData)
+          ? fleetData
+          : fleetData?.data || [];
+
+        // ============================================
+        // 6. PROCESS VEHICLES
+        // ============================================
+
+        for (const vehicle of vehicles) {
+
+          const reg =
+            vehicle.reg_no?.trim();
+
+          if (!reg) continue;
+
+          // ============================================
+          // 7. MATCH TRUCK
+          // ============================================
+
+          const matchedTruck = trucks?.find(
+            (t: any) =>
+              t.external_vehicle_id?.trim() === reg
+          );
+
+          if (!matchedTruck) {
+
+            inserted.push({
+              truck: reg,
+              success: false,
+              stage: "MATCHING",
+              error: "Truck not found"
+            });
+
+            continue;
+          }
+
+          // ============================================
+          // 8. UPSERT TRACKING LOG
+          // ============================================
+
+          const { error } = await supabase
+            .from("tracking_logs")
+            .upsert({
+              truck_id: matchedTruck.id,
+              latitude: vehicle.latitude,
+              longitude: vehicle.longitude,
+              speed: vehicle.speed,
+              fuel_level: vehicle.fuellevel || null,
+              recorded_at: vehicle.fixtime
+            }, {
+              onConflict: "truck_id,recorded_at"
+            });
+
+          inserted.push({
+            truck: reg,
+            success: !error,
+            error: error?.message || null
+          });
+
+        }
+
+      } catch (providerError: any) {
+
         inserted.push({
-          truck: reg,
-          success: !error,
-          error: error?.message || null
+          provider: provider.provider_name,
+          success: false,
+          stage: "PROVIDER",
+          error: providerError.message
         });
 
       }
 
     }
 
+    // ============================================
+    // 9. RETURN RESULTS
+    // ============================================
+
     return Response.json({
       success: true,
-      inserted_count: inserted.length,
+      inserted_count: inserted.filter(
+        (i) => i.success
+      ).length,
       inserted
     });
 
@@ -130,4 +200,5 @@ export async function GET() {
     });
 
   }
+
 }
