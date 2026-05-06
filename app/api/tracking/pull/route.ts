@@ -48,7 +48,7 @@ export async function GET() {
     for (const provider of providers || []) {
       try {
         // ============================================
-        // 4. UPDATED LOGIN BLOCK (BLUETRAX / UNIVERSAL)
+        // 4. LOGIN HANDSHAKE (Universal)
         // ============================================
         const loginResponse = await fetch(provider.login_url, {
           method: "POST",
@@ -63,7 +63,7 @@ export async function GET() {
 
         const loginData = await loginResponse.json();
 
-        console.log("BLUETRAX LOGIN RESPONSE:", loginData);
+        console.log("PROVIDER LOGIN RESPONSE:", loginData);
 
         const token =
           loginData.token ||
@@ -79,7 +79,6 @@ export async function GET() {
             error: "No token received",
             raw_response: loginData
           });
-
           continue;
         }
 
@@ -125,7 +124,7 @@ export async function GET() {
           }
 
           // ============================================
-          // 8. UPSERT TRACKING LOG
+          // 8. UPSERT TRACKING LOG (Duplicate Prevention via onConflict)
           // ============================================
           const { error: upsertError } = await supabase
             .from("tracking_logs")
@@ -140,35 +139,100 @@ export async function GET() {
               onConflict: "truck_id,recorded_at"
             });
 
-          // ============================================
-          // 9. LOW FUEL ALERT LOGIC
-          // ============================================
+          // =========================================
+          // 9. SMART LOW FUEL ALERT ENGINE
+          // =========================================
           if (
             vehicle.fuellevel !== undefined &&
-            vehicle.fuellevel !== null &&
-            Number(vehicle.fuellevel) < 100
+            vehicle.fuellevel !== null
           ) {
-            const { data: alertData, error: alertError } = await supabase
-              .from("tracking_alerts")
-              .insert({
-                truck_id: matchedTruck.id,
-                alert_type: "low_fuel",
-                severity: "high",
-                title: "Low Fuel Level",
-                description: `Fuel level dropped below threshold for ${vehicle.reg_no}`,
-                metadata: {
-                  fuel_level: vehicle.fuellevel,
-                  latitude: vehicle.latitude,
-                  longitude: vehicle.longitude
-                },
-                status: "active"
-              })
-              .select();
+            const fuelLevel = Number(vehicle.fuellevel);
 
-            console.log("ALERT INSERT RESULT:", {
-              alertData,
-              alertError
-            });
+            // -------------------------------------
+            // LOW FUEL ALERT
+            // -------------------------------------
+            if (fuelLevel < 20) {
+              // CHECK FOR RECENT ALERT (6-hour window)
+              const { data: existingAlert } = await supabase
+                .from("tracking_alerts")
+                .select("id, created_at")
+                .eq("truck_id", matchedTruck.id)
+                .eq("alert_type", "low_fuel")
+                .gte(
+                  "created_at",
+                  new Date(Date.now() - 1000 * 60 * 60 * 6).toISOString()
+                )
+                .limit(1)
+                .single();
+
+              // ONLY INSERT IF NO RECENT ALERT
+              if (!existingAlert) {
+                let severity = "medium";
+
+                if (fuelLevel < 10) {
+                  severity = "critical";
+                } else if (fuelLevel < 15) {
+                  severity = "high";
+                }
+
+                await supabase
+                  .from("tracking_alerts")
+                  .insert({
+                    truck_id: matchedTruck.id,
+                    alert_type: "low_fuel",
+                    severity,
+                    title: "Low Fuel Alert",
+                    description: `${matchedTruck.truck || reg} fuel level is at ${fuelLevel}%`,
+                    metadata: {
+                      fuel_level: fuelLevel,
+                      provider: provider.provider_name,
+                      location: {
+                        lat: vehicle.latitude,
+                        lng: vehicle.longitude
+                      }
+                    },
+                    status: "active"
+                  });
+              }
+            }
+
+            // -------------------------------------
+            // CRITICAL FUEL THEFT DETECTION
+            // -------------------------------------
+            if (
+              fuelLevel < 10 &&
+              Number(vehicle.speed || 0) < 5
+            ) {
+              const { data: theftAlert } = await supabase
+                .from("tracking_alerts")
+                .select("id")
+                .eq("truck_id", matchedTruck.id)
+                .eq("alert_type", "possible_fuel_theft")
+                .gte(
+                  "created_at",
+                  new Date(Date.now() - 1000 * 60 * 60 * 12).toISOString()
+                )
+                .limit(1)
+                .single();
+
+              if (!theftAlert) {
+                await supabase
+                  .from("tracking_alerts")
+                  .insert({
+                    truck_id: matchedTruck.id,
+                    alert_type: "possible_fuel_theft",
+                    severity: "critical",
+                    title: "Possible Fuel Theft",
+                    description: `${matchedTruck.truck || reg} has critically low fuel while stationary`,
+                    metadata: {
+                      fuel_level: fuelLevel,
+                      speed: vehicle.speed,
+                      provider: provider.provider_name
+                    },
+                    status: "active"
+                  });
+              }
+            }
           }
 
           inserted.push({
