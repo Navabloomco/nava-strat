@@ -11,67 +11,40 @@ const supabase = createClient(
 
 export async function GET() {
   try {
-    // ============================================
     // 1. GET ACTIVE PROVIDERS
-    // ============================================
     const { data: providers, error: providerError } = await supabase
       .from("tracking_providers")
       .select("*")
       .eq("is_active", true);
 
-    if (providerError) {
-      return Response.json({ success: false, error: providerError.message });
-    }
+    if (providerError) return Response.json({ success: false, error: providerError.message });
 
-    // ============================================
-    // 2. GET TRUCKS
-    // ============================================
-    const { data: trucks, error: truckError } = await supabase
-      .from("trucks")
-      .select("*");
-
-    if (truckError) {
-      return Response.json({ success: false, error: truckError.message });
-    }
+    // 2. GET CURRENT KNOWN TRUCKS
+    const { data: trucks } = await supabase.from("trucks").select("*");
 
     let inserted: any[] = [];
 
-    // ============================================
     // 3. LOOP PROVIDERS
-    // ============================================
     for (const provider of providers || []) {
       try {
-        // Fetch Mapping for this specific provider
         const mapping = provider.field_mapping || {};
 
-        // ============================================
-        // 4. UNIVERSAL LOGIN HANDSHAKE
-        // ============================================
+        // 4. UNIVERSAL LOGIN
         const loginResponse = await fetch(provider.login_url, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            user_name: provider.username,
-            key: provider.api_key
-          })
+          body: JSON.stringify({ user_name: provider.username, key: provider.api_key })
         });
 
         const loginData = await loginResponse.json();
         const token = loginData.token || loginData.access_token || loginData.data?.token || null;
 
         if (!token) {
-          inserted.push({
-            provider: provider.provider_name,
-            success: false,
-            stage: "LOGIN",
-            error: "No token received"
-          });
+          inserted.push({ provider: provider.provider_name, success: false, stage: "LOGIN", error: "No token received" });
           continue;
         }
 
-        // ============================================
         // 5. FETCH LIVE FLEET
-        // ============================================
         const fleetResponse = await fetch(provider.fleet_url, {
           method: "POST",
           headers: { "Authorization": `Bearer ${token}` },
@@ -81,136 +54,111 @@ export async function GET() {
         const fleetData = await fleetResponse.json();
         const vehicles = Array.isArray(fleetData) ? fleetData : fleetData?.data || [];
 
-        // ============================================
-        // 6. PROCESS VEHICLES (TRUE UNIVERSALITY)
-        // ============================================
+        // 6. PROCESS VEHICLES
         for (const vehicle of vehicles) {
-          // Dynamic Mapping applied here
           const reg = vehicle[mapping.truck]?.trim();
           if (!reg) continue;
 
-          // ============================================
-          // 7. MATCH TRUCK
-          // ============================================
-          const matchedTruck = trucks?.find(
-            (t: any) => t.external_vehicle_id?.trim() === reg
-          );
+          // 7. MATCH OR AUTO-CREATE TRUCK
+          const matchedTruck = trucks?.find(t => t.external_vehicle_id?.trim() === reg);
+          let finalTruck = matchedTruck;
 
           if (!matchedTruck) {
-            inserted.push({ truck: reg, success: false, stage: "MATCHING", error: "Not found" });
-            continue;
+            const { data: newTruck, error: truckCreateError } = await supabase
+              .from("trucks")
+              .insert({
+                truck: reg,
+                registration_number: reg,
+                external_vehicle_id: reg,
+                tracking_provider_id: provider.id,
+                status: "active"
+              })
+              .select()
+              .single();
+
+            if (truckCreateError || !newTruck) {
+              inserted.push({ truck: reg, success: false, stage: "AUTO_IMPORT", error: truckCreateError?.message || "Failed to auto-create" });
+              continue;
+            }
+
+            finalTruck = newTruck;
+            // Add to local list so we don't try to auto-create the same truck again in this loop
+            trucks?.push(newTruck); 
+
+            inserted.push({ truck: reg, success: true, stage: "AUTO_IMPORT", message: "Truck auto-imported" });
           }
 
-          // ============================================
           // 8. UPSERT TRACKING LOG
-          // ============================================
           const { error: upsertError } = await supabase
             .from("tracking_logs")
             .upsert({
-              truck_id: matchedTruck.id,
+              truck_id: finalTruck.id,
               latitude: vehicle[mapping.latitude],
               longitude: vehicle[mapping.longitude],
               speed: vehicle[mapping.speed],
               fuel_level: vehicle[mapping.fuel_level] || null,
               recorded_at: vehicle[mapping.recorded_at]
-            }, {
-              onConflict: "truck_id,recorded_at"
-            });
+            }, { onConflict: "truck_id,recorded_at" });
 
-          // =========================================
-          // 9. SMART AGNOSTIC ALERT ENGINE
-          // =========================================
+          // 9. SMART ALERT ENGINE (Using finalTruck.id)
           const currentFuel = vehicle[mapping.fuel_level] !== undefined ? Number(vehicle[mapping.fuel_level]) : null;
           const currentSpeed = vehicle[mapping.speed] !== undefined ? Number(vehicle[mapping.speed]) : 0;
 
           if (currentFuel !== null) {
-            
-            // -------------------------------------
-            // LOW FUEL ALERT (Cooldown: 6 Hours)
-            // -------------------------------------
             if (currentFuel < 20) {
               const { data: existingAlert } = await supabase
                 .from("tracking_alerts")
                 .select("id")
-                .eq("truck_id", matchedTruck.id)
+                .eq("truck_id", finalTruck.id)
                 .eq("alert_type", "low_fuel")
                 .gte("created_at", new Date(Date.now() - 1000 * 60 * 60 * 6).toISOString())
-                .limit(1)
-                .single();
+                .limit(1).single();
 
               if (!existingAlert) {
-                let severity = "medium";
-                if (currentFuel < 10) severity = "critical";
-                else if (currentFuel < 15) severity = "high";
-
+                let severity = currentFuel < 10 ? "critical" : (currentFuel < 15 ? "high" : "medium");
                 await supabase.from("tracking_alerts").insert({
-                  truck_id: matchedTruck.id,
+                  truck_id: finalTruck.id,
                   alert_type: "low_fuel",
                   severity,
                   title: "Low Fuel Alert",
-                  description: `${matchedTruck.truck || reg} fuel is at ${currentFuel}%`,
-                  metadata: {
-                    fuel_level: currentFuel,
-                    location: { lat: vehicle[mapping.latitude], lng: vehicle[mapping.longitude] }
-                  },
+                  description: `${finalTruck.truck} fuel level is at ${currentFuel}%`,
+                  metadata: { fuel_level: currentFuel, location: { lat: vehicle[mapping.latitude], lng: vehicle[mapping.longitude] } },
                   status: "active"
                 });
               }
             }
 
-            // -------------------------------------
-            // FUEL THEFT DETECTION (Cooldown: 12 Hours)
-            // -------------------------------------
             if (currentFuel < 10 && currentSpeed < 5) {
               const { data: theftAlert } = await supabase
                 .from("tracking_alerts")
                 .select("id")
-                .eq("truck_id", matchedTruck.id)
+                .eq("truck_id", finalTruck.id)
                 .eq("alert_type", "possible_fuel_theft")
                 .gte("created_at", new Date(Date.now() - 1000 * 60 * 60 * 12).toISOString())
-                .limit(1)
-                .single();
+                .limit(1).single();
 
               if (!theftAlert) {
                 await supabase.from("tracking_alerts").insert({
-                  truck_id: matchedTruck.id,
+                  truck_id: finalTruck.id,
                   alert_type: "possible_fuel_theft",
                   severity: "critical",
                   title: "Possible Fuel Theft",
-                  description: `${matchedTruck.truck || reg} critical fuel drop while stationary`,
-                  metadata: {
-                    fuel_level: currentFuel,
-                    speed: currentSpeed,
-                    location: { lat: vehicle[mapping.latitude], lng: vehicle[mapping.longitude] }
-                  },
+                  description: `${finalTruck.truck} has critically low fuel while stationary`,
+                  metadata: { fuel_level: currentFuel, speed: currentSpeed },
                   status: "active"
                 });
               }
             }
           }
 
-          inserted.push({
-            truck: reg,
-            success: !upsertError,
-            error: upsertError?.message || null
-          });
+          inserted.push({ truck: reg, success: !upsertError, error: upsertError?.message || null });
         }
       } catch (providerError: any) {
-        inserted.push({
-          provider: provider.provider_name,
-          success: false,
-          stage: "PROVIDER_FAIL",
-          error: providerError.message
-        });
+        inserted.push({ provider: provider.provider_name, success: false, stage: "PROVIDER", error: providerError.message });
       }
     }
 
-    return Response.json({
-      success: true,
-      processed: inserted.length,
-      inserted
-    });
-
+    return Response.json({ success: true, processed: inserted.length, inserted });
   } catch (err: any) {
     return Response.json({ success: false, error: err.message });
   }
