@@ -22,10 +22,12 @@ export async function GET() {
     // 2. GET CURRENT KNOWN TRUCKS
     const { data: trucks } = await supabase.from("trucks").select("*");
 
-    let inserted: any[] = [];
+    let results: any[] = [];
 
     // 3. LOOP PROVIDERS
     for (const provider of providers || []) {
+      let vehiclesProcessed = 0;
+      
       try {
         const mapping = provider.field_mapping || {};
 
@@ -40,7 +42,17 @@ export async function GET() {
         const token = loginData.token || loginData.access_token || loginData.data?.token || null;
 
         if (!token) {
-          inserted.push({ provider: provider.provider_name, success: false, stage: "LOGIN", error: "No token received" });
+          // LOG LOGIN FAILURE
+          await supabase.from("tracking_sync_logs").insert({
+            provider_id: provider.id,
+            provider_name: provider.provider_name,
+            status: "error",
+            stage: "LOGIN",
+            message: loginData.message || "No token received",
+            vehicles_processed: 0
+          });
+
+          results.push({ provider: provider.provider_name, success: false, stage: "LOGIN", error: "Auth Failed" });
           continue;
         }
 
@@ -60,11 +72,10 @@ export async function GET() {
           if (!reg) continue;
 
           // 7. MATCH OR AUTO-CREATE TRUCK
-          const matchedTruck = trucks?.find(t => t.external_vehicle_id?.trim() === reg);
-          let finalTruck = matchedTruck;
-
+          let matchedTruck = trucks?.find(t => t.external_vehicle_id?.trim() === reg);
+          
           if (!matchedTruck) {
-            const { data: newTruck, error: truckCreateError } = await supabase
+            const { data: newTruck } = await supabase
               .from("trucks")
               .insert({
                 truck: reg,
@@ -73,26 +84,18 @@ export async function GET() {
                 tracking_provider_id: provider.id,
                 status: "active"
               })
-              .select()
-              .single();
-
-            if (truckCreateError || !newTruck) {
-              inserted.push({ truck: reg, success: false, stage: "AUTO_IMPORT", error: truckCreateError?.message || "Failed to auto-create" });
-              continue;
+              .select().single();
+            
+            if (newTruck) {
+              matchedTruck = newTruck;
+              trucks?.push(newTruck); 
             }
-
-            finalTruck = newTruck;
-            // Add to local list so we don't try to auto-create the same truck again in this loop
-            trucks?.push(newTruck); 
-
-            inserted.push({ truck: reg, success: true, stage: "AUTO_IMPORT", message: "Truck auto-imported" });
           }
 
-          // 8. UPSERT TRACKING LOG
-          const { error: upsertError } = await supabase
-            .from("tracking_logs")
-            .upsert({
-              truck_id: finalTruck.id,
+          if (matchedTruck) {
+            // 8. UPSERT LOG
+            await supabase.from("tracking_logs").upsert({
+              truck_id: matchedTruck.id,
               latitude: vehicle[mapping.latitude],
               longitude: vehicle[mapping.longitude],
               speed: vehicle[mapping.speed],
@@ -100,65 +103,38 @@ export async function GET() {
               recorded_at: vehicle[mapping.recorded_at]
             }, { onConflict: "truck_id,recorded_at" });
 
-          // 9. SMART ALERT ENGINE (Using finalTruck.id)
-          const currentFuel = vehicle[mapping.fuel_level] !== undefined ? Number(vehicle[mapping.fuel_level]) : null;
-          const currentSpeed = vehicle[mapping.speed] !== undefined ? Number(vehicle[mapping.speed]) : 0;
-
-          if (currentFuel !== null) {
-            if (currentFuel < 20) {
-              const { data: existingAlert } = await supabase
-                .from("tracking_alerts")
-                .select("id")
-                .eq("truck_id", finalTruck.id)
-                .eq("alert_type", "low_fuel")
-                .gte("created_at", new Date(Date.now() - 1000 * 60 * 60 * 6).toISOString())
-                .limit(1).single();
-
-              if (!existingAlert) {
-                let severity = currentFuel < 10 ? "critical" : (currentFuel < 15 ? "high" : "medium");
-                await supabase.from("tracking_alerts").insert({
-                  truck_id: finalTruck.id,
-                  alert_type: "low_fuel",
-                  severity,
-                  title: "Low Fuel Alert",
-                  description: `${finalTruck.truck} fuel level is at ${currentFuel}%`,
-                  metadata: { fuel_level: currentFuel, location: { lat: vehicle[mapping.latitude], lng: vehicle[mapping.longitude] } },
-                  status: "active"
-                });
-              }
-            }
-
-            if (currentFuel < 10 && currentSpeed < 5) {
-              const { data: theftAlert } = await supabase
-                .from("tracking_alerts")
-                .select("id")
-                .eq("truck_id", finalTruck.id)
-                .eq("alert_type", "possible_fuel_theft")
-                .gte("created_at", new Date(Date.now() - 1000 * 60 * 60 * 12).toISOString())
-                .limit(1).single();
-
-              if (!theftAlert) {
-                await supabase.from("tracking_alerts").insert({
-                  truck_id: finalTruck.id,
-                  alert_type: "possible_fuel_theft",
-                  severity: "critical",
-                  title: "Possible Fuel Theft",
-                  description: `${finalTruck.truck} has critically low fuel while stationary`,
-                  metadata: { fuel_level: currentFuel, speed: currentSpeed },
-                  status: "active"
-                });
-              }
-            }
+            vehiclesProcessed++;
           }
-
-          inserted.push({ truck: reg, success: !upsertError, error: upsertError?.message || null });
         }
-      } catch (providerError: any) {
-        inserted.push({ provider: provider.provider_name, success: false, stage: "PROVIDER", error: providerError.message });
+
+        // 9. LOG SUCCESSFUL SYNC
+        await supabase.from("tracking_sync_logs").insert({
+          provider_id: provider.id,
+          provider_name: provider.provider_name,
+          status: "success",
+          stage: "COMPLETED",
+          message: `Successfully processed ${vehiclesProcessed} vehicles`,
+          vehicles_processed: vehiclesProcessed
+        });
+
+        results.push({ provider: provider.provider_name, success: true, processed: vehiclesProcessed });
+
+      } catch (err: any) {
+        // LOG SYSTEM CRASH FOR THIS PROVIDER
+        await supabase.from("tracking_sync_logs").insert({
+          provider_id: provider.id,
+          provider_name: provider.provider_name,
+          status: "error",
+          stage: "SYSTEM",
+          message: err.message,
+          vehicles_processed: vehiclesProcessed
+        });
+
+        results.push({ provider: provider.provider_name, success: false, error: err.message });
       }
     }
 
-    return Response.json({ success: true, processed: inserted.length, inserted });
+    return Response.json({ success: true, results });
   } catch (err: any) {
     return Response.json({ success: false, error: err.message });
   }
