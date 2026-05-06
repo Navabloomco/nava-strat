@@ -166,7 +166,7 @@ export async function GET() {
           if (
             vehicle.fuellevel !== undefined &&
             vehicle.fuellevel !== null &&
-            Number(vehicle.fuellevel) < 20
+            Number(vehicle.fuellevel) < 100
           ) {
 
             await supabase
