@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../../../lib/supabase";
 
 export default function OpsDashboard() {
-  // Existing state
+  // --- STATE DECLARATIONS ---
   const [fuelLogs, setFuelLogs] = useState<any[]>([]);
   const [journeys, setJourneys] = useState<any[]>([]);
   const [expenses, setExpenses] = useState<any[]>([]);
@@ -12,7 +12,7 @@ export default function OpsDashboard() {
   const [fuelDrops, setFuelDrops] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // NEW: Automated Telemetry & Intelligence State
+  // Automated Telemetry & Intelligence State
   const [alerts, setAlerts] = useState<any[]>([]);
   const [syncLogs, setSyncLogs] = useState<any[]>([]);
   const [providers, setProviders] = useState<any[]>([]);
@@ -25,14 +25,14 @@ export default function OpsDashboard() {
   async function load() {
     setLoading(true);
 
-    // Existing Queries
+    // Existing Business Logic Queries
     const { data: fuelData } = await supabase.from("fuel_logs").select("*").order("created_at", { ascending: false });
     const { data: journeyData } = await supabase.from("journeys").select("*").order("created_at", { ascending: false });
     const { data: expenseData } = await supabase.from("expenses").select("*").order("created_at", { ascending: false });
     const { data: trackingData } = await supabase.from("tracking_points").select("*").order("recorded_at", { ascending: false });
     const { data: fuelDropData } = await supabase.from("fuel_drop_events").select("*").order("recorded_at", { ascending: false });
 
-    // NEW: Automated Ingestion Queries
+    // Automated Ingestion & Intelligence Queries
     const { data: alertData } = await supabase.from("tracking_alerts").select("*").order("created_at", { ascending: false });
     const { data: syncData } = await supabase.from("tracking_sync_logs").select("*").order("created_at", { ascending: false });
     const { data: providerData } = await supabase.from("tracking_providers").select("*");
@@ -44,7 +44,7 @@ export default function OpsDashboard() {
     setTrackingPoints(trackingData || []);
     setFuelDrops(fuelDropData || []);
 
-    // NEW: Set Automated State
+    // Set Automated Intelligence State
     setAlerts(alertData || []);
     setSyncLogs(syncData || []);
     setProviders(providerData || []);
@@ -53,7 +53,7 @@ export default function OpsDashboard() {
     setLoading(false);
   }
 
-  // --- Logic Helpers (Kept from original) ---
+  // --- LOGIC HELPERS ---
   function totalFuelCostForJourney(journeyId: string) {
     return fuelLogs.filter((fuel) => fuel.journey_id === journeyId).reduce((sum, fuel) => sum + Number(fuel.total_cost || 0), 0);
   }
@@ -76,7 +76,7 @@ export default function OpsDashboard() {
     return trackingPoints.find((p) => (p.truck_text || "").toUpperCase() === (truck || "").toUpperCase()) || null;
   }
 
-  // --- Memos (Kept from original) ---
+  // --- MEMOS ---
   const activeJourneys = useMemo(() => journeys.filter((j) => j.status === "active"), [journeys]);
   const unallocatedFuel = useMemo(() => fuelLogs.filter((f) => !f.journey_id), [fuelLogs]);
   const lossMakingJourneys = useMemo(() => activeJourneys.filter((j) => {
@@ -103,7 +103,7 @@ export default function OpsDashboard() {
       <h1>Ops Command Center</h1>
       <p>Fuel, tracking, expenses, revenue, and contribution margin.</p>
 
-      {/* NEW: Fleet Intelligence Header */}
+      {/* 1. Fleet Intelligence Header */}
       <hr />
       <section style={{ padding: '10px 0' }}>
         <h2>🚛 Fleet Intelligence Overview</h2>
@@ -124,14 +124,46 @@ export default function OpsDashboard() {
       </section>
       <hr />
 
+      {/* 2. Nava Eye Alerts Summary */}
       <h2>🚨 Nava Eye Alerts</h2>
-      <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', marginBottom: '20px' }}>
         <p>Unallocated Fuel: <strong>{unallocatedFuel.length}</strong></p>
         <p>Possible Fuel Drops: <strong>{fuelDrops.length}</strong></p>
         <p>Loss-Making Journeys: <strong>{lossMakingJourneys.length}</strong></p>
       </div>
 
-      {/* Loss Making Journeys List (Kept from original) */}
+      {/* 3. Live Alert Feed (The New Actionable Layer) */}
+      <div style={{ border: "1px solid #ddd", borderRadius: 12, padding: 16, marginBottom: 24, background: "#fff" }}>
+        <h3>Live Alert Feed</h3>
+        {alerts.length === 0 ? (
+          <p>No active alerts.</p>
+        ) : (
+          alerts.slice(0, 10).map((alert) => (
+            <div
+              key={alert.id}
+              style={{
+                padding: 12,
+                marginBottom: 10,
+                borderRadius: 10,
+                border: alert.severity === "critical" ? "1px solid red" : alert.severity === "high" ? "1px solid orange" : "1px solid #ddd",
+                background: alert.severity === "critical" ? "#fff5f5" : alert.severity === "high" ? "#fffaf0" : "#f9f9f9"
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <strong>{alert.title}</strong>
+                <span style={{ fontSize: '12px', fontWeight: 'bold', color: alert.severity === 'critical' ? 'red' : '#666' }}>
+                  {alert.severity.toUpperCase()}
+                </span>
+              </div>
+              <small style={{ color: '#666' }}>{new Date(alert.created_at).toLocaleString()}</small>
+              <p style={{ margin: '8px 0' }}>{alert.description}</p>
+              <div style={{ fontSize: '13px' }}>Status: <strong>{alert.status || "active"}</strong></div>
+            </div>
+          ))
+        )}
+      </div>
+
+      {/* 4. Loss Making Journeys */}
       {lossMakingJourneys.length > 0 && (
         <>
           <h3>Loss-Making Journeys</h3>
@@ -147,7 +179,7 @@ export default function OpsDashboard() {
         </>
       )}
 
-      {/* Active Operations (Kept from original) */}
+      {/* 5. Active Operations */}
       <h2 style={{ marginTop: 40 }}>Active Operations</h2>
       {Object.keys(grouped).map((client) => (
         <div key={client} style={{ marginBottom: 30 }}>
