@@ -48,48 +48,51 @@ export async function GET() {
     for (const provider of providers || []) {
       try {
         // ============================================
-        // 4. LOGIN TO PROVIDER
+        // 4. UPDATED LOGIN BLOCK (BLUETRAX / UNIVERSAL)
         // ============================================
-        const loginResponse = await fetch(
-          provider.login_url,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json"
-            },
-            body: JSON.stringify({
-              user_name: provider.username,
-              key: provider.api_key
-            }),
-            cache: "no-store"
-          }
-        );
+        const loginResponse = await fetch(provider.login_url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            user_name: provider.username,
+            key: provider.api_key
+          })
+        });
 
         const loginData = await loginResponse.json();
 
-        if (!loginData.token) {
+        console.log("BLUETRAX LOGIN RESPONSE:", loginData);
+
+        const token =
+          loginData.token ||
+          loginData.access_token ||
+          loginData.data?.token ||
+          null;
+
+        if (!token) {
           inserted.push({
             provider: provider.provider_name,
             success: false,
             stage: "LOGIN",
-            error: "No token received"
+            error: "No token received",
+            raw_response: loginData
           });
+
           continue;
         }
 
         // ============================================
         // 5. FETCH LIVE FLEET
         // ============================================
-        const fleetResponse = await fetch(
-          provider.fleet_url,
-          {
-            method: "POST",
-            headers: {
-              "Authorization": `Bearer ${loginData.token}`
-            },
-            cache: "no-store"
-          }
-        );
+        const fleetResponse = await fetch(provider.fleet_url, {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${token}`
+          },
+          cache: "no-store"
+        });
 
         const fleetData = await fleetResponse.json();
 
@@ -124,7 +127,7 @@ export async function GET() {
           // ============================================
           // 8. UPSERT TRACKING LOG
           // ============================================
-          const { error } = await supabase
+          const { error: upsertError } = await supabase
             .from("tracking_logs")
             .upsert({
               truck_id: matchedTruck.id,
@@ -138,12 +141,12 @@ export async function GET() {
             });
 
           // ============================================
-          // 9. UPDATED LOW FUEL ALERT LOGIC
+          // 9. LOW FUEL ALERT LOGIC
           // ============================================
           if (
             vehicle.fuellevel !== undefined &&
             vehicle.fuellevel !== null &&
-            Number(vehicle.fuellevel) < 100 // Using your specified threshold
+            Number(vehicle.fuellevel) < 100
           ) {
             const { data: alertData, error: alertError } = await supabase
               .from("tracking_alerts")
@@ -170,8 +173,8 @@ export async function GET() {
 
           inserted.push({
             truck: reg,
-            success: !error,
-            error: error?.message || null
+            success: !upsertError,
+            error: upsertError?.message || null
           });
         }
       } catch (providerError: any) {
