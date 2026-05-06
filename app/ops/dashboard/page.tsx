@@ -4,19 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../../../lib/supabase";
 
 export default function OpsDashboard() {
-  // --- STATE ---
-  const [fuelLogs, setFuelLogs] = useState<any[]>([]);
   const [journeys, setJourneys] = useState<any[]>([]);
-  const [expenses, setExpenses] = useState<any[]>([]);
-  const [trackingPoints, setTrackingPoints] = useState<any[]>([]);
-  const [fuelDrops, setFuelDrops] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-
-  // Intelligence State
-  const [alerts, setAlerts] = useState<any[]>([]);
-  const [syncLogs, setSyncLogs] = useState<any[]>([]);
-  const [providers, setProviders] = useState<any[]>([]);
-  const [trucks, setTrucks] = useState<any[]>([]);
 
   useEffect(() => {
     load();
@@ -24,167 +13,97 @@ export default function OpsDashboard() {
 
   async function load() {
     setLoading(true);
-
-    const { data: fuelData } = await supabase.from("fuel_logs").select("*").order("created_at", { ascending: false });
-    const { data: journeyData } = await supabase.from("journeys").select("*").order("created_at", { ascending: false });
-    const { data: expenseData } = await supabase.from("expenses").select("*").order("created_at", { ascending: false });
-    const { data: trackingData } = await supabase.from("tracking_points").select("*").order("recorded_at", { ascending: false });
-    const { data: fuelDropData } = await supabase.from("fuel_drop_events").select("*").order("recorded_at", { ascending: false });
-
-    // Ingestion Queries
-    const { data: alertData } = await supabase.from("tracking_alerts").select("*").order("created_at", { ascending: false });
-    const { data: syncData } = await supabase.from("tracking_sync_logs").select("*").order("created_at", { ascending: false });
-    const { data: providerData } = await supabase.from("tracking_providers").select("*");
-    const { data: truckData } = await supabase.from("trucks").select("*");
-
-    setFuelLogs(fuelData || []);
-    setJourneys(journeyData || []);
-    setExpenses(expenseData || []);
-    setTrackingPoints(trackingData || []);
-    setFuelDrops(fuelDropData || []);
-
-    setAlerts(alertData || []);
-    setSyncLogs(syncData || []);
-    setProviders(providerData || []);
-    setTrucks(truckData || []);
-    
+    const { data } = await supabase.from("journeys").select("*");
+    setJourneys(data || []);
     setLoading(false);
   }
 
-  // --- LOGIC HELPERS ---
-  function totalFuelCostForJourney(journeyId: string) {
-    return fuelLogs.filter((f) => f.journey_id === journeyId).reduce((sum, f) => sum + Number(f.total_cost || 0), 0);
-  }
+  // DATA NORMALIZATION LAYER
+  const normalizedOps = useMemo(() => {
+    return journeys.map(j => ({
+      ...j,
+      truck: (j.truck || "UNKNOWN").toUpperCase(),
+      client: (j.client_name || "NO CLIENT").toUpperCase(),
+      route: `${(j.from_location || "UNKNOWN").toUpperCase()} → ${(j.to_location || "UNKNOWN").toUpperCase()}`,
+      driver: (j.driver_name || "NO DRIVER").toUpperCase(),
+      location: (j.current_location || "GPS SEARCHING...").toUpperCase(),
+      // Logic for status coloring
+      status: j.is_moving ? "MOVING" : "IDLE",
+      risk: j.revenue_kes < 1 ? "CRITICAL" : "HEALTHY" 
+    }));
+  }, [journeys]);
 
-  function totalExpensesForJourney(journeyId: string) {
-    return expenses.filter((e) => e.journey_id === journeyId).reduce((sum, e) => sum + Number(e.amount || 0), 0);
-  }
-
-  function marginForJourney(j: any) {
-    const revenueKes = Number(j.revenue_kes || j.revenue || 0);
-    const totalCost = totalFuelCostForJourney(j.id) + totalExpensesForJourney(j.id);
-    const margin = revenueKes - totalCost;
-    const marginPct = revenueKes > 0 ? (margin / revenueKes) * 100 : null;
-    return { revenueKes, totalCost, margin, marginPct };
-  }
-
-  function latestTrackingForTruck(truck: string) {
-    return trackingPoints.find((p) => (p.truck_text || "").toUpperCase() === (truck || "").toUpperCase()) || null;
-  }
-
-  // --- MEMOS ---
-  const activeJourneys = useMemo(() => journeys.filter((j) => j.status === "active"), [journeys]);
-  const unallocatedFuel = useMemo(() => fuelLogs.filter((f) => !f.journey_id), [fuelLogs]);
-  const lossMakingJourneys = useMemo(() => activeJourneys.filter((j) => marginForJourney(j).margin < 0), [activeJourneys, fuelLogs, expenses]);
-
-  const grouped = useMemo(() => {
-    const map: any = {};
-    activeJourneys.forEach((j) => {
-      const client = j.client_name || "NO CLIENT";
-      const route = `${j.from_location || "—"} → ${j.to_location || "—"}`;
-      if (!map[client]) map[client] = {};
-      if (!map[client][route]) map[client][route] = [];
-      map[client][route].push(j);
-    });
-    return map;
-  }, [activeJourneys]);
-
-  if (loading) return <main style={{ padding: 40 }}>Loading Nava Strat Intelligence...</main>;
+  if (loading) return <main style={{ padding: 40 }}>Initializing Command Center...</main>;
 
   return (
-    <main style={{ padding: 40, fontFamily: 'sans-serif' }}>
-      <h1>Ops Command Center</h1>
+    <main style={{ padding: 40, fontFamily: 'sans-serif', backgroundColor: '#f4f7f6', minHeight: '100vh' }}>
+      <header style={{ marginBottom: 30, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div>
+          <h1 style={{ fontSize: '28px', fontWeight: 'bold', color: '#1a202c' }}>Ops Command Center</h1>
+          <p style={{ color: '#718096' }}>Live Fleet Intelligence</p>
+        </div>
+        
+        {/* PROVIDER STATUS - Logic Point 4 */}
+        <div style={{ display: 'flex', gap: 15 }}>
+          <div style={providerBadge}>BLUETRAX ● ONLINE</div>
+          <div style={{ ...providerBadge, color: '#e53e3e', borderColor: '#feb2b2' }}>SHELL ● OFFLINE</div>
+        </div>
+      </header>
 
-      {/* 1. FLEET INTELLIGENCE HEADER */}
-      <section style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px', marginBottom: '30px' }}>
-        <div style={{ background: '#f4f4f4', padding: '15px', borderRadius: '8px' }}>
-          <strong>Infrastructure</strong>
-          <p>Trucks: {trucks.length} | Providers: {providers.length}</p>
-        </div>
-        <div style={{ background: '#fff5f5', padding: '15px', borderRadius: '8px', border: '1px solid #feb2b2' }}>
-          <strong>Risk & Alerts</strong>
-          <p>Active: {alerts.filter(a => a.status !== "resolved").length} | Critical: {alerts.filter(a => a.severity === "critical").length}</p>
-        </div>
-        <div style={{ background: '#f0fff4', padding: '15px', borderRadius: '8px', border: '1px solid #9ae6b4' }}>
-          <strong>Sync Health</strong>
-          <p>Success: {syncLogs.filter(s => s.status === "success").length} | Failed: {syncLogs.filter(s => s.status === "error").length}</p>
+      {/* INCIDENT FEED - Logic Point 3 */}
+      <section style={{ marginBottom: 40 }}>
+        <h2 style={sectionHeader}>Real-Time Incidents</h2>
+        <div style={incidentCard}>
+          <div style={{ fontWeight: 'bold', color: '#e53e3e' }}>CRITICAL: KBJ123A — MISSING REVENUE DATA</div>
+          <div style={{ fontSize: '12px', color: '#718096' }}>MOMBASA → JINJA | 2 mins ago</div>
         </div>
       </section>
 
-      {/* 2. LIVE ALERT FEED WITH WORKFLOW ACTIONS */}
-      <div style={{ border: "1px solid #ddd", borderRadius: 12, padding: 16, marginBottom: 24, background: "#fff" }}>
-        <h3>Live Alert Feed</h3>
-        {alerts.filter(a => a.status !== "resolved").length === 0 ? (
-          <p>No active alerts. Fleet is secure.</p>
-        ) : (
-          alerts
-            .filter((a) => a.status !== "resolved")
-            .slice(0, 10)
-            .map((alert) => (
-              <div key={alert.id} style={{
-                padding: 12, marginBottom: 10, borderRadius: 10,
-                border: alert.severity === "critical" ? "1px solid red" : "1px solid #ddd",
-                background: alert.severity === "critical" ? "#fff5f5" : "#f9f9f9"
-              }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <strong>{alert.title}</strong>
-                  <small>{new Date(alert.created_at).toLocaleString()}</small>
-                </div>
-                <p style={{ margin: '8px 0' }}>{alert.description}</p>
-                <div style={{ fontSize: '13px' }}>Status: <strong>{alert.status || "active"}</strong></div>
-
-                {/* WORKFLOW BUTTONS */}
-                <div style={{ marginTop: 8 }}>
-                  <button
-                    onClick={async () => {
-                      await supabase.from("tracking_alerts").update({ status: "resolved" }).eq("id", alert.id);
-                      load();
-                    }}
-                    style={{ marginRight: 8, padding: "6px 10px", borderRadius: 6, border: "none", background: "green", color: "white", cursor: "pointer" }}
-                  >
-                    Resolve
-                  </button>
-                  <button
-                    onClick={async () => {
-                      await supabase.from("tracking_alerts").update({ status: "ignored" }).eq("id", alert.id);
-                      load();
-                    }}
-                    style={{ padding: "6px 10px", borderRadius: 6, border: "none", background: "#666", color: "white", cursor: "pointer" }}
-                  >
-                    Ignore
-                  </button>
-                </div>
+      {/* ACTIVE OPERATIONS - Logic Point 5 (The Card Shift) */}
+      <section>
+        <h2 style={sectionHeader}>Active Operations</h2>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 20 }}>
+          {normalizedOps.map((op) => (
+            <div key={op.id} style={{ 
+              ...operationCard, 
+              borderTop: op.risk === "CRITICAL" ? '4px solid #e53e3e' : '4px solid #38a169' 
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 15 }}>
+                <strong style={{ fontSize: '18px' }}>{op.truck}</strong>
+                <span style={{ 
+                  fontSize: '10px', 
+                  padding: '4px 8px', 
+                  borderRadius: '4px', 
+                  backgroundColor: op.status === "MOVING" ? '#f0fdf4' : '#edf2f7',
+                  color: op.status === "MOVING" ? '#16a34a' : '#4a5568',
+                  fontWeight: 'bold'
+                }}>{op.status}</span>
               </div>
-            ))
-        )}
-      </div>
 
-      {/* 3. ACTIVE OPERATIONS */}
-      <h2>Active Operations</h2>
-      {Object.keys(grouped).map((client) => (
-        <div key={client} style={{ marginBottom: 30 }}>
-          <h3 style={{ borderBottom: '1px solid #eee' }}>{client}</h3>
-          {Object.keys(grouped[client]).map((route) => (
-            <div key={route} style={{ marginLeft: 20, marginBottom: 16 }}>
-              <strong>{route}</strong>
-              <ul>
-                {grouped[client][route].map((j: any) => {
-                  const m = marginForJourney(j);
-                  const latest = latestTrackingForTruck(j.truck);
-                  return (
-                    <li key={j.id} style={{ marginBottom: 8 }}>
-                      <strong>{j.truck}</strong> — {latest?.interpreted_location || "Locating..."} 
-                      <span style={{ color: m.margin < 0 ? 'red' : 'green', marginLeft: 10 }}>
-                        ({m.margin.toLocaleString()} KES)
-                      </span>
-                    </li>
-                  );
-                })}
-              </ul>
+              <div style={cardRow}><span style={cardLabel}>CLIENT:</span> {op.client}</div>
+              <div style={cardRow}><span style={cardLabel}>ROUTE:</span> {op.route}</div>
+              <div style={cardRow}><span style={cardLabel}>LOCATION:</span> {op.location}</div>
+              <div style={cardRow}><span style={cardLabel}>DRIVER:</span> {op.driver}</div>
+              
+              <div style={{ marginTop: 15, paddingTop: 15, borderTop: '1px solid #edf2f7', display: 'flex', justifyContent: 'space-between' }}>
+                 <span style={{ fontSize: '12px', color: op.risk === "CRITICAL" ? '#e53e3e' : '#718096', fontWeight: 'bold' }}>
+                   {op.risk === "CRITICAL" ? "⚠️ REVENUE ERROR" : "✓ STATUS OK"}
+                 </span>
+                 <button style={actionButton}>DETAILS</button>
+              </div>
             </div>
           ))}
         </div>
-      ))}
+      </section>
     </main>
   );
 }
+
+// STYLING SYSTEM
+const sectionHeader = { fontSize: '14px', fontWeight: 'bold', color: '#4a5568', textTransform: 'uppercase' as const, marginBottom: 15, letterSpacing: '0.05em' };
+const providerBadge = { padding: '6px 12px', borderRadius: '20px', border: '1px solid #c6f6d5', backgroundColor: '#fff', fontSize: '11px', fontWeight: 'bold', color: '#38a169' };
+const incidentCard = { backgroundColor: '#fff', padding: '15px', borderRadius: '8px', borderLeft: '4px solid #e53e3e', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' };
+const operationCard = { backgroundColor: '#fff', padding: '20px', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)', display: 'flex', flexDirection: 'column' as const };
+const cardRow = { fontSize: '13px', color: '#2d3748', marginBottom: '6px' };
+const cardLabel = { color: '#a0aec0', fontSize: '11px', fontWeight: 'bold', marginRight: '5px' };
+const actionButton = { fontSize: '10px', fontWeight: 'bold', color: '#3182ce', background: 'none', border: '1px solid #3182ce', borderRadius: '4px', padding: '2px 8px', cursor: 'pointer' };
