@@ -13,10 +13,16 @@ export default function FinancialEvidenceUploader() {
   const [truckId, setTruckId] = useState("");
 
   const [documentType, setDocumentType] = useState("RECEIPT");
+  const [expenseCategory, setExpenseCategory] = useState("GENERAL");
 
   const [amount, setAmount] = useState("");
   const [vendorName, setVendorName] = useState("");
   const [referenceNumber, setReferenceNumber] = useState("");
+
+  const [description, setDescription] = useState("");
+  const [paidBy, setPaidBy] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState("MPESA");
+
   const [mpesaCode, setMpesaCode] = useState("");
   const [chequeNumber, setChequeNumber] = useState("");
   const [kraInvoiceNumber, setKraInvoiceNumber] = useState("");
@@ -76,6 +82,11 @@ export default function FinancialEvidenceUploader() {
         return;
       }
 
+      if (!description.trim()) {
+        alert("Please describe what this expense/evidence is for");
+        return;
+      }
+
       setUploading(true);
 
       const fileExt = selectedFile.name.split(".").pop() || "file";
@@ -103,6 +114,7 @@ export default function FinancialEvidenceUploader() {
           truck_id: truckId || null,
 
           document_type: documentType,
+          expense_category: expenseCategory,
 
           file_url: filePath,
           file_name: selectedFile.name,
@@ -114,6 +126,10 @@ export default function FinancialEvidenceUploader() {
 
           vendor_name: vendorName || null,
           reference_number: referenceNumber || null,
+
+          description: description || null,
+          paid_by: paidBy || null,
+          payment_method: paymentMethod || null,
 
           mpesa_code: mpesaCode || null,
           cheque_number: chequeNumber || null,
@@ -135,9 +151,13 @@ export default function FinancialEvidenceUploader() {
       setJourneyId("");
       setTruckId("");
       setDocumentType("RECEIPT");
+      setExpenseCategory("GENERAL");
       setAmount("");
       setVendorName("");
       setReferenceNumber("");
+      setDescription("");
+      setPaidBy("");
+      setPaymentMethod("MPESA");
       setMpesaCode("");
       setChequeNumber("");
       setKraInvoiceNumber("");
@@ -188,6 +208,28 @@ export default function FinancialEvidenceUploader() {
           <option value="OFFICE_EXPENSE">Office Expense</option>
           <option value="PARKING">Parking</option>
           <option value="TOLL">Toll</option>
+          <option value="OTHER">Other</option>
+        </select>
+      </div>
+
+      <div style={fieldStyle}>
+        <label>Expense Category</label>
+        <select
+          value={expenseCategory}
+          onChange={(e) => setExpenseCategory(e.target.value)}
+          style={inputStyle}
+        >
+          <option value="GENERAL">General</option>
+          <option value="FUEL">Fuel</option>
+          <option value="REPAIR">Repair</option>
+          <option value="SPARES">Spares</option>
+          <option value="TYRES">Tyres</option>
+          <option value="TOLL">Toll</option>
+          <option value="PARKING">Parking</option>
+          <option value="DRIVER_ADVANCE">Driver Advance</option>
+          <option value="OFFICE">Office</option>
+          <option value="COMPLIANCE">Compliance / License / Inspection</option>
+          <option value="CLIENT_JOB">Client Job Related</option>
           <option value="OTHER">Other</option>
         </select>
       </div>
@@ -246,9 +288,47 @@ export default function FinancialEvidenceUploader() {
           type="text"
           value={vendorName}
           onChange={(e) => setVendorName(e.target.value)}
-          placeholder="Shell, Total, mechanic, vendor..."
+          placeholder="Shell, mechanic, supplier, office vendor..."
           style={inputStyle}
         />
+      </div>
+
+      <div style={fieldStyle}>
+        <label>What is this for?</label>
+        <textarea
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          placeholder="Example: Printer paper for office, radiator repair, driver M-Pesa advance..."
+          style={{ ...inputStyle, minHeight: 90 }}
+        />
+      </div>
+
+      <div style={fieldStyle}>
+        <label>Paid By</label>
+        <input
+          type="text"
+          value={paidBy}
+          onChange={(e) => setPaidBy(e.target.value)}
+          placeholder="Cecilia, driver, finance, petty cash..."
+          style={inputStyle}
+        />
+      </div>
+
+      <div style={fieldStyle}>
+        <label>Payment Method</label>
+        <select
+          value={paymentMethod}
+          onChange={(e) => setPaymentMethod(e.target.value)}
+          style={inputStyle}
+        >
+          <option value="MPESA">M-Pesa</option>
+          <option value="CHEQUE">Cheque</option>
+          <option value="BANK_TRANSFER">Bank Transfer</option>
+          <option value="CASH">Cash</option>
+          <option value="CARD">Card</option>
+          <option value="CREDIT">Supplier Credit</option>
+          <option value="UNKNOWN">Unknown</option>
+        </select>
       </div>
 
       <div style={fieldStyle}>
@@ -262,7 +342,7 @@ export default function FinancialEvidenceUploader() {
         />
       </div>
 
-      {documentType === "MPESA" && (
+      {paymentMethod === "MPESA" && (
         <div style={fieldStyle}>
           <label>M-Pesa Code</label>
           <input
@@ -275,7 +355,7 @@ export default function FinancialEvidenceUploader() {
         </div>
       )}
 
-      {documentType === "CHEQUE" && (
+      {paymentMethod === "CHEQUE" && (
         <div style={fieldStyle}>
           <label>Cheque Number</label>
           <input
