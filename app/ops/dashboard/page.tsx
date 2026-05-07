@@ -15,7 +15,7 @@ export default function OpsDashboard() {
       const result = await requirePermission("contact@navabloomco.com", "ops");
       setAllowed(result.allowed);
 
-      // 2. Trigger data load ONLY if bouncer lets us in
+      // 2. Only fetch data if the bouncer lets us in
       if (result.allowed) {
         await load();
       } else {
@@ -28,7 +28,7 @@ export default function OpsDashboard() {
   async function load() {
     setLoading(true);
     
-    // 3. Robust Data Fetch with Error Catching
+    // 3. Robust Data Fetch with Error Handling
     const { data, error } = await supabase
       .from("journeys")
       .select("*");
@@ -44,18 +44,30 @@ export default function OpsDashboard() {
     setLoading(false);
   }
 
-  // 4. Data Normalization (Scrubbed of Finance terms for Ops privacy)
+  // 4. DATA NORMALIZATION LAYER (Aligned with your actual Schema)
   const normalizedOps = useMemo(() => {
     return journeys.map(j => ({
       ...j,
       truck: (j.truck || "UNKNOWN").toUpperCase(),
       client: (j.client_name || "NO CLIENT").toUpperCase(),
-      route: `${(j.from_location || "UNKNOWN").toUpperCase()} → ${(j.to_location || "UNKNOWN").toUpperCase()}`,
-      driver: (j.driver_name || "NO DRIVER").toUpperCase(),
-      location: (j.current_location || "GPS SEARCHING...").toUpperCase(),
-      status: j.is_moving ? "MOVING" : "IDLE",
-      // Focus on operational risk (missing GPS) rather than money
-      risk: !j.current_location ? "ATTENTION" : "HEALTHY" 
+      
+      // Fixed: Use 'route' column or fallback to from/to logic
+      route: (
+        j.route || 
+        `${j.from_location || "UNKNOWN"} → ${j.to_location || "UNKNOWN"}`
+      ).toUpperCase(),
+
+      // Fixed: Map 'driver' instead of 'driver_name'
+      driver: (j.driver || "NO DRIVER").toUpperCase(),
+
+      // Fixed: Location uses route as proxy for now
+      location: (j.route || "GPS SEARCHING...").toUpperCase(),
+
+      // Fixed: Map 'status' string to UI badge
+      status: j.status?.toUpperCase() === "ACTIVE" ? "MOVING" : "IDLE",
+
+      // Fixed: Risk flags based on missing routing data
+      risk: !j.route && !j.from_location ? "ATTENTION" : "HEALTHY" 
     }));
   }, [journeys]);
 
@@ -64,23 +76,23 @@ export default function OpsDashboard() {
   if (allowed === null || (allowed && loading)) {
     return (
       <main style={{ padding: 40, fontFamily: 'sans-serif', color: '#64748b' }}>
-        Initializing Command Center & Verifying Clearance...
+        Initializing Ops Command Center...
       </main>
     );
   }
 
   if (!allowed) {
     return (
-      <main style={{ padding: 40, fontFamily: 'sans-serif', textAlign: 'center' }}>
+      <main style={{ padding: 40, fontFamily: 'sans-serif' }}>
         <h1 style={{ color: "#dc2626", fontSize: '24px' }}>Access Denied</h1>
         <p style={{ marginTop: '10px', color: '#64748b' }}>
-          You do not have the required Operations clearance to view the Command Center.
+          You do not have Operations clearance for this dashboard.
         </p>
       </main>
     );
   }
 
-  // --- RESTORED COMMAND CENTER UI ---
+  // --- OPS COMMAND CENTER UI ---
 
   return (
     <main style={{ padding: 40, fontFamily: 'sans-serif', backgroundColor: '#f4f7f6', minHeight: '100vh' }}>
@@ -99,8 +111,8 @@ export default function OpsDashboard() {
       <section style={{ marginBottom: 40 }}>
         <h2 style={sectionHeader}>Operational Alerts</h2>
         <div style={incidentCard}>
-          <div style={{ fontWeight: 'bold', color: '#e53e3e' }}>ATTENTION: KBJ123A — GPS SIGNAL WEAK</div>
-          <div style={{ fontSize: '12px', color: '#718096' }}>MOMBASA → JINJA | 2 mins ago</div>
+          <div style={{ fontWeight: 'bold', color: '#e53e3e' }}>ATTENTION: FLEET SYNC ACTIVE</div>
+          <div style={{ fontSize: '12px', color: '#718096' }}>Monitoring all active logistics corridors.</div>
         </div>
       </section>
 
