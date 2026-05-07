@@ -17,7 +17,7 @@ export default function Sidebar() {
 
   useEffect(() => {
     async function checkRoles() {
-      // Current bridge email for the Super Admin
+      // Current bridge email for Super Admin access
       const userEmail = "contact@navabloomco.com";
 
       const ops = await requirePermission(userEmail, "ops");
@@ -40,7 +40,7 @@ export default function Sidebar() {
     {
       name: "Nava Eye",
       href: "/nava-eye",
-      show: true, // Always accessible for general AI queries
+      show: true, 
     },
     {
       name: "Operations",
@@ -64,7 +64,7 @@ export default function Sidebar() {
     },
     {
       name: "Provider Onboarding",
-      href: "/onboarding",
+      href: "/admin/providers", // Corrected path to the Admin Vault
       show: roles.isAdmin,
     },
   ];
@@ -129,4 +129,5 @@ const linkStyle = {
   borderRadius: 8,
   textDecoration: "none",
   fontSize: 14,
+  transition: "background-color 0.2s ease, color 0.2s ease",
 };
