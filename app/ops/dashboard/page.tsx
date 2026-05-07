@@ -11,11 +11,11 @@ export default function OpsDashboard() {
 
   useEffect(() => {
     async function initialize() {
-      // 1. Check Clearance
+      // 1. Permission Handshake
       const result = await requirePermission("contact@navabloomco.com", "ops");
       setAllowed(result.allowed);
 
-      // 2. Only load data if allowed
+      // 2. Trigger data load ONLY if bouncer lets us in
       if (result.allowed) {
         await load();
       } else {
@@ -27,12 +27,24 @@ export default function OpsDashboard() {
 
   async function load() {
     setLoading(true);
-    const { data } = await supabase.from("journeys").select("*");
+    
+    // 3. Robust Data Fetch with Error Catching
+    const { data, error } = await supabase
+      .from("journeys")
+      .select("*");
+
+    if (error) {
+      console.error("Ops Fetch Error:", error);
+      alert(`Database Error: ${error.message}`);
+      setLoading(false);
+      return;
+    }
+
     setJourneys(data || []);
     setLoading(false);
   }
 
-  // DATA NORMALIZATION LAYER (Optimized for Operations)
+  // 4. Data Normalization (Scrubbed of Finance terms for Ops privacy)
   const normalizedOps = useMemo(() => {
     return journeys.map(j => ({
       ...j,
@@ -42,27 +54,33 @@ export default function OpsDashboard() {
       driver: (j.driver_name || "NO DRIVER").toUpperCase(),
       location: (j.current_location || "GPS SEARCHING...").toUpperCase(),
       status: j.is_moving ? "MOVING" : "IDLE",
-      // Shifted from Revenue logic to Operational logic
+      // Focus on operational risk (missing GPS) rather than money
       risk: !j.current_location ? "ATTENTION" : "HEALTHY" 
     }));
   }, [journeys]);
 
-  // --- SECURITY & LOADING SCREENS ---
+  // --- SECURITY & INITIALIZATION STATES ---
 
   if (allowed === null || (allowed && loading)) {
-    return <main style={{ padding: 40, fontFamily: 'sans-serif' }}>Checking operations clearance...</main>;
-  }
-
-  if (!allowed) {
     return (
-      <main style={{ padding: 40, fontFamily: 'sans-serif' }}>
-        <h1 style={{ color: "#dc2626" }}>Access Denied</h1>
-        <p>You do not have the required Operations clearance to view this dashboard.</p>
+      <main style={{ padding: 40, fontFamily: 'sans-serif', color: '#64748b' }}>
+        Initializing Command Center & Verifying Clearance...
       </main>
     );
   }
 
-  // --- OPS COMMAND CENTER UI ---
+  if (!allowed) {
+    return (
+      <main style={{ padding: 40, fontFamily: 'sans-serif', textAlign: 'center' }}>
+        <h1 style={{ color: "#dc2626", fontSize: '24px' }}>Access Denied</h1>
+        <p style={{ marginTop: '10px', color: '#64748b' }}>
+          You do not have the required Operations clearance to view the Command Center.
+        </p>
+      </main>
+    );
+  }
+
+  // --- RESTORED COMMAND CENTER UI ---
 
   return (
     <main style={{ padding: 40, fontFamily: 'sans-serif', backgroundColor: '#f4f7f6', minHeight: '100vh' }}>
@@ -125,7 +143,7 @@ export default function OpsDashboard() {
   );
 }
 
-// --- STYLES ---
+// STYLING SYSTEM
 const sectionHeader = { fontSize: '14px', fontWeight: 'bold', color: '#4a5568', textTransform: 'uppercase' as const, marginBottom: 15, letterSpacing: '0.05em' };
 const providerBadge = { padding: '6px 12px', borderRadius: '20px', border: '1px solid #c6f6d5', backgroundColor: '#fff', fontSize: '11px', fontWeight: 'bold', color: '#38a169' };
 const incidentCard = { backgroundColor: '#fff', padding: '15px', borderRadius: '8px', borderLeft: '4px solid #e53e3e', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' };
