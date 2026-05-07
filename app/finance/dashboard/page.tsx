@@ -1,9 +1,39 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import FinancialEvidenceUploader from "../../components/FinancialEvidenceUploader";
 import FinanceVerificationQueue from "../../components/FinanceVerificationQueue";
+import { requirePermission } from "../../../lib/hooks/requirePermission";
 
 export default function FinanceDashboard() {
+  const [allowed, setAllowed] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    async function check() {
+      const result = await requirePermission(
+        "contact@navabloomco.com",
+        "finance"
+      );
+
+      setAllowed(result.allowed);
+    }
+
+    check();
+  }, []);
+
+  if (allowed === null) {
+    return <main style={{ padding: 40 }}>Checking finance access...</main>;
+  }
+
+  if (!allowed) {
+    return (
+      <main style={{ padding: 40 }}>
+        <h1 style={{ color: "#dc2626" }}>Access Denied</h1>
+        <p>Your role does not have Finance clearance.</p>
+      </main>
+    );
+  }
+
   return (
     <main
       style={{
@@ -35,14 +65,18 @@ export default function FinanceDashboard() {
         </p>
       </header>
 
-      {/* STEP 1: DATA INTAKE */}
       <section style={{ marginBottom: 40 }}>
         <FinancialEvidenceUploader />
       </section>
 
-      <hr style={{ border: "0", borderTop: "1px solid #e2e8f0", margin: "40px 0" }} />
+      <hr
+        style={{
+          border: "0",
+          borderTop: "1px solid #e2e8f0",
+          margin: "40px 0"
+        }}
+      />
 
-      {/* STEP 2: AUDIT & VERIFICATION */}
       <section>
         <header style={{ marginBottom: 15 }}>
           <h2 style={{ fontSize: 20, fontWeight: "bold", color: "#1e293b" }}>
@@ -52,7 +86,7 @@ export default function FinanceDashboard() {
             Review pending evidence and approve for financial reconciliation.
           </p>
         </header>
-        
+
         <FinanceVerificationQueue />
       </section>
     </main>
