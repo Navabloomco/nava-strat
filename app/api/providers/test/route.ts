@@ -1,9 +1,8 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
-// Relative path fix for Vercel deployment
+// Correct relative path for Vercel deployment
 import { normalizeVehicle } from "../../../../lib/providers/normalizeVehicle";
 
-// Service Role Key is required for backend database writes
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
@@ -13,7 +12,6 @@ export async function POST(req: Request) {
   try {
     const { providerId } = await req.json();
 
-    // 1. Fetch Provider details from the tracking_providers table
     const { data: provider, error: pError } = await supabaseAdmin
       .from("tracking_providers")
       .select("*")
@@ -22,7 +20,7 @@ export async function POST(req: Request) {
 
     if (pError || !provider) throw new Error("Provider not found in Vault");
 
-    // 2. Auth Handshake with Bluetrax
+    // --- 1. LOGIN HANDSHAKE ---
     const loginRes = await fetch(provider.login_url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -33,20 +31,36 @@ export async function POST(req: Request) {
     });
 
     const loginData = await loginRes.json();
-    if (!loginData.token) throw new Error("Authentication failed: No token returned");
+    
+    // DEBUG LOG: This allows you to see the REAL token path in the console
+    console.log("--- DEBUG: BLUETRAX LOGIN RESPONSE ---");
+    console.log(JSON.stringify(loginData, null, 2));
 
-    // 3. Fetch Fleet Telemetry (Location Data)
+    // Currently assuming 'token' is the key. 
+    // If it's nested (e.g. loginData.data.token), we will see it in the log.
+    const token = loginData.token || loginData.access_token || loginData.data?.token;
+
+    if (!token) {
+      return NextResponse.json({
+        success: false,
+        stage: "AUTHENTICATION",
+        message: "No token returned. Check console for 'DEBUG: BLUETRAX LOGIN RESPONSE'.",
+        debug: loginData
+      });
+    }
+
+    // --- 2. FLEET FETCH ---
     const fleetRes = await fetch(provider.fleet_url, {
       method: "POST",
       headers: { 
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${loginData.token}`
+        "Authorization": `Bearer ${token}`
       },
     });
 
     const rawData = await fleetRes.json();
 
-    // 4. Extract using the Deterministic Path established in the UI
+    // --- 3. EXTRACTION (Deterministic) ---
     const vehiclePath = provider.fleet_config?.vehicle_paths?.[0] || "data";
     const vehicleArray = rawData[vehiclePath] || [];
 
@@ -54,19 +68,18 @@ export async function POST(req: Request) {
       return NextResponse.json({
         success: false,
         stage: "EXTRACTION",
-        message: `Connected, but found 0 vehicles at path: '${vehiclePath}'`,
+        message: `Connected, but 0 vehicles at path: '${vehiclePath}'`,
         debug: rawData
       });
     }
 
-    // 5. Normalize the first vehicle for the test
+    // --- 4. PERSISTENCE ---
     const sample_normalized = normalizeVehicle(
       vehicleArray[0],
       provider.field_mapping || {},
       provider.provider_name
     );
 
-    // 6. PERSISTENCE: Write the ping to telemetry_logs
     const { error: logError } = await supabaseAdmin
       .from("telemetry_logs")
       .insert({
@@ -83,28 +96,18 @@ export async function POST(req: Request) {
 
     if (logError) throw new Error(`Logging failed: ${logError.message}`);
 
-    // Update the Vault status
-    await supabaseAdmin
-      .from("tracking_providers")
-      .update({ 
-        last_test_status: "success", 
-        last_test_at: new Date().toISOString() 
-      })
-      .eq("id", providerId);
-
     return NextResponse.json({
       success: true,
-      message: `Connected. Found ${vehicleArray.length} vehicles. Logged ${sample_normalized.truck_id}.`,
+      message: `Sync Successful. Logged ${sample_normalized.truck_id}.`,
       sample_normalized,
-      debug: rawData
+      debug: { login: loginData, fleet: rawData }
     });
 
   } catch (err: any) {
-    console.error("API Route Error:", err.message);
     return NextResponse.json({ 
       success: false, 
       message: err.message,
-      stage: "RUNTIME"
+      stage: "RUNTIME_ERROR"
     }, { status: 500 });
   }
 }
