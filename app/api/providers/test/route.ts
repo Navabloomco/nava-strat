@@ -22,6 +22,8 @@ type RuntimeResult = {
   token?: string | null;
   message?: string;
   debug?: any;
+  vehicleCount?: number;
+  sample_normalized?: any;
 };
 
 export async function POST(req: Request) {
@@ -69,23 +71,23 @@ export async function POST(req: Request) {
       });
     }
 
-    // 2. Fetch Fleet and Sync to Assets & Logs
+    // 2. Fetch Fleet and Sync (with detailed error catching)
     const fleet = await testFleet(provider as ProviderRecord, auth.token || null);
     const latencyMs = Date.now() - startedAt;
 
     if (!fleet.success) {
-      await updateStatus(provider.id, "failure", fleet.message || "Fleet fetch failed");
+      await updateStatus(provider.id, "failure", fleet.message || "Sync failed");
       return NextResponse.json({
         success: false,
-        stage: "FLEET",
+        stage: "PERSISTENCE",
         provider: provider.provider_name,
-        message: fleet.message || "Fleet fetch failed",
+        message: fleet.message,
         latency_ms: latencyMs,
         debug: fleet.debug || null,
       });
     }
 
-    // 3. Update Status
+    // 3. Success Reporting
     await updateStatus(
       provider.id,
       "success",
@@ -95,7 +97,7 @@ export async function POST(req: Request) {
     return NextResponse.json({
       success: true,
       provider: provider.provider_name,
-      message: `Connected. Synced ${fleet.vehicleCount} vehicles.`,
+      message: `Sync Successful. Master Registry and Logs updated.`,
       vehicle_count: fleet.vehicleCount,
       latency_ms: latencyMs,
       sample_normalized: fleet.sample_normalized || null,
@@ -106,7 +108,7 @@ export async function POST(req: Request) {
       {
         success: false,
         stage: "SYSTEM",
-        message: err.message || "Unknown provider test error",
+        message: err.message || "Unknown system error",
       },
       { status: 500 }
     );
@@ -171,7 +173,7 @@ async function authenticateProvider(
   return { success: false, message: `Unsupported auth_type: ${authType}` };
 }
 
-async function testFleet(provider: ProviderRecord, token: string | null) {
+async function testFleet(provider: ProviderRecord, token: string | null): Promise<RuntimeResult> {
   if (!provider.fleet_url) return { success: false, message: "Fleet URL missing" };
 
   const authType = (provider.auth_type || "POST_LOGIN").toUpperCase();
@@ -206,8 +208,8 @@ async function testFleet(provider: ProviderRecord, token: string | null) {
     const normalized = normalizeVehicle(rawVehicle, provider.field_mapping || {}, provider.provider_name);
     if (!sample_normalized) sample_normalized = normalized;
 
-    // UPSERT TO MASTER ASSET REGISTRY
-    await supabaseAdmin.from("fleet_assets").upsert({
+    // --- CHECKED ASSET UPSERT ---
+    const { error: assetError } = await supabaseAdmin.from("fleet_assets").upsert({
       provider_id: provider.id,
       provider_name: provider.provider_name,
       truck_id: normalized.truck_id,
@@ -219,8 +221,12 @@ async function testFleet(provider: ProviderRecord, token: string | null) {
       updated_at: new Date().toISOString(),
     }, { onConflict: "provider_id,truck_id" });
 
-    // INSERT TO TELEMETRY LOGS
-    await supabaseAdmin.from("telemetry_logs").insert({
+    if (assetError) {
+      return { success: false, message: `Asset registry write failed: ${assetError.message}`, debug: assetError };
+    }
+
+    // --- CHECKED TELEMETRY INSERT ---
+    const { error: telemetryError } = await supabaseAdmin.from("telemetry_logs").insert({
       provider_id: provider.id,
       truck_id: normalized.truck_id,
       latitude: normalized.latitude,
@@ -231,6 +237,10 @@ async function testFleet(provider: ProviderRecord, token: string | null) {
       raw_payload: normalized.raw,
       validation: normalized.validation,
     });
+
+    if (telemetryError) {
+      return { success: false, message: `Telemetry log write failed: ${telemetryError.message}`, debug: telemetryError };
+    }
   }
 
   return { 
