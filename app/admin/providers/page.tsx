@@ -26,7 +26,7 @@ export default function ProviderVault() {
   const handleSave = async (updatedProvider: any) => {
     setIsSaving(true);
     try {
-      // Ensure field_mapping is valid JSON before saving if it's a string
+      // Ensure field_mapping is valid JSON if it's a string from the textarea
       let finalProvider = { ...updatedProvider };
       if (typeof finalProvider.field_mapping === 'string') {
         try {
@@ -67,7 +67,6 @@ export default function ProviderVault() {
   );
 }
 
-// THE HARDENED COMPONENT WITH EXPLICIT TYPES FOR VERCEL
 function ProviderCard({
   provider,
   onSave,
@@ -101,12 +100,10 @@ function ProviderCard({
       console.log("------------------------------------");
 
       if (result.success) {
-        alert(`✅ ${result.message}\n\nCheck the Browser Console (F12) to see normalized telemetry.`);
+        alert(`✅ ${result.message}\n\nCheck Console for the 'NORMALIZED' object.`);
       } else {
         alert(`❌ ${result.stage || "ERROR"}: ${result.message}`);
       }
-
-      // window.location.reload(); // REMOVED to keep console logs alive
     } catch (err: any) {
       console.error("Test execution error:", err);
       alert(`Test failed: ${err.message}`);
@@ -153,6 +150,27 @@ function ProviderCard({
             onChange={(e) => setForm({...form, fleet_url: e.target.value})} 
           />
         </div>
+        
+        {/* DETERMINISTIC CONFIG FIELD */}
+        <div style={{ gridColumn: "span 2" }}>
+          <label style={labelStyle}>Vehicle List Path (e.g., 'data' or 'Result')</label>
+          <input 
+            style={inputStyle}
+            placeholder="Type the exact path found in RAW DEBUG"
+            value={form.fleet_config?.vehicle_paths?.[0] || ""} 
+            onChange={(e) => {
+              const newPath = e.target.value;
+              setForm({
+                ...form,
+                fleet_config: {
+                  ...form.fleet_config,
+                  vehicle_paths: [newPath]
+                }
+              });
+            }} 
+          />
+        </div>
+
         <div>
           <label style={labelStyle}>Username</label>
           <input 
@@ -177,7 +195,6 @@ function ProviderCard({
             style={textareaStyle}
             value={typeof form.field_mapping === 'object' ? JSON.stringify(form.field_mapping, null, 2) : form.field_mapping}
             onChange={(e) => setForm({...form, field_mapping: e.target.value})}
-            placeholder='{ "truck": "reg_no", "latitude": "lat" }'
           />
         </div>
       </div>
