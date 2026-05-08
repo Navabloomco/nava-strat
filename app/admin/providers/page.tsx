@@ -3,19 +3,17 @@
 import { useState, useEffect } from "react";
 import { createClient } from "@supabase/supabase-js";
 
-// Initialize the client (Using your existing Env vars)
+// Initialize the client
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 );
 
-// --- THE FIX: No props in the default export ---
 export default function ProviderVault() {
   const [providers, setProviders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
 
-  // Load your data inside the component
   useEffect(() => {
     async function loadVault() {
       const { data } = await supabase.from("tracking_providers").select("*");
@@ -25,7 +23,6 @@ export default function ProviderVault() {
     loadVault();
   }, []);
 
-  // YOUR ORIGINAL WORKING SAVE LOGIC
   const handleSave = async (updatedProvider: any) => {
     setIsSaving(true);
     try {
@@ -60,11 +57,11 @@ export default function ProviderVault() {
   );
 }
 
-function ProviderCard({ provider, onSave, isSaving }) {
+// FIX: Added ': any' to props to satisfy TypeScript compiler
+function ProviderCard({ provider, onSave, isSaving }: any) {
   const [form, setForm] = useState({ ...provider });
   const [isTesting, setIsTesting] = useState(false);
 
-  // THE TEST CONNECTION LOGIC
   async function handleTestConnection() {
     setIsTesting(true);
     try {
@@ -160,7 +157,7 @@ function ProviderCard({ provider, onSave, isSaving }) {
   );
 }
 
-// --- STYLES (Preserving your UI) ---
+// --- STYLES ---
 const cardStyle = { backgroundColor: "#fff", borderRadius: "12px", padding: "24px", border: "1px solid #e2e8f0", marginBottom: "20px" };
 const headerStyle = { display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #f1f5f9", paddingBottom: "16px", marginBottom: "20px" };
 const statusText = { fontSize: "12px", color: "#64748b", margin: "4px 0 0 0", fontWeight: "500" };
