@@ -1,10 +1,13 @@
 export type CanonicalVehicle = {
   truck_id: string;
+
   latitude: number | null;
   longitude: number | null;
+
   speed: number | null;
   fuel_level: number | null;
-  recorded_at: string | null;
+
+  recorded_at: string;
 
   provider: string;
 
@@ -20,7 +23,7 @@ export type CanonicalVehicle = {
 type MappingConfig = {
   truck?: string;
   latitude?: string;
-  longitude?: string;
+ longitude?: string;
   speed?: string;
   fuel_level?: string;
   recorded_at?: string;
@@ -42,11 +45,21 @@ export function normalizeVehicle(
   const recorded_at = getTimestamp(raw, mapping.recorded_at);
 
   // REQUIRED FIELDS
-  if (!truck_id) missing_fields.push("truck_id");
-  if (latitude === null) missing_fields.push("latitude");
-  if (longitude === null) missing_fields.push("longitude");
+
+  if (!truck_id) {
+    missing_fields.push("truck_id");
+  }
+
+  if (latitude === null) {
+    missing_fields.push("latitude");
+  }
+
+  if (longitude === null) {
+    missing_fields.push("longitude");
+  }
 
   // VALIDATION RULES
+
   if (latitude !== null && (latitude < -90 || latitude > 90)) {
     warnings.push("Latitude outside valid range");
   }
@@ -68,6 +81,7 @@ export function normalizeVehicle(
 
     latitude,
     longitude,
+
     speed,
     fuel_level,
 
@@ -85,15 +99,18 @@ export function normalizeVehicle(
   };
 }
 
-/* ------------------------------ */
+/* -------------------------------- */
 /* FIELD EXTRACTION HELPERS */
-/* ------------------------------ */
+/* -------------------------------- */
 
 function getValue(raw: any, path?: string): any {
   if (!path) return null;
 
   return path.split(".").reduce((current, key) => {
-    if (current === undefined || current === null) return null;
+    if (current === undefined || current === null) {
+      return null;
+    }
+
     return current[key];
   }, raw);
 }
@@ -101,7 +118,9 @@ function getValue(raw: any, path?: string): any {
 function getString(raw: any, path?: string): string | null {
   const value = getValue(raw, path);
 
-  if (value === undefined || value === null) return null;
+  if (value === undefined || value === null) {
+    return null;
+  }
 
   return String(value).trim();
 }
@@ -109,28 +128,41 @@ function getString(raw: any, path?: string): string | null {
 function getNumber(raw: any, path?: string): number | null {
   const value = getValue(raw, path);
 
-  if (value === undefined || value === null || value === "") {
+  if (
+    value === undefined ||
+    value === null ||
+    value === ""
+  ) {
     return null;
   }
 
   const parsed = Number(value);
 
-  if (Number.isNaN(parsed)) return null;
+  if (Number.isNaN(parsed)) {
+    return null;
+  }
 
   return parsed;
 }
 
-function getNullableNumber(raw: any, path?: string): number | null {
+function getNullableNumber(
+  raw: any,
+  path?: string
+): number | null {
   return getNumber(raw, path);
 }
 
-function getTimestamp(raw: any, path?: string): string | null {
+function getTimestamp(raw: any, path?: string): string {
   const value = getValue(raw, path);
 
-  if (!value) return new Date().toISOString();
+  // FALLBACK TO CURRENT TIME
+  if (!value) {
+    return new Date().toISOString();
+  }
 
   const date = new Date(value);
 
+  // INVALID DATE FALLBACK
   if (isNaN(date.getTime())) {
     return new Date().toISOString();
   }
