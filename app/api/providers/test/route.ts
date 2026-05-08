@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { supabaseAdmin } from "../../../../lib/supabaseAdmin";
 
 type ProviderRecord = {
   id: string;
@@ -26,6 +26,7 @@ export async function POST(req: Request) {
       );
     }
 
+    // 1. Fetch provider with master key (bypassing RLS)
     const { data: provider, error } = await supabaseAdmin
       .from("tracking_providers")
       .select("*")
@@ -34,16 +35,18 @@ export async function POST(req: Request) {
 
     if (error || !provider) {
       return NextResponse.json(
-        { success: false, message: "Provider not found" },
+        { success: false, message: "Provider not found in database" },
         { status: 404 }
       );
     }
 
     const startedAt = Date.now();
+
+    // 2. Execute Auth Strategy
     const auth = await authenticateProvider(provider as ProviderRecord);
 
     if (!auth.success) {
-      await updateStatus(provider.id, "failure", auth.message);
+      await updateStatus(provider.id, "failure", auth.message || "Auth failed");
       return NextResponse.json({
         success: false,
         stage: "AUTH",
@@ -53,11 +56,12 @@ export async function POST(req: Request) {
       });
     }
 
+    // 3. Execute Fleet Handshake
     const fleet = await testFleet(provider as ProviderRecord, auth.token || null);
     const latencyMs = Date.now() - startedAt;
 
     if (!fleet.success) {
-      await updateStatus(provider.id, "failure", fleet.message);
+      await updateStatus(provider.id, "failure", fleet.message || "Fleet fetch failed");
       return NextResponse.json({
         success: false,
         stage: "FLEET",
@@ -68,6 +72,7 @@ export async function POST(req: Request) {
       });
     }
 
+    // 4. Update Success State
     await updateStatus(
       provider.id,
       "success",
@@ -102,21 +107,11 @@ async function authenticateProvider(provider: ProviderRecord) {
 
   if (authType === "BEARER") {
     const token = provider.bearer_token || provider.api_key;
-    if (!token) return { success: false, message: "Bearer token missing" };
-    return { success: true, token };
+    return token ? { success: true, token } : { success: false, message: "Bearer token missing" };
   }
 
   if (authType === "API_KEY") {
-    if (!provider.api_key) return { success: false, message: "API key missing" };
-    return { success: true, token: provider.api_key };
-  }
-
-  if (authType === "BASIC_AUTH") {
-    if (!provider.username || !(provider.password || provider.api_key)) {
-      return { success: false, message: "Basic auth credentials missing" };
-    }
-    const raw = `${provider.username}:${provider.password || provider.api_key}`;
-    return { success: true, token: Buffer.from(raw).toString("base64") };
+    return provider.api_key ? { success: true, token: provider.api_key } : { success: false, message: "API key missing" };
   }
 
   if (authType === "POST_LOGIN") {
@@ -139,7 +134,7 @@ async function authenticateProvider(provider: ProviderRecord) {
     if (!response.ok || !token) {
       return {
         success: false,
-        message: extractProviderError(data) || `Login failed with HTTP ${response.status}`,
+        message: extractProviderError(data) || `Login failed (HTTP ${response.status})`,
         debug: data,
       };
     }
@@ -159,10 +154,7 @@ async function testFleet(provider: ProviderRecord, token: string | null) {
 
   if (token) {
     if (authType === "API_KEY") {
-      const apiKeyHeader = config.api_key_header || "x-api-key";
-      headers[apiKeyHeader] = token;
-    } else if (authType === "BASIC_AUTH") {
-      headers["Authorization"] = `Basic ${token}`;
+      headers[config.api_key_header || "x-api-key"] = token;
     } else {
       headers["Authorization"] = `Bearer ${token}`;
     }
@@ -190,6 +182,8 @@ async function testFleet(provider: ProviderRecord, token: string | null) {
   };
 }
 
+// --- HELPER UTILITIES ---
+
 function buildPayload(template: any, provider: ProviderRecord) {
   if (!template) {
     return {
@@ -197,7 +191,6 @@ function buildPayload(template: any, provider: ProviderRecord) {
       key: provider.api_key,
       username: provider.username,
       password: provider.password || provider.api_key,
-      api_key: provider.api_key,
     };
   }
   const output: any = {};
@@ -221,13 +214,12 @@ function resolveTemplateValue(value: any, provider: ProviderRecord, token: strin
     .replace("{{username}}", provider.username || "")
     .replace("{{api_key}}", provider.api_key || "")
     .replace("{{password}}", provider.password || "")
-    .replace("{{bearer_token}}", provider.bearer_token || "")
     .replace("{{token}}", token || "");
 }
 
 async function safeJson(response: Response) {
   try { return await response.json(); } 
-  catch { return { raw: "Non-JSON", status: response.status, statusText: response.statusText }; }
+  catch { return { raw: "Non-JSON", status: response.status }; }
 }
 
 function getByPaths(data: any, paths: string[]) {
@@ -240,13 +232,10 @@ function getByPaths(data: any, paths: string[]) {
 
 function getByPath(obj: any, path: string) {
   if (path === "$") return obj;
-  return path.split(".").reduce((current, part) => {
-    if (current === undefined || current === null) return undefined;
-    return current[part];
-  }, obj);
+  return path.split(".").reduce((curr, p) => curr?.[p], obj);
 }
 
-function defaultTokenPaths() { return ["token", "access_token", "jwt", "bearer_token", "data.token", "result.token"]; }
+function defaultTokenPaths() { return ["token", "access_token", "jwt", "data.token", "result.token"]; }
 function defaultVehiclePaths() { return ["$", "data", "result", "vehicles", "items"]; }
 
 function extractProviderError(data: any) {
@@ -255,7 +244,7 @@ function extractProviderError(data: any) {
   return data.message || data.error || data.Error || null;
 }
 
-async function updateStatus(providerId: string, status: "success" | "failure", message: string) {
+async function updateStatus(providerId: string, status: string, message: string) {
   await supabaseAdmin
     .from("tracking_providers")
     .update({
