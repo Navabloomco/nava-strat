@@ -1,151 +1,239 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { supabase } from "../../../lib/supabase";
-import { requirePermission } from "../../../lib/hooks/requirePermission";
+import { useState } from "react";
 
-export default function ProviderManager() {
-  const [providers, setProviders] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [allowed, setAllowed] = useState<boolean | null>(null);
-  const [savingId, setSavingId] = useState<string | null>(null);
+export default function ProviderVault({ providers }: { providers: any[] }) {
+  const [isSaving, setIsSaving] = useState(false);
 
-  useEffect(() => {
-    async function init() {
-      // Logic Bridge: Verify Admin access via email
-      const check = await requirePermission("contact@navabloomco.com", "admin");
-      setAllowed(check.allowed);
-
-      if (check.allowed) {
-        // Now that RLS is open for anon/building, this will return data
-        const { data } = await supabase.from("tracking_providers").select("*");
-        setProviders(data || []);
-      }
-      setLoading(false);
+  const handleSave = async (updatedProvider: any) => {
+    setIsSaving(true);
+    try {
+      const res = await fetch("/api/providers/update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updatedProvider),
+      });
+      if (res.ok) alert("Provider Vault Updated");
+    } catch (err) {
+      alert("Save failed");
+    } finally {
+      setIsSaving(false);
     }
-    init();
-  }, []);
-
-  const handleSave = async (id: string, providerData: any) => {
-    setSavingId(id);
-    let cleanData = { ...providerData };
-
-    if (typeof cleanData.field_mapping === "string") {
-      try {
-        cleanData.field_mapping = JSON.parse(cleanData.field_mapping);
-      } catch {
-        alert("Invalid Field Mapping JSON. Fix it before saving.");
-        setSavingId(null);
-        return;
-      }
-    }
-
-    const { error } = await supabase
-      .from("tracking_providers")
-      .update(cleanData)
-      .eq("id", id);
-
-    if (error) {
-      alert(`Update failed: ${error.message}`);
-    } else {
-      alert("Provider configuration updated successfully.");
-    }
-    setSavingId(null);
   };
 
-  if (loading) return <div style={msgStyle}>Initializing Global Integration Vault...</div>;
-
-  if (!allowed) return (
-    <div style={msgStyle}>
-      <h2 style={{ color: '#dc2626' }}>Access Denied</h2>
-      <p>This area requires SUPER_ADMIN clearance.</p>
-    </div>
-  );
-
   return (
-    <main style={{ padding: 40, maxWidth: "1000px" }}>
-      <header style={{ marginBottom: 40 }}>
-        <h1 style={{ fontSize: "28px", fontWeight: "bold" }}>Fleet Provider Management</h1>
-        <p style={{ color: "#64748b" }}>
-          Configure tracking provider integrations, API bridges, and sync parameters.
-        </p>
-      </header>
-
-      <div style={{ display: "flex", flexDirection: "column", gap: "40px" }}>
-        {providers.map((p) => (
-          <ProviderCard 
-            key={p.id} 
-            provider={p} 
-            onSave={(updates: any) => handleSave(p.id, updates)} 
-            isSaving={savingId === p.id}
-          />
-        ))}
-      </div>
-    </main>
+    <div style={{ padding: "40px", maxWidth: "1200px", margin: "0 auto" }}>
+      <h1 style={{ marginBottom: "30px" }}>Provider Vault</h1>
+      {providers.map((p) => (
+        <ProviderCard 
+          key={p.id} 
+          provider={p} 
+          onSave={handleSave} 
+          isSaving={isSaving} 
+        />
+      ))}
+    </div>
   );
 }
 
-function ProviderCard({ provider, onSave, isSaving }: any) {
+function ProviderCard({ provider, onSave, isSaving }) {
   const [form, setForm] = useState({ ...provider });
+  
+  // 1. ADDED TEST STATE
+  const [isTesting, setIsTesting] = useState(false);
+
+  // 2. ADDED TEST FUNCTION
+  async function handleTestConnection() {
+    setIsTesting(true);
+
+    try {
+      const res = await fetch("/api/providers/test", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          providerId: form.id,
+        }),
+      });
+
+      const result = await res.json();
+
+      if (result.success) {
+        alert(`✅ ${result.message}`);
+      } else {
+        alert(`❌ ${result.stage || "ERROR"}: ${result.message}`);
+        console.log("Provider test debug:", result.debug);
+      }
+
+      // Refresh to update the UI with new last_test_status from DB
+      window.location.reload();
+    } catch (err: any) {
+      alert(`Test failed: ${err.message}`);
+    } finally {
+      setIsTesting(false);
+    }
+  }
 
   return (
-    <section style={cardStyle}>
-      <div style={cardHeader}>
-        <h2 style={{ margin: 0 }}>{form.provider_name}</h2>
-        <div style={{ display: 'flex', gap: '15px', alignItems: 'center' }}>
-          <span style={form.is_active ? activeBadge : inactiveBadge}>
-            {form.is_active ? "SYNC ENABLED" : "SYNC PAUSED"}
-          </span>
-          <button onClick={() => onSave(form)} disabled={isSaving} style={saveBtn}>
+    <div style={cardStyle}>
+      <div style={headerStyle}>
+        <div>
+          <h3 style={{ margin: 0 }}>{provider.provider_name}</h3>
+          <p style={statusText}>
+            Last Status: <span style={{ color: provider.last_test_status === 'success' ? '#10b981' : '#ef4444' }}>
+              {provider.last_test_status || "Pending"}
+            </span>
+          </p>
+        </div>
+        <div style={{ display: 'flex', gap: '10px' }}>
+          
+          {/* 3. ADDED TEST BUTTON */}
+          <button
+            onClick={handleTestConnection}
+            disabled={isTesting}
+            style={testBtn}
+          >
+            {isTesting ? "COMMUNICATING..." : "TEST CONNECTION"}
+          </button>
+
+          <button 
+            onClick={() => onSave(form)} 
+            disabled={isSaving} 
+            style={saveBtn}
+          >
             {isSaving ? "SAVING..." : "SAVE CHANGES"}
           </button>
         </div>
       </div>
 
-      <div style={gridStyle}>
-        <Field label="Login URL" value={form.login_url} onChange={(v: string) => setForm({...form, login_url: v})} />
-        <Field label="Fleet API URL" value={form.fleet_url} onChange={(v: string) => setForm({...form, fleet_url: v})} />
-        <Field label="API Username" value={form.username} onChange={(v: string) => setForm({...form, username: v})} />
-        <Field label="API Secret / Key" type="password" value={form.api_key} onChange={(v: string) => setForm({...form, api_key: v})} />
-      </div>
+      <div style={formGrid}>
+        <div>
+          <label style={labelStyle}>Login URL</label>
+          <input 
+            style={inputStyle}
+            value={form.login_url || ""} 
+            onChange={(e) => setForm({...form, login_url: e.target.value})} 
+          />
+        </div>
+        <div>
+          <label style={labelStyle}>Fleet URL</label>
+          <input 
+            style={inputStyle}
+            value={form.fleet_url || ""} 
+            onChange={(e) => setForm({...form, fleet_url: e.target.value})} 
+          />
+        </div>
+        <div>
+          <label style={labelStyle}>Username / Client ID</label>
+          <input 
+            style={inputStyle}
+            value={form.username || ""} 
+            onChange={(e) => setForm({...form, username: e.target.value})} 
+          />
+        </div>
+        <div>
+          <label style={labelStyle}>API Key / Secret</label>
+          <input 
+            type="password"
+            style={inputStyle}
+            value={form.api_key || ""} 
+            onChange={(e) => setForm({...form, api_key: e.target.value})} 
+          />
+        </div>
 
-      <div style={{ marginTop: 25 }}>
-        <label style={labelStyle}>Field Mapping (JSONB)</label>
-        <textarea 
-          style={jsonArea}
-          value={typeof form.field_mapping === 'string' ? form.field_mapping : JSON.stringify(form.field_mapping, null, 2)}
-          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setForm({...form, field_mapping: e.target.value})}
-        />
+        <div style={{ gridColumn: "span 2" }}>
+          <label style={labelStyle}>Field Mapping (Normalization Engine)</label>
+          <textarea 
+            style={textareaStyle}
+            value={typeof form.field_mapping === 'object' ? JSON.stringify(form.field_mapping, null, 2) : form.field_mapping}
+            onChange={(e) => setForm({...form, field_mapping: e.target.value})}
+          />
+        </div>
       </div>
-
-      <div style={statusFooter}>
-        <span>Last Test: <strong>{form.last_test_status || "PENDING"}</strong></span>
-        <button style={toggleBtn} onClick={() => setForm({...form, is_active: !form.is_active})}>
-          {form.is_active ? "Pause Sync" : "Resume Sync"}
-        </button>
-      </div>
-    </section>
-  );
-}
-
-function Field({ label, value, onChange, type = "text" }: { label: string; value: string; onChange: (v: string) => void; type?: string }) {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-      <label style={labelStyle}>{label}</label>
-      <input type={type} style={inputStyle} value={value || ""} onChange={(e) => onChange(e.target.value)} />
     </div>
   );
 }
 
-const msgStyle = { padding: 60, textAlign: 'center' as const, color: '#64748b' };
-const cardStyle = { backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '30px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' };
-const cardHeader = { display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #f1f5f9', paddingBottom: '20px', marginBottom: '20px' };
-const gridStyle = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' };
-const labelStyle = { fontSize: '11px', fontWeight: 'bold', color: '#94a3b8', textTransform: 'uppercase' as const };
-const inputStyle = { padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px' };
-const jsonArea = { width: '100%', height: '120px', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontFamily: 'monospace', fontSize: '12px' };
-const saveBtn = { backgroundColor: '#0f172a', color: '#fff', border: 'none', padding: '8px 20px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer' };
-const statusFooter = { marginTop: 20, paddingTop: 20, borderTop: '1px solid #f1f5f9', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px' };
-const toggleBtn = { background: 'none', border: '1px solid #e2e8f0', padding: '5px 12px', borderRadius: '4px', cursor: 'pointer' };
-const activeBadge = { fontSize: '10px', color: '#16a34a', fontWeight: 'bold', padding: '4px 8px', backgroundColor: '#f0fdf4', borderRadius: '4px' };
-const inactiveBadge = { fontSize: '10px', color: '#dc2626', fontWeight: 'bold', padding: '4px 8px', backgroundColor: '#fef2f2', borderRadius: '4px' };
+// --- STYLES ---
+
+const cardStyle = {
+  backgroundColor: "#fff",
+  borderRadius: "12px",
+  padding: "24px",
+  border: "1px solid #e2e8f0",
+  marginBottom: "20px",
+  boxShadow: "0 1px 3px rgba(0,0,0,0.1)"
+};
+
+const headerStyle = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  borderBottom: "1px solid #f1f5f9",
+  paddingBottom: "16px",
+  marginBottom: "20px"
+};
+
+const statusText = {
+  fontSize: "12px",
+  color: "#64748b",
+  margin: "4px 0 0 0",
+  fontWeight: "500"
+};
+
+const labelStyle = {
+  display: "block",
+  fontSize: "12px",
+  fontWeight: "bold",
+  color: "#475569",
+  marginBottom: "6px",
+  textTransform: "uppercase" as "uppercase"
+};
+
+const inputStyle = {
+  width: "100%",
+  padding: "10px",
+  borderRadius: "6px",
+  border: "1px solid #cbd5e1",
+  marginBottom: "10px",
+  fontSize: "14px"
+};
+
+const textareaStyle = {
+  width: "100%",
+  minHeight: "150px",
+  padding: "12px",
+  borderRadius: "6px",
+  border: "1px solid #cbd5e1",
+  fontFamily: "monospace",
+  fontSize: "12px",
+  backgroundColor: "#f8fafc"
+};
+
+const formGrid = {
+  display: "grid",
+  gridTemplateColumns: "1fr 1fr",
+  gap: "20px"
+};
+
+const saveBtn = {
+  backgroundColor: "#0f172a",
+  color: "#fff",
+  border: "none",
+  padding: "8px 24px",
+  borderRadius: "6px",
+  fontWeight: "bold",
+  cursor: "pointer"
+};
+
+// 4. ADDED TEST STYLE
+const testBtn = {
+  backgroundColor: "#fff",
+  color: "#0f172a",
+  border: "1px solid #cbd5e1",
+  padding: "8px 20px",
+  borderRadius: "6px",
+  fontWeight: "bold",
+  cursor: "pointer"
+};
