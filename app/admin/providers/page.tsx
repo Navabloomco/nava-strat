@@ -12,11 +12,12 @@ export default function ProviderManager() {
 
   useEffect(() => {
     async function init() {
-      // Hard Guard: Super Admin Bridge for COO
+      // Logic Bridge: Verify Admin access via email
       const check = await requirePermission("contact@navabloomco.com", "admin");
       setAllowed(check.allowed);
 
       if (check.allowed) {
+        // Now that RLS is open for anon/building, this will return data
         const { data } = await supabase.from("tracking_providers").select("*");
         setProviders(data || []);
       }
@@ -29,7 +30,6 @@ export default function ProviderManager() {
     setSavingId(id);
     let cleanData = { ...providerData };
 
-    // Force validation of JSON field mapping before database touch
     if (typeof cleanData.field_mapping === "string") {
       try {
         cleanData.field_mapping = JSON.parse(cleanData.field_mapping);
@@ -48,12 +48,12 @@ export default function ProviderManager() {
     if (error) {
       alert(`Update failed: ${error.message}`);
     } else {
-      alert("Provider credentials secured.");
+      alert("Provider configuration updated successfully.");
     }
     setSavingId(null);
   };
 
-  if (loading) return <div style={msgStyle}>Initializing Admin Vault...</div>;
+  if (loading) return <div style={msgStyle}>Initializing Global Integration Vault...</div>;
 
   if (!allowed) return (
     <div style={msgStyle}>
@@ -66,7 +66,9 @@ export default function ProviderManager() {
     <main style={{ padding: 40, maxWidth: "1000px" }}>
       <header style={{ marginBottom: 40 }}>
         <h1 style={{ fontSize: "28px", fontWeight: "bold" }}>Fleet Provider Management</h1>
-        <p style={{ color: "#64748b" }}>Configure API bridges for Bluetrax and sync parameters.</p>
+        <p style={{ color: "#64748b" }}>
+          Configure tracking provider integrations, API bridges, and sync parameters.
+        </p>
       </header>
 
       <div style={{ display: "flex", flexDirection: "column", gap: "40px" }}>
@@ -101,7 +103,6 @@ function ProviderCard({ provider, onSave, isSaving }: any) {
       </div>
 
       <div style={gridStyle}>
-        {/* Explicit String Typing for Vercel Production Build */}
         <Field label="Login URL" value={form.login_url} onChange={(v: string) => setForm({...form, login_url: v})} />
         <Field label="Fleet API URL" value={form.fleet_url} onChange={(v: string) => setForm({...form, fleet_url: v})} />
         <Field label="API Username" value={form.username} onChange={(v: string) => setForm({...form, username: v})} />
