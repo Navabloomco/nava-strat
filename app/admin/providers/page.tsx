@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { createClient } from "@supabase/supabase-js";
 
-// Initialize the client
+// Initialize the client (Using public keys)
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
@@ -57,8 +57,16 @@ export default function ProviderVault() {
   );
 }
 
-// FIX: Added ': any' to props to satisfy TypeScript compiler
-function ProviderCard({ provider, onSave, isSaving }: any) {
+// THE HARDENED COMPONENT WITH EXPLICIT TYPES FOR VERCEL
+function ProviderCard({
+  provider,
+  onSave,
+  isSaving,
+}: {
+  provider: any;
+  onSave: (updatedProvider: any) => void;
+  isSaving: boolean;
+}) {
   const [form, setForm] = useState({ ...provider });
   const [isTesting, setIsTesting] = useState(false);
 
@@ -145,11 +153,12 @@ function ProviderCard({ provider, onSave, isSaving }: any) {
         </div>
 
         <div style={{ gridColumn: "span 2" }}>
-          <label style={labelStyle}>Field Mapping (Normalization Engine)</label>
+          <label style={labelStyle}>Field Mapping (Telemetry Rules)</label>
           <textarea 
             style={textareaStyle}
             value={typeof form.field_mapping === 'object' ? JSON.stringify(form.field_mapping, null, 2) : form.field_mapping}
             onChange={(e) => setForm({...form, field_mapping: e.target.value})}
+            placeholder="JSON config for speed, fuel, and lat/lng mapping"
           />
         </div>
       </div>
@@ -158,12 +167,12 @@ function ProviderCard({ provider, onSave, isSaving }: any) {
 }
 
 // --- STYLES ---
-const cardStyle = { backgroundColor: "#fff", borderRadius: "12px", padding: "24px", border: "1px solid #e2e8f0", marginBottom: "20px" };
+const cardStyle = { backgroundColor: "#fff", borderRadius: "12px", padding: "24px", border: "1px solid #e2e8f0", marginBottom: "20px", boxShadow: "0 1px 3px rgba(0,0,0,0.1)" };
 const headerStyle = { display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #f1f5f9", paddingBottom: "16px", marginBottom: "20px" };
 const statusText = { fontSize: "12px", color: "#64748b", margin: "4px 0 0 0", fontWeight: "500" };
 const labelStyle = { display: "block", fontSize: "11px", fontWeight: "bold", color: "#475569", marginBottom: "4px", textTransform: "uppercase" as "uppercase" };
-const inputStyle = { width: "100%", padding: "8px", borderRadius: "6px", border: "1px solid #cbd5e1", marginBottom: "10px", fontSize: "14px" };
-const textareaStyle = { width: "100%", minHeight: "120px", padding: "10px", borderRadius: "6px", border: "1px solid #cbd5e1", fontFamily: "monospace", fontSize: "12px" };
+const inputStyle = { width: "100%", padding: "10px", borderRadius: "6px", border: "1px solid #cbd5e1", marginBottom: "10px", fontSize: "14px" };
+const textareaStyle = { width: "100%", minHeight: "120px", padding: "12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontFamily: "monospace", fontSize: "12px", backgroundColor: "#f8fafc" };
 const formGrid = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "15px" };
-const saveBtn = { backgroundColor: "#0f172a", color: "#fff", border: "none", padding: "8px 20px", borderRadius: "6px", fontWeight: "bold", cursor: "pointer" };
+const saveBtn = { backgroundColor: "#0f172a", color: "#fff", border: "none", padding: "8px 24px", borderRadius: "6px", fontWeight: "bold", cursor: "pointer" };
 const testBtn = { backgroundColor: "#fff", color: "#0f172a", border: "1px solid #cbd5e1", padding: "8px 20px", borderRadius: "6px", fontWeight: "bold", cursor: "pointer" };
