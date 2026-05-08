@@ -26,10 +26,20 @@ export default function ProviderVault() {
   const handleSave = async (updatedProvider: any) => {
     setIsSaving(true);
     try {
+      // Ensure field_mapping is valid JSON before saving if it's a string
+      let finalProvider = { ...updatedProvider };
+      if (typeof finalProvider.field_mapping === 'string') {
+        try {
+          finalProvider.field_mapping = JSON.parse(finalProvider.field_mapping);
+        } catch (e) {
+          throw new Error("Invalid JSON in Field Mapping");
+        }
+      }
+
       const { error } = await supabase
         .from("tracking_providers")
-        .update(updatedProvider)
-        .eq("id", updatedProvider.id);
+        .update(finalProvider)
+        .eq("id", finalProvider.id);
 
       if (error) throw error;
       alert("✅ Provider Vault Updated");
@@ -72,6 +82,8 @@ function ProviderCard({
 
   async function handleTestConnection() {
     setIsTesting(true);
+    console.log(`🚀 Starting Test for: ${provider.provider_name}`);
+    
     try {
       const res = await fetch("/api/providers/test", {
         method: "POST",
@@ -81,15 +93,22 @@ function ProviderCard({
 
       const result = await res.json();
 
+      // --- THE TRUTH LOGS ---
+      console.log("------------------------------------");
+      console.log("FULL TEST RESULT:", result);
+      console.log("NORMALIZED DATA:", result.sample_normalized);
+      console.log("RAW DEBUG DATA:", result.debug);
+      console.log("------------------------------------");
+
       if (result.success) {
-        alert(`✅ ${result.message}`);
+        alert(`✅ ${result.message}\n\nCheck the Browser Console (F12) to see normalized telemetry.`);
       } else {
         alert(`❌ ${result.stage || "ERROR"}: ${result.message}`);
-        console.log("Provider test debug:", result.debug);
       }
 
-      window.location.reload();
+      // window.location.reload(); // REMOVED to keep console logs alive
     } catch (err: any) {
+      console.error("Test execution error:", err);
       alert(`Test failed: ${err.message}`);
     } finally {
       setIsTesting(false);
@@ -158,7 +177,7 @@ function ProviderCard({
             style={textareaStyle}
             value={typeof form.field_mapping === 'object' ? JSON.stringify(form.field_mapping, null, 2) : form.field_mapping}
             onChange={(e) => setForm({...form, field_mapping: e.target.value})}
-            placeholder="JSON config for speed, fuel, and lat/lng mapping"
+            placeholder='{ "truck": "reg_no", "latitude": "lat" }'
           />
         </div>
       </div>
