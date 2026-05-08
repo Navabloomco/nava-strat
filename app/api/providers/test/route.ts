@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "../../../../lib/supabaseAdmin";
+// CRITICAL: Relative import to bypass Vercel alias issues
+import { normalizeVehicle } from "../../../../lib/providers/normalizeVehicle";
 
 type ProviderRecord = {
   id: string;
@@ -13,6 +15,7 @@ type ProviderRecord = {
   bearer_token: string | null;
   auth_config?: any;
   fleet_config?: any;
+  field_mapping?: any;
 };
 
 export async function POST(req: Request) {
@@ -26,6 +29,7 @@ export async function POST(req: Request) {
       );
     }
 
+    // 1. Fetch provider with master key (bypassing RLS)
     const { data: provider, error } = await supabaseAdmin
       .from("tracking_providers")
       .select("*")
@@ -41,7 +45,7 @@ export async function POST(req: Request) {
 
     const startedAt = Date.now();
 
-    // 1. Authenticate
+    // 2. Execute Auth Strategy
     const auth = await authenticateProvider(provider as ProviderRecord);
 
     if (!auth.success) {
@@ -51,11 +55,11 @@ export async function POST(req: Request) {
         stage: "AUTH",
         provider: provider.provider_name,
         message: auth.message,
-        debug: auth.debug || null, // Capture auth failure payload
+        debug: auth.debug || null,
       });
     }
 
-    // 2. Fetch Fleet
+    // 3. Execute Fleet Handshake & Normalization
     const fleet = await testFleet(provider as ProviderRecord, auth.token || null);
     const latencyMs = Date.now() - startedAt;
 
@@ -67,11 +71,11 @@ export async function POST(req: Request) {
         provider: provider.provider_name,
         message: fleet.message,
         latency_ms: latencyMs,
-        debug: fleet.debug || null, // Capture fleet failure payload
+        debug: fleet.debug || null,
       });
     }
 
-    // 3. Log Success & Return Debug Data
+    // 4. Update Success State
     await updateStatus(
       provider.id,
       "success",
@@ -84,8 +88,8 @@ export async function POST(req: Request) {
       message: `Connected. Found ${fleet.vehicleCount} vehicles.`,
       vehicle_count: fleet.vehicleCount,
       latency_ms: latencyMs,
-      sample_vehicle: fleet.sampleVehicle || null,
-      debug: fleet.debug || null, // <--- CRITICAL: Passes the "Zero Vehicle" payload to the frontend
+      sample_normalized: fleet.sample_normalized, // <--- The birth of Nava Eye
+      debug: fleet.debug || null,
     });
   } catch (err: any) {
     return NextResponse.json(
@@ -171,15 +175,28 @@ async function testFleet(provider: ProviderRecord, token: string | null) {
   const data = await safeJson(response);
   if (!response.ok) return { success: false, message: `Fleet API returned HTTP ${response.status}`, debug: data };
 
-  // This is where the mismatch happens - we need to see what 'data' is to set these paths right
-  const vehicles = getByPaths(data, config.vehicle_paths || defaultVehiclePaths());
+  // --- TELEMETRY EXTRACTION ---
+  const vehicles = getByPaths(
+    data,
+    provider.fleet_config?.vehicle_paths || defaultVehiclePaths()
+  );
   const vehicleArray = Array.isArray(vehicles) ? vehicles : [];
+
+  // --- TELEMETRY NORMALIZATION ---
+  let sample_normalized = null;
+  if (vehicleArray.length > 0) {
+    sample_normalized = normalizeVehicle(
+      vehicleArray[0],
+      provider.field_mapping || {},
+      provider.provider_name
+    );
+  }
 
   return {
     success: true,
     vehicleCount: vehicleArray.length,
-    sampleVehicle: vehicleArray[0] || null,
-    debug: data, // Pass the fleet raw data back for investigation
+    sample_normalized,
+    debug: data,
   };
 }
 
