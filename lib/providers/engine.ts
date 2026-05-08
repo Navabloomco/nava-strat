@@ -5,12 +5,18 @@ export type ProviderRecord = {
   id: string;
   provider_name: string;
   auth_type: string | null;
+
   login_url: string | null;
   fleet_url: string | null;
+
+  default_login_url?: string | null;
+  default_fleet_url?: string | null;
+
   username: string | null;
   api_key: string | null;
   password: string | null;
   bearer_token: string | null;
+
   auth_config?: any;
   fleet_config?: any;
   field_mapping?: any;
@@ -129,7 +135,9 @@ export async function runProviderSync(
           });
 
         if (telemetryError) {
-          throw new Error(`Telemetry log write failed: ${telemetryError.message}`);
+          throw new Error(
+            `Telemetry log write failed: ${telemetryError.message}`
+          );
         }
 
         syncedCount++;
@@ -161,7 +169,9 @@ export async function runProviderSync(
   }
 }
 
-async function authenticateProvider(provider: ProviderRecord): Promise<AuthResult> {
+async function authenticateProvider(
+  provider: ProviderRecord
+): Promise<AuthResult> {
   const authType = (provider.auth_type || "POST_LOGIN").toUpperCase();
   const config = provider.auth_config || {};
 
@@ -220,7 +230,12 @@ async function authenticateProvider(provider: ProviderRecord): Promise<AuthResul
   }
 
   if (authType === "POST_LOGIN") {
-    if (!provider.login_url) {
+    const loginUrl =
+      provider.login_url ||
+      provider.auth_config?.login_url ||
+      provider.default_login_url;
+
+    if (!loginUrl) {
       return {
         success: false,
         message: "Login URL missing",
@@ -240,7 +255,7 @@ async function authenticateProvider(provider: ProviderRecord): Promise<AuthResul
     const payload = buildPayload(payloadTemplate, provider);
     const headers = buildHeaders(config.headers || {}, provider, null);
 
-    const response = await fetch(provider.login_url, {
+    const response = await fetch(loginUrl, {
       method,
       headers: {
         "Content-Type": "application/json",
@@ -266,6 +281,7 @@ async function authenticateProvider(provider: ProviderRecord): Promise<AuthResul
         debug: {
           status: response.status,
           statusText: response.statusText,
+          login_url: loginUrl,
           payload_sent: maskPayload(payload),
           token_paths_checked: tokenPaths,
           auth_response: data,
@@ -290,7 +306,12 @@ async function fetchFleet(
   provider: ProviderRecord,
   token: string | null
 ): Promise<FleetResult> {
-  if (!provider.fleet_url) {
+  const fleetUrl =
+    provider.fleet_url ||
+    provider.fleet_config?.fleet_url ||
+    provider.default_fleet_url;
+
+  if (!fleetUrl) {
     return {
       success: false,
       vehicles: [],
@@ -316,7 +337,7 @@ async function fetchFleet(
 
   const payload = buildPayload(config.payload || {}, provider);
 
-  const response = await fetch(provider.fleet_url, {
+  const response = await fetch(fleetUrl, {
     method,
     headers: {
       "Content-Type": "application/json",
@@ -336,6 +357,7 @@ async function fetchFleet(
       debug: {
         status: response.status,
         statusText: response.statusText,
+        fleet_url: fleetUrl,
         fleet_response: data,
       },
     };
@@ -353,6 +375,7 @@ async function fetchFleet(
     success: true,
     vehicles: vehicleArray,
     debug: {
+      fleet_url: fleetUrl,
       vehicle_paths_checked: vehiclePaths,
       fleet_response: data,
     },
