@@ -26,7 +26,6 @@ export async function POST(req: Request) {
       );
     }
 
-    // 1. Fetch provider with master key (bypassing RLS)
     const { data: provider, error } = await supabaseAdmin
       .from("tracking_providers")
       .select("*")
@@ -42,7 +41,7 @@ export async function POST(req: Request) {
 
     const startedAt = Date.now();
 
-    // 2. Execute Auth Strategy
+    // 1. Authenticate
     const auth = await authenticateProvider(provider as ProviderRecord);
 
     if (!auth.success) {
@@ -52,11 +51,11 @@ export async function POST(req: Request) {
         stage: "AUTH",
         provider: provider.provider_name,
         message: auth.message,
-        debug: auth.debug || null,
+        debug: auth.debug || null, // Capture auth failure payload
       });
     }
 
-    // 3. Execute Fleet Handshake
+    // 2. Fetch Fleet
     const fleet = await testFleet(provider as ProviderRecord, auth.token || null);
     const latencyMs = Date.now() - startedAt;
 
@@ -68,11 +67,11 @@ export async function POST(req: Request) {
         provider: provider.provider_name,
         message: fleet.message,
         latency_ms: latencyMs,
-        debug: fleet.debug || null,
+        debug: fleet.debug || null, // Capture fleet failure payload
       });
     }
 
-    // 4. Update Success State
+    // 3. Log Success & Return Debug Data
     await updateStatus(
       provider.id,
       "success",
@@ -86,6 +85,7 @@ export async function POST(req: Request) {
       vehicle_count: fleet.vehicleCount,
       latency_ms: latencyMs,
       sample_vehicle: fleet.sampleVehicle || null,
+      debug: fleet.debug || null, // <--- CRITICAL: Passes the "Zero Vehicle" payload to the frontend
     });
   } catch (err: any) {
     return NextResponse.json(
@@ -171,6 +171,7 @@ async function testFleet(provider: ProviderRecord, token: string | null) {
   const data = await safeJson(response);
   if (!response.ok) return { success: false, message: `Fleet API returned HTTP ${response.status}`, debug: data };
 
+  // This is where the mismatch happens - we need to see what 'data' is to set these paths right
   const vehicles = getByPaths(data, config.vehicle_paths || defaultVehiclePaths());
   const vehicleArray = Array.isArray(vehicles) ? vehicles : [];
 
@@ -178,7 +179,7 @@ async function testFleet(provider: ProviderRecord, token: string | null) {
     success: true,
     vehicleCount: vehicleArray.length,
     sampleVehicle: vehicleArray[0] || null,
-    debug: data,
+    debug: data, // Pass the fleet raw data back for investigation
   };
 }
 
