@@ -52,6 +52,28 @@ export default function NewProviderPage() {
       return;
     }
 
+    const loginUrl =
+      form.login_url ||
+      selectedTemplate.default_login_url ||
+      selectedTemplate.auth_config?.login_url ||
+      null;
+
+    const fleetUrl =
+      form.fleet_url ||
+      selectedTemplate.default_fleet_url ||
+      selectedTemplate.fleet_config?.fleet_url ||
+      null;
+
+    if (!loginUrl) {
+      alert("Login URL is missing from the template. Add an override.");
+      return;
+    }
+
+    if (!fleetUrl) {
+      alert("Fleet URL is missing from the template. Add an override.");
+      return;
+    }
+
     setSaving(true);
 
     const { error } = await supabase.from("tracking_providers").insert({
@@ -68,8 +90,8 @@ export default function NewProviderPage() {
       password: form.password || null,
 
       base_url: form.base_url || null,
-      login_url: form.login_url || null,
-      fleet_url: form.fleet_url || null,
+      login_url: loginUrl,
+      fleet_url: fleetUrl,
 
       is_active: true,
       last_test_status: "not_tested",
@@ -95,8 +117,8 @@ export default function NewProviderPage() {
       <header style={{ marginBottom: 30 }}>
         <h1 style={titleStyle}>Add Provider</h1>
         <p style={subtitleStyle}>
-          Add a verified tracking integration. Clients only enter credentials;
-          Nava Strat handles the telemetry rules.
+          Add a verified tracking integration. Clients enter credentials; Nava
+          Strat handles the telemetry rules.
         </p>
       </header>
 
