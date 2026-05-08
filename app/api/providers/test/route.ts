@@ -1,274 +1,112 @@
+import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
-import { supabaseAdmin } from "../../../../lib/supabaseAdmin";
-// CRITICAL: Relative import to bypass Vercel alias issues
-import { normalizeVehicle } from "../../../../lib/providers/normalizeVehicle";
+import { normalizeVehicle } from "@/lib/providers/normalizeVehicle";
 
-type ProviderRecord = {
-  id: string;
-  provider_name: string;
-  auth_type: string | null;
-  login_url: string | null;
-  fleet_url: string | null;
-  username: string | null;
-  api_key: string | null;
-  password: string | null;
-  bearer_token: string | null;
-  auth_config?: any;
-  fleet_config?: any;
-  field_mapping?: any;
-};
+// We use the Service Role Key here because this is a backend process 
+// that needs to bypass Row Level Security to write logs.
+const supabaseAdmin = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+);
 
 export async function POST(req: Request) {
   try {
     const { providerId } = await req.json();
 
-    if (!providerId) {
-      return NextResponse.json(
-        { success: false, message: "providerId is required" },
-        { status: 400 }
-      );
-    }
-
-    // 1. Fetch provider with master key (bypassing RLS)
-    const { data: provider, error } = await supabaseAdmin
+    // 1. Fetch the Provider configuration from the Vault
+    const { data: provider, error: pError } = await supabaseAdmin
       .from("tracking_providers")
       .select("*")
       .eq("id", providerId)
       .single();
 
-    if (error || !provider) {
-      return NextResponse.json(
-        { success: false, message: "Provider not found in database" },
-        { status: 404 }
-      );
-    }
+    if (pError || !provider) throw new Error("Provider not found in Vault");
 
-    const startedAt = Date.now();
-
-    // 2. Execute Auth Strategy
-    const auth = await authenticateProvider(provider as ProviderRecord);
-
-    if (!auth.success) {
-      await updateStatus(provider.id, "failure", auth.message || "Auth failed");
-      return NextResponse.json({
-        success: false,
-        stage: "AUTH",
-        provider: provider.provider_name,
-        message: auth.message,
-        debug: auth.debug || null,
-      });
-    }
-
-    // 3. Execute Fleet Handshake & Normalization
-    const fleet = await testFleet(provider as ProviderRecord, auth.token || null);
-    const latencyMs = Date.now() - startedAt;
-
-    if (!fleet.success) {
-      await updateStatus(provider.id, "failure", fleet.message || "Fleet fetch failed");
-      return NextResponse.json({
-        success: false,
-        stage: "FLEET",
-        provider: provider.provider_name,
-        message: fleet.message,
-        latency_ms: latencyMs,
-        debug: fleet.debug || null,
-      });
-    }
-
-    // 4. Update Success State
-    await updateStatus(
-      provider.id,
-      "success",
-      `Connected. Found ${fleet.vehicleCount} vehicles. Latency ${latencyMs}ms.`
-    );
-
-    return NextResponse.json({
-      success: true,
-      provider: provider.provider_name,
-      message: `Connected. Found ${fleet.vehicleCount} vehicles.`,
-      vehicle_count: fleet.vehicleCount,
-      latency_ms: latencyMs,
-      sample_normalized: fleet.sample_normalized, // <--- The birth of Nava Eye
-      debug: fleet.debug || null,
+    // 2. Perform the Handshake (Login to Bluetrax)
+    const loginRes = await fetch(provider.login_url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        username: provider.username,
+        password: provider.api_key, // In Bluetrax, api_key stores the password
+      }),
     });
-  } catch (err: any) {
-    return NextResponse.json(
-      {
-        success: false,
-        stage: "SYSTEM",
-        message: err.message || "Unknown provider test error",
+
+    const loginData = await loginRes.json();
+    if (!loginData.token) throw new Error("Authentication failed: No token returned");
+
+    // 3. Fetch Fleet Telemetry
+    const fleetRes = await fetch(provider.fleet_url, {
+      method: "POST",
+      headers: { 
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${loginData.token}`
       },
-      { status: 500 }
-    );
-  }
-}
-
-async function authenticateProvider(provider: ProviderRecord) {
-  const authType = (provider.auth_type || "POST_LOGIN").toUpperCase();
-  const config = provider.auth_config || {};
-
-  if (authType === "NONE") return { success: true, token: null };
-
-  if (authType === "BEARER") {
-    const token = provider.bearer_token || provider.api_key;
-    return token ? { success: true, token } : { success: false, message: "Bearer token missing" };
-  }
-
-  if (authType === "API_KEY") {
-    return provider.api_key ? { success: true, token: provider.api_key } : { success: false, message: "API key missing" };
-  }
-
-  if (authType === "POST_LOGIN") {
-    if (!provider.login_url) return { success: false, message: "Login URL missing" };
-
-    const method = config.method || "POST";
-    const headers = buildHeaders(config.headers || {}, provider, null);
-    const payload = buildPayload(config.payload, provider);
-
-    const response = await fetch(provider.login_url, {
-      method,
-      headers: { "Content-Type": "application/json", ...headers },
-      body: method === "GET" ? undefined : JSON.stringify(payload),
-      cache: "no-store",
     });
 
-    const data = await safeJson(response);
-    const token = getByPaths(data, config.token_paths || defaultTokenPaths());
+    const rawData = await fleetRes.json();
 
-    if (!response.ok || !token) {
-      return {
+    // 4. Extract Vehicles using your Deterministic Path
+    // It defaults to 'data' if the path isn't set yet.
+    const vehiclePath = provider.fleet_config?.vehicle_paths?.[0] || "data";
+    const vehicleArray = rawData[vehiclePath] || [];
+
+    if (vehicleArray.length === 0) {
+      return NextResponse.json({
         success: false,
-        message: extractProviderError(data) || `Login failed (HTTP ${response.status})`,
-        debug: data,
-      };
+        stage: "EXTRACTION",
+        message: `Connected, but found 0 vehicles at path: '${vehiclePath}'`,
+        debug: rawData
+      });
     }
-    return { success: true, token, debug: data };
-  }
 
-  return { success: false, message: `Unsupported auth_type: ${authType}` };
-}
-
-async function testFleet(provider: ProviderRecord, token: string | null) {
-  if (!provider.fleet_url) return { success: false, message: "Fleet URL missing" };
-
-  const authType = (provider.auth_type || "POST_LOGIN").toUpperCase();
-  const config = provider.fleet_config || {};
-  const method = config.method || "POST";
-  const headers = buildHeaders(config.headers || {}, provider, token);
-
-  if (token) {
-    if (authType === "API_KEY") {
-      headers[config.api_key_header || "x-api-key"] = token;
-    } else {
-      headers["Authorization"] = `Bearer ${token}`;
-    }
-  }
-
-  const payload = buildPayload(config.payload, provider);
-  const response = await fetch(provider.fleet_url, {
-    method,
-    headers: { "Content-Type": "application/json", ...headers },
-    body: method === "GET" ? undefined : JSON.stringify(payload),
-    cache: "no-store",
-  });
-
-  const data = await safeJson(response);
-  if (!response.ok) return { success: false, message: `Fleet API returned HTTP ${response.status}`, debug: data };
-
-  // --- TELEMETRY EXTRACTION ---
-  const vehicles = getByPaths(
-    data,
-    provider.fleet_config?.vehicle_paths || defaultVehiclePaths()
-  );
-  const vehicleArray = Array.isArray(vehicles) ? vehicles : [];
-
-  // --- TELEMETRY NORMALIZATION ---
-  let sample_normalized = null;
-  if (vehicleArray.length > 0) {
-    sample_normalized = normalizeVehicle(
+    // 5. Normalize and Persist (The "Memory" Phase)
+    // We'll normalize the first truck found to verify the mapping works.
+    const sample_normalized = normalizeVehicle(
       vehicleArray[0],
       provider.field_mapping || {},
       provider.provider_name
     );
+
+    // Write this specific ping to our new telemetry_logs table
+    const { error: logError } = await supabaseAdmin
+      .from("telemetry_logs")
+      .insert({
+        provider_id: provider.id,
+        truck_id: sample_normalized.truck_id,
+        latitude: sample_normalized.latitude,
+        longitude: sample_normalized.longitude,
+        speed: sample_normalized.speed,
+        fuel_level: sample_normalized.fuel_level,
+        recorded_at: sample_normalized.recorded_at || new Date().toISOString(),
+        raw_payload: sample_normalized.raw,
+        validation: sample_normalized.validation,
+      });
+
+    if (logError) throw new Error(`Logging failed: ${logError.message}`);
+
+    // Update the provider status in the vault
+    await supabaseAdmin
+      .from("tracking_providers")
+      .update({ 
+        last_test_status: "success", 
+        last_test_at: new Date().toISOString() 
+      })
+      .eq("id", providerId);
+
+    return NextResponse.json({
+      success: true,
+      message: `Connected. Found ${vehicleArray.length} vehicles. Logged ${sample_normalized.truck_id}.`,
+      sample_normalized,
+      debug: rawData
+    });
+
+  } catch (err: any) {
+    console.error("API Route Error:", err.message);
+    return NextResponse.json({ 
+      success: false, 
+      message: err.message,
+      stage: "RUNTIME"
+    }, { status: 500 });
   }
-
-  return {
-    success: true,
-    vehicleCount: vehicleArray.length,
-    sample_normalized,
-    debug: data,
-  };
-}
-
-// --- HELPER UTILITIES ---
-
-function buildPayload(template: any, provider: ProviderRecord) {
-  if (!template) {
-    return {
-      user_name: provider.username,
-      key: provider.api_key,
-      username: provider.username,
-      password: provider.password || provider.api_key,
-    };
-  }
-  const output: any = {};
-  Object.keys(template).forEach((key) => {
-    output[key] = resolveTemplateValue(template[key], provider, null);
-  });
-  return output;
-}
-
-function buildHeaders(template: any, provider: ProviderRecord, token: string | null) {
-  const output: Record<string, string> = {};
-  Object.keys(template).forEach((key) => {
-    output[key] = String(resolveTemplateValue(template[key], provider, token));
-  });
-  return output;
-}
-
-function resolveTemplateValue(value: any, provider: ProviderRecord, token: string | null) {
-  if (typeof value !== "string") return value;
-  return value
-    .replace("{{username}}", provider.username || "")
-    .replace("{{api_key}}", provider.api_key || "")
-    .replace("{{password}}", provider.password || "")
-    .replace("{{token}}", token || "");
-}
-
-async function safeJson(response: Response) {
-  try { return await response.json(); } 
-  catch { return { raw: "Non-JSON", status: response.status }; }
-}
-
-function getByPaths(data: any, paths: string[]) {
-  for (const path of paths) {
-    const value = getByPath(data, path);
-    if (value !== undefined && value !== null) return value;
-  }
-  return null;
-}
-
-function getByPath(obj: any, path: string) {
-  if (path === "$") return obj;
-  return path.split(".").reduce((curr, p) => curr?.[p], obj);
-}
-
-function defaultTokenPaths() { return ["token", "access_token", "jwt", "data.token", "result.token"]; }
-function defaultVehiclePaths() { return ["$", "data", "result", "vehicles", "items"]; }
-
-function extractProviderError(data: any) {
-  if (!data) return null;
-  if (Array.isArray(data.Error)) return data.Error.join(", ");
-  return data.message || data.error || data.Error || null;
-}
-
-async function updateStatus(providerId: string, status: string, message: string) {
-  await supabaseAdmin
-    .from("tracking_providers")
-    .update({
-      last_test_status: status,
-      last_test_message: message,
-      last_test_at: new Date().toISOString(),
-    })
-    .eq("id", providerId);
 }
