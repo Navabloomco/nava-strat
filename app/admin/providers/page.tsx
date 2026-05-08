@@ -12,7 +12,7 @@ export default function ProviderManager() {
 
   useEffect(() => {
     async function init() {
-      // Hard Guard: Super Admin Bridge
+      // Hard Guard: Super Admin Bridge for COO
       const check = await requirePermission("contact@navabloomco.com", "admin");
       setAllowed(check.allowed);
 
@@ -66,7 +66,7 @@ export default function ProviderManager() {
     <main style={{ padding: 40, maxWidth: "1000px" }}>
       <header style={{ marginBottom: 40 }}>
         <h1 style={{ fontSize: "28px", fontWeight: "bold" }}>Fleet Provider Management</h1>
-        <p style={{ color: "#64748b" }}>Configure API bridges and sync parameters.</p>
+        <p style={{ color: "#64748b" }}>Configure API bridges for Bluetrax and sync parameters.</p>
       </header>
 
       <div style={{ display: "flex", flexDirection: "column", gap: "40px" }}>
@@ -101,10 +101,11 @@ function ProviderCard({ provider, onSave, isSaving }: any) {
       </div>
 
       <div style={gridStyle}>
-        <Field label="Login URL" value={form.login_url} onChange={(v) => setForm({...form, login_url: v})} />
-        <Field label="Fleet API URL" value={form.fleet_url} onChange={(v) => setForm({...form, fleet_url: v})} />
-        <Field label="API Username" value={form.username} onChange={(v) => setForm({...form, username: v})} />
-        <Field label="API Secret / Key" type="password" value={form.api_key} onChange={(v) => setForm({...form, api_key: v})} />
+        {/* Explicit String Typing for Vercel Production Build */}
+        <Field label="Login URL" value={form.login_url} onChange={(v: string) => setForm({...form, login_url: v})} />
+        <Field label="Fleet API URL" value={form.fleet_url} onChange={(v: string) => setForm({...form, fleet_url: v})} />
+        <Field label="API Username" value={form.username} onChange={(v: string) => setForm({...form, username: v})} />
+        <Field label="API Secret / Key" type="password" value={form.api_key} onChange={(v: string) => setForm({...form, api_key: v})} />
       </div>
 
       <div style={{ marginTop: 25 }}>
@@ -112,7 +113,7 @@ function ProviderCard({ provider, onSave, isSaving }: any) {
         <textarea 
           style={jsonArea}
           value={typeof form.field_mapping === 'string' ? form.field_mapping : JSON.stringify(form.field_mapping, null, 2)}
-          onChange={(e) => setForm({...form, field_mapping: e.target.value})}
+          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setForm({...form, field_mapping: e.target.value})}
         />
       </div>
 
@@ -126,7 +127,7 @@ function ProviderCard({ provider, onSave, isSaving }: any) {
   );
 }
 
-function Field({ label, value, onChange, type = "text" }: any) {
+function Field({ label, value, onChange, type = "text" }: { label: string; value: string; onChange: (v: string) => void; type?: string }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
       <label style={labelStyle}>{label}</label>
