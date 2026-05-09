@@ -267,7 +267,7 @@ async function detectFuelDropWhileStationary(logs: TelemetryLog[]) {
         metadata: {
           previous_fuel: previousFuel,
           current_fuel: currentFuel,
-          fuel_drop,
+          fuel_drop: fuelDrop,
           minutes: Math.floor(minutes),
           previous_speed: previousSpeed,
           current_speed: currentSpeed,
