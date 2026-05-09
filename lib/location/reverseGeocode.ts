@@ -12,9 +12,9 @@ export async function reverseGeocode(
   lng: number
 ): Promise<LocationInfo | null> {
   try {
-    // ROUNDING = MASSIVE COST SAVER
-    const roundedLat = Number(lat.toFixed(3));
-    const roundedLng = Number(lng.toFixed(3));
+    // HIGH PRECISION CACHE KEY
+    const roundedLat = Number(lat.toFixed(5));
+    const roundedLng = Number(lng.toFixed(5));
 
     // CHECK CACHE FIRST
     const { data: cached } = await supabaseAdmin
@@ -22,8 +22,10 @@ export async function reverseGeocode(
       .select("*")
       .eq("rounded_lat", roundedLat)
       .eq("rounded_lng", roundedLng)
+      .gt("expires_at", new Date().toISOString())
       .single();
 
+    // CACHE HIT
     if (cached) {
       return {
         display_name: cached.display_name,
@@ -33,7 +35,7 @@ export async function reverseGeocode(
       };
     }
 
-    // CALL OPENSTREETMAP NOMINATIM
+    // OPENSTREETMAP NOMINATIM
     const url =
       `https://nominatim.openstreetmap.org/reverse` +
       `?format=jsonv2` +
@@ -79,7 +81,7 @@ export async function reverseGeocode(
     // SAVE TO CACHE
     await supabaseAdmin
       .from("location_cache")
-      .insert({
+      .upsert({
         latitude: lat,
         longitude: lng,
 
@@ -94,6 +96,18 @@ export async function reverseGeocode(
         country: locationData.country,
 
         raw_response: result,
+
+        expires_at: new Date(
+          Date.now() +
+            1000 *
+              60 *
+              60 *
+              24 *
+              90
+        ).toISOString(),
+      }, {
+        onConflict:
+          "rounded_lat,rounded_lng"
       });
 
     return locationData;
