@@ -12,7 +12,6 @@ export async function GET(req: Request) {
     const result = await runNavaEyeEventEngine();
 
     return NextResponse.json({
-      success: true,
       ...result,
       generated_at: new Date().toISOString(),
     });
