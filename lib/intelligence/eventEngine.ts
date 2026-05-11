@@ -76,7 +76,7 @@ async function analyzeTruck(truckId: string) {
   const lowFuelCreated = await detectLowFuel(latest);
   if (lowFuelCreated) eventsCreated++;
 
-  const idleCreated = await detectLongIdle(logs as TelemetryLog[]);
+  const idleCreated = await detectExcessiveIdle(logs as TelemetryLog[]);
   if (idleCreated) eventsCreated++;
 
   const fuelDropCreated = await detectFuelDropWhileStationary(
@@ -105,7 +105,6 @@ async function detectOffline(latest: TelemetryLog) {
 
   if (minutesOffline < 30) return false;
 
-  // Get location name if coordinates exist
   let locationName: string | null = null;
   let country: string | null = null;
   if (latest.latitude && latest.longitude) {
@@ -144,7 +143,6 @@ async function detectSpeeding(latest: TelemetryLog) {
 
   if (latest.speed <= 120) return false;
 
-  // Get location name if coordinates exist
   let locationName: string | null = null;
   let country: string | null = null;
   if (latest.latitude && latest.longitude) {
@@ -159,7 +157,7 @@ async function detectSpeeding(latest: TelemetryLog) {
   return createEventIfNotExists({
     provider_id: latest.provider_id,
     truck_id: latest.truck_id,
-    event_type: "speeding",
+    event_type: "overspeed",
     severity: latest.speed > 140 ? "high" : "medium",
     started_at: latest.recorded_at,
     latitude: latest.latitude,
@@ -184,7 +182,6 @@ async function detectLowFuel(latest: TelemetryLog) {
 
   if (latest.fuel_level >= 10) return false;
 
-  // Get location name if coordinates exist
   let locationName: string | null = null;
   let country: string | null = null;
   if (latest.latitude && latest.longitude) {
@@ -217,7 +214,7 @@ async function detectLowFuel(latest: TelemetryLog) {
 /**
  * Truck stayed idle for 30+ minutes.
  */
-async function detectLongIdle(logs: TelemetryLog[]) {
+async function detectExcessiveIdle(logs: TelemetryLog[]) {
   const idleLogs = logs
     .filter((log) => log.speed !== null && log.speed !== undefined)
     .filter((log) => Number(log.speed) <= 1)
@@ -236,7 +233,6 @@ async function detectLongIdle(logs: TelemetryLog[]) {
 
   if (durationMinutes < 30) return false;
 
-  // Get location name from the newest coordinates
   let locationName: string | null = null;
   let country: string | null = null;
   if (newest.latitude && newest.longitude) {
@@ -251,7 +247,7 @@ async function detectLongIdle(logs: TelemetryLog[]) {
   return createEventIfNotExists({
     provider_id: newest.provider_id,
     truck_id: newest.truck_id,
-    event_type: "long_idle",
+    event_type: "excessive_idle",
     severity: durationMinutes > 120 ? "high" : "medium",
     started_at: oldest.recorded_at,
     ended_at: newest.recorded_at,
@@ -311,7 +307,6 @@ async function detectFuelDropWhileStationary(logs: TelemetryLog[]) {
       minutes <= 30 &&
       fuelDrop >= 5
     ) {
-      // Get location name from current coordinates
       let locationName: string | null = null;
       let country: string | null = null;
       if (current.latitude && current.longitude) {
@@ -365,26 +360,38 @@ async function createEventIfNotExists(event: {
   country?: string | null;
   metadata?: any;
 }) {
-  const windowStart = event.started_at
-    ? new Date(event.started_at)
-    : new Date();
-
-  const windowEnd = new Date(windowStart);
-  windowEnd.setMinutes(windowEnd.getMinutes() + 5);
-
+  // Generate a unique hash for this event
+  let hashBase = `${event.truck_id}|${event.event_type}`;
+  
+  if (event.event_type === "excessive_idle") {
+    const startedAt = event.started_at || new Date().toISOString();
+    hashBase += `|${startedAt}`;
+  } else if (event.event_type === "fuel_drop_stationary") {
+    const startedAt = event.started_at || new Date().toISOString();
+    const endedAt = event.ended_at || new Date().toISOString();
+    hashBase += `|${startedAt}|${endedAt}`;
+  } else {
+    const startedAt = event.started_at || new Date().toISOString();
+    hashBase += `|${startedAt}`;
+  }
+  
+  // Simple hash using crypto (Edge compatible)
+  const encoder = new TextEncoder();
+  const data = encoder.encode(hashBase);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  const eventHash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('').substring(0, 32);
+  
   const { data: existing } = await supabaseAdmin
     .from("telemetry_events")
     .select("id")
-    .eq("truck_id", event.truck_id)
-    .eq("event_type", event.event_type)
-    .gte("started_at", windowStart.toISOString())
-    .lte("started_at", windowEnd.toISOString())
+    .eq("event_hash", eventHash)
     .limit(1);
-
+  
   if (existing && existing.length > 0) {
     return false;
   }
-
+  
   const { error } = await supabaseAdmin
     .from("telemetry_events")
     .insert({
@@ -400,9 +407,11 @@ async function createEventIfNotExists(event: {
       location_name: event.location_name || null,
       country: event.country || null,
       metadata: event.metadata || {},
+      event_hash: eventHash,
     });
 
   if (error) {
+    console.error("Failed to create telemetry event:", error);
     throw new Error(`Failed to create telemetry event: ${error.message}`);
   }
 
