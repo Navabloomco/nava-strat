@@ -1,4 +1,5 @@
 import { supabaseAdmin } from "../supabaseAdmin";
+import { reverseGeocode } from "../location/reverseGeocode";
 
 type TelemetryLog = {
   id: string;
@@ -104,6 +105,18 @@ async function detectOffline(latest: TelemetryLog) {
 
   if (minutesOffline < 30) return false;
 
+  // Get location name if coordinates exist
+  let locationName: string | null = null;
+  let country: string | null = null;
+  if (latest.latitude && latest.longitude) {
+    const location = await reverseGeocode(
+      Number(latest.latitude),
+      Number(latest.longitude)
+    );
+    locationName = location?.town || location?.display_name || null;
+    country = location?.country || null;
+  }
+
   return createEventIfNotExists({
     provider_id: latest.provider_id,
     truck_id: latest.truck_id,
@@ -112,6 +125,8 @@ async function detectOffline(latest: TelemetryLog) {
     started_at: latest.recorded_at,
     latitude: latest.latitude,
     longitude: latest.longitude,
+    location_name: locationName,
+    country: country,
     metadata: {
       minutes_offline: Math.floor(minutesOffline),
       message: `${latest.truck_id} has not reported for ${Math.floor(
@@ -129,6 +144,18 @@ async function detectSpeeding(latest: TelemetryLog) {
 
   if (latest.speed <= 120) return false;
 
+  // Get location name if coordinates exist
+  let locationName: string | null = null;
+  let country: string | null = null;
+  if (latest.latitude && latest.longitude) {
+    const location = await reverseGeocode(
+      Number(latest.latitude),
+      Number(latest.longitude)
+    );
+    locationName = location?.town || location?.display_name || null;
+    country = location?.country || null;
+  }
+
   return createEventIfNotExists({
     provider_id: latest.provider_id,
     truck_id: latest.truck_id,
@@ -137,6 +164,8 @@ async function detectSpeeding(latest: TelemetryLog) {
     started_at: latest.recorded_at,
     latitude: latest.latitude,
     longitude: latest.longitude,
+    location_name: locationName,
+    country: country,
     metadata: {
       speed: latest.speed,
       threshold: 120,
@@ -155,6 +184,18 @@ async function detectLowFuel(latest: TelemetryLog) {
 
   if (latest.fuel_level >= 10) return false;
 
+  // Get location name if coordinates exist
+  let locationName: string | null = null;
+  let country: string | null = null;
+  if (latest.latitude && latest.longitude) {
+    const location = await reverseGeocode(
+      Number(latest.latitude),
+      Number(latest.longitude)
+    );
+    locationName = location?.town || location?.display_name || null;
+    country = location?.country || null;
+  }
+
   return createEventIfNotExists({
     provider_id: latest.provider_id,
     truck_id: latest.truck_id,
@@ -163,6 +204,8 @@ async function detectLowFuel(latest: TelemetryLog) {
     started_at: latest.recorded_at,
     latitude: latest.latitude,
     longitude: latest.longitude,
+    location_name: locationName,
+    country: country,
     metadata: {
       fuel_level: latest.fuel_level,
       threshold: 10,
@@ -193,6 +236,18 @@ async function detectLongIdle(logs: TelemetryLog[]) {
 
   if (durationMinutes < 30) return false;
 
+  // Get location name from the newest coordinates
+  let locationName: string | null = null;
+  let country: string | null = null;
+  if (newest.latitude && newest.longitude) {
+    const location = await reverseGeocode(
+      Number(newest.latitude),
+      Number(newest.longitude)
+    );
+    locationName = location?.town || location?.display_name || null;
+    country = location?.country || null;
+  }
+
   return createEventIfNotExists({
     provider_id: newest.provider_id,
     truck_id: newest.truck_id,
@@ -203,6 +258,8 @@ async function detectLongIdle(logs: TelemetryLog[]) {
     duration_minutes: Math.floor(durationMinutes),
     latitude: newest.latitude,
     longitude: newest.longitude,
+    location_name: locationName,
+    country: country,
     metadata: {
       duration_minutes: Math.floor(durationMinutes),
       message: `${newest.truck_id} has been idle for ${Math.floor(
@@ -254,6 +311,18 @@ async function detectFuelDropWhileStationary(logs: TelemetryLog[]) {
       minutes <= 30 &&
       fuelDrop >= 5
     ) {
+      // Get location name from current coordinates
+      let locationName: string | null = null;
+      let country: string | null = null;
+      if (current.latitude && current.longitude) {
+        const location = await reverseGeocode(
+          Number(current.latitude),
+          Number(current.longitude)
+        );
+        locationName = location?.town || location?.display_name || null;
+        country = location?.country || null;
+      }
+
       return createEventIfNotExists({
         provider_id: current.provider_id,
         truck_id: current.truck_id,
@@ -264,6 +333,8 @@ async function detectFuelDropWhileStationary(logs: TelemetryLog[]) {
         duration_minutes: Math.floor(minutes),
         latitude: current.latitude,
         longitude: current.longitude,
+        location_name: locationName,
+        country: country,
         metadata: {
           previous_fuel: previousFuel,
           current_fuel: currentFuel,
@@ -291,6 +362,7 @@ async function createEventIfNotExists(event: {
   latitude?: number | null;
   longitude?: number | null;
   location_name?: string | null;
+  country?: string | null;
   metadata?: any;
 }) {
   const windowStart = event.started_at
@@ -326,6 +398,7 @@ async function createEventIfNotExists(event: {
       latitude: event.latitude || null,
       longitude: event.longitude || null,
       location_name: event.location_name || null,
+      country: event.country || null,
       metadata: event.metadata || {},
     });
 
