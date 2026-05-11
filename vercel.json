@@ -3,6 +3,10 @@
     {
       "path": "/api/sync/providers",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/nava-eye/run-events",
+      "schedule": "*/10 * * * *"
     }
   ]
 }
