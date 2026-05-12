@@ -382,6 +382,7 @@ async function createEventIfNotExists(event: {
   const hashArray = Array.from(new Uint8Array(hashBuffer));
   const eventHash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('').substring(0, 32);
   
+  // Check if event with this hash already exists
   const { data: existing } = await supabaseAdmin
     .from("telemetry_events")
     .select("id")
@@ -389,9 +390,11 @@ async function createEventIfNotExists(event: {
     .limit(1);
   
   if (existing && existing.length > 0) {
+    // Event already exists, skip insertion
     return false;
   }
   
+  // Insert new event with hash
   const { error } = await supabaseAdmin
     .from("telemetry_events")
     .insert({
@@ -411,6 +414,19 @@ async function createEventIfNotExists(event: {
     });
 
   if (error) {
+    // Ignore duplicate hash errors (unique constraint violation)
+    if (
+      error.message && (
+        error.message.includes("idx_telemetry_events_event_hash") ||
+        error.message.includes("duplicate key value") ||
+        error.message.includes("unique constraint")
+      )
+    ) {
+      // Duplicate event already exists, safe to ignore
+      return false;
+    }
+    
+    // Other errors should be logged and thrown
     console.error("Failed to create telemetry event:", error);
     throw new Error(`Failed to create telemetry event: ${error.message}`);
   }
