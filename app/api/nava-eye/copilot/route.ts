@@ -1,142 +1,43 @@
-// app/api/nava-eye/copilot/route.ts
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "../../../../lib/supabaseAdmin";
-import { analyzeTruckFuelRisk } from "../../../../lib/intelligence/fuelRiskEngine.universal";
-
-// Cache AI settings per tenant
-let aiSettingsCache: { slug: string; apiKey: string; provider: string; model: string; expires: number } | null = null;
-const CACHE_TTL = 5 * 60 * 1000;
-
-async function getCompanyAISettings(slug: string) {
-  if (aiSettingsCache && aiSettingsCache.slug === slug && Date.now() < aiSettingsCache.expires) {
-    return aiSettingsCache;
-  }
-  const { data, error } = await supabaseAdmin
-    .from("company_ai_settings")
-    .select(`
-      api_key,
-      provider,
-      model,
-      companies!inner(slug)
-    `)
-    .eq("is_active", true)
-    .eq("companies.slug", slug)
-    .single();
-  if (error || !data) return null;
-  aiSettingsCache = {
-    slug,
-    apiKey: data.api_key,
-    provider: data.provider,
-    model: data.model,
-    expires: Date.now() + CACHE_TTL,
-  };
-  return aiSettingsCache;
-}
-
-// Fleet health cache
-let fleetHealthCache: { data: any; timestamp: number } | null = null;
-async function getCachedFleetHealth() {
-  if (fleetHealthCache && Date.now() - fleetHealthCache.timestamp < 5 * 60 * 1000) {
-    return fleetHealthCache.data;
-  }
-  const data = await fetchFleetHealth();
-  fleetHealthCache = { data, timestamp: Date.now() };
-  return data;
-}
-
-async function fetchFleetHealth() {
-  const since = new Date();
-  since.setHours(since.getHours() - 24);
-  const [assetsRes, eventsRes] = await Promise.all([
-    supabaseAdmin.from("fleet_assets").select("*"),
-    supabaseAdmin.from("telemetry_events").select("*").gte("created_at", since.toISOString()),
-  ]);
-  const assets = assetsRes.data || [];
-  const events = eventsRes.data || [];
-  const now = Date.now();
-  const offlineTrucks = assets.filter((a) => {
-    if (!a.last_seen_at) return true;
-    return now - new Date(a.last_seen_at).getTime() > 30 * 60 * 1000;
-  });
-  const criticalEvents = events.filter((e) => e.severity === "high");
-  const fuelEvents = events.filter((e) =>
-    ["fuel_drop_stationary", "low_fuel"].includes(e.event_type)
-  );
-  return {
-    total_trucks: assets.length,
-    online_trucks: assets.length - offlineTrucks.length,
-    offline_trucks: offlineTrucks.length,
-    critical_events_24h: criticalEvents.length,
-    fuel_anomalies_24h: fuelEvents.length,
-    top_offline_trucks: offlineTrucks.slice(0, 5).map((t) => t.truck_id),
-  };
-}
-
-async function getOfflineTrucks() {
-  const { data: assets } = await supabaseAdmin.from("fleet_assets").select("truck_id, last_seen_at");
-  if (!assets) return [];
-  const now = Date.now();
-  return assets
-    .filter((a) => {
-      if (!a.last_seen_at) return true;
-      return now - new Date(a.last_seen_at).getTime() > 30 * 60 * 1000;
-    })
-    .map((a) => a.truck_id);
-}
-
-async function getTopFuelRiskTrucks(limit = 3) {
-  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-  const { data } = await supabaseAdmin
-    .from("telemetry_events")
-    .select("truck_id")
-    .eq("event_type", "fuel_drop_stationary")
-    .gte("created_at", sevenDaysAgo);
-  if (!data) return [];
-  const counts: Record<string, number> = {};
-  for (const ev of data) counts[ev.truck_id] = (counts[ev.truck_id] || 0) + 1;
-  return Object.entries(counts)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, limit)
-    .map(([truck_id, count]) => ({ truck_id, event_count: count }));
-}
+import {
+  routeContext,
+  getCompanyBySlug,
+} from "../../../../lib/intelligence/contextRouter";
 
 export async function POST(req: Request) {
   try {
     const { question, tenant = "jlcl" } = await req.json();
     if (!question || typeof question !== "string" || question.length > 500) {
-      return NextResponse.json({ error: "Valid question string required (max 500 chars)" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Valid question string required (max 500 chars)" },
+        { status: 400 }
+      );
     }
 
-    const aiSettings = await getCompanyAISettings(tenant);
-    const apiKey = aiSettings?.apiKey;
-
-    const lower = question.toLowerCase();
-    let context: any = {};
-    let intent = "general";
-
-    if (lower.includes("fuel") && (lower.includes("theft") || lower.includes("siphon") || lower.includes("risk"))) {
-      intent = "fuel_risk";
-      const truckMatch = question.match(/[A-Z]{3}\s?\d{3}[A-Z]/i);
-      if (truckMatch) {
-        const risk = await analyzeTruckFuelRisk(truckMatch[0], 30);
-        context = { truck: truckMatch[0], fuel_risk_analysis: risk };
-      } else {
-        const topRisky = await getTopFuelRiskTrucks(3);
-        context = { top_fuel_risk_trucks: topRisky, message: "Based on recent fuel drop events." };
-      }
-    } else if (lower.includes("fleet") && (lower.includes("health") || lower.includes("summary"))) {
-      intent = "fleet_health";
-      context = await getCachedFleetHealth();
-    } else if (lower.includes("offline") || lower.includes("disconnected")) {
-      intent = "offline_trucks";
-      const offline = await getOfflineTrucks();
-      context = { offline_trucks: offline, count: offline.length };
-    } else {
-      intent = "general";
-      context = { note: "Nava Eye can answer about fuel risk, fleet health, and offline trucks. Please rephrase your question." };
+    let company;
+    try {
+      company = await getCompanyBySlug(tenant);
+    } catch {
+      return NextResponse.json(
+        { error: `Tenant "${tenant}" not found` },
+        { status: 404 }
+      );
     }
 
-    if (apiKey && Object.keys(context).length > 0 && intent !== "general") {
+    const context = await routeContext(question, tenant);
+
+    // ✅ Tenant‑filtered AI settings
+    const { data: aiSettings } = await supabaseAdmin
+      .from("company_ai_settings")
+      .select("api_key, provider, model")
+      .eq("company_id", company.id)
+      .eq("is_active", true)
+      .single();
+
+    const apiKey = aiSettings?.api_key;
+
+    if (apiKey && Object.keys(context).length > 0) {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 8000);
       try {
@@ -149,45 +50,94 @@ export async function POST(req: Request) {
           body: JSON.stringify({
             model: aiSettings?.model || "deepseek-chat",
             messages: [
-              { role: "system", content: "You are Nava Eye, a fleet intelligence analyst. Answer concisely (max 2 sentences) using the provided data. Be actionable." },
-              { role: "user", content: `Question: ${question}\nData: ${JSON.stringify(context)}` },
+              {
+                role: "system",
+                content:
+                  "You are Nava Eye, a company operations intelligence analyst for logistics. Use only the provided data. If evidence is missing, say so. Answer concisely and recommend the next operational action.",
+              },
+              {
+                role: "user",
+                content: `Question: ${question}\nCompany: ${company.name}\nContext: ${JSON.stringify(context)}`,
+              },
             ],
             temperature: 0.2,
-            max_tokens: 150,
+            max_tokens: 220,
           }),
           signal: controller.signal,
         });
         clearTimeout(timeout);
         if (res.ok) {
           const aiData = await res.json();
-          const answer = aiData.choices?.[0]?.message?.content || "Sorry, Nava Eye couldn't generate an answer.";
-          return NextResponse.json({ success: true, answer, intent, context });
-        } else {
-          console.error("DeepSeek API error:", res.status);
+          const answer =
+            aiData.choices?.[0]?.message?.content ||
+            "Nava Eye could not generate an answer.";
+          return NextResponse.json({
+            success: true,
+            tenant,
+            company,
+            answer,
+            intent: context.intent,
+            context,
+          });
         }
+        console.error("DeepSeek API error:", res.status);
       } catch (err: any) {
+        clearTimeout(timeout);
         console.error("DeepSeek fetch error:", err.message);
       }
     }
 
-    // Fallback deterministic
-    let fallbackAnswer = "";
-    if (intent === "fuel_risk") {
-      if (context.truck) {
-        fallbackAnswer = `Truck ${context.truck} fuel risk score ${context.fuel_risk_analysis?.risk_score}. ${context.fuel_risk_analysis?.recommendation || ""}`;
-      } else {
-        fallbackAnswer = `Top fuel risk trucks: ${context.top_fuel_risk_trucks?.map((t: any) => t.truck_id).join(", ")}.`;
-      }
-    } else if (intent === "fleet_health") {
-      fallbackAnswer = `Fleet health: ${context.online_trucks} online, ${context.offline_trucks} offline, ${context.critical_events_24h} critical events, ${context.fuel_anomalies_24h} fuel anomalies in last 24h.`;
-    } else if (intent === "offline_trucks") {
-      fallbackAnswer = `${context.count} truck(s) offline: ${context.offline_trucks.join(", ")}.`;
-    } else {
-      fallbackAnswer = "I can answer questions about fuel theft, fleet health, and offline trucks. Please be more specific.";
-    }
-    return NextResponse.json({ success: true, answer: fallbackAnswer, intent, context });
+    const fallbackAnswer = buildFallbackAnswer(context);
+    return NextResponse.json({
+      success: true,
+      tenant,
+      company,
+      answer: fallbackAnswer,
+      intent: context.intent,
+      context,
+      ai_used: false,
+    });
   } catch (err: any) {
     console.error("Copilot error:", err);
-    return NextResponse.json({ error: "Internal server error. Please try again later." }, { status: 500 });
+    return NextResponse.json(
+      { error: "Internal server error. Please try again later." },
+      { status: 500 }
+    );
   }
+}
+
+function buildFallbackAnswer(context: any) {
+  const parts: string[] = [];
+  if (context.fleet_health) {
+    const f = context.fleet_health;
+    parts.push(
+      `Fleet health: ${f.online_trucks}/${f.total_trucks} online, ${f.offline_trucks} offline, ${f.critical_events_24h} critical events, ${f.fuel_events_24h} fuel events, and ${f.idle_events_24h} idle events in the last 24 hours.`
+    );
+  }
+  if (context.offline_trucks?.length) {
+    parts.push(
+      `Offline trucks: ${context.offline_trucks
+        .map((t: any) => t.truck_id)
+        .join(", ")}.`
+    );
+  }
+  if (context.fuel_risk) {
+    parts.push(
+      `Fuel risk score: ${context.fuel_risk.risk_score}. ${context.fuel_risk.recommendation || ""}`
+    );
+  }
+  if (context.truck) {
+    parts.push(
+      `Truck ${context.detected_truck_id} was last seen at ${context.truck.last_seen_at}.`
+    );
+  }
+  if (context.recent_events?.length) {
+    parts.push(
+      `${context.recent_events.length} recent operational events found.`
+    );
+  }
+  if (parts.length === 0) {
+    return "Nava Eye found limited context. Ask about fleet health, offline trucks, fuel risk, truck status, driver activity, or journeys.";
+  }
+  return parts.join(" ");
 }
