@@ -26,48 +26,62 @@ export async function POST(req: Request) {
     }
 
     const context = await routeContext(question, tenant);
+    console.log("Context from router:", JSON.stringify(context, null, 2));
 
-    // ✅ Tenant‑filtered AI settings
-    const { data: aiSettings } = await supabaseAdmin
+    // Fetch AI settings for this tenant (must be filtered by company_id)
+    const { data: aiSettings, error: aiError } = await supabaseAdmin
       .from("company_ai_settings")
       .select("api_key, provider, model")
       .eq("company_id", company.id)
       .eq("is_active", true)
       .single();
 
+    if (aiError) {
+      console.error("AI settings query error:", aiError);
+    }
+    console.log("AI Settings:", aiSettings);
+
     const apiKey = aiSettings?.api_key;
+    console.log("API Key exists:", !!apiKey);
+    console.log("Context has keys:", Object.keys(context).length > 0);
 
     if (apiKey && Object.keys(context).length > 0) {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 8000);
       try {
+        const deepSeekPayload = {
+          model: aiSettings?.model || "deepseek-chat",
+          messages: [
+            {
+              role: "system",
+              content:
+                "You are Nava Eye, a company operations intelligence analyst for logistics. Use only the provided data. If evidence is missing, say so. Answer concisely and recommend the next operational action.",
+            },
+            {
+              role: "user",
+              content: `Question: ${question}\nCompany: ${company.name}\nContext: ${JSON.stringify(context)}`,
+            },
+          ],
+          temperature: 0.2,
+          max_tokens: 220,
+        };
+        console.log("Calling DeepSeek with payload:", JSON.stringify(deepSeekPayload, null, 2));
+
         const res = await fetch("https://api.deepseek.com/v1/chat/completions", {
           method: "POST",
           headers: {
             Authorization: `Bearer ${apiKey}`,
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({
-            model: aiSettings?.model || "deepseek-chat",
-            messages: [
-              {
-                role: "system",
-                content:
-                  "You are Nava Eye, a company operations intelligence analyst for logistics. Use only the provided data. If evidence is missing, say so. Answer concisely and recommend the next operational action.",
-              },
-              {
-                role: "user",
-                content: `Question: ${question}\nCompany: ${company.name}\nContext: ${JSON.stringify(context)}`,
-              },
-            ],
-            temperature: 0.2,
-            max_tokens: 220,
-          }),
+          body: JSON.stringify(deepSeekPayload),
           signal: controller.signal,
         });
         clearTimeout(timeout);
+        console.log("DeepSeek status:", res.status);
+
         if (res.ok) {
           const aiData = await res.json();
+          console.log("DeepSeek response:", JSON.stringify(aiData, null, 2));
           const answer =
             aiData.choices?.[0]?.message?.content ||
             "Nava Eye could not generate an answer.";
@@ -78,13 +92,18 @@ export async function POST(req: Request) {
             answer,
             intent: context.intent,
             context,
+            ai_used: true,
           });
+        } else {
+          const errorText = await res.text();
+          console.error("DeepSeek API error status:", res.status, errorText);
         }
-        console.error("DeepSeek API error:", res.status);
       } catch (err: any) {
         clearTimeout(timeout);
         console.error("DeepSeek fetch error:", err.message);
       }
+    } else {
+      console.log("Skipping AI: missing key or empty context");
     }
 
     const fallbackAnswer = buildFallbackAnswer(context);
