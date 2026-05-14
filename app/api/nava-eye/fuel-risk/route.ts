@@ -5,6 +5,8 @@ import {
   analyzeTruckFuelRisk
 } from "../../../../lib/intelligence/fuelRiskEngine.universal";
 
+export const dynamic = "force-dynamic";
+
 export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
