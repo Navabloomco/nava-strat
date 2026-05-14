@@ -1,13 +1,9 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "../../../../lib/supabaseAdmin";
-import {
-  runProviderSync,
-  ProviderRecord,
-} from "../../../../lib/providers/engine";
+import { runProviderSync, ProviderRecord } from "../../../../lib/providers/engine";
 
 export async function GET(req: Request) {
   const authHeader = req.headers.get("authorization");
-
   if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
     return new Response("Unauthorized", { status: 401 });
   }
@@ -15,18 +11,16 @@ export async function GET(req: Request) {
   try {
     const startedAt = Date.now();
 
+    // ✅ Only sync providers that are linked to a company (company_id IS NOT NULL)
     const { data: providers, error } = await supabaseAdmin
       .from("tracking_providers")
       .select("*")
-      .eq("is_active", true);
+      .eq("is_active", true)
+      .not("company_id", "is", null);
 
     if (error) {
       return NextResponse.json(
-        {
-          success: false,
-          message: "Failed to load active providers",
-          debug: error,
-        },
+        { success: false, message: "Failed to load active providers", debug: error },
         { status: 500 }
       );
     }
@@ -35,7 +29,6 @@ export async function GET(req: Request) {
 
     for (const provider of providers || []) {
       const providerStartedAt = Date.now();
-
       const result = await runProviderSync(provider as ProviderRecord);
 
       await supabaseAdmin
@@ -65,10 +58,7 @@ export async function GET(req: Request) {
     });
   } catch (err: any) {
     return NextResponse.json(
-      {
-        success: false,
-        message: err.message || "Unknown sync error",
-      },
+      { success: false, message: err.message || "Unknown sync error" },
       { status: 500 }
     );
   }
