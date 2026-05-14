@@ -1,6 +1,8 @@
+import "./globals.css";
 import Sidebar from "./components/Sidebar";
+import type { Metadata } from "next";
 
-export const metadata = {
+export const metadata: Metadata = {
   title: "Nava Strat",
   description: "Fleet Intelligence Platform",
 };
@@ -12,25 +14,9 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body
-        style={{
-          margin: 0,
-          display: "flex",
-          backgroundColor: "#f8fafc",
-        }}
-      >
-        {/* Persistent Navigation */}
+      <body>
         <Sidebar />
-
-        {/* Responsive Content Area */}
-        <main
-          style={{
-            marginLeft: 240,
-            width: "calc(100% - 240px)",
-            minHeight: "100vh",
-            boxSizing: "border-box",
-          }}
-        >
+        <main className="min-h-screen bg-slate-50 pl-[240px]">
           {children}
         </main>
       </body>
