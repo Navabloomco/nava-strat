@@ -4,15 +4,18 @@ import { supabase } from "../../lib/supabase";
 import { useRouter } from "next/navigation";
 
 interface OverviewData {
-  company: { id: string; name: string };
-  fleet_health: any;
-  active_memories: any[];
-  trucks_in_uganda: any[];
+  success: boolean;
+  error?: string;
+  company?: any;
+  fleet_health?: any;
+  active_memories?: any[];
+  trucks_in_uganda?: any[];
 }
 
 export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<OverviewData | null>(null);
+  const [errorDetail, setErrorDetail] = useState<string | null>(null);
   const [copilotQuery, setCopilotQuery] = useState("");
   const [copilotAnswer, setCopilotAnswer] = useState("");
   const [copilotLoading, setCopilotLoading] = useState(false);
@@ -20,24 +23,31 @@ export default function DashboardPage() {
 
   useEffect(() => {
     async function load() {
-      const { data: sessionData } = await supabase.auth.getSession();
-      if (!sessionData.session) {
-        router.push("/login");
-        return;
+      try {
+        const { data: sessionData } = await supabase.auth.getSession();
+        if (!sessionData.session) {
+          router.push("/login");
+          return;
+        }
+        const token = sessionData.session.access_token;
+        const res = await fetch("/api/dashboard/overview", {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+        const json = await res.json();
+        console.log("Dashboard overview response:", json);
+        if (json.success) {
+          setData(json);
+        } else {
+          setErrorDetail(json.error || "Unknown error");
+        }
+      } catch (err: any) {
+        console.error("Fetch error:", err);
+        setErrorDetail(err.message);
+      } finally {
+        setLoading(false);
       }
-      const token = sessionData.session.access_token;
-      const res = await fetch("/api/dashboard/overview", {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-      const json = await res.json();
-      if (json.success) {
-        setData(json);
-      } else {
-        console.error(json.error);
-      }
-      setLoading(false);
     }
     load();
   }, [router]);
@@ -62,9 +72,21 @@ export default function DashboardPage() {
   };
 
   if (loading) return <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center">Loading Nava Eye...</div>;
-  if (!data) return <div className="min-h-screen bg-slate-950 text-white p-8">Unable to load dashboard.</div>;
+  if (errorDetail) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-white p-8">
+        <h1 className="text-xl text-red-500">Dashboard Error</h1>
+        <pre className="mt-4 text-sm">{errorDetail}</pre>
+        <p className="mt-4">Check browser console for more details.</p>
+      </div>
+    );
+  }
+  if (!data || !data.success) return <div className="min-h-screen bg-slate-950 text-white p-8">Unable to load dashboard.</div>;
 
-  const fh = data.fleet_health;
+  const fh = data.fleet_health!;
+  const company = data.company!;
+  const memories = data.active_memories || [];
+  const ugandaTrucks = data.trucks_in_uganda || [];
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
@@ -72,7 +94,7 @@ export default function DashboardPage() {
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 bg-blue-600 rounded-full animate-pulse" />
           <h1 className="text-2xl font-bold tracking-tight">Nava Eye</h1>
-          <span className="text-slate-500 text-sm ml-2">{data.company.name}</span>
+          <span className="text-slate-500 text-sm ml-2">{company.name}</span>
         </div>
         <button
           onClick={() => supabase.auth.signOut().then(() => router.push("/login"))}
@@ -113,7 +135,7 @@ export default function DashboardPage() {
               <div className="text-slate-500 text-sm">Critical Events (24h)</div>
             </div>
             <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-5">
-              <div className="text-4xl font-bold text-purple-500">{data.trucks_in_uganda.length}</div>
+              <div className="text-4xl font-bold text-purple-500">{ugandaTrucks.length}</div>
               <div className="text-slate-500 text-sm">Trucks in Uganda</div>
             </div>
           </div>
@@ -183,7 +205,7 @@ export default function DashboardPage() {
               <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-5">
                 <h2 className="text-lg font-semibold mb-4">💡 Active Operational Memories</h2>
                 <div className="space-y-3">
-                  {data.active_memories.map((m) => (
+                  {memories.map((m) => (
                     <div key={m.id} className="border border-slate-700 rounded-xl p-3">
                       <div className="flex items-center gap-2 mb-1">
                         <span className={`px-2 py-0.5 text-xs rounded-full font-medium ${
@@ -200,7 +222,6 @@ export default function DashboardPage() {
                       {m.recommendation && <div className="text-xs text-blue-400 mt-2">🔧 {m.recommendation}</div>}
                     </div>
                   ))}
-                  {data.active_memories.length === 0 && <div className="text-slate-500 text-sm">No active memories</div>}
                 </div>
               </div>
             </div>
