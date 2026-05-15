@@ -113,10 +113,25 @@ export default function DashboardPage() {
     setCopilotLoading(true);
     setCopilotAnswer("");
     try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
+      if (!token) {
+        router.push("/login");
+        return;
+      }
+
       const res = await fetch("/api/nava-eye/copilot", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: copilotQuery }),
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          question: copilotQuery,
+          ...(isPlatformOwner && selectedCompanyId
+            ? { companyId: selectedCompanyId }
+            : {}),
+        }),
       });
       const json = await res.json();
       setCopilotAnswer(json.answer || "No answer");

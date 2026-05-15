@@ -1,10 +1,8 @@
 // app/api/nava-eye/copilot/route.ts
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "../../../../lib/supabaseAdmin";
-import {
-  routeContext,
-  getCompanyBySlug,
-} from "../../../../lib/intelligence/contextRouter";
+import { supabase } from "../../../../lib/supabase";
+import { routeContext } from "../../../../lib/intelligence/contextRouter";
 import {
   getActiveMemories,
   storeMemory,
@@ -12,7 +10,22 @@ import {
 
 export async function POST(req: Request) {
   try {
-    const { question, tenant = "jlcl" } = await req.json();
+    const authHeader = req.headers.get("authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const token = authHeader.replace("Bearer ", "");
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser(token);
+
+    if (userError || !user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const { question, companyId: requestedCompanyId } = await req.json();
     if (!question || typeof question !== "string" || question.length > 500) {
       return NextResponse.json(
         { error: "Valid question string required (max 500 chars)" },
@@ -20,19 +33,76 @@ export async function POST(req: Request) {
       );
     }
 
-    // 1. Get company (tenant) information
+    const { data: memberships, error: membershipError } = await supabaseAdmin
+      .from("company_users")
+      .select("company_id, role, is_active")
+      .eq("user_id", user.id)
+      .eq("is_active", true);
+
+    if (membershipError) throw membershipError;
+
+    const activeMemberships = memberships || [];
+    const isPlatformOwner = activeMemberships.some(
+      (membership) => membership.role === "platform_owner"
+    );
+
     let company;
-    try {
-      company = await getCompanyBySlug(tenant);
-    } catch {
-      return NextResponse.json(
-        { error: `Tenant "${tenant}" not found` },
-        { status: 404 }
-      );
+
+    if (isPlatformOwner) {
+      if (!requestedCompanyId) {
+        return NextResponse.json(
+          { error: "companyId is required for platform owner Copilot requests" },
+          { status: 400 }
+        );
+      }
+
+      const { data: requestedCompany, error: companyError } =
+        await supabaseAdmin
+          .from("companies")
+          .select("id, name, slug")
+          .eq("id", requestedCompanyId)
+          .maybeSingle();
+
+      if (companyError) throw companyError;
+      if (!requestedCompany) {
+        return NextResponse.json(
+          { error: "Company not found" },
+          { status: 404 }
+        );
+      }
+
+      company = requestedCompany;
+    } else {
+      const companyId = activeMemberships
+        .map((membership) => membership.company_id)
+        .filter(Boolean)[0];
+
+      if (!companyId) {
+        return NextResponse.json(
+          { error: "Unable to resolve company access" },
+          { status: 403 }
+        );
+      }
+
+      const { data: assignedCompany, error: companyError } = await supabaseAdmin
+        .from("companies")
+        .select("id, name, slug")
+        .eq("id", companyId)
+        .maybeSingle();
+
+      if (companyError) throw companyError;
+      if (!assignedCompany) {
+        return NextResponse.json(
+          { error: "Unable to resolve company access" },
+          { status: 403 }
+        );
+      }
+
+      company = assignedCompany;
     }
 
     // 2. Get deterministic context from router
-    const context = await routeContext(question, tenant);
+    const context = await routeContext(question, company.slug);
     console.log("Context from router:", JSON.stringify(context, null, 2));
 
     // 3. Fetch active memories for this company (up to 5 most recent)
@@ -219,7 +289,7 @@ export async function POST(req: Request) {
     // 9. Return response
     return NextResponse.json({
       success: true,
-      tenant,
+      tenant: company.slug,
       company,
       answer,
       intent: context.intent,
