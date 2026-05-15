@@ -5,6 +5,8 @@ import { supabase } from "../../../lib/supabase";
 
 export default function RevenuePage() {
   const [journeys, setJourneys] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [message, setMessage] = useState("");
   const [client, setClient] = useState("");
   const [route, setRoute] = useState("");
 
@@ -18,18 +20,37 @@ export default function RevenuePage() {
   }, []);
 
   async function loadJourneys() {
-    const { data, error } = await supabase
-      .from("journeys")
-      .select("*")
-      .eq("status", "active")
-      .order("created_at", { ascending: false });
+    setLoading(true);
+    setMessage("");
 
-    if (error) {
-      alert(error.message);
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    if (!session?.access_token) {
+      window.location.href = "/login";
       return;
     }
 
-    setJourneys(data || []);
+    const res = await fetch("/api/finance/revenue", {
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+      },
+    });
+    const json = await res.json();
+
+    if (!res.ok || !json.success) {
+      setMessage(json.error || "Failed to load revenue data.");
+      setLoading(false);
+      return;
+    }
+
+    setJourneys(
+      (json.journeys || []).filter(
+        (journey: any) => String(journey.status || "").toLowerCase() === "active"
+      )
+    );
+    setLoading(false);
   }
 
   const clients = useMemo(() => {
@@ -89,21 +110,34 @@ export default function RevenuePage() {
       return;
     }
 
-    for (const journey of selectedJourneys) {
-      const { error } = await supabase
-        .from("journeys")
-        .update({
-          rate_type: rateType,
-          rate_amount: Number(rateAmount),
-          rate_currency: rateCurrency,
-          fx_rate: rateCurrency === "KES" ? 1 : Number(fxRate || 1),
-        })
-        .eq("id", journey.id);
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
 
-      if (error) {
-        alert(error.message);
-        return;
-      }
+    if (!session?.access_token) {
+      setMessage("Session expired. Please log in again.");
+      return;
+    }
+
+    const res = await fetch("/api/finance/revenue", {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        journeyIds: selectedJourneys.map((journey) => journey.id),
+        rate_type: rateType,
+        rate_amount: Number(rateAmount),
+        rate_currency: rateCurrency,
+        fx_rate: rateCurrency === "KES" ? 1 : Number(fxRate || 1),
+      }),
+    });
+    const json = await res.json();
+
+    if (!res.ok || !json.success) {
+      setMessage(json.error || "Failed to apply rate.");
+      return;
     }
 
     alert(`Rate applied to ${selectedJourneys.length} journey/journeys ✅`);
@@ -111,6 +145,7 @@ export default function RevenuePage() {
   }
 
   async function saveQuantities(journeyId: string) {
+    const journey = journeys.find((item) => item.id === journeyId);
     const loadedInput = document.getElementById(
       `loaded-${journeyId}`
     ) as HTMLInputElement;
@@ -119,20 +154,38 @@ export default function RevenuePage() {
       `offloaded-${journeyId}`
     ) as HTMLInputElement;
 
-    const { error } = await supabase
-      .from("journeys")
-      .update({
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    if (!session?.access_token) {
+      setMessage("Session expired. Please log in again.");
+      return;
+    }
+
+    const res = await fetch("/api/finance/revenue", {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        journeyId,
         loaded_quantity: Number(loadedInput.value || 0),
         offloaded_quantity: Number(offloadedInput.value || 0),
         rate_type: rateType,
-        rate_amount: Number(rateAmount || 0),
-        rate_currency: rateCurrency,
-        fx_rate: rateCurrency === "KES" ? 1 : Number(fxRate || 1),
-      })
-      .eq("id", journeyId);
+        rate_amount: Number(rateAmount || journey?.rate_amount || 0),
+        rate_currency: rateCurrency || journey?.rate_currency || "KES",
+        fx_rate:
+          rateCurrency === "KES"
+            ? 1
+            : Number(fxRate || journey?.fx_rate || 1),
+      }),
+    });
+    const json = await res.json();
 
-    if (error) {
-      alert(error.message);
+    if (!res.ok || !json.success) {
+      setMessage(json.error || "Failed to save quantity.");
       return;
     }
 
@@ -144,6 +197,9 @@ export default function RevenuePage() {
     <main style={{ padding: 40 }}>
       <h1>Revenue Engine</h1>
       <p>Set pricing by client/route, then enter loaded/offloaded quantity per truck.</p>
+
+      {loading && <p>Loading revenue data...</p>}
+      {message && <pre style={{ background: "#f4f4f4", padding: 12 }}>{message}</pre>}
 
       <form onSubmit={applyRateToSelected}>
         <select
