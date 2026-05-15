@@ -163,8 +163,13 @@ export async function GET(req: Request) {
     if (expensesResult.error) throw expensesResult.error;
 
     const journeys = journeysResult.data || [];
-    const fuelLogs = fuelResult.data || [];
-    const expenses = expensesResult.data || [];
+    const nonDemoJourneyIds = new Set(journeys.map((journey) => journey.id));
+    const fuelLogs = (fuelResult.data || []).filter(
+      (fuel) => !fuel.journey_id || nonDemoJourneyIds.has(fuel.journey_id)
+    );
+    const expenses = (expensesResult.data || []).filter(
+      (expense) => !expense.journey_id || nonDemoJourneyIds.has(expense.journey_id)
+    );
 
     const journeyPerformance = journeys.map((journey) => {
       const revenue = Number(journey.revenue_kes || 0);
