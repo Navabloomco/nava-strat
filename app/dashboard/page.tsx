@@ -25,6 +25,8 @@ export default function DashboardPage() {
   const [companies, setCompanies] = useState<CompanyOption[]>([]);
   const [isPlatformOwner, setIsPlatformOwner] = useState(false);
   const [selectedCompanyId, setSelectedCompanyId] = useState("");
+  const [companySwitcherOpen, setCompanySwitcherOpen] = useState(false);
+  const [companySearch, setCompanySearch] = useState("");
   const [copilotQuery, setCopilotQuery] = useState("");
   const [copilotAnswer, setCopilotAnswer] = useState("");
   const [copilotLoading, setCopilotLoading] = useState(false);
@@ -159,6 +161,15 @@ export default function DashboardPage() {
   const memories = data.active_memories || [];
   const ugandaTrucks = data.trucks_in_uganda || [];
   const showCompanySelector = isPlatformOwner || companies.length > 1;
+  const selectedCompany =
+    companies.find((companyOption) => companyOption.id === selectedCompanyId) ||
+    company;
+  const normalizedCompanySearch = companySearch.toLowerCase();
+  const filteredCompanies = companies.filter(
+    (companyOption) =>
+      companyOption.name.toLowerCase().includes(normalizedCompanySearch) ||
+      companyOption.slug.toLowerCase().includes(normalizedCompanySearch)
+  );
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
@@ -167,17 +178,77 @@ export default function DashboardPage() {
           <div className="w-8 h-8 bg-blue-600 rounded-full animate-pulse" />
           <h1 className="text-2xl font-bold tracking-tight">Nava Eye</h1>
           {showCompanySelector ? (
-            <select
-              value={selectedCompanyId || company.id}
-              onChange={(e) => handleCompanyChange(e.target.value)}
-              className="ml-2 bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-600"
-            >
-              {companies.map((companyOption) => (
-                <option key={companyOption.id} value={companyOption.id}>
-                  {companyOption.name}
-                </option>
-              ))}
-            </select>
+            <div className="relative ml-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setCompanySwitcherOpen((open) => !open);
+                  setCompanySearch("");
+                }}
+                className="flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-left text-sm text-slate-200 shadow-sm hover:border-slate-600 hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-600"
+              >
+                <span className="max-w-48 truncate font-medium">
+                  {selectedCompany.name}
+                </span>
+                {isPlatformOwner && (
+                  <span className="rounded-full border border-blue-500/30 bg-blue-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-300">
+                    Platform Owner
+                  </span>
+                )}
+                <span className="text-slate-500">⌄</span>
+              </button>
+
+              {companySwitcherOpen && (
+                <div className="absolute left-0 top-full z-50 mt-2 w-80 overflow-hidden rounded-xl border border-slate-700 bg-slate-950 shadow-2xl shadow-black/40">
+                  <div className="border-b border-slate-800 p-2">
+                    <input
+                      autoFocus
+                      value={companySearch}
+                      onChange={(e) => setCompanySearch(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Escape") {
+                          setCompanySwitcherOpen(false);
+                          setCompanySearch("");
+                        }
+                      }}
+                      placeholder="Search companies..."
+                      className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                    />
+                  </div>
+                  <div className="max-h-72 overflow-y-auto p-1">
+                    {filteredCompanies.length > 0 ? (
+                      filteredCompanies.map((companyOption) => (
+                        <button
+                          key={companyOption.id}
+                          type="button"
+                          onClick={() => {
+                            handleCompanyChange(companyOption.id);
+                            setCompanySwitcherOpen(false);
+                            setCompanySearch("");
+                          }}
+                          className={`w-full rounded-lg px-3 py-2 text-left hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-600 ${
+                            companyOption.id === selectedCompanyId
+                              ? "bg-slate-800"
+                              : ""
+                          }`}
+                        >
+                          <div className="truncate text-sm font-medium text-slate-100">
+                            {companyOption.name}
+                          </div>
+                          <div className="truncate text-xs text-slate-500">
+                            {companyOption.slug}
+                          </div>
+                        </button>
+                      ))
+                    ) : (
+                      <div className="px-3 py-6 text-center text-sm text-slate-500">
+                        No companies found
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
           ) : (
             <span className="text-slate-500 text-sm ml-2">{company.name}</span>
           )}
