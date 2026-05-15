@@ -308,6 +308,73 @@ export async function POST(req: Request) {
 
 function buildFallbackAnswer(context: any): string {
   const parts: string[] = [];
+  if (context.profitability) {
+    const p = context.profitability;
+    const summary = p.summary || {};
+    const topTruck = p.most_profitable_trucks?.[0];
+    const weakTruck = p.least_profitable_trucks?.[0];
+    const topClient = p.most_profitable_clients?.[0];
+    const weakClient = p.least_profitable_clients?.[0];
+    const weakRoute = p.least_profitable_routes?.[0];
+
+    parts.push(
+      `Profitability summary: revenue is ${Number(
+        summary.total_revenue || 0
+      ).toLocaleString()} KES, fuel cost is ${Number(
+        summary.total_fuel_cost || 0
+      ).toLocaleString()} KES, expenses are ${Number(
+        summary.total_expenses || 0
+      ).toLocaleString()} KES, and estimated profit is ${Number(
+        summary.estimated_profit || 0
+      ).toLocaleString()} KES.`
+    );
+
+    if (topTruck) {
+      parts.push(
+        `Most profitable truck: ${topTruck.name} at ${Number(
+          topTruck.profit || 0
+        ).toLocaleString()} KES across ${topTruck.count || 0} journey(s).`
+      );
+    }
+    if (weakTruck) {
+      parts.push(
+        `Least profitable truck: ${weakTruck.name} at ${Number(
+          weakTruck.profit || 0
+        ).toLocaleString()} KES across ${weakTruck.count || 0} journey(s).`
+      );
+    }
+    if (topClient) {
+      parts.push(
+        `Most profitable client: ${topClient.name} at ${Number(
+          topClient.profit || 0
+        ).toLocaleString()} KES.`
+      );
+    }
+    if (weakClient) {
+      parts.push(
+        `Renegotiation candidate: ${weakClient.name} at ${Number(
+          weakClient.profit || 0
+        ).toLocaleString()} KES.`
+      );
+    }
+    if (weakRoute) {
+      parts.push(
+        `Route bleeding money: ${weakRoute.name} at ${Number(
+          weakRoute.profit || 0
+        ).toLocaleString()} KES.`
+      );
+    }
+    if (
+      Number(summary.unlinked_fuel_cost || 0) > 0 ||
+      Number(summary.unlinked_expense_cost || 0) > 0
+    ) {
+      parts.push(
+        `Note: ${Number(summary.unlinked_fuel_cost || 0).toLocaleString()} KES fuel cost and ${Number(
+          summary.unlinked_expense_cost || 0
+        ).toLocaleString()} KES expenses are unlinked company costs, so they affect total profit but are not attributed to a specific truck, client, or route.`
+      );
+    }
+  }
   if (context.fleet_health) {
     const f = context.fleet_health;
     parts.push(

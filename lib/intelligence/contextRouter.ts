@@ -5,6 +5,7 @@ import {
   detectSupportedCountryName,
   getCurrentTrucksInCountry,
 } from "./fleetLocationService";
+import { getCompanyProfitability } from "./profitabilityService";
 
 export type ContextIntent =
   | "fleet_health"
@@ -14,6 +15,7 @@ export type ContextIntent =
   | "driver_activity"
   | "journey_context"
   | "country_trucks"
+  | "profitability"
   | "general";
 
 export async function getCompanyBySlug(slug: string) {
@@ -81,6 +83,9 @@ export async function routeContext(question: string, tenantSlug: string) {
       }),
     };
   }
+  if (intent === "profitability") {
+    context.profitability = await getCompanyProfitability(companyId);
+  }
   if (intent === "general") {
     context.fleet_health = await fetchFleetHealth(companyId);
     context.recent_events = await fetchRecentEvents(companyId);
@@ -94,6 +99,24 @@ function detectIntent(
 ): ContextIntent {
   if (detectedCountryName) {
     return "country_trucks";
+  }
+  if (
+    lower.includes("profit") ||
+    lower.includes("profitable") ||
+    lower.includes("profitability") ||
+    lower.includes("margin") ||
+    lower.includes("loss") ||
+    lower.includes("losses") ||
+    lower.includes("leakage") ||
+    lower.includes("bleeding") ||
+    lower.includes("renegotiate") ||
+    lower.includes("ranking") ||
+    (lower.includes("client") && lower.includes("least")) ||
+    (lower.includes("client") && lower.includes("most")) ||
+    (lower.includes("truck") && lower.includes("least")) ||
+    (lower.includes("truck") && lower.includes("most"))
+  ) {
+    return "profitability";
   }
   if (
     lower.includes("fleet") &&
