@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { supabase } from "../../../../lib/supabase";
 
 export default function NewJourneyPage() {
@@ -11,6 +12,7 @@ export default function NewJourneyPage() {
   const [toLocation, setToLocation] = useState("");
   const [expectedFuel, setExpectedFuel] = useState("");
   const [message, setMessage] = useState("");
+  const router = useRouter();
 
   function makeTripId() {
     const today = new Date().toISOString().slice(0, 10).replaceAll("-", "");
@@ -24,40 +26,26 @@ export default function NewJourneyPage() {
 
   async function handleSubmit(e: any) {
     e.preventDefault();
-    setMessage("Checking active journey...");
+    setMessage("Saving journey...");
 
     const cleanTruck = truck.trim().toUpperCase();
-
-    const { data: existing, error: checkError } = await supabase
-      .from("journeys")
-      .select("*")
-      .eq("truck", cleanTruck)
-      .eq("status", "active")
-      .limit(1);
-
-    if (checkError) {
-      setMessage(checkError.message);
-      return;
-    }
-
-    if (existing && existing.length > 0) {
-      const j = existing[0];
-
-      setMessage(
-        `Blocked 🚫 ${cleanTruck} already has an active journey: ${
-          j.client_name || "NO CLIENT"
-        } — ${j.from_location || "—"} → ${
-          j.to_location || "—"
-        }. Complete or cancel it first.`
-      );
-
-      return;
-    }
-
     const tripId = makeTripId();
 
-    const { error } = await supabase.from("journeys").insert([
-      {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData.session?.access_token;
+
+    if (!token) {
+      setMessage("You must be signed in to create a journey.");
+      return;
+    }
+
+    const res = await fetch("/api/journeys", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
         internal_trip_id: tripId,
         client_name: client.trim().toUpperCase(),
         truck: cleanTruck,
@@ -66,22 +54,18 @@ export default function NewJourneyPage() {
         to_location: toLocation.trim().toUpperCase(),
         status: "active",
         expected_fuel_liters: expectedFuel ? Number(expectedFuel) : null,
-      },
-    ]);
+      }),
+    });
 
-    if (error) {
-      setMessage(error.message);
+    const json = await res.json();
+
+    if (!json.success) {
+      setMessage(json.error || "Failed to save journey.");
       return;
     }
 
     setMessage(`Journey saved ✅ Trip ID: ${tripId}`);
-
-    setClient("");
-    setTruck("");
-    setDriver("");
-    setFromLocation("");
-    setToLocation("");
-    setExpectedFuel("");
+    router.push("/ops/journey");
   }
 
   return (

@@ -5,20 +5,38 @@ import { supabase } from "../../../lib/supabase";
 
 export default function JourneyListPage() {
   const [journeys, setJourneys] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [errorDetail, setErrorDetail] = useState("");
 
   async function fetchJourneys() {
-    const { data, error } = await supabase
-      .from("journeys")
-      .select("*")
-      .order("created_at", { ascending: false });
+    setLoading(true);
+    setErrorDetail("");
 
-    if (error) {
-      alert(error.message);
-      console.error(error);
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData.session?.access_token;
+
+    if (!token) {
+      setErrorDetail("You must be signed in to view journeys.");
+      setLoading(false);
       return;
     }
 
-    setJourneys(data || []);
+    const res = await fetch("/api/journeys", {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    const json = await res.json();
+
+    if (!json.success) {
+      setErrorDetail(json.error || "Failed to load journeys");
+      setLoading(false);
+      return;
+    }
+
+    setJourneys(json.journeys || []);
+    setLoading(false);
   }
 
   useEffect(() => {
@@ -32,7 +50,11 @@ export default function JourneyListPage() {
 
       <br />
 
-      {journeys.length === 0 ? (
+      {loading ? (
+        <p>Loading journeys...</p>
+      ) : errorDetail ? (
+        <pre style={{ background: "#f4f4f4", padding: 12 }}>{errorDetail}</pre>
+      ) : journeys.length === 0 ? (
         <p>No journeys yet.</p>
       ) : (
         <table border={1} cellPadding={10}>
