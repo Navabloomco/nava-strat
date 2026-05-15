@@ -12,14 +12,44 @@ interface OverviewData {
   trucks_in_uganda?: any[];
 }
 
+interface CompanyOption {
+  id: string;
+  name: string;
+  slug: string;
+}
+
 export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<OverviewData | null>(null);
   const [errorDetail, setErrorDetail] = useState<string | null>(null);
+  const [companies, setCompanies] = useState<CompanyOption[]>([]);
+  const [isPlatformOwner, setIsPlatformOwner] = useState(false);
+  const [selectedCompanyId, setSelectedCompanyId] = useState("");
   const [copilotQuery, setCopilotQuery] = useState("");
   const [copilotAnswer, setCopilotAnswer] = useState("");
   const [copilotLoading, setCopilotLoading] = useState(false);
   const router = useRouter();
+
+  async function loadOverview(token: string, companyId: string, platformOwner: boolean) {
+    const overviewUrl =
+      platformOwner && companyId
+        ? `/api/dashboard/overview?companyId=${encodeURIComponent(companyId)}`
+        : "/api/dashboard/overview";
+
+    const res = await fetch(overviewUrl, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    const json = await res.json();
+    console.log("Dashboard overview response:", json);
+    if (json.success) {
+      setData(json);
+      setErrorDetail(null);
+    } else {
+      setErrorDetail(json.error || "Unknown error");
+    }
+  }
 
   useEffect(() => {
     async function load() {
@@ -30,17 +60,24 @@ export default function DashboardPage() {
           return;
         }
         const token = sessionData.session.access_token;
-        const res = await fetch("/api/dashboard/overview", {
+        const companiesRes = await fetch("/api/companies", {
           headers: {
             Authorization: `Bearer ${token}`,
           },
         });
-        const json = await res.json();
-        console.log("Dashboard overview response:", json);
-        if (json.success) {
-          setData(json);
+        const companiesJson = await companiesRes.json();
+        if (companiesJson.success) {
+          const nextCompanies = companiesJson.companies || [];
+          const nextIsPlatformOwner = Boolean(companiesJson.is_platform_owner);
+          const nextSelectedCompanyId = nextCompanies[0]?.id || "";
+
+          setCompanies(nextCompanies);
+          setIsPlatformOwner(nextIsPlatformOwner);
+          setSelectedCompanyId(nextSelectedCompanyId);
+
+          await loadOverview(token, nextSelectedCompanyId, nextIsPlatformOwner);
         } else {
-          setErrorDetail(json.error || "Unknown error");
+          setErrorDetail(companiesJson.error || "Unknown error");
         }
       } catch (err: any) {
         console.error("Fetch error:", err);
@@ -51,6 +88,25 @@ export default function DashboardPage() {
     }
     load();
   }, [router]);
+
+  const handleCompanyChange = async (companyId: string) => {
+    setSelectedCompanyId(companyId);
+    setLoading(true);
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
+      if (!token) {
+        router.push("/login");
+        return;
+      }
+      await loadOverview(token, companyId, isPlatformOwner);
+    } catch (err: any) {
+      console.error("Fetch error:", err);
+      setErrorDetail(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const askCopilot = async () => {
     if (!copilotQuery.trim()) return;
@@ -87,6 +143,7 @@ export default function DashboardPage() {
   const company = data.company!;
   const memories = data.active_memories || [];
   const ugandaTrucks = data.trucks_in_uganda || [];
+  const showCompanySelector = isPlatformOwner || companies.length > 1;
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
@@ -94,7 +151,21 @@ export default function DashboardPage() {
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 bg-blue-600 rounded-full animate-pulse" />
           <h1 className="text-2xl font-bold tracking-tight">Nava Eye</h1>
-          <span className="text-slate-500 text-sm ml-2">{company.name}</span>
+          {showCompanySelector ? (
+            <select
+              value={selectedCompanyId || company.id}
+              onChange={(e) => handleCompanyChange(e.target.value)}
+              className="ml-2 bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-600"
+            >
+              {companies.map((companyOption) => (
+                <option key={companyOption.id} value={companyOption.id}>
+                  {companyOption.name}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <span className="text-slate-500 text-sm ml-2">{company.name}</span>
+          )}
         </div>
         <button
           onClick={() => supabase.auth.signOut().then(() => router.push("/login"))}
