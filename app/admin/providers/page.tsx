@@ -1,13 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { createClient } from "@supabase/supabase-js";
-
-// Initialize the client (Using public keys)
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+import { supabase } from "../../../lib/supabase";
 
 export default function ProviderVault() {
   const [providers, setProviders] = useState<any[]>([]);
@@ -16,8 +10,23 @@ export default function ProviderVault() {
 
   useEffect(() => {
     async function loadVault() {
-      const { data } = await supabase.from("tracking_providers").select("*");
-      if (data) setProviders(data);
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        window.location.href = "/login";
+        return;
+      }
+
+      const res = await fetch("/api/providers", {
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+      });
+      const data = await res.json();
+      if (data.success) setProviders(data.providers || []);
+      else alert(data.error || "Failed to load providers");
       setLoading(false);
     }
     loadVault();
@@ -36,12 +45,53 @@ export default function ProviderVault() {
         }
       }
 
-      const { error } = await supabase
-        .from("tracking_providers")
-        .update(finalProvider)
-        .eq("id", finalProvider.id);
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
 
-      if (error) throw error;
+      if (!session?.access_token) {
+        throw new Error("Session expired. Please log in again.");
+      }
+
+      const payload: any = {
+        provider_name: finalProvider.provider_name,
+        provider_slug: finalProvider.provider_slug,
+        provider_type: finalProvider.provider_type,
+        auth_type: finalProvider.auth_type,
+        fleet_config: finalProvider.fleet_config,
+        field_mapping: finalProvider.field_mapping,
+        username: finalProvider.username || null,
+        base_url: finalProvider.base_url || null,
+        login_url: finalProvider.login_url || null,
+        fleet_url: finalProvider.fleet_url || null,
+        is_active: finalProvider.is_active,
+      };
+
+      if (finalProvider.api_key) payload.api_key = finalProvider.api_key;
+      if (finalProvider.password) payload.password = finalProvider.password;
+      if (finalProvider.bearer_token) {
+        payload.bearer_token = finalProvider.bearer_token;
+      }
+
+      const res = await fetch(`/api/providers/${finalProvider.id}`, {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Provider update failed");
+      }
+
+      setProviders((current) =>
+        current.map((provider) =>
+          provider.id === data.provider.id ? data.provider : provider
+        )
+      );
       alert("✅ Provider Vault Updated");
     } catch (err: any) {
       alert(`Save failed: ${err.message}`);
@@ -84,10 +134,21 @@ function ProviderCard({
     console.log(`🚀 Starting Test for: ${provider.provider_name}`);
     
     try {
-      const res = await fetch("/api/providers/test", {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        throw new Error("Session expired. Please log in again.");
+      }
+
+      const res = await fetch(`/api/providers/${form.id}/test`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ providerId: form.id }),
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({}),
       });
 
       const result = await res.json();
@@ -100,9 +161,13 @@ function ProviderCard({
       console.log("------------------------------------");
 
       if (result.success) {
-        alert(`✅ ${result.message}\n\nCheck Console for the 'NORMALIZED' object.`);
+        alert(
+          `✅ ${result.message}\nAssets: ${result.assets_count}\nLatest telemetry: ${
+            result.latest_telemetry_at || "none"
+          }`
+        );
       } else {
-        alert(`❌ ${result.stage || "ERROR"}: ${result.message}`);
+        alert(`❌ ${result.stage || "ERROR"}: ${result.message || result.error}`);
       }
     } catch (err: any) {
       console.error("Test execution error:", err);
@@ -180,10 +245,13 @@ function ProviderCard({
           />
         </div>
         <div>
-          <label style={labelStyle}>API Key / Secret</label>
+          <label style={labelStyle}>
+            API Key / Secret {provider.has_api_key ? "(stored)" : ""}
+          </label>
           <input 
             type="password"
             style={inputStyle}
+            placeholder={provider.has_api_key ? "Leave blank to keep existing" : ""}
             value={form.api_key || ""} 
             onChange={(e) => setForm({...form, api_key: e.target.value})} 
           />

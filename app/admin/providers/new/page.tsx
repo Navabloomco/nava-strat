@@ -41,6 +41,15 @@ export default function NewProviderPage() {
 
   const selectedTemplate = templates.find((t) => t.id === selectedTemplateId);
 
+  function originFromUrl(url: string | null) {
+    if (!url) return "";
+    try {
+      return new URL(url).origin;
+    } catch {
+      return "";
+    }
+  }
+
   async function handleCreateProvider() {
     if (!selectedTemplate) {
       alert("Choose a supported provider first.");
@@ -63,6 +72,13 @@ export default function NewProviderPage() {
       selectedTemplate.default_fleet_url ||
       selectedTemplate.fleet_config?.fleet_url ||
       null;
+    const baseUrl =
+      form.base_url ||
+      selectedTemplate.base_url ||
+      selectedTemplate.default_base_url ||
+      selectedTemplate.auth_config?.base_url ||
+      selectedTemplate.fleet_config?.base_url ||
+      originFromUrl(fleetUrl);
 
     if (!loginUrl) {
       alert("Login URL is missing from the template. Add an override.");
@@ -76,9 +92,28 @@ export default function NewProviderPage() {
 
     setSaving(true);
 
-    const { error } = await supabase.from("tracking_providers").insert({
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    if (!session?.access_token) {
+      alert("Session expired. Please log in again.");
+      setSaving(false);
+      window.location.href = "/login";
+      return;
+    }
+
+    const res = await fetch("/api/providers", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
       provider_name: selectedTemplate.display_name,
+      name: selectedTemplate.display_name,
       provider_slug: selectedTemplate.slug,
+      provider_type: selectedTemplate.slug,
 
       auth_type: selectedTemplate.auth_type,
       auth_config: selectedTemplate.auth_config,
@@ -89,18 +124,19 @@ export default function NewProviderPage() {
       api_key: form.api_key,
       password: form.password || null,
 
-      base_url: form.base_url || null,
+      base_url: baseUrl,
       login_url: loginUrl,
       fleet_url: fleetUrl,
 
       is_active: true,
-      last_test_status: "not_tested",
+      }),
     });
+    const data = await res.json();
 
     setSaving(false);
 
-    if (error) {
-      alert(`Provider creation failed: ${error.message}`);
+    if (!res.ok || !data.success) {
+      alert(`Provider creation failed: ${data.error || "Unknown error"}`);
       return;
     }
 
