@@ -44,7 +44,7 @@ export async function routeContext(question: string, tenantSlug: string) {
   }
   if (intent === "fuel_risk") {
     if (truckId) {
-      context.fuel_risk = await analyzeTruckFuelRisk(truckId, 30);
+      context.fuel_risk = await analyzeTruckFuelRisk(truckId, 30, companyId);
     } else {
       context.recent_fuel_scores = await fetchRecentFuelRiskScores(companyId);
       context.recent_fuel_events = await fetchRecentFuelEvents(companyId);

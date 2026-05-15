@@ -278,18 +278,28 @@ export async function getUniversalDriverFuelRisk(driverName: string, days: numbe
  * Analyze fuel risk for a specific truck over a time period (no driver required).
  * Useful for yard theft detection, parked vehicle monitoring.
  */
-export async function analyzeTruckFuelRisk(truckId: string, days: number = 30) {
+export async function analyzeTruckFuelRisk(
+  truckId: string,
+  days: number = 30,
+  companyId?: string
+) {
   const since = new Date();
   since.setDate(since.getDate() - days);
 
   // Fetch telemetry for this truck with fuel data
-  const { data: telemetry, error } = await supabaseAdmin
+  let telemetryQuery = supabaseAdmin
     .from("telemetry_logs")
     .select("*")
     .eq("truck_id", truckId)
     .gte("recorded_at", since.toISOString())
     .not("fuel_level", "is", null)
     .order("recorded_at", { ascending: true });
+
+  if (companyId) {
+    telemetryQuery = telemetryQuery.eq("company_id", companyId);
+  }
+
+  const { data: telemetry, error } = await telemetryQuery;
 
   if (error) throw error;
   if (!telemetry || telemetry.length < 2) {
@@ -412,6 +422,7 @@ export async function analyzeTruckFuelRisk(truckId: string, days: number = 30) {
 
   // Save analysis to fuel_risk_scores (driver fields null)
   await supabaseAdmin.from("fuel_risk_scores").insert({
+    ...(companyId ? { company_id: companyId } : {}),
     truck_id: truckId,
     driver_id: null,
     driver_name: null,
