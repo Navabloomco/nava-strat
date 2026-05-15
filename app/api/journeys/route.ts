@@ -95,6 +95,7 @@ export async function GET(req: Request) {
       .from("journeys")
       .select("*")
       .eq("company_id", company.id)
+      .eq("is_demo", false)
       .order("created_at", { ascending: false });
 
     if (journeysError) throw journeysError;

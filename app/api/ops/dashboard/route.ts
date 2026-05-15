@@ -138,6 +138,7 @@ export async function GET(req: Request) {
         .from("journeys")
         .select("*")
         .eq("company_id", resolved.company.id)
+        .eq("is_demo", false)
         .order("created_at", { ascending: false }),
       supabaseAdmin
         .from("fleet_assets")
