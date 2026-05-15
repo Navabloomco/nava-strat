@@ -5,6 +5,8 @@ import { supabase } from "../../../lib/supabase";
 
 export default function NewExpensePage() {
   const [journeys, setJourneys] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [message, setMessage] = useState("");
 
   const [truck, setTruck] = useState("");
   const [amount, setAmount] = useState("");
@@ -21,13 +23,37 @@ export default function NewExpensePage() {
   }, []);
 
   async function loadJourneys() {
-    const { data } = await supabase
-      .from("journeys")
-      .select("*")
-      .eq("status", "active")
-      .order("created_at", { ascending: false });
+    setLoading(true);
+    setMessage("");
 
-    setJourneys(data || []);
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    if (!session?.access_token) {
+      window.location.href = "/login";
+      return;
+    }
+
+    const res = await fetch("/api/expenses", {
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+      },
+    });
+    const json = await res.json();
+
+    if (!res.ok || !json.success) {
+      setMessage(json.error || "Failed to load journeys.");
+      setLoading(false);
+      return;
+    }
+
+    setJourneys(
+      (json.journeys || []).filter(
+        (journey: any) => String(journey.status || "").toLowerCase() === "active"
+      )
+    );
+    setLoading(false);
   }
 
   function handleJourneySelect(id: string) {
@@ -48,9 +74,24 @@ export default function NewExpensePage() {
 
   async function handleSubmit(e: any) {
     e.preventDefault();
+    setMessage("");
 
-    const { error } = await supabase.from("expenses").insert([
-      {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    if (!session?.access_token) {
+      setMessage("Session expired. Please log in again.");
+      return;
+    }
+
+    const res = await fetch("/api/expenses", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
         journey_id: journeyId || null,
         truck: truck.trim().toUpperCase(),
         expense_type: type,
@@ -60,11 +101,12 @@ export default function NewExpensePage() {
         reference_number: reference.trim(),
         trip_reference: tripReference.trim().toUpperCase(),
         notes,
-      },
-    ]);
+      }),
+    });
+    const json = await res.json();
 
-    if (error) {
-      alert(error.message);
+    if (!res.ok || !json.success) {
+      setMessage(json.error || "Failed to save expense.");
       return;
     }
 
@@ -84,6 +126,9 @@ export default function NewExpensePage() {
   return (
     <main style={{ padding: 40 }}>
       <h1>Add Expense</h1>
+
+      {loading && <p>Loading journeys...</p>}
+      {message && <pre style={{ background: "#f4f4f4", padding: 12 }}>{message}</pre>}
 
       <form onSubmit={handleSubmit}>
         <select value={journeyId} onChange={(e) => handleJourneySelect(e.target.value)}>
