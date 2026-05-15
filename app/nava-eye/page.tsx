@@ -1,329 +1,228 @@
 "use client";
 
-import { useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { supabase } from "../../lib/supabase";
+
+type CompanyOption = {
+  id: string;
+  name: string;
+  slug: string;
+};
 
 export default function NavaEyeChatPage() {
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState("");
+  const [errorDetail, setErrorDetail] = useState("");
   const [loading, setLoading] = useState(false);
+  const [initializing, setInitializing] = useState(true);
+  const [companies, setCompanies] = useState<CompanyOption[]>([]);
+  const [isPlatformOwner, setIsPlatformOwner] = useState(false);
+  const [selectedCompanyId, setSelectedCompanyId] = useState("");
 
-  function isToday(dateString: string) {
-    const d = new Date(dateString);
-    const now = new Date();
+  useEffect(() => {
+    initialize();
+  }, []);
 
-    return (
-      d.getFullYear() === now.getFullYear() &&
-      d.getMonth() === now.getMonth() &&
-      d.getDate() === now.getDate()
-    );
+  async function initialize() {
+    setInitializing(true);
+    setErrorDetail("");
+
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    if (!session?.access_token) {
+      window.location.href = "/login";
+      return;
+    }
+
+    const res = await fetch("/api/companies", {
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+      },
+    });
+    const json = await res.json();
+
+    if (!res.ok || !json.success) {
+      setErrorDetail(json.error || "Unable to load companies");
+      setInitializing(false);
+      return;
+    }
+
+    const nextCompanies = json.companies || [];
+    setCompanies(nextCompanies);
+    setIsPlatformOwner(Boolean(json.is_platform_owner));
+    setSelectedCompanyId(nextCompanies[0]?.id || "");
+    setInitializing(false);
   }
 
-  function formatJourney(journey: any) {
-    if (!journey) return "No journey linked";
-
-    return `${journey.client_name || "NO CLIENT"} — ${
-      journey.from_location || "—"
-    } → ${journey.to_location || "—"}`;
-  }
-
-  async function askNavaEye(e: any) {
+  async function askNavaEye(e: FormEvent) {
     e.preventDefault();
+    if (!question.trim()) return;
+
     setLoading(true);
     setAnswer("");
+    setErrorDetail("");
 
-    const q = question.toLowerCase();
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
 
-    const { data: fuelLogs } = await supabase
-      .from("fuel_logs")
-      .select("*")
-      .order("created_at", { ascending: false });
+    if (!session?.access_token) {
+      setErrorDetail("Session expired. Please log in again.");
+      setLoading(false);
+      return;
+    }
 
-    const { data: journeys } = await supabase
-      .from("journeys")
-      .select("*")
-      .order("created_at", { ascending: false });
+    const payload: Record<string, string> = {
+      question: question.trim(),
+    };
 
-    const { data: trackingPoints } = await supabase
-      .from("tracking_points")
-      .select("*")
-      .order("recorded_at", { ascending: false });
+    if (isPlatformOwner && selectedCompanyId) {
+      payload.companyId = selectedCompanyId;
+    }
 
-    const { data: expenses } = await supabase
-      .from("expenses")
-      .select("*")
-      .order("created_at", { ascending: false });
-
-    const fuel = fuelLogs || [];
-    const trips = journeys || [];
-    const tracking = trackingPoints || [];
-    const costs = expenses || [];
-
-    const latestTrackingByTruck: Record<string, any> = {};
-
-    tracking.forEach((p) => {
-      if (!latestTrackingByTruck[p.truck_text]) {
-        latestTrackingByTruck[p.truck_text] = p;
-      }
+    const res = await fetch("/api/nava-eye/copilot", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
     });
+    const json = await res.json();
 
-    function findJourney(id: string | null) {
-      if (!id) return null;
-      return trips.find((j) => j.id === id) || null;
-    }
-
-    function findActiveJourneyByTruck(truck: string) {
-      return (
-        trips.find(
-          (j) =>
-            (j.truck || "").toUpperCase() === truck.toUpperCase() &&
-            j.status === "active"
-        ) || null
-      );
-    }
-
-    // 1. Fuel today
-    if (
-      q.includes("fuel") &&
-      q.includes("today") &&
-      (q.includes("how many") || q.includes("where"))
-    ) {
-      const todaysFuel = fuel.filter((f) => isToday(f.created_at));
-      const uniqueTrucks = Array.from(
-        new Set(todaysFuel.map((f) => f.truck_text).filter(Boolean))
-      );
-
-      if (todaysFuel.length === 0) {
-        setAnswer("No fuel entries have been recorded today.");
-        setLoading(false);
-        return;
-      }
-
-      let response = `${uniqueTrucks.length} truck(s) were fueled today.\n\n`;
-
-      uniqueTrucks.forEach((truck) => {
-        const truckFuel = todaysFuel.filter((f) => f.truck_text === truck);
-        const totalLiters = truckFuel.reduce(
-          (sum, f) => sum + Number(f.liters || 0),
-          0
-        );
-
-        const linkedJourney =
-          findJourney(truckFuel[0]?.journey_id) || findActiveJourneyByTruck(truck);
-
-        response += `• ${truck}: ${totalLiters}L\n`;
-        response += `  Going: ${formatJourney(linkedJourney)}\n`;
-
-        const latest = latestTrackingByTruck[truck];
-        if (latest) {
-          response += `  Last seen: ${
-            latest.interpreted_location || latest.location_text || "Location needs review"
-          }\n`;
-        }
-
-        const unallocated = truckFuel.filter((f) => !f.journey_id).length;
-        if (unallocated > 0) {
-          response += `  ⚠️ ${unallocated} unallocated fuel entry/entries.\n`;
-        }
-
-        response += "\n";
-      });
-
-      setAnswer(response);
+    if (!res.ok || !json.success) {
+      setErrorDetail(json.error || "Nava Eye could not answer that request.");
       setLoading(false);
       return;
     }
 
-    // 2. Where is truck
-    if (q.includes("where") && q.includes("truck")) {
-      const words = question.toUpperCase().split(/\s+/);
-      const possibleTruck = words.find((w) => /^[A-Z]{3}\d{3}[A-Z]?$/.test(w));
-
-      if (!possibleTruck) {
-        setAnswer("Tell me the truck registration, e.g. “Where is KBJ123A?”");
-        setLoading(false);
-        return;
-      }
-
-      const latest = latestTrackingByTruck[possibleTruck];
-
-      if (!latest) {
-        setAnswer(`I do not have recent tracking data for ${possibleTruck}.`);
-        setLoading(false);
-        return;
-      }
-
-      const journey =
-        findJourney(latest.journey_id) || findActiveJourneyByTruck(possibleTruck);
-
-      setAnswer(
-        `${possibleTruck} is ${
-          latest.movement_status || "UNKNOWN"
-        } at ${
-          latest.interpreted_location || latest.location_text || "Location needs review"
-        }.\n\nJourney: ${formatJourney(journey)}\nSpeed: ${
-          latest.speed ?? "unknown"
-        } km/h\nFuel: ${latest.fuel_level ?? "unknown"}\nIgnition: ${
-          latest.ignition_status || "unknown"
-        }\nRisk: ${latest.risk_level || "normal"}`
-      );
-
-      setLoading(false);
-      return;
-    }
-
-    // 3. Problems / alerts
-    if (
-      q.includes("problem") ||
-      q.includes("issue") ||
-      q.includes("alert") ||
-      q.includes("risk")
-    ) {
-      const unallocatedFuel = fuel.filter((f) => !f.journey_id);
-
-      const riskyTracking = Object.values(latestTrackingByTruck).filter(
-        (p: any) => p.risk_level && p.risk_level !== "normal"
-      );
-
-      let response = "";
-
-      response += `Fuel issues:\n`;
-      response += `• Unallocated fuel entries: ${unallocatedFuel.length}\n\n`;
-
-      response += `Tracking risks:\n`;
-
-      if (riskyTracking.length === 0) {
-        response += `• No major tracking risks currently.\n`;
-      } else {
-        riskyTracking.forEach((p: any) => {
-          response += `• ${p.truck_text}: ${
-            p.nava_eye_summary || "Review required"
-          }\n`;
-        });
-      }
-
-      setAnswer(response);
-      setLoading(false);
-      return;
-    }
-
-    // 4. Active trips
-    if (q.includes("active") || q.includes("trips") || q.includes("journeys")) {
-      const activeTrips = trips.filter((j) => j.status === "active");
-
-      if (activeTrips.length === 0) {
-        setAnswer("There are no active journeys right now.");
-        setLoading(false);
-        return;
-      }
-
-      const grouped: Record<string, any[]> = {};
-
-      activeTrips.forEach((j) => {
-        const client = j.client_name || "NO CLIENT";
-        if (!grouped[client]) grouped[client] = [];
-        grouped[client].push(j);
-      });
-
-      let response = `${activeTrips.length} active journey/journeys found.\n\n`;
-
-      Object.keys(grouped).forEach((client) => {
-        response += `${client}\n`;
-
-        grouped[client].forEach((j) => {
-          const latest = latestTrackingByTruck[j.truck];
-
-          response += `• ${j.truck} — ${j.from_location} → ${j.to_location}`;
-
-          if (latest) {
-            response += ` — ${latest.interpreted_location || "Location needs review"}`;
-          }
-
-          response += "\n";
-        });
-
-        response += "\n";
-      });
-
-      setAnswer(response);
-      setLoading(false);
-      return;
-    }
-
-    // 5. Expenses today
-    if (q.includes("expense") || q.includes("cost")) {
-      const todaysExpenses = costs.filter((e) => isToday(e.created_at));
-      const total = todaysExpenses.reduce(
-        (sum, e) => sum + Number(e.amount || 0),
-        0
-      );
-
-      let response = `Today's recorded expenses: ${todaysExpenses.length}\nTotal: ${total.toLocaleString()}\n\n`;
-
-      todaysExpenses.forEach((e) => {
-        const journey = findJourney(e.journey_id);
-
-        response += `• ${e.truck || "NO TRUCK"} — ${
-          e.expense_type || "expense"
-        } — ${Number(e.amount || 0).toLocaleString()}\n`;
-        response += `  Journey: ${formatJourney(journey)}\n`;
-        response += `  Reference: ${e.reference_number || "missing"}\n\n`;
-      });
-
-      setAnswer(response);
-      setLoading(false);
-      return;
-    }
-
-    // fallback
-    setAnswer(
-      `I can answer questions like:\n\n` +
-        `• How many trucks were fueled today and where were they going?\n` +
-        `• Where is truck KBJ123A?\n` +
-        `• What problems do we have?\n` +
-        `• Show active trips\n` +
-        `• What expenses were recorded today?\n\n` +
-        `Ask me one of those and I’ll inspect the system.`
-    );
-
+    setAnswer(json.answer || "Nava Eye returned no answer.");
     setLoading(false);
   }
 
+  const showCompanySelector = isPlatformOwner || companies.length > 1;
+  const selectedCompany = useMemo(
+    () => companies.find((company) => company.id === selectedCompanyId),
+    [companies, selectedCompanyId]
+  );
+
+  if (initializing) {
+    return <main style={{ padding: 40 }}>Loading Nava Eye...</main>;
+  }
+
   return (
-    <main style={{ padding: 40 }}>
-      <h1>Nava Eye Chat</h1>
-      <p>Ask Nava Eye about fuel, trips, tracking, risks, and expenses.</p>
+    <main style={{ padding: 40, maxWidth: 900 }}>
+      <header style={{ marginBottom: 24 }}>
+        <h1 style={{ fontSize: 30, fontWeight: 800, marginBottom: 8 }}>Nava Eye</h1>
+        <p style={{ color: "#64748b", marginBottom: 16 }}>
+          Ask company-scoped questions about fleet health, journeys, fuel risk,
+          truck status, providers, and operations.
+        </p>
+
+        {showCompanySelector && (
+          <label style={{ display: "block", maxWidth: 360 }}>
+            <span style={{ display: "block", fontSize: 12, fontWeight: 700, color: "#475569", marginBottom: 6 }}>
+              Company
+            </span>
+            <select
+              value={selectedCompanyId}
+              onChange={(e) => setSelectedCompanyId(e.target.value)}
+              style={{
+                width: "100%",
+                padding: "10px 12px",
+                border: "1px solid #cbd5e1",
+                borderRadius: 8,
+              }}
+            >
+              {companies.map((company) => (
+                <option key={company.id} value={company.id}>
+                  {company.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+
+        {!showCompanySelector && selectedCompany && (
+          <p style={{ color: "#64748b", fontSize: 13 }}>
+            Company: {selectedCompany.name}
+          </p>
+        )}
+      </header>
 
       <form onSubmit={askNavaEye}>
         <textarea
           value={question}
           onChange={(e) => setQuestion(e.target.value)}
-          placeholder="Ask: How many trucks were fueled today and where were they going?"
-          style={{ width: "100%", height: 120 }}
+          placeholder="Ask Nava Eye about fleet health, active journeys, trucks in Uganda, offline assets, or fuel risk."
+          style={{
+            width: "100%",
+            height: 130,
+            padding: 14,
+            border: "1px solid #cbd5e1",
+            borderRadius: 10,
+            fontSize: 14,
+          }}
         />
 
-        <br />
-        <br />
-
-        <button type="submit" disabled={loading}>
-          {loading ? "Thinking..." : "Ask Nava Eye"}
-        </button>
+        <div style={{ marginTop: 14, display: "flex", gap: 10, alignItems: "center" }}>
+          <button
+            type="submit"
+            disabled={loading || !question.trim()}
+            style={{
+              background: "#0f172a",
+              color: "#fff",
+              border: "none",
+              borderRadius: 8,
+              padding: "10px 16px",
+              fontWeight: 800,
+              cursor: loading ? "default" : "pointer",
+              opacity: loading || !question.trim() ? 0.7 : 1,
+            }}
+          >
+            {loading ? "Thinking..." : "Ask Nava Eye"}
+          </button>
+          {!answer && !errorDetail && (
+            <span style={{ color: "#64748b", fontSize: 13 }}>
+              Answers use authenticated company data only.
+            </span>
+          )}
+        </div>
       </form>
 
-      <br />
+      {errorDetail && (
+        <pre style={errorBox}>
+          {errorDetail}
+        </pre>
+      )}
 
       {answer && (
-        <pre
-          style={{
-            whiteSpace: "pre-wrap",
-            background: "#f4f4f4",
-            padding: 20,
-            borderRadius: 8,
-          }}
-        >
+        <pre style={answerBox}>
           {answer}
         </pre>
       )}
     </main>
   );
 }
+
+const answerBox = {
+  whiteSpace: "pre-wrap" as const,
+  background: "#f8fafc",
+  border: "1px solid #e2e8f0",
+  padding: 20,
+  borderRadius: 10,
+  marginTop: 24,
+  color: "#0f172a",
+};
+
+const errorBox = {
+  whiteSpace: "pre-wrap" as const,
+  background: "#fef2f2",
+  border: "1px solid #fecaca",
+  padding: 16,
+  borderRadius: 10,
+  marginTop: 24,
+  color: "#991b1b",
+};
