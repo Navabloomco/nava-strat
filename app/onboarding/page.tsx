@@ -1,575 +1,326 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { supabase } from "../../lib/supabase";
 
+type Checklist = {
+  company_created: boolean;
+  tracking_provider_connected: boolean;
+  provider_tested_successfully: boolean;
+  fleet_assets_received: boolean;
+  recent_telemetry_received: boolean;
+  ready_to_create_first_journey: boolean;
+};
+
+const checklistItems: Array<{ key: keyof Checklist; label: string; detail: string }> = [
+  {
+    key: "company_created",
+    label: "Company created",
+    detail: "Your workspace exists in the company-scoped SaaS model.",
+  },
+  {
+    key: "tracking_provider_connected",
+    label: "Tracking provider connected",
+    detail: "Add at least one GPS or telemetry provider for this company.",
+  },
+  {
+    key: "provider_tested_successfully",
+    label: "Provider tested successfully",
+    detail: "Run a provider test or sync and confirm Nava can read the feed.",
+  },
+  {
+    key: "fleet_assets_received",
+    label: "Fleet assets received",
+    detail: "Nava has received real company-scoped fleet asset records.",
+  },
+  {
+    key: "recent_telemetry_received",
+    label: "Recent telemetry received",
+    detail: "At least one telemetry point has landed in the last 24 hours.",
+  },
+  {
+    key: "ready_to_create_first_journey",
+    label: "Ready to create first journey",
+    detail: "Provider, fleet, and telemetry checks are green.",
+  },
+];
+
 export default function Onboarding() {
-  const [step, setStep] = useState(1);
-  const [tenantId, setTenantId] = useState("");
+  const [companyName, setCompanyName] = useState("");
+  const [subscriptionPlan, setSubscriptionPlan] = useState("starter");
+  const [status, setStatus] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
 
-  const [trucks, setTrucks] = useState<any[]>([]);
-  const [geofences, setGeofences] = useState<any[]>([]);
-  const [rules, setRules] = useState<any[]>([]);
-
-  const [truck, setTruck] = useState("");
-  const [driver, setDriver] = useState("");
-
-  const [geoSearch, setGeoSearch] = useState("");
-  const [geoName, setGeoName] = useState("");
-  const [geoType, setGeoType] = useState("client");
-  const [lat, setLat] = useState("");
-  const [lng, setLng] = useState("");
-  const [radius, setRadius] = useState("300");
-  const [geoSource, setGeoSource] = useState("");
-  const [geoConfidence, setGeoConfidence] = useState("");
-  const [searchingPlace, setSearchingPlace] = useState(false);
-
-  const [client, setClient] = useState("");
-  const [fromLocation, setFromLocation] = useState("");
-  const [toLocation, setToLocation] = useState("");
-  const [rateType, setRateType] = useState("per_tonne");
-  const [billingUnit, setBillingUnit] = useState("tonne");
-  const [rate, setRate] = useState("");
-  const [currency, setCurrency] = useState("KES");
-  const [fxRate, setFxRate] = useState("1");
-
   useEffect(() => {
-    init();
+    loadStatus();
   }, []);
 
-  async function init() {
-    const { data: user } = await supabase.auth.getUser();
+  async function getAccessToken() {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
 
-    if (!user.user) {
+    if (!session?.access_token) {
       window.location.href = "/login";
-      return;
+      return null;
     }
 
-    const { data: tenant } = await supabase.rpc("current_tenant_id");
-
-    if (!tenant) {
-      setMessage("Tenant not linked.");
-      return;
-    }
-
-    setTenantId(tenant);
-
-    const { data: tenantData } = await supabase
-      .from("tenants")
-      .select("onboarding_step")
-      .eq("id", tenant)
-      .single();
-
-    if (tenantData?.onboarding_step) {
-      setStep(tenantData.onboarding_step);
-    }
-
-    loadData();
+    return session.access_token;
   }
 
-  async function loadData() {
-    const { data: t } = await supabase.from("trucks").select("*");
-    const { data: g } = await supabase.from("geofences").select("*");
-    const { data: r } = await supabase.from("client_rate_rules").select("*");
+  async function loadStatus() {
+    setLoading(true);
+    setMessage("");
 
-    setTrucks(t || []);
-    setGeofences(g || []);
-    setRules(r || []);
-  }
+    const token = await getAccessToken();
+    if (!token) return;
 
-  async function nextStep() {
-    const next = step + 1;
-
-    await supabase
-      .from("tenants")
-      .update({ onboarding_step: next })
-      .eq("id", tenantId);
-
-    setStep(next);
-  }
-
-  async function previousStep() {
-    const prev = Math.max(1, step - 1);
-
-    await supabase
-      .from("tenants")
-      .update({ onboarding_step: prev })
-      .eq("id", tenantId);
-
-    setStep(prev);
-  }
-
-  function fallbackRadiusForType(type: string) {
-    if (type === "fuel") return "150";
-    if (type === "border") return "1500";
-    if (type === "yard") return "500";
-    if (type === "depot") return "500";
-    if (type === "client") return "300";
-    return "300";
-  }
-
-  async function searchPlace() {
-    if (!geoSearch.trim()) {
-      alert("Type a place name first.");
-      return;
-    }
-
-    setSearchingPlace(true);
-    setMessage("Nava Eye is searching for the location...");
-
-    try {
-      const response = await fetch("/api/place-search", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ query: geoSearch.trim() }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        setMessage(data.error || "Place not found.");
-        setSearchingPlace(false);
-        return;
-      }
-
-      setGeoName(data.name || geoSearch);
-      setLat(String(data.latitude));
-      setLng(String(data.longitude));
-      setGeoType(data.suggested_type || "client");
-      setRadius(String(data.suggested_radius || 300));
-      setGeoSource(data.source || "search");
-      setGeoConfidence(data.confidence || "medium");
-
-      setMessage(
-        `Found: ${data.display_name}. Nava suggests ${data.suggested_type} with ${data.suggested_radius}m radius.`
-      );
-    } catch (err: any) {
-      setMessage(err.message || "Search failed.");
-    }
-
-    setSearchingPlace(false);
-  }
-
-  async function addTruck(e: any) {
-    e.preventDefault();
-
-    const cleanTruck = truck.trim().toUpperCase();
-
-    if (!cleanTruck) {
-      alert("Truck is required.");
-      return;
-    }
-
-    const { error } = await supabase.from("trucks").insert([
-      {
-        tenant_id: tenantId,
-        truck: cleanTruck,
-        driver: driver.trim().toUpperCase() || null,
+    const res = await fetch("/api/onboarding/company", {
+      cache: "no-store",
+      headers: {
+        Authorization: `Bearer ${token}`,
       },
-    ]);
+    });
+    const json = await res.json();
 
-    if (error) {
-      alert(error.message);
+    if (!res.ok || !json.success) {
+      setMessage(json.error || "Failed to load onboarding status.");
+      setLoading(false);
       return;
     }
 
-    setTruck("");
-    setDriver("");
-    loadData();
+    setStatus(json);
+    setLoading(false);
   }
 
-  async function addGeofence(e: any) {
+  async function createCompany(e: any) {
     e.preventDefault();
+    setSaving(true);
+    setMessage("");
 
-    const latitude = Number(lat);
-    const longitude = Number(lng);
+    const token = await getAccessToken();
+    if (!token) return;
 
-    if (!geoName.trim() || isNaN(latitude) || isNaN(longitude)) {
-      alert("Name, latitude, and longitude are required.");
-      return;
-    }
-
-    const { error } = await supabase.from("geofences").insert([
-      {
-        tenant_id: tenantId,
-        name: geoName.trim(),
-        type: geoType,
-        latitude,
-        longitude,
-        radius_meters: Number(radius || fallbackRadiusForType(geoType)),
-        source: geoSource || "manual",
-        confidence: geoConfidence || "manual",
-        nava_suggested_radius: geoSource ? true : false,
+    const res = await fetch("/api/onboarding/company", {
+      method: "POST",
+      cache: "no-store",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
       },
-    ]);
+      body: JSON.stringify({
+        name: companyName,
+        subscription_plan: subscriptionPlan,
+      }),
+    });
+    const json = await res.json();
 
-    if (error) {
-      alert(error.message);
+    if (!res.ok || !json.success) {
+      setMessage(json.error || "Failed to create company.");
+      setSaving(false);
       return;
     }
 
-    setGeoSearch("");
-    setGeoName("");
-    setGeoType("client");
-    setLat("");
-    setLng("");
-    setRadius("300");
-    setGeoSource("");
-    setGeoConfidence("");
-    setMessage("Location saved ✅");
-    loadData();
+    setStatus(json);
+    setCompanyName("");
+    setSaving(false);
   }
 
-  async function addRule(e: any) {
-    e.preventDefault();
+  const checklist = status?.checklist || {};
+  const completeCount = useMemo(() => {
+    return checklistItems.filter((item) => checklist[item.key]).length;
+  }, [checklist]);
 
-    if (!client.trim() || !rate) {
-      alert("Client and rate are required.");
-      return;
-    }
-
-    const { error } = await supabase.from("client_rate_rules").insert([
-      {
-        tenant_id: tenantId,
-        client_name: client.trim().toUpperCase(),
-        from_location: fromLocation.trim()
-          ? fromLocation.trim().toUpperCase()
-          : null,
-        to_location: toLocation.trim() ? toLocation.trim().toUpperCase() : null,
-        rate_type: rateType,
-        billing_unit: billingUnit.trim().toLowerCase(),
-        rate_amount: Number(rate),
-        rate_currency: currency,
-        fx_rate: currency === "KES" ? 1 : Number(fxRate || 1),
-        valid_from: new Date().toISOString().slice(0, 10),
-        is_active: true,
-      },
-    ]);
-
-    if (error) {
-      alert(error.message);
-      return;
-    }
-
-    setClient("");
-    setFromLocation("");
-    setToLocation("");
-    setRateType("per_tonne");
-    setBillingUnit("tonne");
-    setRate("");
-    setCurrency("KES");
-    setFxRate("1");
-    loadData();
-  }
-
-  async function finishOnboarding() {
-    await supabase
-      .from("tenants")
-      .update({
-        onboarding_step: 3,
-        onboarding_completed: true,
-      })
-      .eq("id", tenantId);
-
-    window.location.href = "/ops/dashboard";
+  if (loading) {
+    return (
+      <main className="min-h-screen bg-slate-50 p-10 text-slate-950">
+        Loading onboarding...
+      </main>
+    );
   }
 
   return (
-    <main style={{ padding: 40 }}>
-      <h1>Setup Nava</h1>
-      <p>Step {step} of 3</p>
-
-      {message && (
-        <pre style={{ background: "#f4f4f4", padding: 12 }}>{message}</pre>
-      )}
-
-      <br />
-
-      {step > 1 && <button onClick={previousStep}>← Back</button>}
-
-      {step === 1 && (
-        <>
-          <h2>1. Add your trucks</h2>
-          <p>Add the trucks that Nava Eye should monitor.</p>
-
-          <form onSubmit={addTruck}>
-            <input
-              placeholder="Truck e.g. KBJ123A"
-              value={truck}
-              onChange={(e) => setTruck(e.target.value.toUpperCase())}
-              required
-            />
-
-            <br />
-            <br />
-
-            <input
-              placeholder="Driver optional e.g. Kariuki"
-              value={driver}
-              onChange={(e) => setDriver(e.target.value.toUpperCase())}
-            />
-
-            <br />
-            <br />
-
-            <button type="submit">Add Truck</button>
-          </form>
-
-          <p>{trucks.length} trucks added</p>
-
-          {trucks.length > 0 && (
-            <ul>
-              {trucks.slice(0, 8).map((t) => (
-                <li key={t.id}>
-                  {t.truck} {t.driver ? `— ${t.driver}` : ""}
-                </li>
-              ))}
-            </ul>
-          )}
-
-          {trucks.length > 0 && <button onClick={nextStep}>Next → Locations</button>}
-        </>
-      )}
-
-      {step === 2 && (
-        <>
-          <h2>2. Add key locations</h2>
-          <p>
-            Type a known place like Shell Bonje, Busia Border, GBHL Mombasa, or
-            your yard. Nava Eye will search coordinates and suggest a radius.
+    <main className="min-h-screen bg-slate-50 p-8 text-slate-950">
+      <div className="mx-auto max-w-6xl">
+        <header className="mb-8 rounded-lg border border-slate-200 bg-white p-8">
+          <p className="text-sm font-bold uppercase tracking-[0.18em] text-cyan-700">
+            SaaS onboarding
           </p>
-
-          <div style={{ border: "1px solid #ddd", padding: 16 }}>
-            <input
-              placeholder="Search place e.g. Shell Bonje"
-              value={geoSearch}
-              onChange={(e) => setGeoSearch(e.target.value)}
-              style={{ width: 300 }}
-            />
-
-            <button type="button" onClick={searchPlace} disabled={searchingPlace}>
-              {searchingPlace ? "Searching..." : "Nava Eye Search"}
-            </button>
-          </div>
-
-          <br />
-
-          <form onSubmit={addGeofence}>
-            <input
-              placeholder="Location name"
-              value={geoName}
-              onChange={(e) => setGeoName(e.target.value)}
-              required
-            />
-
-            <br />
-            <br />
-
-            <select
-              value={geoType}
-              onChange={(e) => {
-                setGeoType(e.target.value);
-                setRadius(fallbackRadiusForType(e.target.value));
-              }}
-            >
-              <option value="client">Client Site</option>
-              <option value="fuel">Fuel Station</option>
-              <option value="yard">Yard</option>
-              <option value="depot">Depot</option>
-              <option value="border">Border</option>
-              <option value="other">Other</option>
-            </select>
-
-            <br />
-            <br />
-
-            <input
-              placeholder="Latitude"
-              value={lat}
-              onChange={(e) => setLat(e.target.value)}
-              required
-            />
-
-            <br />
-            <br />
-
-            <input
-              placeholder="Longitude"
-              value={lng}
-              onChange={(e) => setLng(e.target.value)}
-              required
-            />
-
-            <br />
-            <br />
-
-            <input
-              placeholder="Radius meters"
-              value={radius}
-              onChange={(e) => setRadius(e.target.value)}
-              required
-            />
-
-            <br />
-            <br />
-
-            {geoConfidence && (
-              <p>
-                Nava confidence: <strong>{geoConfidence}</strong> | Source:{" "}
-                <strong>{geoSource || "manual"}</strong>
+          <div className="mt-3 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <h1 className="text-4xl font-semibold tracking-normal">
+                Set up your Nava Strat workspace
+              </h1>
+              <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600">
+                Create the company workspace, connect a real tracking provider, and
+                verify live fleet data before creating the first operational journey.
               </p>
+            </div>
+            {status?.company && (
+              <div className="rounded-md border border-slate-200 bg-slate-50 px-4 py-3 text-sm">
+                <div className="font-semibold">{status.company.name}</div>
+                <div className="text-slate-500">{status.company.slug}</div>
+              </div>
             )}
+          </div>
+        </header>
 
-            <button type="submit">Save Location</button>
-          </form>
+        {message && (
+          <div className="mb-6 rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+            {message}
+          </div>
+        )}
 
-          <p>{geofences.length} locations added</p>
+        {!status?.company ? (
+          <section className="rounded-lg border border-slate-200 bg-white p-6">
+            <h2 className="text-xl font-semibold">Create company workspace</h2>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
+              You do not have active company access yet. Create a company to start
+              onboarding with the new company-scoped architecture.
+            </p>
 
-          {geofences.length > 0 && (
-            <ul>
-              {geofences.slice(0, 8).map((g) => (
-                <li key={g.id}>
-                  {g.name} — {g.type || "location"} — {g.radius_meters}m
-                </li>
-              ))}
-            </ul>
-          )}
-
-          {geofences.length > 0 && <button onClick={nextStep}>Next → Pricing</button>}
-        </>
-      )}
-
-      {step === 3 && (
-        <>
-          <h2>3. Set your first client rate</h2>
-          <p>
-            Add a rate once. Later, when prices change, use the Pricing page to
-            create a new version without destroying old history.
-          </p>
-
-          <form onSubmit={addRule}>
-            <input
-              placeholder="Client e.g. ENGAANO"
-              value={client}
-              onChange={(e) => setClient(e.target.value.toUpperCase())}
-              required
-            />
-
-            <br />
-            <br />
-
-            <input
-              placeholder="From optional e.g. MOMBASA"
-              value={fromLocation}
-              onChange={(e) => setFromLocation(e.target.value.toUpperCase())}
-            />
-
-            <br />
-            <br />
-
-            <input
-              placeholder="To optional e.g. JINJA"
-              value={toLocation}
-              onChange={(e) => setToLocation(e.target.value.toUpperCase())}
-            />
-
-            <br />
-            <br />
-
-            <select value={rateType} onChange={(e) => setRateType(e.target.value)}>
-              <option value="per_tonne">Per Tonne</option>
-              <option value="per_truck">Per Truck</option>
-              <option value="per_box">Per Box</option>
-              <option value="per_bag">Per Bag</option>
-              <option value="per_crate">Per Crate</option>
-              <option value="per_pallet">Per Pallet</option>
-              <option value="per_litre">Per Litre</option>
-              <option value="per_km">Per KM</option>
-              <option value="custom">Custom Unit</option>
-            </select>
-
-            <br />
-            <br />
-
-            <input
-              placeholder="Billing unit e.g. tonne, box, truck"
-              value={billingUnit}
-              onChange={(e) => setBillingUnit(e.target.value)}
-              required
-            />
-
-            <br />
-            <br />
-
-            <input
-              placeholder="Rate amount e.g. 45"
-              value={rate}
-              onChange={(e) => setRate(e.target.value)}
-              required
-            />
-
-            <br />
-            <br />
-
-            <select
-              value={currency}
-              onChange={(e) => {
-                setCurrency(e.target.value);
-                if (e.target.value === "KES") setFxRate("1");
-              }}
-            >
-              <option value="KES">KES</option>
-              <option value="USD">USD</option>
-              <option value="UGX">UGX</option>
-              <option value="TZS">TZS</option>
-              <option value="RWF">RWF</option>
-              <option value="EUR">EUR</option>
-              <option value="GBP">GBP</option>
-              <option value="ZAR">ZAR</option>
-            </select>
-
-            <br />
-            <br />
-
-            {currency !== "KES" && (
-              <>
+            <form onSubmit={createCompany} className="mt-6 grid max-w-2xl gap-4">
+              <label className="block">
+                <span className="text-sm font-semibold text-slate-700">
+                  Company name
+                </span>
                 <input
-                  placeholder="FX to KES e.g. 129"
-                  value={fxRate}
-                  onChange={(e) => setFxRate(e.target.value)}
+                  value={companyName}
+                  onChange={(e) => setCompanyName(e.target.value)}
+                  placeholder="Your logistics company"
+                  className="mt-2 w-full rounded-md border border-slate-300 px-4 py-3 outline-none focus:border-cyan-600"
                   required
                 />
+              </label>
 
-                <br />
-                <br />
-              </>
-            )}
+              <label className="block">
+                <span className="text-sm font-semibold text-slate-700">
+                  Subscription plan
+                </span>
+                <select
+                  value={subscriptionPlan}
+                  onChange={(e) => setSubscriptionPlan(e.target.value)}
+                  className="mt-2 w-full rounded-md border border-slate-300 px-4 py-3 outline-none focus:border-cyan-600"
+                >
+                  <option value="starter">Starter</option>
+                  <option value="growth">Growth</option>
+                  <option value="enterprise">Enterprise</option>
+                  <option value="platform_custom">Platform / Custom</option>
+                </select>
+              </label>
 
-            <button type="submit">Save Rate</button>
-          </form>
+              <button
+                type="submit"
+                disabled={saving}
+                className="rounded-md bg-slate-950 px-5 py-3 text-sm font-bold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {saving ? "Creating workspace..." : "Create company"}
+              </button>
+            </form>
+          </section>
+        ) : (
+          <div className="grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
+            <section className="rounded-lg border border-slate-200 bg-white p-6">
+              <div className="mb-5 flex items-center justify-between">
+                <div>
+                  <h2 className="text-xl font-semibold">Pilot readiness checklist</h2>
+                  <p className="mt-1 text-sm text-slate-600">
+                    {completeCount} of {checklistItems.length} checks complete.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={loadStatus}
+                  className="rounded-md border border-slate-300 px-4 py-2 text-sm font-semibold hover:bg-slate-50"
+                >
+                  Refresh
+                </button>
+              </div>
 
-          <p>{rules.length} pricing rules added</p>
+              <div className="space-y-3">
+                {checklistItems.map((item) => {
+                  const done = Boolean(checklist[item.key]);
+                  return (
+                    <div
+                      key={item.key}
+                      className="flex gap-4 rounded-md border border-slate-200 p-4"
+                    >
+                      <div
+                        className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-sm font-bold ${
+                          done
+                            ? "bg-emerald-100 text-emerald-700"
+                            : "bg-slate-100 text-slate-500"
+                        }`}
+                      >
+                        {done ? "✓" : "•"}
+                      </div>
+                      <div>
+                        <div className="font-semibold">{item.label}</div>
+                        <div className="mt-1 text-sm leading-6 text-slate-600">
+                          {item.detail}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
 
-          {rules.length > 0 && (
-            <ul>
-              {rules.slice(0, 8).map((r) => (
-                <li key={r.id}>
-                  {r.client_name} — {r.from_location || "ANY"} →{" "}
-                  {r.to_location || "ANY"} — {r.rate_currency} {r.rate_amount}/
-                  {r.billing_unit}
-                </li>
-              ))}
-            </ul>
-          )}
+            <aside className="space-y-6">
+              <section className="rounded-lg border border-slate-200 bg-white p-6">
+                <h2 className="text-xl font-semibold">Live data status</h2>
+                <div className="mt-5 grid gap-3">
+                  <Metric label="Providers" value={status.counts?.providers || 0} />
+                  <Metric label="Fleet assets" value={status.counts?.fleet_assets || 0} />
+                  <Metric
+                    label="Recent telemetry"
+                    value={status.counts?.recent_telemetry || 0}
+                  />
+                </div>
+                <p className="mt-4 text-sm text-slate-500">
+                  Latest telemetry: {status.latest_telemetry_at || "none yet"}
+                </p>
+              </section>
 
-          {rules.length > 0 && (
-            <button onClick={finishOnboarding}>Finish → Dashboard</button>
-          )}
-        </>
-      )}
+              <section className="rounded-lg border border-slate-200 bg-white p-6">
+                <h2 className="text-xl font-semibold">Next actions</h2>
+                <div className="mt-5 grid gap-3">
+                  <Link
+                    href="/admin/providers"
+                    className="rounded-md bg-slate-950 px-4 py-3 text-center text-sm font-bold text-white hover:bg-slate-800"
+                  >
+                    Provider setup
+                  </Link>
+                  <Link
+                    href="/dashboard"
+                    className="rounded-md border border-slate-300 px-4 py-3 text-center text-sm font-semibold hover:bg-slate-50"
+                  >
+                    Open dashboard
+                  </Link>
+                  <Link
+                    href="/ops/journey/new"
+                    className="rounded-md border border-slate-300 px-4 py-3 text-center text-sm font-semibold hover:bg-slate-50"
+                  >
+                    Create first journey
+                  </Link>
+                </div>
+              </section>
+            </aside>
+          </div>
+        )}
+      </div>
     </main>
+  );
+}
+
+function Metric({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="flex items-center justify-between rounded-md border border-slate-200 px-4 py-3">
+      <span className="text-sm text-slate-600">{label}</span>
+      <span className="text-lg font-bold">{value}</span>
+    </div>
   );
 }
