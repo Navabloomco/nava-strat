@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
-import { supabase } from "../../../lib/supabase";
 import { supabaseAdmin } from "../../../lib/supabaseAdmin";
+import { supabase } from "../../../lib/supabase";
+
+export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
   try {
@@ -27,25 +29,20 @@ export async function GET(req: Request) {
       .eq("user_id", user.id)
       .eq("is_active", true);
 
-    if (membershipError) {
-      return NextResponse.json(
-        { error: membershipError.message },
-        { status: 500 }
-      );
-    }
+    if (membershipError) throw membershipError;
 
-    const isPlatformOwner =
-      memberships?.some((m) => m.role === "platform_owner") || false;
+    const activeMemberships = memberships || [];
+    const isPlatformOwner = activeMemberships.some(
+      (membership) => membership.role === "platform_owner"
+    );
 
     if (isPlatformOwner) {
-      const { data: companies, error } = await supabaseAdmin
+      const { data: companies, error: companiesError } = await supabaseAdmin
         .from("companies")
         .select("id, name, slug")
         .order("name", { ascending: true });
 
-      if (error) {
-        return NextResponse.json({ error: error.message }, { status: 500 });
-      }
+      if (companiesError) throw companiesError;
 
       return NextResponse.json({
         success: true,
@@ -54,7 +51,9 @@ export async function GET(req: Request) {
       });
     }
 
-    const companyIds = memberships?.map((m) => m.company_id).filter(Boolean) || [];
+    const companyIds = activeMemberships
+      .map((membership) => membership.company_id)
+      .filter(Boolean);
 
     if (companyIds.length === 0) {
       return NextResponse.json({
@@ -64,15 +63,13 @@ export async function GET(req: Request) {
       });
     }
 
-    const { data: companies, error } = await supabaseAdmin
+    const { data: companies, error: companiesError } = await supabaseAdmin
       .from("companies")
       .select("id, name, slug")
       .in("id", companyIds)
       .order("name", { ascending: true });
 
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
+    if (companiesError) throw companiesError;
 
     return NextResponse.json({
       success: true,
@@ -80,8 +77,9 @@ export async function GET(req: Request) {
       companies: companies || [],
     });
   } catch (err: any) {
+    console.error("Companies route error:", err);
     return NextResponse.json(
-      { error: err.message || "Failed to load companies" },
+      { success: false, error: err.message || "Failed to load companies" },
       { status: 500 }
     );
   }

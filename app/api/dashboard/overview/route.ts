@@ -1,6 +1,5 @@
 // app/api/dashboard/overview/route.ts
 import { NextResponse } from "next/server";
-import { getCurrentCompany } from "../../../../lib/auth/getCurrentCompany";
 import { getFleetHealth } from "../../../../lib/intelligence/fleetHealthService";
 import { supabaseAdmin } from "../../../../lib/supabaseAdmin";
 import { supabase } from "../../../../lib/supabase";
@@ -23,7 +22,90 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const company = await getCurrentCompany(user.id);
+    const { searchParams } = new URL(req.url);
+    const requestedCompanyId = searchParams.get("companyId");
+
+    const { data: memberships, error: membershipError } = await supabaseAdmin
+      .from("company_users")
+      .select("company_id, role, is_active")
+      .eq("user_id", user.id)
+      .eq("is_active", true);
+
+    if (membershipError) throw membershipError;
+
+    const activeMemberships = memberships || [];
+    const isPlatformOwner = activeMemberships.some(
+      (membership) => membership.role === "platform_owner"
+    );
+
+    let company;
+
+    if (isPlatformOwner) {
+      if (requestedCompanyId) {
+        const { data: requestedCompany, error: companyError } =
+          await supabaseAdmin
+            .from("companies")
+            .select("id, name, slug")
+            .eq("id", requestedCompanyId)
+            .maybeSingle();
+
+        if (companyError) throw companyError;
+        if (!requestedCompany) {
+          return NextResponse.json(
+            { success: false, error: "Company not found" },
+            { status: 404 }
+          );
+        }
+
+        company = requestedCompany;
+      } else {
+        const { data: defaultCompany, error: companyError } =
+          await supabaseAdmin
+            .from("companies")
+            .select("id, name, slug")
+            .order("name", { ascending: true })
+            .limit(1)
+            .maybeSingle();
+
+        if (companyError) throw companyError;
+        if (!defaultCompany) {
+          return NextResponse.json(
+            { success: false, error: "Company not found" },
+            { status: 404 }
+          );
+        }
+
+        company = defaultCompany;
+      }
+    } else {
+      const companyId = activeMemberships
+        .map((membership) => membership.company_id)
+        .filter(Boolean)[0];
+
+      if (!companyId) {
+        return NextResponse.json(
+          { success: false, error: "User not associated with any company" },
+          { status: 403 }
+        );
+      }
+
+      const { data: assignedCompany, error: companyError } = await supabaseAdmin
+        .from("companies")
+        .select("id, name, slug")
+        .eq("id", companyId)
+        .maybeSingle();
+
+      if (companyError) throw companyError;
+      if (!assignedCompany) {
+        return NextResponse.json(
+          { success: false, error: "Company not found" },
+          { status: 404 }
+        );
+      }
+
+      company = assignedCompany;
+    }
+
     const fleetHealth = await getFleetHealth(company.id);
 
     // Active memories
