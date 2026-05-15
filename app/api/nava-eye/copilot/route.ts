@@ -321,6 +321,34 @@ function buildFallbackAnswer(context: any): string {
         .join(", ")}.`
     );
   }
+  if (context.country_fleet_location) {
+    const locationContext = context.country_fleet_location;
+    const country = locationContext.country || "that country";
+    const freshnessWindow =
+      locationContext.freshness_window_minutes || 30;
+    const trucks = locationContext.trucks || [];
+
+    if (trucks.length === 0) {
+      parts.push(
+        `No fresh evidence shows active company trucks in ${country} within the last ${freshnessWindow} minutes.`
+      );
+    } else {
+      parts.push(
+        `Current trucks in ${country} within the last ${freshnessWindow} minutes: ${trucks
+          .map((t: any) => {
+            const freshness =
+              t.freshness_minutes === null
+                ? "freshness unknown"
+                : `${t.freshness_minutes} minutes old`;
+            const location = t.location ? ` near ${t.location}` : "";
+            return `${t.registration || t.truck_id}${location}, last seen ${
+              t.last_seen_at || "unknown"
+            } at ${t.latitude}, ${t.longitude} (${freshness})`;
+          })
+          .join("; ")}.`
+      );
+    }
+  }
   if (context.fuel_risk) {
     parts.push(
       `Fuel risk score: ${context.fuel_risk.risk_score}. ${context.fuel_risk.recommendation || ""}`

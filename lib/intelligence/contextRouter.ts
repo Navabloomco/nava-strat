@@ -1,6 +1,10 @@
 // lib/intelligence/contextRouter.ts
 import { supabaseAdmin } from "../supabaseAdmin";
 import { analyzeTruckFuelRisk } from "./fuelRiskEngine.universal";
+import {
+  detectSupportedCountryName,
+  getCurrentTrucksInCountry,
+} from "./fleetLocationService";
 
 export type ContextIntent =
   | "fleet_health"
@@ -9,6 +13,7 @@ export type ContextIntent =
   | "truck_status"
   | "driver_activity"
   | "journey_context"
+  | "country_trucks"
   | "general";
 
 export async function getCompanyBySlug(slug: string) {
@@ -27,12 +32,14 @@ export async function routeContext(question: string, tenantSlug: string) {
   const company = await getCompanyBySlug(tenantSlug);
   const companyId = company.id;
   const lower = question.toLowerCase();
-  const intent = detectIntent(lower);
+  const detectedCountryName = detectSupportedCountryName(question);
+  const intent = detectIntent(lower, detectedCountryName);
   const truckId = await detectTruckId(question, companyId);
   const context: any = {
     company,
     intent,
     detected_truck_id: truckId,
+    detected_country_name: detectedCountryName,
     generated_at: new Date().toISOString(),
   };
 
@@ -65,6 +72,15 @@ export async function routeContext(question: string, tenantSlug: string) {
       truckId
     );
   }
+  if (intent === "country_trucks" && detectedCountryName) {
+    context.country_fleet_location = {
+      country: detectedCountryName,
+      freshness_window_minutes: 30,
+      trucks: await getCurrentTrucksInCountry(companyId, detectedCountryName, {
+        includeLocation: true,
+      }),
+    };
+  }
   if (intent === "general") {
     context.fleet_health = await fetchFleetHealth(companyId);
     context.recent_events = await fetchRecentEvents(companyId);
@@ -72,7 +88,13 @@ export async function routeContext(question: string, tenantSlug: string) {
   return context;
 }
 
-function detectIntent(lower: string): ContextIntent {
+function detectIntent(
+  lower: string,
+  detectedCountryName: string | null
+): ContextIntent {
+  if (detectedCountryName) {
+    return "country_trucks";
+  }
   if (
     lower.includes("fleet") &&
     (lower.includes("health") || lower.includes("summary") || lower.includes("status"))

@@ -1,9 +1,9 @@
 // app/api/dashboard/overview/route.ts
 import { NextResponse } from "next/server";
 import { getFleetHealth } from "../../../../lib/intelligence/fleetHealthService";
+import { getCurrentTrucksInCountry } from "../../../../lib/intelligence/fleetLocationService";
 import { supabaseAdmin } from "../../../../lib/supabaseAdmin";
 import { supabase } from "../../../../lib/supabase";
-import { reverseGeocode } from "../../../../lib/location/reverseGeocode";
 
 export const dynamic = "force-dynamic";
 
@@ -118,30 +118,7 @@ export async function GET(req: Request) {
       .limit(10);
     if (memoryError) throw memoryError;
 
-    // Real Uganda detection using reverse geocode on latest telemetry
-    const { data: latestTelemetry, error: telemetryError } = await supabaseAdmin
-      .from("telemetry_logs")
-      .select("truck_id, latitude, longitude")
-      .eq("company_id", company.id)
-      .order("recorded_at", { ascending: false })
-      .limit(100);
-    if (telemetryError) throw telemetryError;
-
-    const ugandaTrucks: Array<{ truck_id: string; location: string }> = [];
-    const processed = new Set<string>();
-    for (const point of latestTelemetry || []) {
-      if (processed.has(point.truck_id)) continue;
-      processed.add(point.truck_id);
-      if (point.latitude && point.longitude) {
-        const loc = await reverseGeocode(point.latitude, point.longitude);
-        if (loc?.country?.toLowerCase() === "uganda") {
-          ugandaTrucks.push({
-            truck_id: point.truck_id,
-            location: loc.town || loc.display_name || "Uganda",
-          });
-        }
-      }
-    }
+    const ugandaTrucks = await getCurrentTrucksInCountry(company.id, "Uganda");
 
     return NextResponse.json({
       success: true,
