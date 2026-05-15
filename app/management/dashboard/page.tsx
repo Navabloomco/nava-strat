@@ -38,6 +38,7 @@ export default function ManagementDashboard() {
     }
 
     const res = await fetch("/api/management/dashboard", {
+      cache: "no-store",
       headers: {
         Authorization: `Bearer ${session.access_token}`,
       },

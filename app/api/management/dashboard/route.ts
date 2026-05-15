@@ -4,6 +4,17 @@ import { supabaseAdmin } from "../../../../lib/supabaseAdmin";
 import { getCompanyProfitability } from "../../../../lib/intelligence/profitabilityService";
 
 export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
+function noStoreJson(body: any, init?: ResponseInit) {
+  return NextResponse.json(body, {
+    ...init,
+    headers: {
+      ...(init?.headers || {}),
+      "Cache-Control": "no-store",
+    },
+  });
+}
 
 type ResolvedCompany = {
   id: string;
@@ -21,7 +32,7 @@ async function resolveCompany(
 ): Promise<ResolveCompanyResult> {
   const authHeader = req.headers.get("authorization");
   if (!authHeader?.startsWith("Bearer ")) {
-    return { error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
+    return { error: noStoreJson({ error: "Unauthorized" }, { status: 401 }) };
   }
 
   const token = authHeader.replace("Bearer ", "");
@@ -31,7 +42,7 @@ async function resolveCompany(
   } = await supabase.auth.getUser(token);
 
   if (userError || !user) {
-    return { error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
+    return { error: noStoreJson({ error: "Unauthorized" }, { status: 401 }) };
   }
 
   const { data: memberships, error: membershipError } = await supabaseAdmin
@@ -59,7 +70,7 @@ async function resolveCompany(
     if (companyError) throw companyError;
     if (!company) {
       return {
-        error: NextResponse.json(
+        error: noStoreJson(
           { success: false, error: "Company not found" },
           { status: 404 }
         ),
@@ -75,7 +86,7 @@ async function resolveCompany(
 
   if (!companyId) {
     return {
-      error: NextResponse.json(
+      error: noStoreJson(
         { success: false, error: "Unable to resolve company access" },
         { status: 403 }
       ),
@@ -91,7 +102,7 @@ async function resolveCompany(
   if (companyError) throw companyError;
   if (!company) {
     return {
-      error: NextResponse.json(
+      error: noStoreJson(
         { success: false, error: "Unable to resolve company access" },
         { status: 403 }
       ),
@@ -109,7 +120,7 @@ export async function GET(req: Request) {
 
     const profitability = await getCompanyProfitability(resolved.company.id);
 
-    return NextResponse.json({
+    return noStoreJson({
       success: true,
       company: resolved.company,
       is_platform_owner: resolved.isPlatformOwner,
@@ -117,7 +128,7 @@ export async function GET(req: Request) {
     });
   } catch (err: any) {
     console.error("Management dashboard error:", err);
-    return NextResponse.json(
+    return noStoreJson(
       { success: false, error: err.message || "Failed to load management dashboard" },
       { status: 500 }
     );
