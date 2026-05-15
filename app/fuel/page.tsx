@@ -6,33 +6,42 @@ import { supabase } from "../../lib/supabase";
 export default function FuelControlPage() {
   const [fuelLogs, setFuelLogs] = useState<any[]>([]);
   const [journeys, setJourneys] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [errorDetail, setErrorDetail] = useState("");
 
   useEffect(() => {
     loadData();
   }, []);
 
   async function loadData() {
-    const { data: fuelData, error: fuelError } = await supabase
-      .from("fuel_logs")
-      .select("*")
-      .order("created_at", { ascending: false });
+    setLoading(true);
+    setErrorDetail("");
 
-    if (fuelError) {
-      alert(fuelError.message);
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    if (!session?.access_token) {
+      window.location.href = "/login";
       return;
     }
 
-    const { data: journeyData, error: journeyError } = await supabase
-      .from("journeys")
-      .select("*");
+    const res = await fetch("/api/fuel", {
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+      },
+    });
+    const json = await res.json();
 
-    if (journeyError) {
-      alert(journeyError.message);
+    if (!res.ok || !json.success) {
+      setErrorDetail(json.error || "Failed to load fuel data");
+      setLoading(false);
       return;
     }
 
-    setFuelLogs(fuelData || []);
-    setJourneys(journeyData || []);
+    setFuelLogs(json.fuel_logs || []);
+    setJourneys(json.journeys || []);
+    setLoading(false);
   }
 
   function findJourney(journeyId: string | null) {
@@ -73,6 +82,11 @@ export default function FuelControlPage() {
 
       <br />
 
+      {loading ? (
+        <p>Loading fuel data...</p>
+      ) : errorDetail ? (
+        <p style={{ color: "red" }}>{errorDetail}</p>
+      ) : (
       <table border={1} cellPadding={10}>
         <thead>
           <tr>
@@ -177,6 +191,7 @@ export default function FuelControlPage() {
           })}
         </tbody>
       </table>
+      )}
     </main>
   );
 }

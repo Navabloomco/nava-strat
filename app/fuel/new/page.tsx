@@ -6,6 +6,8 @@ import { supabase } from "../../../lib/supabase";
 export default function NewFuelPage() {
   const [journeys, setJourneys] = useState<any[]>([]);
   const [providers, setProviders] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [message, setMessage] = useState("");
 
   const [client, setClient] = useState("");
   const [truck, setTruck] = useState("");
@@ -20,28 +22,42 @@ export default function NewFuelPage() {
   const [approvalReason, setApprovalReason] = useState("");
 
   useEffect(() => {
-    loadJourneys();
-    loadProviders();
+    loadFuelData();
   }, []);
 
-  async function loadJourneys() {
-    const { data } = await supabase
-      .from("journeys")
-      .select("*")
-      .eq("status", "active")
-      .order("created_at", { ascending: false });
+  async function loadFuelData() {
+    setLoading(true);
+    setMessage("");
 
-    setJourneys(data || []);
-  }
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
 
-  async function loadProviders() {
-    const { data } = await supabase
-      .from("fuel_providers")
-      .select("*")
-      .eq("is_active", true)
-      .order("created_at", { ascending: false });
+    if (!session?.access_token) {
+      window.location.href = "/login";
+      return;
+    }
 
-    setProviders(data || []);
+    const res = await fetch("/api/fuel", {
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+      },
+    });
+    const json = await res.json();
+
+    if (!res.ok || !json.success) {
+      setMessage(json.error || "Failed to load fuel data.");
+      setLoading(false);
+      return;
+    }
+
+    setJourneys(
+      (json.journeys || []).filter(
+        (journey: any) => String(journey.status || "").toLowerCase() === "active"
+      )
+    );
+    setProviders(json.fuel_providers || []);
+    setLoading(false);
   }
 
   const clients = useMemo(() => {
@@ -61,72 +77,9 @@ export default function NewFuelPage() {
     });
   }, [journeys, client, truck]);
 
-  async function updateFuelProfile(truckValue: string, journeyIdValue: string) {
-    const cleanTruck = truckValue.trim().toUpperCase();
-
-    const { data: journey } = await supabase
-      .from("journeys")
-      .select("*")
-      .eq("id", journeyIdValue)
-      .single();
-
-    if (!journey) return;
-
-    const { data: fuelLogs } = await supabase
-      .from("fuel_logs")
-      .select("*")
-      .eq("journey_id", journeyIdValue);
-
-    if (!fuelLogs) return;
-
-    const totalFuel = fuelLogs.reduce(
-      (sum, fuel) => sum + Number(fuel.liters || 0),
-      0
-    );
-
-    const { data: existing } = await supabase
-      .from("truck_route_fuel_profiles")
-      .select("*")
-      .eq("truck", cleanTruck)
-      .eq("from_location", journey.from_location)
-      .eq("to_location", journey.to_location)
-      .maybeSingle();
-
-    if (!existing) {
-      await supabase.from("truck_route_fuel_profiles").insert([
-        {
-          truck: cleanTruck,
-          client_name: journey.client_name,
-          from_location: journey.from_location,
-          to_location: journey.to_location,
-          avg_fuel_liters: totalFuel,
-          trip_count: 1,
-        },
-      ]);
-
-      return;
-    }
-
-    const newCount = Number(existing.trip_count || 0) + 1;
-
-    const newAverage =
-      (Number(existing.avg_fuel_liters || 0) *
-        Number(existing.trip_count || 0) +
-        totalFuel) /
-      newCount;
-
-    await supabase
-      .from("truck_route_fuel_profiles")
-      .update({
-        avg_fuel_liters: newAverage,
-        trip_count: newCount,
-        last_updated: new Date().toISOString(),
-      })
-      .eq("id", existing.id);
-  }
-
   async function handleSubmit(e: any) {
     e.preventDefault();
+    setMessage("");
 
     const cleanTruck = truck.trim().toUpperCase();
     const litersNum = Number(liters);
@@ -137,50 +90,38 @@ export default function NewFuelPage() {
       return;
     }
 
-    if (journeyId) {
-      const { data: existingFuel } = await supabase
-        .from("fuel_logs")
-        .select("id")
-        .eq("journey_id", journeyId);
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
 
-      if (existingFuel && existingFuel.length > 0 && !approved) {
-        alert(
-          "🚨 Fuel already exists for this journey. Approval is required to add more fuel."
-        );
-        return;
-      }
-
-      if (approved && !approvalReason.trim()) {
-        alert("Please enter a reason for approved extra fuel.");
-        return;
-      }
-    }
-
-    const { error } = await supabase.from("fuel_logs").insert([
-      {
-        truck_text: cleanTruck,
-        liters: litersNum,
-        price_per_liter: priceNum,
-        total_cost: litersNum * priceNum,
-        vendor: vendor.trim().toUpperCase(),
-        notes,
-        journey_id: journeyId || null,
-        allocation_status: journeyId ? "allocated" : "unallocated",
-        fuel_source: "manual",
-        approved_extra_fuel: approved,
-        approval_reason: approved ? approvalReason : null,
-        request_status: "approved",
-        approval_required: approved,
-      },
-    ]);
-
-    if (error) {
-      alert(error.message);
+    if (!session?.access_token) {
+      setMessage("Session expired. Please log in again.");
       return;
     }
 
-    if (journeyId) {
-      await updateFuelProfile(cleanTruck, journeyId);
+    const res = await fetch("/api/fuel", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        truck_text: cleanTruck,
+        liters: litersNum,
+        price_per_liter: priceNum,
+        vendor: vendor.trim().toUpperCase(),
+        notes,
+        journey_id: journeyId || null,
+        fuel_source: "manual",
+        approved_extra_fuel: approved,
+        approval_reason: approved ? approvalReason : null,
+      }),
+    });
+    const json = await res.json();
+
+    if (!res.ok || !json.success) {
+      setMessage(json.error || "Failed to save fuel.");
+      return;
     }
 
     alert("Fuel saved ✅");
@@ -195,11 +136,15 @@ export default function NewFuelPage() {
     setSelectedProviderId("");
     setApproved(false);
     setApprovalReason("");
+    loadFuelData();
   }
 
   return (
     <main style={{ padding: 40 }}>
       <h1>Add Fuel</h1>
+
+      {loading && <p>Loading fuel data...</p>}
+      {message && <pre style={{ background: "#f4f4f4", padding: 12 }}>{message}</pre>}
 
       <form onSubmit={handleSubmit}>
         <select
