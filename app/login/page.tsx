@@ -1,60 +1,185 @@
 "use client";
-import { useState } from "react";
+
+import { useEffect, useState } from "react";
+import Link from "next/link";
 import { supabase } from "../../lib/supabase";
 
+type AuthMode = "signin" | "signup";
+
 export default function LoginPage() {
-  const [email, setEmail] = useState("contact@navabloomco.com");
+  const [mode, setMode] = useState<AuthMode>("signin");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  async function login(e: any) {
-    e.preventDefault();
-    setMessage("Logging in...");
+  useEffect(() => {
+    if (window.location.search.includes("signup")) {
+      setMode("signup");
+    }
+  }, []);
 
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
+  async function routeAfterAuth(accessToken: string) {
+    const res = await fetch("/api/companies", {
+      cache: "no-store",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
     });
+    const json = await res.json();
 
-    if (error) {
-      setMessage(error.message);
+    if (res.ok && json.success && (json.companies || []).length > 0) {
+      window.location.href = "/dashboard";
       return;
     }
 
-    if (data.session) {
-      setMessage(`Logged in as ${data.user.email} ✅`);
-      // ✅ FIX: redirect to the new canonical dashboard
-      window.location.href = "/dashboard";
+    window.location.href = "/onboarding";
+  }
+
+  async function handleSubmit(e: any) {
+    e.preventDefault();
+    setLoading(true);
+    setMessage(mode === "signin" ? "Signing in..." : "Creating account...");
+
+    const authResult =
+      mode === "signin"
+        ? await supabase.auth.signInWithPassword({ email, password })
+        : await supabase.auth.signUp({ email, password });
+
+    if (authResult.error) {
+      setMessage(authResult.error.message);
+      setLoading(false);
+      return;
     }
+
+    const session = authResult.data.session;
+
+    if (!session?.access_token) {
+      setMessage(
+        mode === "signup"
+          ? "Account created. Check your email to confirm your account, then sign in."
+          : "Signed in, but no session was returned. Please try again."
+      );
+      setLoading(false);
+      return;
+    }
+
+    await routeAfterAuth(session.access_token);
   }
 
   return (
-    <main style={{ padding: 40, maxWidth: 500 }}>
-      <h1>Nava Strat Login</h1>
-      <form onSubmit={login}>
-        <input
-          type="email"
-          placeholder="Email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          style={{ width: "100%", padding: 10 }}
-          required
-        />
-        <br />
-        <br />
-        <input
-          type="password"
-          placeholder="Password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          style={{ width: "100%", padding: 10 }}
-          required
-        />
-        <br />
-        <br />
-        <button type="submit">Login</button>
-      </form>
-      {message && <pre style={{ background: "#f4f4f4", padding: 12 }}>{message}</pre>}
+    <main className="min-h-screen bg-slate-950 text-white">
+      <section className="grid min-h-screen lg:grid-cols-[0.95fr_1.05fr]">
+        <div className="flex flex-col justify-between border-r border-white/10 px-8 py-8">
+          <Link href="/" className="text-lg font-semibold">
+            Nava Strat
+          </Link>
+          <div className="max-w-xl py-16">
+            <p className="text-sm font-bold uppercase tracking-[0.18em] text-cyan-200">
+              Nava Eye ready
+            </p>
+            <h1 className="mt-4 text-5xl font-semibold leading-tight tracking-normal">
+              Sign in to your fleet intelligence workspace.
+            </h1>
+            <p className="mt-5 text-lg leading-8 text-slate-300">
+              Access company-scoped operations, provider telemetry, fuel risk,
+              profitability context, and the Nava Eye copilot from one secure SaaS entry.
+            </p>
+          </div>
+          <Link href="/pricing" className="text-sm font-medium text-slate-300 hover:text-white">
+            View pricing
+          </Link>
+        </div>
+
+        <div className="flex items-center justify-center px-8 py-16">
+          <div className="w-full max-w-md rounded-lg border border-white/10 bg-white/[0.06] p-6 shadow-2xl shadow-black/30">
+            <div className="mb-6 grid grid-cols-2 rounded-md border border-white/10 bg-slate-950/70 p-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setMode("signin");
+                  setMessage("");
+                }}
+                className={`rounded px-4 py-2 text-sm font-semibold ${
+                  mode === "signin"
+                    ? "bg-cyan-300 text-slate-950"
+                    : "text-slate-300 hover:bg-white/10"
+                }`}
+              >
+                Sign in
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMode("signup");
+                  setMessage("");
+                }}
+                className={`rounded px-4 py-2 text-sm font-semibold ${
+                  mode === "signup"
+                    ? "bg-cyan-300 text-slate-950"
+                    : "text-slate-300 hover:bg-white/10"
+                }`}
+              >
+                Create account
+              </button>
+            </div>
+
+            <h2 className="text-2xl font-semibold">
+              {mode === "signin" ? "Welcome back" : "Start your Nava Strat trial"}
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-slate-300">
+              {mode === "signin"
+                ? "Use your work email to continue into your company workspace."
+                : "Create your user account first. Company setup continues in onboarding."}
+            </p>
+
+            <form onSubmit={handleSubmit} className="mt-6 space-y-4">
+              <label className="block">
+                <span className="text-sm font-medium text-slate-200">Work email</span>
+                <input
+                  type="email"
+                  placeholder="you@company.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="mt-2 w-full rounded-md border border-white/10 bg-slate-950 px-4 py-3 text-white outline-none focus:border-cyan-300"
+                  required
+                />
+              </label>
+
+              <label className="block">
+                <span className="text-sm font-medium text-slate-200">Password</span>
+                <input
+                  type="password"
+                  placeholder="Your password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="mt-2 w-full rounded-md border border-white/10 bg-slate-950 px-4 py-3 text-white outline-none focus:border-cyan-300"
+                  required
+                  minLength={6}
+                />
+              </label>
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full rounded-md bg-cyan-300 px-4 py-3 text-sm font-bold text-slate-950 hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {loading
+                  ? "Please wait..."
+                  : mode === "signin"
+                    ? "Sign in"
+                    : "Create account"}
+              </button>
+            </form>
+
+            {message && (
+              <div className="mt-5 rounded-md border border-white/10 bg-slate-950/70 p-3 text-sm text-slate-200">
+                {message}
+              </div>
+            )}
+          </div>
+        </div>
+      </section>
     </main>
   );
 }
