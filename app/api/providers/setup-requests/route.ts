@@ -15,6 +15,10 @@ type ResolveCompanyResult =
   | { company: ResolvedCompany; error?: never }
   | { error: NextResponse; company?: never };
 
+type AuthContext =
+  | { userId: string; roles: string[]; isPlatformOwner: boolean; error?: never }
+  | { error: NextResponse; userId?: never; roles?: never; isPlatformOwner?: never };
+
 function noStoreJson(body: any, init?: ResponseInit) {
   return NextResponse.json(body, {
     ...init,
@@ -29,6 +33,7 @@ function sanitizeRequest(request: any) {
   return {
     id: request.id,
     company_id: request.company_id,
+    company_name: request.company_name || null,
     user_id: request.user_id,
     provider_name: request.provider_name,
     provider_website: request.provider_website || null,
@@ -36,7 +41,48 @@ function sanitizeRequest(request: any) {
     access_type_known: request.access_type_known || "unsure",
     notes: request.notes || null,
     status: request.status || "new",
+    internal_notes: request.internal_notes || null,
     created_at: request.created_at || null,
+    updated_at: request.updated_at || null,
+  };
+}
+
+async function getAuthContext(req: Request): Promise<AuthContext> {
+  const authHeader = req.headers.get("authorization");
+  if (!authHeader?.startsWith("Bearer ")) {
+    return { error: noStoreJson({ success: false, error: "Unauthorized" }, { status: 401 }) };
+  }
+
+  const token = authHeader.replace("Bearer ", "");
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser(token);
+
+  if (userError || !user) {
+    return { error: noStoreJson({ success: false, error: "Unauthorized" }, { status: 401 }) };
+  }
+
+  const { data: memberships, error: membershipError } = await supabaseAdmin
+    .from("company_users")
+    .select("company_id, role, is_active")
+    .eq("user_id", user.id)
+    .eq("is_active", true);
+
+  if (membershipError) throw membershipError;
+
+  const roles = Array.from(
+    new Set(
+      (memberships || [])
+        .map((membership) => String(membership.role || "").toLowerCase())
+        .filter(Boolean)
+    )
+  );
+
+  return {
+    userId: user.id,
+    roles,
+    isPlatformOwner: roles.includes("platform_owner"),
   };
 }
 
@@ -124,6 +170,63 @@ async function resolveCompany(
   }
 
   return { company: company as ResolvedCompany, userId: user.id };
+}
+
+export async function GET(req: Request) {
+  try {
+    const auth = await getAuthContext(req);
+    if (auth.error) return auth.error;
+
+    if (!auth.isPlatformOwner) {
+      return noStoreJson(
+        { success: false, error: "Platform owner access required" },
+        { status: 403 }
+      );
+    }
+
+    const { data: requests, error } = await supabaseAdmin
+      .from("provider_setup_requests")
+      .select(
+        "id, company_id, user_id, provider_name, provider_website, provider_contact, access_type_known, notes, status, internal_notes, created_at, updated_at"
+      )
+      .order("created_at", { ascending: false });
+
+    if (error) throw error;
+
+    const companyIds = Array.from(
+      new Set((requests || []).map((request) => request.company_id).filter(Boolean))
+    );
+    const companyNames = new Map<string, string>();
+
+    if (companyIds.length > 0) {
+      const { data: companies, error: companiesError } = await supabaseAdmin
+        .from("companies")
+        .select("id, name")
+        .in("id", companyIds);
+
+      if (companiesError) throw companiesError;
+
+      for (const company of companies || []) {
+        companyNames.set(company.id, company.name);
+      }
+    }
+
+    return noStoreJson({
+      success: true,
+      requests: (requests || []).map((request) =>
+        sanitizeRequest({
+          ...request,
+          company_name: companyNames.get(request.company_id) || null,
+        })
+      ),
+    });
+  } catch (err: any) {
+    console.error("Provider setup request list error:", err);
+    return noStoreJson(
+      { success: false, error: err.message || "Failed to load provider requests" },
+      { status: 500 }
+    );
+  }
 }
 
 export async function POST(req: Request) {

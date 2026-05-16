@@ -14,6 +14,7 @@ export default function Sidebar() {
     isFinance: false,
     isManagement: false,
     isAdmin: false,
+    isPlatformOwner: false,
   });
 
   useEffect(() => {
@@ -29,6 +30,7 @@ export default function Sidebar() {
           isFinance: false,
           isManagement: false,
           isAdmin: false,
+          isPlatformOwner: false,
         });
         return;
       }
@@ -48,6 +50,7 @@ export default function Sidebar() {
           isFinance: false,
           isManagement: false,
           isAdmin: false,
+          isPlatformOwner: false,
         });
         return;
       }
@@ -60,6 +63,8 @@ export default function Sidebar() {
         activeRoles.has("platform_owner") ||
         activeRoles.has("owner") ||
         activeRoles.has("admin");
+      const isPlatformOwner =
+        Boolean(json.is_platform_owner) || activeRoles.has("platform_owner");
 
       setRoles({
         hasCompanyAccess: (json.companies || []).length > 0,
@@ -67,6 +72,7 @@ export default function Sidebar() {
         isFinance: isAdminRole || activeRoles.has("finance"),
         isManagement: isAdminRole || activeRoles.has("management"),
         isAdmin: isAdminRole,
+        isPlatformOwner,
       });
     }
 
@@ -77,6 +83,7 @@ export default function Sidebar() {
         isFinance: false,
         isManagement: false,
         isAdmin: false,
+        isPlatformOwner: false,
       });
     });
   }, []);
@@ -141,6 +148,11 @@ export default function Sidebar() {
       name: "Provider Onboarding",
       href: "/admin/providers", // Corrected path to the Admin Vault
       show: roles.isAdmin,
+    },
+    {
+      name: "Provider Requests",
+      href: "/admin/provider-requests",
+      show: roles.isPlatformOwner,
     },
   ];
 
