@@ -274,7 +274,10 @@ export async function POST(req: Request) {
         is_active: true,
       });
 
-    if (membershipError) throw membershipError;
+    if (membershipError) {
+      await supabaseAdmin.from("companies").delete().eq("id", company.id);
+      throw membershipError;
+    }
 
     const status = await buildStatus(company);
     return noStoreJson({

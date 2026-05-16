@@ -3,12 +3,13 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { requirePermission } from "../../lib/hooks/requirePermission";
+import { supabase } from "../../lib/supabase";
 
 export default function Sidebar() {
   const pathname = usePathname();
 
   const [roles, setRoles] = useState({
+    hasCompanyAccess: false,
     isOps: false,
     isFinance: false,
     isManagement: false,
@@ -17,30 +18,79 @@ export default function Sidebar() {
 
   useEffect(() => {
     async function checkRoles() {
-      // Current bridge email for Super Admin access
-      const userEmail = "contact@navabloomco.com";
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
 
-      const ops = await requirePermission(userEmail, "ops");
-      const finance = await requirePermission(userEmail, "finance");
-      const management = await requirePermission(userEmail, "management");
-      const admin = await requirePermission(userEmail, "admin");
+      if (!session?.access_token) {
+        setRoles({
+          hasCompanyAccess: false,
+          isOps: false,
+          isFinance: false,
+          isManagement: false,
+          isAdmin: false,
+        });
+        return;
+      }
+
+      const res = await fetch("/api/companies", {
+        cache: "no-store",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+      });
+      const json = await res.json();
+
+      if (!res.ok || !json.success) {
+        setRoles({
+          hasCompanyAccess: false,
+          isOps: false,
+          isFinance: false,
+          isManagement: false,
+          isAdmin: false,
+        });
+        return;
+      }
+
+      const activeRoles = new Set(
+        (json.roles || []).map((role: string) => String(role).toLowerCase())
+      );
+      const isAdminRole =
+        Boolean(json.is_platform_owner) ||
+        activeRoles.has("platform_owner") ||
+        activeRoles.has("owner") ||
+        activeRoles.has("admin");
 
       setRoles({
-        isOps: ops.allowed,
-        isFinance: finance.allowed,
-        isManagement: management.allowed,
-        isAdmin: admin.allowed,
+        hasCompanyAccess: (json.companies || []).length > 0,
+        isOps: isAdminRole || activeRoles.has("ops"),
+        isFinance: isAdminRole || activeRoles.has("finance"),
+        isManagement: isAdminRole || activeRoles.has("management"),
+        isAdmin: isAdminRole,
       });
     }
 
-    checkRoles();
+    checkRoles().catch(() => {
+      setRoles({
+        hasCompanyAccess: false,
+        isOps: false,
+        isFinance: false,
+        isManagement: false,
+        isAdmin: false,
+      });
+    });
   }, []);
 
   const navItems = [
     {
+      name: "Dashboard",
+      href: "/dashboard",
+      show: roles.hasCompanyAccess,
+    },
+    {
       name: "Nava Eye",
       href: "/nava-eye",
-      show: true, 
+      show: roles.hasCompanyAccess,
     },
     {
       name: "Operations",
@@ -48,8 +98,33 @@ export default function Sidebar() {
       show: roles.isOps || roles.isAdmin,
     },
     {
+      name: "Journeys",
+      href: "/ops/journey",
+      show: roles.isOps || roles.isAdmin,
+    },
+    {
+      name: "Live Tracking",
+      href: "/tracking/live",
+      show: roles.isOps || roles.isAdmin,
+    },
+    {
       name: "Finance",
       href: "/finance/dashboard",
+      show: roles.isFinance || roles.isAdmin,
+    },
+    {
+      name: "Fuel",
+      href: "/fuel",
+      show: roles.isFinance || roles.isAdmin,
+    },
+    {
+      name: "Expenses",
+      href: "/expenses/new",
+      show: roles.isFinance || roles.isAdmin,
+    },
+    {
+      name: "Revenue",
+      href: "/finance/revenue",
       show: roles.isFinance || roles.isAdmin,
     },
     {

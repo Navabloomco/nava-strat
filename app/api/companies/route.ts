@@ -3,13 +3,24 @@ import { supabaseAdmin } from "../../../lib/supabaseAdmin";
 import { supabase } from "../../../lib/supabase";
 
 export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
+function noStoreJson(body: any, init?: ResponseInit) {
+  return NextResponse.json(body, {
+    ...init,
+    headers: {
+      ...(init?.headers || {}),
+      "Cache-Control": "no-store",
+    },
+  });
+}
 
 export async function GET(req: Request) {
   try {
     const authHeader = req.headers.get("authorization");
 
     if (!authHeader?.startsWith("Bearer ")) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return noStoreJson({ error: "Unauthorized" }, { status: 401 });
     }
 
     const token = authHeader.replace("Bearer ", "");
@@ -20,7 +31,7 @@ export async function GET(req: Request) {
     } = await supabase.auth.getUser(token);
 
     if (userError || !user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return noStoreJson({ error: "Unauthorized" }, { status: 401 });
     }
 
     const { data: memberships, error: membershipError } = await supabaseAdmin
@@ -32,6 +43,18 @@ export async function GET(req: Request) {
     if (membershipError) throw membershipError;
 
     const activeMemberships = memberships || [];
+    const membershipSummary = activeMemberships.map((membership) => ({
+      company_id: membership.company_id,
+      role: membership.role,
+      is_active: Boolean(membership.is_active),
+    }));
+    const roles = Array.from(
+      new Set(
+        activeMemberships
+          .map((membership) => membership.role)
+          .filter(Boolean)
+      )
+    );
     const isPlatformOwner = activeMemberships.some(
       (membership) => membership.role === "platform_owner"
     );
@@ -44,9 +67,11 @@ export async function GET(req: Request) {
 
       if (companiesError) throw companiesError;
 
-      return NextResponse.json({
+      return noStoreJson({
         success: true,
         is_platform_owner: true,
+        roles,
+        memberships: membershipSummary,
         companies: companies || [],
       });
     }
@@ -56,9 +81,11 @@ export async function GET(req: Request) {
       .filter(Boolean);
 
     if (companyIds.length === 0) {
-      return NextResponse.json({
+      return noStoreJson({
         success: true,
         is_platform_owner: false,
+        roles,
+        memberships: membershipSummary,
         companies: [],
       });
     }
@@ -71,14 +98,16 @@ export async function GET(req: Request) {
 
     if (companiesError) throw companiesError;
 
-    return NextResponse.json({
+    return noStoreJson({
       success: true,
       is_platform_owner: false,
+      roles,
+      memberships: membershipSummary,
       companies: companies || [],
     });
   } catch (err: any) {
     console.error("Companies route error:", err);
-    return NextResponse.json(
+    return noStoreJson(
       { success: false, error: err.message || "Failed to load companies" },
       { status: 500 }
     );
