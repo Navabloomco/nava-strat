@@ -10,37 +10,103 @@ type ResolvedCompany = {
   slug: string;
 };
 
-type ResolveCompanyResult =
-  | { company: ResolvedCompany; isPlatformOwner: boolean; error?: never }
-  | { error: NextResponse; company?: never; isPlatformOwner?: never };
+type ProviderCapabilities = {
+  can_view_provider_status: boolean;
+  can_add_provider: boolean;
+  can_update_provider_credentials: boolean;
+  can_test_provider: boolean;
+  can_edit_advanced_provider_config: boolean;
+};
 
-function sanitizeProvider(provider: any) {
+type ResolveCompanyResult =
+  | {
+      company: ResolvedCompany;
+      isPlatformOwner: boolean;
+      roles: string[];
+      capabilities: ProviderCapabilities;
+      error?: never;
+    }
+  | {
+      error: NextResponse;
+      company?: never;
+      isPlatformOwner?: never;
+      roles?: never;
+      capabilities?: never;
+    };
+
+function getProviderCapabilities(roles: string[], isPlatformOwner: boolean) {
+  const normalizedRoles = new Set(roles.map((role) => role.toLowerCase()));
+  const isCompanyAdmin =
+    normalizedRoles.has("owner") || normalizedRoles.has("admin");
+
+  if (isPlatformOwner || normalizedRoles.has("platform_owner")) {
+    return {
+      can_view_provider_status: true,
+      can_add_provider: true,
+      can_update_provider_credentials: true,
+      can_test_provider: true,
+      can_edit_advanced_provider_config: true,
+    };
+  }
+
+  if (isCompanyAdmin) {
+    return {
+      can_view_provider_status: true,
+      can_add_provider: true,
+      can_update_provider_credentials: true,
+      can_test_provider: true,
+      can_edit_advanced_provider_config: false,
+    };
+  }
+
   return {
+    can_view_provider_status: true,
+    can_add_provider: false,
+    can_update_provider_credentials: false,
+    can_test_provider: false,
+    can_edit_advanced_provider_config: false,
+  };
+}
+
+function sanitizeProvider(provider: any, capabilities: ProviderCapabilities) {
+  const baseProvider: Record<string, any> = {
     id: provider.id,
-    company_id: provider.company_id,
     name: provider.provider_name,
     provider_name: provider.provider_name,
-    provider_type: provider.provider_type || provider.provider_slug || null,
-    provider_slug: provider.provider_slug || null,
-    auth_type: provider.auth_type || null,
-    username: provider.username || null,
-    base_url: provider.base_url || null,
-    login_url: provider.login_url || null,
-    fleet_url: provider.fleet_url || null,
-    is_active: Boolean(provider.is_active),
     status: provider.last_test_status || (provider.is_active ? "active" : "inactive"),
     last_test_status: provider.last_test_status || null,
     last_test_message: provider.last_test_message || null,
     last_test_at: provider.last_test_at || null,
     last_sync_at: provider.last_sync_at || provider.last_test_at || null,
-    field_mapping: provider.field_mapping || {},
-    fleet_config: provider.fleet_config || {},
-    has_api_key: Boolean(provider.api_key),
-    has_password: Boolean(provider.password),
-    has_bearer_token: Boolean(provider.bearer_token),
     created_at: provider.created_at || null,
     updated_at: provider.updated_at || null,
   };
+
+  if (
+    capabilities.can_update_provider_credentials ||
+    capabilities.can_edit_advanced_provider_config
+  ) {
+    baseProvider.username = provider.username || null;
+    baseProvider.has_api_key = Boolean(provider.api_key);
+    baseProvider.has_password = Boolean(provider.password);
+    baseProvider.has_bearer_token = Boolean(provider.bearer_token);
+  }
+
+  if (capabilities.can_edit_advanced_provider_config) {
+    baseProvider.company_id = provider.company_id;
+    baseProvider.provider_type =
+      provider.provider_type || provider.provider_slug || null;
+    baseProvider.provider_slug = provider.provider_slug || null;
+    baseProvider.auth_type = provider.auth_type || null;
+    baseProvider.base_url = provider.base_url || null;
+    baseProvider.login_url = provider.login_url || null;
+    baseProvider.fleet_url = provider.fleet_url || null;
+    baseProvider.is_active = Boolean(provider.is_active);
+    baseProvider.field_mapping = provider.field_mapping || {};
+    baseProvider.fleet_config = provider.fleet_config || {};
+  }
+
+  return baseProvider;
 }
 
 async function resolveCompany(
@@ -71,9 +137,17 @@ async function resolveCompany(
   if (membershipError) throw membershipError;
 
   const activeMemberships = memberships || [];
+  const roles = Array.from(
+    new Set(
+      activeMemberships
+        .map((membership) => String(membership.role || "").toLowerCase())
+        .filter(Boolean)
+    )
+  );
   const isPlatformOwner = activeMemberships.some(
     (membership) => membership.role === "platform_owner"
   );
+  const capabilities = getProviderCapabilities(roles, isPlatformOwner);
 
   if (isPlatformOwner) {
     if (requestedCompanyId) {
@@ -93,7 +167,7 @@ async function resolveCompany(
         };
       }
 
-      return { company: company as ResolvedCompany, isPlatformOwner };
+      return { company: company as ResolvedCompany, isPlatformOwner, roles, capabilities };
     }
 
     const { data: company, error: companyError } = await supabaseAdmin
@@ -113,7 +187,7 @@ async function resolveCompany(
       };
     }
 
-    return { company: company as ResolvedCompany, isPlatformOwner };
+    return { company: company as ResolvedCompany, isPlatformOwner, roles, capabilities };
   }
 
   const companyId = activeMemberships
@@ -145,7 +219,7 @@ async function resolveCompany(
     };
   }
 
-  return { company: company as ResolvedCompany, isPlatformOwner };
+  return { company: company as ResolvedCompany, isPlatformOwner, roles, capabilities };
 }
 
 export async function GET(req: Request) {
@@ -166,7 +240,11 @@ export async function GET(req: Request) {
       success: true,
       company: resolved.company,
       is_platform_owner: resolved.isPlatformOwner,
-      providers: (providers || []).map(sanitizeProvider),
+      roles: resolved.roles,
+      capabilities: resolved.capabilities,
+      providers: (providers || []).map((provider) =>
+        sanitizeProvider(provider, resolved.capabilities)
+      ),
     });
   } catch (err: any) {
     console.error("Provider list error:", err);
@@ -182,6 +260,13 @@ export async function POST(req: Request) {
     const body = await req.json();
     const resolved = await resolveCompany(req, body.companyId);
     if (resolved.error) return resolved.error;
+
+    if (!resolved.capabilities.can_add_provider) {
+      return NextResponse.json(
+        { success: false, error: "Provider administration access required" },
+        { status: 403 }
+      );
+    }
 
     const providerName = String(body.provider_name || body.name || "").trim();
     const providerType = String(
@@ -229,7 +314,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       success: true,
-      provider: sanitizeProvider(provider),
+      provider: sanitizeProvider(provider, resolved.capabilities),
     });
   } catch (err: any) {
     console.error("Provider create error:", err);

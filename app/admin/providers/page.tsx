@@ -6,6 +6,13 @@ import { supabase } from "../../../lib/supabase";
 
 export default function ProviderVault() {
   const [providers, setProviders] = useState<any[]>([]);
+  const [capabilities, setCapabilities] = useState<any>({
+    can_view_provider_status: false,
+    can_add_provider: false,
+    can_update_provider_credentials: false,
+    can_test_provider: false,
+    can_edit_advanced_provider_config: false,
+  });
   const [loading, setLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -27,8 +34,10 @@ export default function ProviderVault() {
         },
       });
       const data = await res.json();
-      if (data.success) setProviders(data.providers || []);
-      else alert(data.error || "Failed to load providers");
+      if (data.success) {
+        setProviders(data.providers || []);
+        setCapabilities(data.capabilities || {});
+      } else alert(data.error || "Failed to load providers");
       setLoading(false);
     }
     loadVault();
@@ -55,19 +64,23 @@ export default function ProviderVault() {
         throw new Error("Session expired. Please log in again.");
       }
 
-      const payload: any = {
-        provider_name: finalProvider.provider_name,
-        provider_slug: finalProvider.provider_slug,
-        provider_type: finalProvider.provider_type,
-        auth_type: finalProvider.auth_type,
-        fleet_config: finalProvider.fleet_config,
-        field_mapping: finalProvider.field_mapping,
-        username: finalProvider.username || null,
-        base_url: finalProvider.base_url || null,
-        login_url: finalProvider.login_url || null,
-        fleet_url: finalProvider.fleet_url || null,
-        is_active: finalProvider.is_active,
-      };
+      const payload: any = capabilities.can_edit_advanced_provider_config
+        ? {
+            provider_name: finalProvider.provider_name,
+            provider_slug: finalProvider.provider_slug,
+            provider_type: finalProvider.provider_type,
+            auth_type: finalProvider.auth_type,
+            fleet_config: finalProvider.fleet_config,
+            field_mapping: finalProvider.field_mapping,
+            username: finalProvider.username || null,
+            base_url: finalProvider.base_url || null,
+            login_url: finalProvider.login_url || null,
+            fleet_url: finalProvider.fleet_url || null,
+            is_active: finalProvider.is_active,
+          }
+        : {
+            username: finalProvider.username || null,
+          };
 
       if (finalProvider.api_key) payload.api_key = finalProvider.api_key;
       if (finalProvider.password) payload.password = finalProvider.password;
@@ -115,13 +128,15 @@ export default function ProviderVault() {
             secure fleet view.
           </p>
         </div>
-        <Link href="/admin/providers/new" style={primaryLinkStyle}>
-          Add Provider
-        </Link>
+        {capabilities.can_add_provider && (
+          <Link href="/admin/providers/new" style={primaryLinkStyle}>
+            Add Provider
+          </Link>
+        )}
       </div>
 
       {providers.length === 0 ? (
-        <EmptyProviderState />
+        <EmptyProviderState capabilities={capabilities} />
       ) : (
         providers.map((p) => (
           <ProviderCard 
@@ -129,6 +144,7 @@ export default function ProviderVault() {
             provider={p} 
             onSave={handleSave} 
             isSaving={isSaving} 
+            capabilities={capabilities}
           />
         ))
       )}
@@ -136,7 +152,7 @@ export default function ProviderVault() {
   );
 }
 
-function EmptyProviderState() {
+function EmptyProviderState({ capabilities }: { capabilities: any }) {
   const steps = [
     "Choose your GPS/telemetry provider",
     "Enter the access details supplied by your provider",
@@ -156,12 +172,21 @@ function EmptyProviderState() {
         </p>
 
         <div style={ctaRowStyle}>
-          <Link href="/admin/providers/new" style={primaryLinkStyle}>
-            Add Provider
-          </Link>
-          <Link href="/admin/providers/new?request=1" style={secondaryLinkStyle}>
-            Request provider setup
-          </Link>
+          {capabilities.can_add_provider ? (
+            <>
+              <Link href="/admin/providers/new" style={primaryLinkStyle}>
+                Add Provider
+              </Link>
+              <Link href="/admin/providers/new?request=1" style={secondaryLinkStyle}>
+                Request provider setup
+              </Link>
+            </>
+          ) : (
+            <div style={trustNoteStyle}>
+              You do not have provider administration access. Contact your
+              company administrator if a provider needs to be added.
+            </div>
+          )}
           <Link href="/onboarding" style={secondaryLinkStyle}>
             Back to onboarding
           </Link>
@@ -198,10 +223,12 @@ function ProviderCard({
   provider,
   onSave,
   isSaving,
+  capabilities,
 }: {
   provider: any;
   onSave: (updatedProvider: any) => void;
   isSaving: boolean;
+  capabilities: any;
 }) {
   const [form, setForm] = useState({ ...provider });
   const [isTesting, setIsTesting] = useState(false);
@@ -230,12 +257,13 @@ function ProviderCard({
 
       const result = await res.json();
 
-      // --- THE TRUTH LOGS ---
-      console.log("------------------------------------");
-      console.log("FULL TEST RESULT:", result);
-      console.log("NORMALIZED DATA:", result.sample_normalized);
-      console.log("PROVIDER DIAGNOSTICS:", result.debug);
-      console.log("------------------------------------");
+      if (capabilities.can_edit_advanced_provider_config) {
+        console.log("------------------------------------");
+        console.log("FULL TEST RESULT:", result);
+        console.log("NORMALIZED DATA:", result.sample_normalized);
+        console.log("PROVIDER DIAGNOSTICS:", result.debug);
+        console.log("------------------------------------");
+      }
 
       if (result.success) {
         alert(
@@ -266,84 +294,167 @@ function ProviderCard({
           </p>
         </div>
         <div style={{ display: 'flex', gap: '10px' }}>
-          <button onClick={handleTestConnection} disabled={isTesting} style={testBtn}>
-            {isTesting ? "COMMUNICATING..." : "TEST CONNECTION"}
-          </button>
-          <button onClick={() => onSave(form)} disabled={isSaving} style={saveBtn}>
-            {isSaving ? "SAVING..." : "SAVE CHANGES"}
-          </button>
+          {capabilities.can_test_provider && (
+            <button onClick={handleTestConnection} disabled={isTesting} style={testBtn}>
+              {isTesting ? "COMMUNICATING..." : "TEST CONNECTION"}
+            </button>
+          )}
+          {(capabilities.can_update_provider_credentials ||
+            capabilities.can_edit_advanced_provider_config) && (
+            <button onClick={() => onSave(form)} disabled={isSaving} style={saveBtn}>
+              {isSaving ? "SAVING..." : "SAVE CHANGES"}
+            </button>
+          )}
         </div>
       </div>
 
-      <div style={formGrid}>
-        <div>
-          <label style={labelStyle}>Provider Access Setup</label>
-          <input 
-            style={inputStyle}
-            value={form.login_url || ""} 
-            onChange={(e) => setForm({...form, login_url: e.target.value})} 
-          />
+      {capabilities.can_edit_advanced_provider_config ? (
+        <AdvancedProviderEditor provider={provider} form={form} setForm={setForm} />
+      ) : capabilities.can_update_provider_credentials ? (
+        <CredentialProviderEditor provider={provider} form={form} setForm={setForm} />
+      ) : (
+        <div style={statusOnlyStyle}>
+          You can view provider status, but provider administration is limited
+          to company administrators.
         </div>
-        <div>
-          <label style={labelStyle}>Fleet Data Setup</label>
-          <input 
-            style={inputStyle}
-            value={form.fleet_url || ""} 
-            onChange={(e) => setForm({...form, fleet_url: e.target.value})} 
-          />
-        </div>
-        
-        {/* DETERMINISTIC CONFIG FIELD */}
-        <div style={{ gridColumn: "span 2" }}>
-          <label style={labelStyle}>Provider Data Group</label>
-          <input 
-            style={inputStyle}
-            placeholder="Enter the confirmed provider data path"
-            value={form.fleet_config?.vehicle_paths?.[0] || ""} 
-            onChange={(e) => {
-              const newPath = e.target.value;
-              setForm({
-                ...form,
-                fleet_config: {
-                  ...form.fleet_config,
-                  vehicle_paths: [newPath]
-                }
-              });
-            }} 
-          />
-        </div>
+      )}
+    </div>
+  );
+}
 
-        <div>
-          <label style={labelStyle}>Username</label>
-          <input 
-            style={inputStyle}
-            value={form.username || ""} 
-            onChange={(e) => setForm({...form, username: e.target.value})} 
-          />
-        </div>
-        <div>
-          <label style={labelStyle}>
-            Provider Password / Secret {provider.has_api_key ? "(stored)" : ""}
-          </label>
-          <input 
-            type="password"
-            style={inputStyle}
-            placeholder={provider.has_api_key ? "Leave blank to keep existing" : ""}
-            value={form.api_key || ""} 
-            onChange={(e) => setForm({...form, api_key: e.target.value})} 
-          />
-        </div>
+function AdvancedProviderEditor({
+  provider,
+  form,
+  setForm,
+}: {
+  provider: any;
+  form: any;
+  setForm: (form: any) => void;
+}) {
+  return (
+    <div style={formGrid}>
+      <div>
+        <label style={labelStyle}>Provider Access Setup</label>
+        <input 
+          style={inputStyle}
+          value={form.login_url || ""} 
+          onChange={(e) => setForm({...form, login_url: e.target.value})} 
+        />
+      </div>
+      <div>
+        <label style={labelStyle}>Fleet Data Setup</label>
+        <input 
+          style={inputStyle}
+          value={form.fleet_url || ""} 
+          onChange={(e) => setForm({...form, fleet_url: e.target.value})} 
+        />
+      </div>
+      
+      <div style={{ gridColumn: "span 2" }}>
+        <label style={labelStyle}>Provider Data Group</label>
+        <input 
+          style={inputStyle}
+          placeholder="Enter the confirmed provider data path"
+          value={form.fleet_config?.vehicle_paths?.[0] || ""} 
+          onChange={(e) => {
+            const newPath = e.target.value;
+            setForm({
+              ...form,
+              fleet_config: {
+                ...form.fleet_config,
+                vehicle_paths: [newPath]
+              }
+            });
+          }} 
+        />
+      </div>
 
-        <div style={{ gridColumn: "span 2" }}>
-          <label style={labelStyle}>Connection Setup</label>
-          <textarea 
-            style={textareaStyle}
-            value={typeof form.field_mapping === 'object' ? JSON.stringify(form.field_mapping, null, 2) : form.field_mapping}
-            onChange={(e) => setForm({...form, field_mapping: e.target.value})}
-          />
-        </div>
+      <CredentialProviderFields provider={provider} form={form} setForm={setForm} />
+
+      <div style={{ gridColumn: "span 2" }}>
+        <label style={labelStyle}>Connection Setup</label>
+        <textarea 
+          style={textareaStyle}
+          value={typeof form.field_mapping === 'object' ? JSON.stringify(form.field_mapping, null, 2) : form.field_mapping}
+          onChange={(e) => setForm({...form, field_mapping: e.target.value})}
+        />
       </div>
     </div>
+  );
+}
+
+function CredentialProviderEditor({
+  provider,
+  form,
+  setForm,
+}: {
+  provider: any;
+  form: any;
+  setForm: (form: any) => void;
+}) {
+  return (
+    <div style={formGrid}>
+      <CredentialProviderFields provider={provider} form={form} setForm={setForm} />
+    </div>
+  );
+}
+
+function CredentialProviderFields({
+  provider,
+  form,
+  setForm,
+}: {
+  provider: any;
+  form: any;
+  setForm: (form: any) => void;
+}) {
+  return (
+    <>
+      <div>
+        <label style={labelStyle}>Username</label>
+        <input 
+          style={inputStyle}
+          value={form.username || ""} 
+          onChange={(e) => setForm({...form, username: e.target.value})} 
+        />
+      </div>
+      <div>
+        <label style={labelStyle}>
+          Provider Password / Secret {provider.has_api_key ? "(stored)" : ""}
+        </label>
+        <input 
+          type="password"
+          style={inputStyle}
+          placeholder={provider.has_api_key ? "Leave blank to keep existing" : ""}
+          value={form.api_key || ""} 
+          onChange={(e) => setForm({...form, api_key: e.target.value})} 
+        />
+      </div>
+      <div>
+        <label style={labelStyle}>
+          Password {provider.has_password ? "(stored)" : ""}
+        </label>
+        <input
+          type="password"
+          style={inputStyle}
+          placeholder={provider.has_password ? "Leave blank to keep existing" : ""}
+          value={form.password || ""}
+          onChange={(e) => setForm({...form, password: e.target.value})}
+        />
+      </div>
+      <div>
+        <label style={labelStyle}>
+          Access Token {provider.has_bearer_token ? "(stored)" : ""}
+        </label>
+        <input
+          type="password"
+          style={inputStyle}
+          placeholder={provider.has_bearer_token ? "Leave blank to keep existing" : ""}
+          value={form.bearer_token || ""}
+          onChange={(e) => setForm({...form, bearer_token: e.target.value})}
+        />
+      </div>
+    </>
   );
 }
 
@@ -378,3 +489,4 @@ const textareaStyle = { width: "100%", minHeight: "120px", padding: "12px", bord
 const formGrid = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "15px" };
 const saveBtn = { backgroundColor: "#0f172a", color: "#fff", border: "none", padding: "8px 24px", borderRadius: "6px", fontWeight: "bold", cursor: "pointer" };
 const testBtn = { backgroundColor: "#fff", color: "#0f172a", border: "1px solid #cbd5e1", padding: "8px 20px", borderRadius: "6px", fontWeight: "bold", cursor: "pointer" };
+const statusOnlyStyle = { border: "1px solid #e2e8f0", backgroundColor: "#f8fafc", color: "#64748b", borderRadius: 8, padding: 14, fontSize: 13, lineHeight: 1.6 };

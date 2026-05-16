@@ -14,9 +14,63 @@ type ResolvedCompany = {
   slug: string;
 };
 
+type ProviderCapabilities = {
+  can_view_provider_status: boolean;
+  can_add_provider: boolean;
+  can_update_provider_credentials: boolean;
+  can_test_provider: boolean;
+  can_edit_advanced_provider_config: boolean;
+};
+
 type ResolveCompanyResult =
-  | { company: ResolvedCompany; isPlatformOwner: boolean; error?: never }
-  | { error: NextResponse; company?: never; isPlatformOwner?: never };
+  | {
+      company: ResolvedCompany;
+      isPlatformOwner: boolean;
+      roles: string[];
+      capabilities: ProviderCapabilities;
+      error?: never;
+    }
+  | {
+      error: NextResponse;
+      company?: never;
+      isPlatformOwner?: never;
+      roles?: never;
+      capabilities?: never;
+    };
+
+function getProviderCapabilities(roles: string[], isPlatformOwner: boolean) {
+  const normalizedRoles = new Set(roles.map((role) => role.toLowerCase()));
+  const isCompanyAdmin =
+    normalizedRoles.has("owner") || normalizedRoles.has("admin");
+
+  if (isPlatformOwner || normalizedRoles.has("platform_owner")) {
+    return {
+      can_view_provider_status: true,
+      can_add_provider: true,
+      can_update_provider_credentials: true,
+      can_test_provider: true,
+      can_edit_advanced_provider_config: true,
+    };
+  }
+
+  if (isCompanyAdmin) {
+    return {
+      can_view_provider_status: true,
+      can_add_provider: true,
+      can_update_provider_credentials: true,
+      can_test_provider: true,
+      can_edit_advanced_provider_config: false,
+    };
+  }
+
+  return {
+    can_view_provider_status: true,
+    can_add_provider: false,
+    can_update_provider_credentials: false,
+    can_test_provider: false,
+    can_edit_advanced_provider_config: false,
+  };
+}
 
 async function resolveCompany(
   req: Request,
@@ -46,9 +100,17 @@ async function resolveCompany(
   if (membershipError) throw membershipError;
 
   const activeMemberships = memberships || [];
+  const roles = Array.from(
+    new Set(
+      activeMemberships
+        .map((membership) => String(membership.role || "").toLowerCase())
+        .filter(Boolean)
+    )
+  );
   const isPlatformOwner = activeMemberships.some(
     (membership) => membership.role === "platform_owner"
   );
+  const capabilities = getProviderCapabilities(roles, isPlatformOwner);
 
   if (isPlatformOwner) {
     const companyQuery = supabaseAdmin
@@ -69,7 +131,7 @@ async function resolveCompany(
       };
     }
 
-    return { company: company as ResolvedCompany, isPlatformOwner };
+    return { company: company as ResolvedCompany, isPlatformOwner, roles, capabilities };
   }
 
   const companyId = activeMemberships
@@ -101,7 +163,7 @@ async function resolveCompany(
     };
   }
 
-  return { company: company as ResolvedCompany, isPlatformOwner };
+  return { company: company as ResolvedCompany, isPlatformOwner, roles, capabilities };
 }
 
 export async function POST(
@@ -112,6 +174,13 @@ export async function POST(
     const body = await req.json().catch(() => ({}));
     const resolved = await resolveCompany(req, body.companyId);
     if (resolved.error) return resolved.error;
+
+    if (!resolved.capabilities.can_test_provider) {
+      return NextResponse.json(
+        { success: false, error: "Provider test access required" },
+        { status: 403 }
+      );
+    }
 
     const { data: provider, error: providerError } = await supabaseAdmin
       .from("tracking_providers")
@@ -169,7 +238,7 @@ export async function POST(
     const latestTelemetryAt =
       telemetryResult.data?.[0]?.recorded_at || null;
 
-    return NextResponse.json({
+    const responseBody: Record<string, any> = {
       success: result.success,
       message: result.message,
       provider_id: provider.id,
@@ -178,8 +247,13 @@ export async function POST(
       assets_count: assetsCount || 0,
       telemetry_count: telemetryCount || 0,
       latest_telemetry_at: latestTelemetryAt,
-      sample_normalized: result.sample_normalized || null,
-    });
+    };
+
+    if (resolved.capabilities.can_edit_advanced_provider_config) {
+      responseBody.sample_normalized = result.sample_normalized || null;
+    }
+
+    return NextResponse.json(responseBody);
   } catch (err: any) {
     console.error("Provider test error:", err);
     return NextResponse.json(
