@@ -209,7 +209,7 @@ export default function ClientVisibilityPage() {
           dark
           eyebrow="Client visibility"
           title="Client visibility links"
-          body="Create secure client-facing portal links for selected customers. Public tracking pages are not enabled in this phase."
+          body="Create secure client-facing portal links for selected customers. Clients can view only the deliveries assigned to them."
         />
 
         {error && (
