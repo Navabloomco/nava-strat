@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import Link from "next/link";
 import { supabase } from "../../../lib/supabase";
 
 export default function ProviderVault() {
@@ -20,6 +21,7 @@ export default function ProviderVault() {
       }
 
       const res = await fetch("/api/providers", {
+        cache: "no-store",
         headers: {
           Authorization: `Bearer ${session.access_token}`,
         },
@@ -104,16 +106,88 @@ export default function ProviderVault() {
 
   return (
     <div style={{ padding: "40px", maxWidth: "1200px", margin: "0 auto" }}>
-      <h1 style={{ marginBottom: "30px" }}>Provider Vault</h1>
-      {providers.map((p) => (
-        <ProviderCard 
-          key={p.id} 
-          provider={p} 
-          onSave={handleSave} 
-          isSaving={isSaving} 
-        />
-      ))}
+      <div style={pageHeaderStyle}>
+        <div>
+          <div style={eyebrowStyle}>Provider onboarding</div>
+          <h1 style={pageTitleStyle}>Provider Vault</h1>
+          <p style={pageSubtitleStyle}>
+            Connect real GPS and telemetry feeds so Nava Strat can build a live,
+            company-scoped fleet picture.
+          </p>
+        </div>
+        <Link href="/admin/providers/new" style={primaryLinkStyle}>
+          Add Provider
+        </Link>
+      </div>
+
+      {providers.length === 0 ? (
+        <EmptyProviderState />
+      ) : (
+        providers.map((p) => (
+          <ProviderCard 
+            key={p.id} 
+            provider={p} 
+            onSave={handleSave} 
+            isSaving={isSaving} 
+          />
+        ))
+      )}
     </div>
+  );
+}
+
+function EmptyProviderState() {
+  const steps = [
+    "Choose your GPS/telemetry provider",
+    "Enter the access details supplied by your provider",
+    "Save the connection securely",
+    "Test the connection",
+    "Return to onboarding once fleet data starts appearing",
+  ];
+
+  return (
+    <section style={emptyStateStyle}>
+      <div style={emptyContentStyle}>
+        <div style={emptyBadgeStyle}>First connection</div>
+        <h2 style={emptyTitleStyle}>No tracking provider connected yet</h2>
+        <p style={emptyBodyStyle}>
+          Connect your GPS or telemetry provider so Nava can begin receiving fleet
+          assets, live locations, fuel readings, and movement history.
+        </p>
+
+        <div style={ctaRowStyle}>
+          <Link href="/admin/providers/new" style={primaryLinkStyle}>
+            Add Provider
+          </Link>
+          <Link href="/onboarding" style={secondaryLinkStyle}>
+            Back to onboarding
+          </Link>
+        </div>
+
+        <div style={noteGridStyle}>
+          <div style={trustNoteStyle}>
+            Provider access details are handled server-side and are not shown back
+            in the browser after saving.
+          </div>
+          <div style={readinessNoteStyle}>
+            After a successful test, Nava will check for fleet assets and recent
+            telemetry before marking onboarding as ready.
+          </div>
+        </div>
+      </div>
+
+      <div style={guideStyle}>
+        <h3 style={guideTitleStyle}>How setup works</h3>
+        <div style={stepListStyle}>
+          {steps.map((step, index) => (
+            <div key={step} style={stepStyle}>
+              <div style={stepNumberStyle}>{index + 1}</div>
+              <div style={stepTextStyle}>{step}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -272,6 +346,27 @@ function ProviderCard({
 
 // --- STYLES ---
 const cardStyle = { backgroundColor: "#fff", borderRadius: "12px", padding: "24px", border: "1px solid #e2e8f0", marginBottom: "20px", boxShadow: "0 1px 3px rgba(0,0,0,0.1)" };
+const pageHeaderStyle = { display: "flex", justifyContent: "space-between", gap: 24, alignItems: "flex-start", marginBottom: 28 };
+const eyebrowStyle = { fontSize: 12, fontWeight: 800, color: "#0891b2", textTransform: "uppercase" as const, letterSpacing: "0.14em", marginBottom: 8 };
+const pageTitleStyle = { margin: 0, fontSize: 34, fontWeight: 850, color: "#0f172a", letterSpacing: 0 };
+const pageSubtitleStyle = { margin: "10px 0 0 0", maxWidth: 620, color: "#64748b", fontSize: 14, lineHeight: 1.7 };
+const primaryLinkStyle = { display: "inline-flex", alignItems: "center", justifyContent: "center", backgroundColor: "#0f172a", color: "#fff", borderRadius: 8, padding: "12px 18px", fontSize: 14, fontWeight: 800, textDecoration: "none", whiteSpace: "nowrap" as const };
+const secondaryLinkStyle = { display: "inline-flex", alignItems: "center", justifyContent: "center", border: "1px solid #cbd5e1", color: "#0f172a", backgroundColor: "#fff", borderRadius: 8, padding: "12px 18px", fontSize: 14, fontWeight: 800, textDecoration: "none", whiteSpace: "nowrap" as const };
+const emptyStateStyle = { display: "grid", gridTemplateColumns: "1.1fr 0.9fr", gap: 24, background: "linear-gradient(135deg, #08111f 0%, #0f172a 55%, #123047 100%)", borderRadius: 16, padding: 28, border: "1px solid #0f2742", boxShadow: "0 24px 70px rgba(15, 23, 42, 0.22)" };
+const emptyContentStyle = { color: "#fff" };
+const emptyBadgeStyle = { display: "inline-flex", border: "1px solid rgba(103, 232, 249, 0.28)", background: "rgba(103, 232, 249, 0.10)", color: "#cffafe", borderRadius: 999, padding: "7px 11px", fontSize: 12, fontWeight: 800, marginBottom: 18 };
+const emptyTitleStyle = { margin: 0, fontSize: 32, lineHeight: 1.15, fontWeight: 850, color: "#fff", letterSpacing: 0 };
+const emptyBodyStyle = { margin: "14px 0 0 0", color: "#cbd5e1", fontSize: 15, lineHeight: 1.75, maxWidth: 640 };
+const ctaRowStyle = { display: "flex", flexWrap: "wrap" as const, gap: 12, marginTop: 24 };
+const noteGridStyle = { display: "grid", gridTemplateColumns: "1fr", gap: 10, marginTop: 24 };
+const trustNoteStyle = { border: "1px solid rgba(148, 163, 184, 0.25)", background: "rgba(255, 255, 255, 0.06)", borderRadius: 10, padding: 14, color: "#dbeafe", fontSize: 13, lineHeight: 1.6 };
+const readinessNoteStyle = { border: "1px solid rgba(34, 211, 238, 0.25)", background: "rgba(34, 211, 238, 0.08)", borderRadius: 10, padding: 14, color: "#cffafe", fontSize: 13, lineHeight: 1.6 };
+const guideStyle = { background: "rgba(255, 255, 255, 0.08)", border: "1px solid rgba(255, 255, 255, 0.12)", borderRadius: 14, padding: 20, alignSelf: "start" };
+const guideTitleStyle = { margin: "0 0 16px 0", color: "#fff", fontSize: 17, fontWeight: 850 };
+const stepListStyle = { display: "grid", gap: 12 };
+const stepStyle = { display: "grid", gridTemplateColumns: "30px 1fr", gap: 12, alignItems: "center" };
+const stepNumberStyle = { width: 30, height: 30, borderRadius: 999, background: "#67e8f9", color: "#0f172a", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 900 };
+const stepTextStyle = { color: "#e2e8f0", fontSize: 13, lineHeight: 1.5 };
 const headerStyle = { display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #f1f5f9", paddingBottom: "16px", marginBottom: "20px" };
 const statusText = { fontSize: "12px", color: "#64748b", margin: "4px 0 0 0", fontWeight: "500" };
 const labelStyle = { display: "block", fontSize: "11px", fontWeight: "bold", color: "#475569", marginBottom: "4px", textTransform: "uppercase" as "uppercase" };
