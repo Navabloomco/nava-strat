@@ -121,6 +121,7 @@ export default function NavaEyeChatPage() {
     "Which client is least profitable?",
     "Which assets have stale locations?",
     "Which route is bleeding money?",
+    "What profit would I make at 4,500 per tonne with 28 tonnes, fuel 42,000 and per diem 3,000?",
   ];
 
   if (initializing) {

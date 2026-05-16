@@ -141,7 +141,7 @@ export async function POST(req: Request) {
     let storePromises = [];
 
     // 6. Try AI if key exists and we have context
-    if (apiKey && Object.keys(context).length > 0) {
+    if (apiKey && Object.keys(context).length > 0 && !context.profit_simulation) {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 8000);
       try {
@@ -308,6 +308,74 @@ export async function POST(req: Request) {
 
 function buildFallbackAnswer(context: any): string {
   const parts: string[] = [];
+  if (context.profit_simulation) {
+    const simulation = context.profit_simulation;
+    const knownInputs = formatSimulationInputs(simulation.inputs || {});
+    const routeText =
+      simulation.route?.from || simulation.route?.to
+        ? `Route: ${simulation.route?.from || "unknown origin"} to ${
+            simulation.route?.to || "unknown destination"
+          }.`
+        : null;
+
+    if (simulation.missing_inputs?.length) {
+      parts.push(
+        `I can calculate that, but I need ${simulation.missing_inputs.join(
+          ", "
+        )}.`
+      );
+
+      if (routeText) parts.push(routeText);
+      if (knownInputs.length > 0) {
+        parts.push(`Known inputs: ${knownInputs.join("; ")}.`);
+      }
+      parts.push(
+        `Missing inputs: ${simulation.missing_inputs.join("; ")}.`
+      );
+      if (simulation.assumptions?.length) {
+        parts.push(`Assumptions: ${simulation.assumptions.join(" ")}`);
+      }
+
+      return parts.join(" ");
+    }
+
+    const result = simulation.result || {};
+    const inputs = simulation.inputs || {};
+    const costBreakdown = formatSimulationCosts(inputs);
+
+    if (routeText) parts.push(routeText);
+    parts.push(
+      `Revenue calculation: ${formatMoney(inputs.rate_per_tonne)} per tonne × ${formatNumber(
+        inputs.tonnes
+      )} tonnes = ${formatMoney(result.revenue)}.`
+    );
+    parts.push(
+      `Cost breakdown: ${costBreakdown.length ? costBreakdown.join("; ") : "no costs detected"}. Total costs: ${formatMoney(
+        result.total_costs
+      )}.`
+    );
+    parts.push(`Estimated profit: ${formatMoney(result.profit)}.`);
+    parts.push(
+      `Margin: ${
+        result.margin_percent === null || result.margin_percent === undefined
+          ? "not available"
+          : `${Number(result.margin_percent).toFixed(1)}%`
+      }.`
+    );
+    parts.push(
+      `Break-even rate: ${
+        result.break_even_rate_per_tonne === null ||
+        result.break_even_rate_per_tonne === undefined
+          ? "not available"
+          : `${formatMoney(result.break_even_rate_per_tonne)} per tonne`
+      }.`
+    );
+    if (simulation.assumptions?.length) {
+      parts.push(`Assumptions: ${simulation.assumptions.join(" ")}`);
+    }
+
+    return parts.join(" ");
+  }
   if (context.profitability) {
     const p = context.profitability;
     const summary = p.summary || {};
@@ -435,4 +503,54 @@ function buildFallbackAnswer(context: any): string {
     return "Nava Eye found limited context. Ask about fleet health, offline trucks, fuel risk, truck status, driver activity, or journeys.";
   }
   return parts.join(" ");
+}
+
+function formatSimulationInputs(inputs: any) {
+  const labels: Record<string, string> = {
+    rate_per_tonne: "rate per tonne",
+    tonnes: "tonnes",
+    fuel_cost: "fuel",
+    per_diem: "per diem",
+    tolls: "tolls",
+    parking: "parking",
+    loading: "loading",
+    offloading: "offloading",
+    transaction_cost: "transaction cost",
+    other_costs: "other costs",
+  };
+
+  return Object.entries(labels)
+    .filter(([key]) => inputs[key] !== undefined)
+    .map(([key, label]) => {
+      if (key === "tonnes") return `${label}: ${formatNumber(inputs[key])}`;
+      if (key === "rate_per_tonne") {
+        return `${label}: ${formatMoney(inputs[key])}`;
+      }
+      return `${label}: ${formatMoney(inputs[key])}`;
+    });
+}
+
+function formatSimulationCosts(inputs: any) {
+  const labels: Record<string, string> = {
+    fuel_cost: "Fuel",
+    per_diem: "Per diem",
+    tolls: "Tolls",
+    parking: "Parking",
+    loading: "Loading",
+    offloading: "Offloading",
+    transaction_cost: "Transaction cost",
+    other_costs: "Other costs",
+  };
+
+  return Object.entries(labels)
+    .filter(([key]) => Number(inputs[key] || 0) > 0)
+    .map(([key, label]) => `${label}: ${formatMoney(inputs[key])}`);
+}
+
+function formatMoney(value: any) {
+  return `${Number(value || 0).toLocaleString()} KES`;
+}
+
+function formatNumber(value: any) {
+  return Number(value || 0).toLocaleString();
 }

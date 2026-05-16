@@ -6,6 +6,7 @@ import {
   getCurrentTrucksInCountry,
 } from "./fleetLocationService";
 import { getCompanyProfitability } from "./profitabilityService";
+import { detectProfitSimulation, simulateProfit } from "./profitSimulator";
 
 export type ContextIntent =
   | "fleet_health"
@@ -15,6 +16,7 @@ export type ContextIntent =
   | "driver_activity"
   | "journey_context"
   | "country_trucks"
+  | "profit_simulation"
   | "profitability"
   | "general";
 
@@ -83,6 +85,9 @@ export async function routeContext(question: string, tenantSlug: string) {
       }),
     };
   }
+  if (intent === "profit_simulation") {
+    context.profit_simulation = simulateProfit(question);
+  }
   if (intent === "profitability") {
     context.profitability = await getCompanyProfitability(companyId);
   }
@@ -99,6 +104,9 @@ function detectIntent(
 ): ContextIntent {
   if (detectedCountryName) {
     return "country_trucks";
+  }
+  if (detectProfitSimulation(lower)) {
+    return "profit_simulation";
   }
   if (
     lower.includes("profit") ||
