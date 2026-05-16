@@ -17,23 +17,49 @@ export default function LoginPage() {
     if (window.location.search.includes("signup")) {
       setMode("signup");
     }
+
+    async function routeExistingSession() {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) return;
+
+      setLoading(true);
+      setMessage("Checking your workspace...");
+
+      try {
+        await routeAfterAuth(session.access_token);
+      } catch (err) {
+        console.error("Existing session routing failed:", err);
+        setMessage("We could not finish routing your session. Please refresh or contact support if this continues.");
+        setLoading(false);
+      }
+    }
+
+    routeExistingSession();
   }, []);
 
   async function routeAfterAuth(accessToken: string) {
-    const res = await fetch("/api/companies", {
-      cache: "no-store",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-      },
-    });
-    const json = await res.json();
+    try {
+      const res = await fetch("/api/companies", {
+        cache: "no-store",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+      const json = await res.json();
 
-    if (res.ok && json.success && (json.companies || []).length > 0) {
-      window.location.href = "/dashboard";
-      return;
+      if (res.ok && json.success && (json.companies || []).length > 0) {
+        window.location.href = "/dashboard";
+        return;
+      }
+
+      window.location.href = "/onboarding";
+    } catch (err) {
+      console.error("Auth routing failed:", err);
+      throw err;
     }
-
-    window.location.href = "/onboarding";
   }
 
   async function handleSubmit(e: any) {
@@ -64,7 +90,12 @@ export default function LoginPage() {
       return;
     }
 
-    await routeAfterAuth(session.access_token);
+    try {
+      await routeAfterAuth(session.access_token);
+    } catch {
+      setMessage("We could not finish signing you in. Please refresh or contact support if this continues.");
+      setLoading(false);
+    }
   }
 
   return (
