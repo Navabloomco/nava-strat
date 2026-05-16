@@ -2,6 +2,18 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../../../lib/supabase";
+import {
+  EmptyState,
+  FormField,
+  PageHeader,
+  Panel,
+  PrimaryButton,
+  SecondaryButton,
+  StatusPill,
+} from "../../components/ui/Primitives";
+
+const inputClass =
+  "w-full rounded-md border border-white/10 bg-slate-900 px-3 py-3 text-sm text-white outline-none placeholder:text-slate-500 focus:border-cyan-300";
 
 export default function RevenuePage() {
   const [journeys, setJourneys] = useState<any[]>([]);
@@ -194,167 +206,251 @@ export default function RevenuePage() {
   }
 
   return (
-    <main style={{ padding: 40 }}>
-      <h1>Revenue Engine</h1>
-      <p>Set pricing by client/route, then enter loaded/offloaded quantity per truck.</p>
-
-      {loading && <p>Loading revenue data...</p>}
-      {message && <pre style={{ background: "#f4f4f4", padding: 12 }}>{message}</pre>}
-
-      <form onSubmit={applyRateToSelected}>
-        <select
-          value={client}
-          onChange={(e) => {
-            setClient(e.target.value);
-            setRoute("");
-          }}
-          required
-        >
-          <option value="">Select client</option>
-          {clients.map((c) => (
-            <option key={c} value={c}>
-              {c}
-            </option>
-          ))}
-        </select>
-
-        <br /><br />
-
-        <select value={route} onChange={(e) => setRoute(e.target.value)} required>
-          <option value="">Select route</option>
-          {routes.map((r) => (
-            <option key={r} value={r}>
-              {r}
-            </option>
-          ))}
-        </select>
-
-        <br /><br />
-
-        <select value={rateType} onChange={(e) => setRateType(e.target.value)}>
-          <option value="per_tonne">Per Tonne</option>
-          <option value="per_truck">Per Truck</option>
-          <option value="per_box">Per Box</option>
-          <option value="per_bag">Per Bag</option>
-          <option value="per_crate">Per Crate</option>
-          <option value="per_pallet">Per Pallet</option>
-          <option value="per_litre">Per Litre</option>
-          <option value="per_km">Per KM</option>
-          <option value="custom">Custom Unit</option>
-        </select>
-
-        <br /><br />
-
-        <input
-          placeholder="Rate amount e.g. 45"
-          value={rateAmount}
-          onChange={(e) => setRateAmount(e.target.value)}
-          required
+    <main className="min-h-screen bg-slate-950 px-8 py-10 text-white">
+      <div className="mx-auto max-w-7xl">
+        <PageHeader
+          dark
+          eyebrow="Finance control"
+          title="Revenue Engine"
+          body="Set pricing by client and route, then enter loaded and offloaded quantity per truck."
         />
 
-        <br /><br />
-
-        <select
-          value={rateCurrency}
-          onChange={(e) => {
-            setRateCurrency(e.target.value);
-            if (e.target.value === "KES") setFxRate("1");
-          }}
-        >
-          <option value="KES">KES</option>
-          <option value="USD">USD</option>
-          <option value="UGX">UGX</option>
-          <option value="TZS">TZS</option>
-          <option value="RWF">RWF</option>
-          <option value="EUR">EUR</option>
-          <option value="GBP">GBP</option>
-          <option value="ZAR">ZAR</option>
-        </select>
-
-        <br /><br />
-
-        {rateCurrency !== "KES" && (
-          <>
-            <input
-              placeholder="FX rate to KES e.g. 129"
-              value={fxRate}
-              onChange={(e) => setFxRate(e.target.value)}
-              required
-            />
-            <br /><br />
-          </>
+        {loading && (
+          <Panel dark className="mt-8 p-6">
+            <div className="text-sm text-slate-300">Loading revenue data...</div>
+          </Panel>
+        )}
+        {message && (
+          <Panel dark className="mt-8 border-cyan-200/20 bg-cyan-300/10 p-4">
+            <div className="whitespace-pre-wrap text-sm text-cyan-50">{message}</div>
+          </Panel>
         )}
 
-        <button type="submit">Apply Rate to Client/Route</button>
-      </form>
+        {!loading && journeys.length === 0 ? (
+          <div className="mt-8">
+            <EmptyState
+              dark
+              title="No active journeys for revenue yet"
+              body="Active journeys will appear here once they are ready for rate and quantity capture."
+            />
+          </div>
+        ) : (
+          <>
+            <Panel dark className="mt-8 p-6">
+              <div className="mb-5 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <h2 className="text-xl font-semibold">Rate setup</h2>
+                  <p className="mt-1 text-sm text-slate-400">
+                    Apply a rate to the selected client and route.
+                  </p>
+                </div>
+                <StatusPill tone="info">
+                  {selectedJourneys.length} matching journey/journeys
+                </StatusPill>
+              </div>
 
-      <br /><br />
+              <form onSubmit={applyRateToSelected} className="grid gap-5">
+                <div className="grid gap-5 md:grid-cols-2">
+                  <FormField label="Client" dark>
+                    <select
+                      value={client}
+                      onChange={(e) => {
+                        setClient(e.target.value);
+                        setRoute("");
+                      }}
+                      className={inputClass}
+                      required
+                    >
+                      <option value="">Select client</option>
+                      {clients.map((c) => (
+                        <option key={c} value={c}>
+                          {c}
+                        </option>
+                      ))}
+                    </select>
+                  </FormField>
 
-      <h2>Matching Active Journeys</h2>
+                  <FormField label="Route" dark>
+                    <select
+                      value={route}
+                      onChange={(e) => setRoute(e.target.value)}
+                      className={inputClass}
+                      required
+                    >
+                      <option value="">Select route</option>
+                      {routes.map((r) => (
+                        <option key={r} value={r}>
+                          {r}
+                        </option>
+                      ))}
+                    </select>
+                  </FormField>
+                </div>
 
-      {selectedJourneys.length === 0 ? (
-        <p>Select client and route.</p>
-      ) : (
-        <table border={1} cellPadding={10}>
-          <thead>
-            <tr>
-              <th>Truck</th>
-              <th>Driver</th>
-              <th>Loaded Quantity</th>
-              <th>Offloaded Quantity</th>
-              <th>Rate</th>
-              <th>Revenue</th>
-              <th>Save Quantity</th>
-            </tr>
-          </thead>
+                <div className="grid gap-5 md:grid-cols-3">
+                  <FormField label="Rate type" dark>
+                    <select
+                      value={rateType}
+                      onChange={(e) => setRateType(e.target.value)}
+                      className={inputClass}
+                    >
+                      <option value="per_tonne">Per Tonne</option>
+                      <option value="per_truck">Per Truck</option>
+                      <option value="per_box">Per Box</option>
+                      <option value="per_bag">Per Bag</option>
+                      <option value="per_crate">Per Crate</option>
+                      <option value="per_pallet">Per Pallet</option>
+                      <option value="per_litre">Per Litre</option>
+                      <option value="per_km">Per KM</option>
+                      <option value="custom">Custom Unit</option>
+                    </select>
+                  </FormField>
 
-          <tbody>
-            {selectedJourneys.map((j) => {
-              const preview = calculatePreview(j);
-
-              return (
-                <tr key={j.id}>
-                  <td>{j.truck}</td>
-                  <td>{j.driver || "—"}</td>
-
-                  <td>
+                  <FormField label="Rate amount" dark>
                     <input
-                      id={`loaded-${j.id}`}
-                      defaultValue={j.loaded_quantity || ""}
-                      placeholder="Loaded"
+                      placeholder="Rate amount e.g. 45"
+                      value={rateAmount}
+                      onChange={(e) => setRateAmount(e.target.value)}
+                      className={inputClass}
+                      required
                     />
-                  </td>
+                  </FormField>
 
-                  <td>
+                  <FormField label="Currency" dark>
+                    <select
+                      value={rateCurrency}
+                      onChange={(e) => {
+                        setRateCurrency(e.target.value);
+                        if (e.target.value === "KES") setFxRate("1");
+                      }}
+                      className={inputClass}
+                    >
+                      <option value="KES">KES</option>
+                      <option value="USD">USD</option>
+                      <option value="UGX">UGX</option>
+                      <option value="TZS">TZS</option>
+                      <option value="RWF">RWF</option>
+                      <option value="EUR">EUR</option>
+                      <option value="GBP">GBP</option>
+                      <option value="ZAR">ZAR</option>
+                    </select>
+                  </FormField>
+                </div>
+
+                {rateCurrency !== "KES" && (
+                  <FormField label="FX rate to KES" dark>
                     <input
-                      id={`offloaded-${j.id}`}
-                      defaultValue={j.offloaded_quantity || ""}
-                      placeholder="Offloaded"
+                      placeholder="FX rate to KES e.g. 129"
+                      value={fxRate}
+                      onChange={(e) => setFxRate(e.target.value)}
+                      className={inputClass}
+                      required
                     />
-                  </td>
+                  </FormField>
+                )}
 
-                  <td>
-                    {rateCurrency} {rateAmount || j.rate_amount || 0} /{" "}
-                    {rateType.replace("per_", "")}
-                  </td>
+                <div>
+                  <PrimaryButton type="submit">
+                    Apply Rate to Client/Route
+                  </PrimaryButton>
+                </div>
+              </form>
+            </Panel>
 
-                  <td>
-                    {preview.revenueOriginal.toLocaleString()} {rateCurrency}
-                    <br />
-                    <strong>{preview.revenueKes.toLocaleString()} KES</strong>
-                  </td>
+            <Panel dark className="mt-8 overflow-hidden">
+              <div className="flex flex-col gap-3 border-b border-white/10 px-5 py-4 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <h2 className="text-lg font-semibold">Matching Active Journeys</h2>
+                  <p className="mt-1 text-sm text-slate-400">
+                    Enter loaded and offloaded quantities, then save each truck.
+                  </p>
+                </div>
+                <SecondaryButton type="button" onClick={loadJourneys}>
+                  Refresh
+                </SecondaryButton>
+              </div>
 
-                  <td>
-                    <button type="button" onClick={() => saveQuantities(j.id)}>
-                      Save
-                    </button>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      )}
+              {selectedJourneys.length === 0 ? (
+                <div className="p-5">
+                  <EmptyState
+                    dark
+                    title="Select client and route"
+                    body="Matching active journeys will appear once both filters are selected."
+                  />
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-white/10 text-left text-sm">
+                    <thead className="bg-white/[0.04] text-xs uppercase tracking-[0.12em] text-slate-400">
+                      <tr>
+                        <th className="px-4 py-3 font-semibold">Truck</th>
+                        <th className="px-4 py-3 font-semibold">Driver</th>
+                        <th className="px-4 py-3 font-semibold">Loaded Quantity</th>
+                        <th className="px-4 py-3 font-semibold">Offloaded Quantity</th>
+                        <th className="px-4 py-3 font-semibold">Rate</th>
+                        <th className="px-4 py-3 font-semibold">Revenue</th>
+                        <th className="px-4 py-3 font-semibold">Save Quantity</th>
+                      </tr>
+                    </thead>
+
+                    <tbody className="divide-y divide-white/10 text-slate-200">
+                      {selectedJourneys.map((j) => {
+                        const preview = calculatePreview(j);
+
+                        return (
+                          <tr key={j.id} className="hover:bg-white/[0.03]">
+                            <td className="px-4 py-4 font-semibold text-white">{j.truck}</td>
+                            <td className="px-4 py-4">{j.driver || "—"}</td>
+
+                            <td className="px-4 py-4">
+                              <input
+                                id={`loaded-${j.id}`}
+                                defaultValue={j.loaded_quantity || ""}
+                                placeholder="Loaded"
+                                className={inputClass}
+                              />
+                            </td>
+
+                            <td className="px-4 py-4">
+                              <input
+                                id={`offloaded-${j.id}`}
+                                defaultValue={j.offloaded_quantity || ""}
+                                placeholder="Offloaded"
+                                className={inputClass}
+                              />
+                            </td>
+
+                            <td className="px-4 py-4">
+                              {rateCurrency} {rateAmount || j.rate_amount || 0} /{" "}
+                              {rateType.replace("per_", "")}
+                            </td>
+
+                            <td className="px-4 py-4">
+                              <div>{preview.revenueOriginal.toLocaleString()} {rateCurrency}</div>
+                              <strong className="text-cyan-100">
+                                {preview.revenueKes.toLocaleString()} KES
+                              </strong>
+                            </td>
+
+                            <td className="px-4 py-4">
+                              <SecondaryButton
+                                type="button"
+                                onClick={() => saveQuantities(j.id)}
+                              >
+                                Save
+                              </SecondaryButton>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Panel>
+          </>
+        )}
+      </div>
     </main>
   );
 }
