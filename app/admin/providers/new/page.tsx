@@ -15,9 +15,7 @@ export default function NewProviderPage() {
     username: "",
     api_key: "",
     password: "",
-    base_url: "",
-    login_url: "",
-    fleet_url: "",
+    bearer_token: "",
   });
 
   useEffect(() => {
@@ -59,6 +57,9 @@ export default function NewProviderPage() {
   }
 
   const selectedTemplate = templates.find((t) => t.id === selectedTemplateId);
+  const requiredCredentialFields = selectedTemplate
+    ? getCredentialFields(selectedTemplate)
+    : [];
 
   function originFromUrl(url: string | null) {
     if (!url) return "";
@@ -75,24 +76,25 @@ export default function NewProviderPage() {
       return;
     }
 
-    if (!form.username || !form.api_key) {
-      alert("Username and API key are required.");
+    const missingCredential = requiredCredentialFields.find(
+      (field) => !String(form[field.name as keyof typeof form] || "").trim()
+    );
+
+    if (missingCredential) {
+      alert(`${missingCredential.label} is required.`);
       return;
     }
 
     const loginUrl =
-      form.login_url ||
       selectedTemplate.default_login_url ||
       selectedTemplate.auth_config?.login_url ||
       null;
 
     const fleetUrl =
-      form.fleet_url ||
       selectedTemplate.default_fleet_url ||
       selectedTemplate.fleet_config?.fleet_url ||
       null;
     const baseUrl =
-      form.base_url ||
       selectedTemplate.base_url ||
       selectedTemplate.default_base_url ||
       selectedTemplate.auth_config?.base_url ||
@@ -142,6 +144,7 @@ export default function NewProviderPage() {
       username: form.username,
       api_key: form.api_key,
       password: form.password || null,
+      bearer_token: form.bearer_token || null,
 
       base_url: baseUrl,
       login_url: loginUrl,
@@ -172,8 +175,9 @@ export default function NewProviderPage() {
       <header style={{ marginBottom: 30 }}>
         <h1 style={titleStyle}>Add Provider</h1>
         <p style={subtitleStyle}>
-          Add a verified tracking integration. Clients enter credentials; Nava
-          Strat handles the telemetry rules.
+          Enter the access details supplied by your GPS/telemetry provider.
+          Nava handles the provider URLs, sync rules, and telemetry mapping
+          behind the scenes.
         </p>
       </header>
 
@@ -202,77 +206,23 @@ export default function NewProviderPage() {
               <>
                 <div style={noticeStyle}>
                   Template loaded: <strong>{selectedTemplate.display_name}</strong>.
-                  Auth, fleet extraction, and telemetry mapping are preconfigured.
+                  Nava will use the verified connection setup for this provider.
                 </div>
 
                 <div style={gridStyle}>
-                  <div style={fieldGroup}>
-                    <label style={labelStyle}>Username</label>
-                    <input
-                      style={inputStyle}
-                      value={form.username}
-                      onChange={(e) =>
-                        setForm({ ...form, username: e.target.value })
-                      }
-                    />
-                  </div>
-
-                  <div style={fieldGroup}>
-                    <label style={labelStyle}>API Key / Secret</label>
-                    <input
-                      type="password"
-                      style={inputStyle}
-                      value={form.api_key}
-                      onChange={(e) =>
-                        setForm({ ...form, api_key: e.target.value })
-                      }
-                    />
-                  </div>
-
-                  <div style={fieldGroup}>
-                    <label style={labelStyle}>Password Optional</label>
-                    <input
-                      type="password"
-                      style={inputStyle}
-                      value={form.password}
-                      onChange={(e) =>
-                        setForm({ ...form, password: e.target.value })
-                      }
-                    />
-                  </div>
-
-                  <div style={fieldGroup}>
-                    <label style={labelStyle}>Base URL Optional</label>
-                    <input
-                      style={inputStyle}
-                      value={form.base_url}
-                      onChange={(e) =>
-                        setForm({ ...form, base_url: e.target.value })
-                      }
-                    />
-                  </div>
-
-                  <div style={fieldGroup}>
-                    <label style={labelStyle}>Login URL Optional Override</label>
-                    <input
-                      style={inputStyle}
-                      value={form.login_url}
-                      onChange={(e) =>
-                        setForm({ ...form, login_url: e.target.value })
-                      }
-                    />
-                  </div>
-
-                  <div style={fieldGroup}>
-                    <label style={labelStyle}>Fleet URL Optional Override</label>
-                    <input
-                      style={inputStyle}
-                      value={form.fleet_url}
-                      onChange={(e) =>
-                        setForm({ ...form, fleet_url: e.target.value })
-                      }
-                    />
-                  </div>
+                  {requiredCredentialFields.map((field) => (
+                    <div key={field.name} style={fieldGroup}>
+                      <label style={labelStyle}>{field.label}</label>
+                      <input
+                        type={field.secret ? "password" : "text"}
+                        style={inputStyle}
+                        value={form[field.name as keyof typeof form]}
+                        onChange={(e) =>
+                          setForm({ ...form, [field.name]: e.target.value })
+                        }
+                      />
+                    </div>
+                  ))}
                 </div>
 
                 <button
@@ -289,6 +239,26 @@ export default function NewProviderPage() {
       </section>
     </main>
   );
+}
+
+function getCredentialFields(template: any) {
+  const placeholders = new Set<string>();
+  const configText = JSON.stringify({
+    auth_config: template.auth_config || {},
+    fleet_config: template.fleet_config || {},
+  });
+
+  const matches = configText.match(/{{\s*(username|api_key|password|bearer_token)\s*}}/g) || [];
+  matches.forEach((match) => placeholders.add(match.replace(/[{}\s]/g, "")));
+
+  const fields = [
+    { name: "username", label: "API Username", secret: false },
+    { name: "api_key", label: "API Password / Secret", secret: true },
+    { name: "password", label: "Password", secret: true },
+    { name: "bearer_token", label: "Bearer Token", secret: true },
+  ];
+
+  return fields.filter((field) => placeholders.has(field.name));
 }
 
 function EmptyTemplateState({ error }: { error: string }) {
