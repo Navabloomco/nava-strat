@@ -13,6 +13,15 @@ type Checklist = {
   ready_to_create_first_journey: boolean;
 };
 
+type OnboardingState =
+  | "no_company"
+  | "no_provider"
+  | "provider_request_submitted"
+  | "provider_connected_not_tested"
+  | "provider_tested_no_fleet"
+  | "fleet_no_recent_location"
+  | "live_tracking_ready";
+
 const checklistItems: Array<{ key: keyof Checklist; label: string; detail: string }> = [
   {
     key: "company_created",
@@ -133,6 +142,8 @@ export default function Onboarding() {
   const completeCount = useMemo(() => {
     return checklistItems.filter((item) => checklist[item.key]).length;
   }, [checklist]);
+  const onboardingState = getOnboardingState(status);
+  const nextStep = getNextBestStep(onboardingState, status, loadStatus);
 
   if (loading) {
     return (
@@ -285,34 +296,156 @@ export default function Onboarding() {
                 </p>
               </section>
 
-              <section className="rounded-lg border border-slate-200 bg-white p-6">
-                <h2 className="text-xl font-semibold">Next actions</h2>
-                <div className="mt-5 grid gap-3">
-                  <Link
-                    href="/admin/providers"
-                    className="rounded-md bg-slate-950 px-4 py-3 text-center text-sm font-bold text-white hover:bg-slate-800"
-                  >
-                    Provider setup
-                  </Link>
-                  <Link
-                    href="/dashboard"
-                    className="rounded-md border border-slate-300 px-4 py-3 text-center text-sm font-semibold hover:bg-slate-50"
-                  >
-                    Open dashboard
-                  </Link>
-                  <Link
-                    href="/ops/journey/new"
-                    className="rounded-md border border-slate-300 px-4 py-3 text-center text-sm font-semibold hover:bg-slate-50"
-                  >
-                    Create first journey
-                  </Link>
-                </div>
-              </section>
+              <NextBestStepCard step={nextStep} />
             </aside>
           </div>
         )}
       </div>
     </main>
+  );
+}
+
+function getOnboardingState(status: any): OnboardingState {
+  if (!status?.company) return "no_company";
+
+  const checklist = status.checklist || {};
+  const providerCount = Number(status.counts?.providers || 0);
+  const providerRequestCount = Number(status.provider_setup_requests_count || 0);
+
+  if (providerCount === 0 && providerRequestCount > 0) {
+    return "provider_request_submitted";
+  }
+
+  if (providerCount === 0) {
+    return "no_provider";
+  }
+
+  if (!checklist.provider_tested_successfully) {
+    return "provider_connected_not_tested";
+  }
+
+  if (!checklist.fleet_assets_received) {
+    return "provider_tested_no_fleet";
+  }
+
+  if (!checklist.recent_telemetry_received) {
+    return "fleet_no_recent_location";
+  }
+
+  return "live_tracking_ready";
+}
+
+function getNextBestStep(state: OnboardingState, status: any, onRefresh: () => void) {
+  const providerName = status?.latest_provider_setup_request_provider_name;
+
+  const steps: Record<OnboardingState, any> = {
+    no_company: {
+      eyebrow: "Workspace setup",
+      title: "Create your company workspace",
+      body: "Start by creating the secure workspace your team will use for fleet operations.",
+      primary: null,
+      secondary: null,
+      tertiary: null,
+    },
+    no_provider: {
+      eyebrow: "First connection",
+      title: "Connect your tracking provider",
+      body: "Add your GPS or telemetry provider so Nava can begin receiving your fleet picture.",
+      primary: { label: "Add Provider", href: "/admin/providers/new" },
+      secondary: {
+        label: "Request Provider Setup",
+        href: "/admin/providers/new?request=1",
+      },
+      tertiary: null,
+    },
+    provider_request_submitted: {
+      eyebrow: "Setup request received",
+      title: providerName
+        ? `${providerName} is being prepared`
+        : "Your provider setup request is in progress",
+      body: "Nava will prepare a verified connection path before any access details are collected.",
+      primary: {
+        label: "Back to Provider Setup",
+        href: "/admin/providers/new?request=1",
+      },
+      secondary: { label: "Refresh Onboarding", onClick: onRefresh },
+      tertiary: null,
+    },
+    provider_connected_not_tested: {
+      eyebrow: "Connection check",
+      title: "Test your provider connection",
+      body: "Open the Provider Vault and run a connection test so Nava can confirm the feed is ready.",
+      primary: { label: "Open Provider Vault", href: "/admin/providers" },
+      secondary: { label: "Refresh Onboarding", onClick: onRefresh },
+      tertiary: null,
+    },
+    provider_tested_no_fleet: {
+      eyebrow: "Fleet intake",
+      title: "Confirm fleet data is arriving",
+      body: "The connection is saved, but your fleet has not appeared yet. Check the Provider Vault and refresh once data starts flowing.",
+      primary: { label: "Open Provider Vault", href: "/admin/providers" },
+      secondary: { label: "Refresh Onboarding", onClick: onRefresh },
+      tertiary: null,
+    },
+    fleet_no_recent_location: {
+      eyebrow: "Live movement",
+      title: "Check live tracking",
+      body: "Fleet records are present. Open Live Tracking to confirm fresh movement is arriving.",
+      primary: { label: "Open Live Tracking", href: "/tracking/live" },
+      secondary: { label: "Refresh Onboarding", onClick: onRefresh },
+      tertiary: null,
+    },
+    live_tracking_ready: {
+      eyebrow: "Ready for operations",
+      title: "Create your first journey",
+      body: "Your live fleet picture is ready. Start the first customer journey and monitor it from Nava.",
+      primary: { label: "Create First Journey", href: "/ops/journey/new" },
+      secondary: { label: "Open Live Tracking", href: "/tracking/live" },
+      tertiary: { label: "Ask Nava Eye", href: "/nava-eye" },
+    },
+  };
+
+  return steps[state];
+}
+
+function NextBestStepCard({ step }: { step: any }) {
+  return (
+    <section className="rounded-lg border border-slate-200 bg-white p-6">
+      <p className="text-xs font-bold uppercase tracking-[0.18em] text-cyan-700">
+        {step.eyebrow}
+      </p>
+      <h2 className="mt-3 text-xl font-semibold">Next best step</h2>
+      <h3 className="mt-4 text-2xl font-semibold tracking-normal text-slate-950">
+        {step.title}
+      </h3>
+      <p className="mt-3 text-sm leading-6 text-slate-600">{step.body}</p>
+
+      <div className="mt-5 grid gap-3">
+        {step.primary && <ActionButton action={step.primary} primary />}
+        {step.secondary && <ActionButton action={step.secondary} />}
+        {step.tertiary && <ActionButton action={step.tertiary} />}
+      </div>
+    </section>
+  );
+}
+
+function ActionButton({ action, primary = false }: { action: any; primary?: boolean }) {
+  const className = primary
+    ? "rounded-md bg-slate-950 px-4 py-3 text-center text-sm font-bold text-white hover:bg-slate-800"
+    : "rounded-md border border-slate-300 px-4 py-3 text-center text-sm font-semibold hover:bg-slate-50";
+
+  if (action.href) {
+    return (
+      <Link href={action.href} className={className}>
+        {action.label}
+      </Link>
+    );
+  }
+
+  return (
+    <button type="button" onClick={action.onClick} className={className}>
+      {action.label}
+    </button>
   );
 }
 

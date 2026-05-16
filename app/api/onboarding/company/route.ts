@@ -98,7 +98,12 @@ async function buildStatus(company: any) {
         providers: 0,
         fleet_assets: 0,
         recent_telemetry: 0,
+        provider_setup_requests: 0,
       },
+      provider_setup_requests_count: 0,
+      latest_provider_setup_request_status: null,
+      latest_provider_setup_request_provider_name: null,
+      latest_provider_setup_request_created_at: null,
       checklist: {
         company_created: false,
         tracking_provider_connected: false,
@@ -112,7 +117,13 @@ async function buildStatus(company: any) {
 
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
-  const [providersResult, assetsResult, telemetryResult] = await Promise.all([
+  const [
+    providersResult,
+    assetsResult,
+    telemetryResult,
+    providerRequestsResult,
+    providerRequestCountResult,
+  ] = await Promise.all([
     supabaseAdmin
       .from("tracking_providers")
       .select(
@@ -132,15 +143,29 @@ async function buildStatus(company: any) {
       .gte("recorded_at", since)
       .order("recorded_at", { ascending: false })
       .limit(50),
+    supabaseAdmin
+      .from("provider_setup_requests")
+      .select("provider_name, status, created_at")
+      .eq("company_id", company.id)
+      .order("created_at", { ascending: false })
+      .limit(1),
+    supabaseAdmin
+      .from("provider_setup_requests")
+      .select("id", { count: "exact", head: true })
+      .eq("company_id", company.id),
   ]);
 
   if (providersResult.error) throw providersResult.error;
   if (assetsResult.error) throw assetsResult.error;
   if (telemetryResult.error) throw telemetryResult.error;
+  if (providerRequestsResult.error) throw providerRequestsResult.error;
+  if (providerRequestCountResult.error) throw providerRequestCountResult.error;
 
   const providers = providersResult.data || [];
   const fleetAssets = assetsResult.data || [];
   const recentTelemetry = telemetryResult.data || [];
+  const latestProviderRequest = providerRequestsResult.data?.[0] || null;
+  const providerRequestsCount = providerRequestCountResult.count || 0;
   const providerTestedSuccessfully = providers.some(
     (provider) =>
       provider.last_test_status === "success" || Boolean(provider.last_sync_at)
@@ -165,8 +190,15 @@ async function buildStatus(company: any) {
       providers: providers.length,
       fleet_assets: fleetAssets.length,
       recent_telemetry: recentTelemetry.length,
+      provider_setup_requests: providerRequestsCount,
     },
     latest_telemetry_at: recentTelemetry[0]?.recorded_at || null,
+    provider_setup_requests_count: providerRequestsCount,
+    latest_provider_setup_request_status: latestProviderRequest?.status || null,
+    latest_provider_setup_request_provider_name:
+      latestProviderRequest?.provider_name || null,
+    latest_provider_setup_request_created_at:
+      latestProviderRequest?.created_at || null,
     checklist: {
       company_created: true,
       tracking_provider_connected: providers.length > 0,
