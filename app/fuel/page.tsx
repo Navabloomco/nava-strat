@@ -2,6 +2,12 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "../../lib/supabase";
+import {
+  EmptyState,
+  PageHeader,
+  Panel,
+  StatusPill,
+} from "../components/ui/Primitives";
 
 export default function FuelControlPage() {
   const [fuelLogs, setFuelLogs] = useState<any[]>([]);
@@ -72,126 +78,206 @@ export default function FuelControlPage() {
       .reduce((sum, f) => sum + Number(f.liters || 0), 0);
   }
 
+  const totalLiters = fuelLogs.reduce(
+    (sum, fuel) => sum + Number(fuel.liters || 0),
+    0
+  );
+  const totalCost = fuelLogs.reduce(
+    (sum, fuel) => sum + Number(fuel.total_cost || 0),
+    0
+  );
+  const unallocatedRecords = fuelLogs.filter((fuel) => !fuel.journey_id).length;
+
   return (
-    <main style={{ padding: 40 }}>
-      <h1>Fuel Control</h1>
-      <p>
-        Allocated vs unallocated fuel, duplicate detection, and optional
-        expected fuel variance.
-      </p>
+    <main className="min-h-screen bg-slate-950 px-8 py-10 text-white">
+      <div className="mx-auto max-w-7xl">
+        <PageHeader
+          dark
+          eyebrow="Finance control"
+          title="Fuel Control"
+          body="Allocated and unallocated fuel records, duplicate detection, and expected fuel variance."
+        />
 
-      <br />
+        {loading ? (
+          <Panel dark className="mt-8 p-6">
+            <div className="text-sm text-slate-300">Loading fuel data...</div>
+          </Panel>
+        ) : errorDetail ? (
+          <Panel dark className="mt-8 border-rose-300/30 bg-rose-500/10 p-4">
+            <div className="text-sm text-rose-100">{errorDetail}</div>
+          </Panel>
+        ) : (
+          <>
+            <section className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <SummaryCard label="Fuel records" value={fuelLogs.length.toLocaleString()} />
+              <SummaryCard label="Total liters" value={totalLiters.toLocaleString()} />
+              <SummaryCard label="Total cost" value={totalCost.toLocaleString()} />
+              <SummaryCard
+                label="Unallocated"
+                value={unallocatedRecords.toLocaleString()}
+                warning={unallocatedRecords > 0}
+              />
+            </section>
 
-      {loading ? (
-        <p>Loading fuel data...</p>
-      ) : errorDetail ? (
-        <p style={{ color: "red" }}>{errorDetail}</p>
-      ) : (
-      <table border={1} cellPadding={10}>
-        <thead>
-          <tr>
-            <th>Truck</th>
-            <th>Liters</th>
-            <th>Cost</th>
-            <th>Fuel Provider</th>
-            <th>Client</th>
-            <th>Route</th>
-            <th>Status</th>
-            <th>Fuel Variance</th>
-            <th>Approval</th>
-            <th>Notes</th>
-            <th>Date</th>
-          </tr>
-        </thead>
+            {fuelLogs.length === 0 ? (
+              <div className="mt-8">
+                <EmptyState
+                  dark
+                  title="No fuel records yet"
+                  body="Fuel entries will appear here once they are captured for your fleet."
+                />
+              </div>
+            ) : (
+              <Panel dark className="mt-8 overflow-hidden">
+                <div className="border-b border-white/10 px-5 py-4">
+                  <h2 className="text-lg font-semibold">Fuel ledger</h2>
+                  <p className="mt-1 text-sm text-slate-400">
+                    Review allocation, duplicate risk, and journey-level fuel variance.
+                  </p>
+                </div>
 
-        <tbody>
-          {fuelLogs.map((fuel) => {
-            const journey = findJourney(fuel.journey_id);
-            const duplicate = isDuplicateFuel(fuel);
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-white/10 text-left text-sm">
+                    <thead className="bg-white/[0.04] text-xs uppercase tracking-[0.12em] text-slate-400">
+                      <tr>
+                        <th className="px-4 py-3 font-semibold">Truck</th>
+                        <th className="px-4 py-3 font-semibold">Liters</th>
+                        <th className="px-4 py-3 font-semibold">Cost</th>
+                        <th className="px-4 py-3 font-semibold">Fuel Provider</th>
+                        <th className="px-4 py-3 font-semibold">Client</th>
+                        <th className="px-4 py-3 font-semibold">Route</th>
+                        <th className="px-4 py-3 font-semibold">Status</th>
+                        <th className="px-4 py-3 font-semibold">Fuel Variance</th>
+                        <th className="px-4 py-3 font-semibold">Approval</th>
+                        <th className="px-4 py-3 font-semibold">Notes</th>
+                        <th className="px-4 py-3 font-semibold">Date</th>
+                      </tr>
+                    </thead>
 
-            const journeyFuel = journey ? totalFuelForJourney(journey.id) : 0;
-            const expected =
-              journey && journey.expected_fuel_liters !== null
-                ? Number(journey.expected_fuel_liters)
-                : null;
+                    <tbody className="divide-y divide-white/10 text-slate-200">
+                      {fuelLogs.map((fuel) => {
+                        const journey = findJourney(fuel.journey_id);
+                        const duplicate = isDuplicateFuel(fuel);
 
-            const variance =
-              expected !== null ? journeyFuel - expected : null;
+                        const journeyFuel = journey ? totalFuelForJourney(journey.id) : 0;
+                        const expected =
+                          journey && journey.expected_fuel_liters !== null
+                            ? Number(journey.expected_fuel_liters)
+                            : null;
 
-            return (
-              <tr
-                key={fuel.id}
-                style={{
-                  backgroundColor: duplicate ? "#ffcccc" : "white",
-                }}
-              >
-                <td>{fuel.truck_text || "—"}</td>
+                        const variance =
+                          expected !== null ? journeyFuel - expected : null;
 
-                <td>{fuel.liters || "—"}</td>
+                        return (
+                          <tr
+                            key={fuel.id}
+                            className={
+                              duplicate
+                                ? "bg-rose-500/10"
+                                : "bg-transparent hover:bg-white/[0.03]"
+                            }
+                          >
+                            <td className="px-4 py-4 font-semibold text-white">
+                              {fuel.truck_text || "—"}
+                            </td>
 
-                <td>
-                  {fuel.total_cost
-                    ? Number(fuel.total_cost).toLocaleString()
-                    : "—"}
-                </td>
+                            <td className="px-4 py-4">{fuel.liters || "—"}</td>
 
-                <td>{fuel.vendor || "—"}</td>
+                            <td className="px-4 py-4">
+                              {fuel.total_cost
+                                ? Number(fuel.total_cost).toLocaleString()
+                                : "—"}
+                            </td>
 
-                <td>{journey ? journey.client_name || "—" : "—"}</td>
+                            <td className="px-4 py-4">{fuel.vendor || "—"}</td>
 
-                <td>
-                  {journey
-                    ? `${journey.from_location || "—"} → ${
-                        journey.to_location || "—"
-                      }`
-                    : "—"}
-                </td>
+                            <td className="px-4 py-4">
+                              {journey ? journey.client_name || "—" : "—"}
+                            </td>
 
-                <td
-                  style={{
-                    color: fuel.journey_id ? "green" : "red",
-                    fontWeight: "bold",
-                  }}
-                >
-                  {fuel.journey_id ? "Allocated" : "UNALLOCATED ⚠️"}
-                </td>
+                            <td className="px-4 py-4">
+                              {journey
+                                ? `${journey.from_location || "—"} → ${
+                                    journey.to_location || "—"
+                                  }`
+                                : "—"}
+                            </td>
 
-                <td>
-                  {variance !== null ? (
-                    <span
-                      style={{
-                        color: variance > 0 ? "red" : "green",
-                        fontWeight: "bold",
-                      }}
-                    >
-                      {variance > 0 ? `+${variance}L 🚨` : `${variance}L`}
-                    </span>
-                  ) : (
-                    "—"
-                  )}
-                </td>
+                            <td className="px-4 py-4">
+                              {fuel.journey_id ? (
+                                <StatusPill tone="success">Allocated</StatusPill>
+                              ) : (
+                                <StatusPill tone="danger">UNALLOCATED</StatusPill>
+                              )}
+                            </td>
 
-                <td>
-                  {fuel.approved_extra_fuel
-                    ? `Approved: ${fuel.approval_reason || "No reason"}`
-                    : duplicate
-                    ? "Duplicate risk ⚠️"
-                    : "—"}
-                </td>
+                            <td className="px-4 py-4">
+                              {variance !== null ? (
+                                <StatusPill tone={variance > 0 ? "danger" : "success"}>
+                                  {variance > 0 ? `+${variance}L` : `${variance}L`}
+                                </StatusPill>
+                              ) : (
+                                "—"
+                              )}
+                            </td>
 
-                <td>{fuel.notes || "—"}</td>
+                            <td className="px-4 py-4">
+                              {fuel.approved_extra_fuel ? (
+                                <span className="text-cyan-100">
+                                  Approved: {fuel.approval_reason || "No reason"}
+                                </span>
+                              ) : duplicate ? (
+                                <StatusPill tone="warning">Duplicate risk</StatusPill>
+                              ) : (
+                                "—"
+                              )}
+                            </td>
 
-                <td>
-                  {fuel.created_at
-                    ? new Date(fuel.created_at).toLocaleString()
-                    : "—"}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-      )}
+                            <td className="px-4 py-4">{fuel.notes || "—"}</td>
+
+                            <td className="px-4 py-4 text-slate-400">
+                              {fuel.created_at
+                                ? new Date(fuel.created_at).toLocaleString()
+                                : "—"}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </Panel>
+            )}
+          </>
+        )}
+      </div>
     </main>
+  );
+}
+
+function SummaryCard({
+  label,
+  value,
+  warning = false,
+}: {
+  label: string;
+  value: string;
+  warning?: boolean;
+}) {
+  return (
+    <Panel dark className="p-4">
+      <div className="text-xs font-bold uppercase tracking-[0.16em] text-slate-400">
+        {label}
+      </div>
+      <div
+        className={
+          warning
+            ? "mt-3 text-3xl font-semibold text-amber-100"
+            : "mt-3 text-3xl font-semibold text-white"
+        }
+      >
+        {value}
+      </div>
+    </Panel>
   );
 }
