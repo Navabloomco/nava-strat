@@ -2,6 +2,12 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../../../lib/supabase";
+import {
+  EmptyState,
+  PageHeader,
+  Panel,
+  StatusPill,
+} from "../../components/ui/Primitives";
 
 type OpsData = {
   company?: any;
@@ -127,128 +133,211 @@ export default function OpsDashboard() {
 
   if (loading) {
     return (
-      <main style={{ padding: 40, fontFamily: "sans-serif", color: "#64748b" }}>
-        Loading operations dashboard...
+      <main className="min-h-screen bg-slate-950 px-8 py-10 text-white">
+        <Panel dark className="p-6">
+          <div className="text-sm text-slate-300">Loading operations dashboard...</div>
+        </Panel>
       </main>
     );
   }
 
   if (errorDetail) {
     return (
-      <main style={{ padding: 40, fontFamily: "sans-serif" }}>
-        <h1 style={{ color: "#dc2626", fontSize: 24 }}>Operations unavailable</h1>
-        <p style={{ marginTop: 10, color: "#64748b" }}>{errorDetail}</p>
+      <main className="min-h-screen bg-slate-950 px-8 py-10 text-white">
+        <Panel dark className="border-rose-300/30 bg-rose-500/10 p-6">
+          <h1 className="text-2xl font-semibold text-rose-100">
+            Operations unavailable
+          </h1>
+          <p className="mt-3 text-sm leading-6 text-rose-100">{errorDetail}</p>
+        </Panel>
       </main>
     );
   }
 
   return (
-    <main style={{ padding: 40, fontFamily: "sans-serif", backgroundColor: "#f4f7f6", minHeight: "100vh" }}>
-      <header style={{ marginBottom: 30, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 20 }}>
-        <div>
-          <h1 style={{ fontSize: 28, fontWeight: "bold", color: "#1a202c" }}>Ops Command Center</h1>
-          <p style={{ color: "#718096" }}>
-            {data.company?.name || "Company"} real-time operations
-          </p>
-        </div>
+    <main className="min-h-screen bg-slate-950 px-8 py-10 text-white">
+      <div className="mx-auto max-w-7xl">
+        <PageHeader
+          dark
+          eyebrow="Operations"
+          title="Ops Command Center"
+          body={`${data.company?.name || "Company"} real-time operations`}
+        />
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(90px, 1fr))", gap: 10 }}>
+        <section className="mt-8 grid gap-4 md:grid-cols-3">
           <Metric label="Active journeys" value={data.summary?.active_journeys || 0} />
-          <Metric label="Online assets" value={data.summary?.online_assets || 0} />
+          <Metric label="Online assets" value={data.summary?.online_assets || 0} accent />
           <Metric label="Alerts" value={data.summary?.alert_count || 0} />
-        </div>
-      </header>
+        </section>
 
-      <section style={{ marginBottom: 35 }}>
-        <h2 style={sectionHeader}>Provider Status</h2>
-        {data.provider_statuses.length === 0 ? (
-          <div style={emptyCard}>No provider data configured for this company.</div>
-        ) : (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
-            {data.provider_statuses.map((provider) => (
-              <div key={provider.id} style={providerBadge}>
-                <strong>{provider.provider_name}</strong>
-                <span>{provider.status}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      <section style={{ marginBottom: 35 }}>
-        <h2 style={sectionHeader}>Operational Alerts</h2>
-        {data.alerts.length === 0 ? (
-          <div style={emptyCard}>No recent telemetry alerts for this company.</div>
-        ) : (
-          <div style={{ display: "grid", gap: 10 }}>
-            {data.alerts.slice(0, 5).map((alert) => (
-              <div key={alert.id} style={incidentCard}>
-                <div style={{ fontWeight: "bold", color: alert.severity === "high" ? "#e53e3e" : "#2d3748" }}>
-                  {alert.truck_id || "Unknown asset"} - {alert.event_type || "Event"}
-                </div>
-                <div style={{ fontSize: 12, color: "#718096" }}>
-                  {alert.location_name || alert.created_at || "No event detail"}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      <section>
-        <h2 style={sectionHeader}>Active Operations</h2>
-        {operations.length === 0 ? (
-          <div style={emptyCard}>No active journeys or saved operations found.</div>
-        ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 20 }}>
-            {operations.map((op) => (
-              <div
-                key={op.journey.id}
-                style={{
-                  ...operationCard,
-                  borderTop: op.risk === "High alert" ? "4px solid #e53e3e" : "4px solid #38a169",
-                }}
-              >
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 15 }}>
-                  <strong style={{ fontSize: 18 }}>{op.truck}</strong>
-                  <span style={statusPill}>{op.journey.status || "unknown"}</span>
-                </div>
-
-                <div style={cardRow}><span style={cardLabel}>CLIENT:</span> {op.client}</div>
-                <div style={cardRow}><span style={cardLabel}>ROUTE:</span> {op.route}</div>
-                <div style={cardRow}><span style={cardLabel}>LOCATION:</span> {op.location}</div>
-                <div style={cardRow}><span style={cardLabel}>DRIVER:</span> {op.driver}</div>
-
-                <div style={{ marginTop: 15, paddingTop: 15, borderTop: "1px solid #edf2f7" }}>
-                  <div style={{ fontSize: 12, color: "#718096" }}>{op.status}</div>
-                  <div style={{ fontSize: 12, color: op.risk === "High alert" ? "#e53e3e" : "#4a5568", fontWeight: "bold" }}>
-                    {op.risk}
+        <section className="mt-8 grid gap-6 xl:grid-cols-[0.8fr_1.2fr]">
+          <Panel dark className="p-5">
+            <SectionTitle title="Provider status" />
+            {data.provider_statuses.length === 0 ? (
+              <EmptyState
+                dark
+                title="No provider data"
+                body="No provider data configured for this company."
+              />
+            ) : (
+              <div className="mt-4 grid gap-3">
+                {data.provider_statuses.map((provider) => (
+                  <div
+                    key={provider.id}
+                    className="flex items-center justify-between gap-4 rounded-md border border-white/10 bg-white/[0.04] px-4 py-3"
+                  >
+                    <div>
+                      <div className="text-sm font-semibold text-slate-100">
+                        {provider.provider_name || "Provider"}
+                      </div>
+                      <div className="mt-1 text-xs text-slate-500">
+                        Last sync: {provider.last_sync_at || "none yet"}
+                      </div>
+                    </div>
+                    <StatusPill tone={provider.status === "active" || provider.status === "success" ? "success" : "warning"}>
+                      {provider.status || "unknown"}
+                    </StatusPill>
                   </div>
-                </div>
+                ))}
               </div>
-            ))}
+            )}
+          </Panel>
+
+          <Panel dark className="p-5">
+            <SectionTitle title="Operational alerts" />
+            {data.alerts.length === 0 ? (
+              <EmptyState
+                dark
+                title="No telemetry alerts"
+                body="No recent telemetry alerts for this company."
+              />
+            ) : (
+              <div className="mt-4 grid gap-3">
+                {data.alerts.slice(0, 5).map((alert) => (
+                  <div
+                    key={alert.id}
+                    className={`rounded-md border px-4 py-3 ${
+                      alert.severity === "high"
+                        ? "border-rose-300/30 bg-rose-500/10"
+                        : "border-white/10 bg-white/[0.04]"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-4">
+                      <div className="text-sm font-semibold text-slate-100">
+                        {alert.truck_id || "Unknown asset"} - {alert.event_type || "Event"}
+                      </div>
+                      <StatusPill tone={alert.severity === "high" ? "danger" : "warning"}>
+                        {alert.severity || "event"}
+                      </StatusPill>
+                    </div>
+                    <div className="mt-2 text-xs text-slate-400">
+                      {alert.location_name || alert.created_at || "No event detail"}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Panel>
+        </section>
+
+        <section className="mt-8">
+          <div className="mb-4">
+            <SectionTitle title="Active operations" />
           </div>
-        )}
-      </section>
+          {operations.length === 0 ? (
+            <EmptyState
+              dark
+              title="No active journeys"
+              body="No active journeys or saved operations found."
+            />
+          ) : (
+            <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+              {operations.map((op) => (
+                <Panel
+                  key={op.journey.id}
+                  dark
+                  className={`p-5 ${
+                    op.risk === "High alert"
+                      ? "border-rose-300/30"
+                      : "border-emerald-300/20"
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <div className="text-lg font-semibold text-slate-100">
+                        {op.truck}
+                      </div>
+                      <div className="mt-1 text-xs uppercase tracking-[0.12em] text-slate-500">
+                        {op.client}
+                      </div>
+                    </div>
+                    <StatusPill tone="info">{op.journey.status || "unknown"}</StatusPill>
+                  </div>
+
+                  <div className="mt-5 grid gap-3 text-sm">
+                    <Detail label="Route" value={op.route} />
+                    <Detail label="Location" value={op.location} />
+                    <Detail label="Driver" value={op.driver} />
+                  </div>
+
+                  <div className="mt-5 border-t border-white/10 pt-4">
+                    <div className="text-xs text-slate-400">{op.status}</div>
+                    <div
+                      className={
+                        op.risk === "High alert"
+                          ? "mt-1 text-xs font-bold text-rose-200"
+                          : "mt-1 text-xs font-bold text-cyan-100"
+                      }
+                    >
+                      {op.risk}
+                    </div>
+                  </div>
+                </Panel>
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
     </main>
   );
 }
 
-function Metric({ label, value }: { label: string; value: number }) {
+function Metric({
+  label,
+  value,
+  accent = false,
+}: {
+  label: string;
+  value: number;
+  accent?: boolean;
+}) {
   return (
-    <div style={metricCard}>
-      <div style={{ fontSize: 20, fontWeight: 800, color: "#1a202c" }}>{value}</div>
-      <div style={{ fontSize: 11, color: "#718096", textTransform: "uppercase" }}>{label}</div>
-    </div>
+    <Panel dark className="p-5">
+      <div className="text-xs font-bold uppercase tracking-[0.14em] text-slate-400">
+        {label}
+      </div>
+      <div className={accent ? "mt-3 text-3xl font-semibold text-cyan-200" : "mt-3 text-3xl font-semibold text-white"}>
+        {value}
+      </div>
+    </Panel>
   );
 }
 
-const sectionHeader = { fontSize: 14, fontWeight: "bold", color: "#4a5568", textTransform: "uppercase" as const, marginBottom: 15, letterSpacing: "0.05em" };
-const providerBadge = { padding: "10px 12px", borderRadius: 8, border: "1px solid #cbd5e1", backgroundColor: "#fff", fontSize: 12, color: "#2d3748", display: "flex", gap: 10, alignItems: "center" };
-const incidentCard = { backgroundColor: "#fff", padding: 15, borderRadius: 8, borderLeft: "4px solid #e53e3e", boxShadow: "0 1px 3px rgba(0,0,0,0.1)" };
-const operationCard = { backgroundColor: "#fff", padding: 20, borderRadius: 12, boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1)", display: "flex", flexDirection: "column" as const };
-const emptyCard = { backgroundColor: "#fff", padding: 18, borderRadius: 8, border: "1px solid #e2e8f0", color: "#718096" };
-const metricCard = { backgroundColor: "#fff", border: "1px solid #e2e8f0", borderRadius: 8, padding: "10px 12px", minWidth: 100 };
-const statusPill = { fontSize: 10, padding: "4px 8px", borderRadius: 4, backgroundColor: "#edf2f7", color: "#4a5568", fontWeight: "bold", textTransform: "uppercase" as const };
-const cardRow = { fontSize: 13, color: "#2d3748", marginBottom: 6 };
-const cardLabel = { color: "#a0aec0", fontSize: 11, fontWeight: "bold", marginRight: 5 };
+function SectionTitle({ title }: { title: string }) {
+  return (
+    <h2 className="text-xs font-bold uppercase tracking-[0.18em] text-cyan-200">
+      {title}
+    </h2>
+  );
+}
+
+function Detail({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <div className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">
+        {label}
+      </div>
+      <div className="mt-1 text-slate-200">{value}</div>
+    </div>
+  );
+}
