@@ -139,6 +139,20 @@ export default function PricingPage() {
           </div>
         </div>
       </section>
+
+      <footer className="border-t border-white/10 px-8 py-8 text-sm text-slate-400">
+        <div className="mx-auto flex max-w-7xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>© {new Date().getFullYear()} Nava Strat</div>
+          <div className="flex gap-5">
+            <Link href="/terms" className="hover:text-white">
+              Terms
+            </Link>
+            <Link href="/privacy" className="hover:text-white">
+              Privacy
+            </Link>
+          </div>
+        </div>
+      </footer>
     </main>
   );
 }

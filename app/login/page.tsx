@@ -170,6 +170,20 @@ export default function LoginPage() {
                     ? "Sign in"
                     : "Create account"}
               </button>
+
+              {mode === "signup" && (
+                <p className="text-xs leading-5 text-slate-400">
+                  By creating an account, you agree to the Nava Strat{" "}
+                  <Link href="/terms" className="text-cyan-200 hover:text-cyan-100">
+                    Terms
+                  </Link>{" "}
+                  and acknowledge the{" "}
+                  <Link href="/privacy" className="text-cyan-200 hover:text-cyan-100">
+                    Privacy Notice
+                  </Link>
+                  .
+                </p>
+              )}
             </form>
 
             {message && (
