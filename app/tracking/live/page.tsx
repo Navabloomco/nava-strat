@@ -39,25 +39,62 @@ export default function LiveTrackingPage() {
   const [data, setData] = useState<LiveTrackingData>(emptyData);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [canEnrichLocations, setCanEnrichLocations] = useState(false);
+  const [enrichingLocations, setEnrichingLocations] = useState(false);
   const [error, setError] = useState("");
+  const [enrichmentMessage, setEnrichmentMessage] = useState("");
   const [lastLoadedAt, setLastLoadedAt] = useState<string | null>(null);
 
   useEffect(() => {
+    loadAccess();
     loadData();
 
     const interval = setInterval(loadData, 30000);
     return () => clearInterval(interval);
   }, []);
 
-  async function loadData() {
-    setError("");
-    setRefreshing(true);
-
+  async function getAccessToken() {
     const {
       data: { session },
     } = await supabase.auth.getSession();
 
-    if (!session?.access_token) {
+    return session?.access_token || null;
+  }
+
+  async function loadAccess() {
+    const accessToken = await getAccessToken();
+    if (!accessToken) return;
+
+    try {
+      const res = await fetch("/api/companies", {
+        cache: "no-store",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+      const json = await res.json();
+      const roles = new Set(
+        (json.roles || []).map((role: string) => String(role).toLowerCase())
+      );
+
+      setCanEnrichLocations(
+        Boolean(json.is_platform_owner) ||
+          roles.has("platform_owner") ||
+          roles.has("owner") ||
+          roles.has("admin")
+      );
+    } catch {
+      setCanEnrichLocations(false);
+    }
+  }
+
+  async function loadData() {
+    setError("");
+    setRefreshing(true);
+
+    const accessToken = await getAccessToken();
+
+    if (!accessToken) {
       window.location.href = "/login";
       return;
     }
@@ -66,7 +103,7 @@ export default function LiveTrackingPage() {
       const res = await fetch("/api/tracking/live", {
         cache: "no-store",
         headers: {
-          Authorization: `Bearer ${session.access_token}`,
+          Authorization: `Bearer ${accessToken}`,
         },
       });
       const json = await res.json();
@@ -89,6 +126,44 @@ export default function LiveTrackingPage() {
     } finally {
       setLoading(false);
       setRefreshing(false);
+    }
+  }
+
+  async function enrichLocationLabels() {
+    setEnrichmentMessage("");
+    setError("");
+    setEnrichingLocations(true);
+
+    const accessToken = await getAccessToken();
+    if (!accessToken) {
+      window.location.href = "/login";
+      return;
+    }
+
+    try {
+      const res = await fetch("/api/tracking/enrich-locations", {
+        method: "POST",
+        cache: "no-store",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ maxItems: 10 }),
+      });
+      const json = await res.json();
+
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || "Failed to enrich location labels.");
+      }
+
+      setEnrichmentMessage(
+        `Location enrichment checked ${json.checked} coordinate sets, added ${json.enriched} labels, and skipped ${json.skipped_recent_attempt} recent attempts.`
+      );
+      await loadData();
+    } catch (err: any) {
+      setError(err.message || "Failed to enrich location labels.");
+    } finally {
+      setEnrichingLocations(false);
     }
   }
 
@@ -119,6 +194,16 @@ export default function LiveTrackingPage() {
               {refreshing ? "Refreshing..." : "Auto-refresh every 30 seconds"}
               {lastLoadedAt ? ` · ${formatDateTime(lastLoadedAt)}` : ""}
             </span>
+            {canEnrichLocations && (
+              <button
+                type="button"
+                onClick={enrichLocationLabels}
+                disabled={enrichingLocations}
+                className="rounded-md border border-cyan-200/30 px-3 py-2 text-xs font-bold uppercase tracking-[0.14em] text-cyan-100 hover:bg-cyan-300/10 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {enrichingLocations ? "Enriching..." : "Enrich location labels"}
+              </button>
+            )}
           </div>
         </header>
 
@@ -131,6 +216,11 @@ export default function LiveTrackingPage() {
             {error && (
               <section className="mt-8 rounded-lg border border-rose-300/30 bg-rose-500/10 p-4 text-sm text-rose-100">
                 {error}
+              </section>
+            )}
+            {enrichmentMessage && (
+              <section className="mt-8 rounded-lg border border-cyan-200/20 bg-cyan-300/10 p-4 text-sm text-cyan-50">
+                {enrichmentMessage}
               </section>
             )}
 
