@@ -157,10 +157,17 @@ export default function Sidebar() {
   ];
 
   return (
-    <aside style={sidebarStyle}>
-      <div style={logoStyle}>Nava Strat</div>
+    <aside className="fixed left-0 top-0 h-screen w-[240px] border-r border-slate-800 bg-slate-950 px-4 py-5 text-slate-100">
+      <div className="mb-7 rounded-lg border border-cyan-200/10 bg-white/[0.04] px-4 py-4">
+        <div className="text-lg font-semibold tracking-normal text-white">
+          Nava Strat
+        </div>
+        <div className="mt-1 text-[10px] font-bold uppercase tracking-[0.2em] text-cyan-200/70">
+          Fleet Intelligence
+        </div>
+      </div>
 
-      <nav style={navGroup}>
+      <nav className="flex flex-col gap-1.5">
         {navItems
           .filter((item) => item.show)
           .map((item) => {
@@ -170,12 +177,11 @@ export default function Sidebar() {
               <Link
                 key={item.href}
                 href={item.href}
-                style={{
-                  ...linkStyle,
-                  backgroundColor: active ? "#e2e8f0" : "transparent",
-                  fontWeight: active ? 700 : 500,
-                  color: active ? "#0f172a" : "#475569",
-                }}
+                className={
+                  active
+                    ? "rounded-md border border-cyan-200/20 bg-cyan-300/10 px-3 py-2.5 text-sm font-bold text-cyan-100"
+                    : "rounded-md px-3 py-2.5 text-sm font-medium text-slate-400 transition hover:bg-white/[0.05] hover:text-white"
+                }
               >
                 {item.name}
               </Link>
@@ -185,36 +191,3 @@ export default function Sidebar() {
     </aside>
   );
 }
-
-const sidebarStyle = {
-  width: 240,
-  backgroundColor: "#fff",
-  borderRight: "1px solid #e2e8f0",
-  height: "100vh",
-  padding: 20,
-  position: "fixed" as const,
-  left: 0,
-  top: 0,
-  boxSizing: "border-box" as const,
-};
-
-const logoStyle = {
-  fontSize: 20,
-  fontWeight: 800,
-  marginBottom: 40,
-  color: "#1e293b",
-};
-
-const navGroup = {
-  display: "flex",
-  flexDirection: "column" as const,
-  gap: 8,
-};
-
-const linkStyle = {
-  padding: "10px 14px",
-  borderRadius: 8,
-  textDecoration: "none",
-  fontSize: 14,
-  transition: "background-color 0.2s ease, color 0.2s ease",
-};

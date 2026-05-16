@@ -2,6 +2,15 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { supabase } from "../../lib/supabase";
+import {
+  EmptyState,
+  FormField,
+  PageHeader,
+  Panel,
+  PrimaryButton,
+  SecondaryButton,
+  StatusPill,
+} from "../components/ui/Primitives";
 
 type CompanyOption = {
   id: string;
@@ -107,122 +116,159 @@ export default function NavaEyeChatPage() {
     () => companies.find((company) => company.id === selectedCompanyId),
     [companies, selectedCompanyId]
   );
+  const suggestedQuestions = [
+    "Which trucks are live right now?",
+    "Which client is least profitable?",
+    "Which assets have stale locations?",
+    "Which route is bleeding money?",
+  ];
 
   if (initializing) {
-    return <main style={{ padding: 40 }}>Loading Nava Eye...</main>;
+    return (
+      <main className="min-h-screen bg-slate-950 px-8 py-10 text-white">
+        <Panel dark className="p-6">
+          <div className="text-sm text-slate-300">Loading Nava Eye...</div>
+        </Panel>
+      </main>
+    );
   }
 
   return (
-    <main style={{ padding: 40, maxWidth: 900 }}>
-      <header style={{ marginBottom: 24 }}>
-        <h1 style={{ fontSize: 30, fontWeight: 800, marginBottom: 8 }}>Nava Eye</h1>
-        <p style={{ color: "#64748b", marginBottom: 16 }}>
-          Ask questions about your fleet health, journeys, fuel risk,
-          truck status, providers, and operations.
-        </p>
-
-        {showCompanySelector && (
-          <label style={{ display: "block", maxWidth: 360 }}>
-            <span style={{ display: "block", fontSize: 12, fontWeight: 700, color: "#475569", marginBottom: 6 }}>
-              Company
-            </span>
-            <select
-              value={selectedCompanyId}
-              onChange={(e) => setSelectedCompanyId(e.target.value)}
-              style={{
-                width: "100%",
-                padding: "10px 12px",
-                border: "1px solid #cbd5e1",
-                borderRadius: 8,
-              }}
-            >
-              {companies.map((company) => (
-                <option key={company.id} value={company.id}>
-                  {company.name}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
-
-        {!showCompanySelector && selectedCompany && (
-          <p style={{ color: "#64748b", fontSize: 13 }}>
-            Company: {selectedCompany.name}
-          </p>
-        )}
-      </header>
-
-      <form onSubmit={askNavaEye}>
-        <textarea
-          value={question}
-          onChange={(e) => setQuestion(e.target.value)}
-          placeholder="Ask Nava Eye about fleet health, active journeys, trucks in Uganda, offline assets, or fuel risk."
-          style={{
-            width: "100%",
-            height: 130,
-            padding: 14,
-            border: "1px solid #cbd5e1",
-            borderRadius: 10,
-            fontSize: 14,
-          }}
+    <main className="min-h-screen bg-slate-950 px-8 py-10 text-white">
+      <div className="mx-auto max-w-5xl">
+        <PageHeader
+          dark
+          eyebrow="Nava Eye"
+          title="Fleet intelligence copilot"
+          body="Ask questions about fleet health, journeys, fuel risk, truck status, providers, and operating performance."
+          actions={
+            selectedCompany ? (
+              <StatusPill tone="info">{selectedCompany.name}</StatusPill>
+            ) : undefined
+          }
         />
 
-        <div style={{ marginTop: 14, display: "flex", gap: 10, alignItems: "center" }}>
-          <button
-            type="submit"
-            disabled={loading || !question.trim()}
-            style={{
-              background: "#0f172a",
-              color: "#fff",
-              border: "none",
-              borderRadius: 8,
-              padding: "10px 16px",
-              fontWeight: 800,
-              cursor: loading ? "default" : "pointer",
-              opacity: loading || !question.trim() ? 0.7 : 1,
-            }}
-          >
-            {loading ? "Thinking..." : "Ask Nava Eye"}
-          </button>
-          {!answer && !errorDetail && (
-            <span style={{ color: "#64748b", fontSize: 13 }}>
-              Answers are based only on data available in your workspace.
-            </span>
+        <div className="mt-8 grid gap-6 lg:grid-cols-[1fr_320px]">
+          <Panel dark className="p-6">
+            <form onSubmit={askNavaEye}>
+              {showCompanySelector && (
+                <FormField label="Company" dark>
+                  <select
+                    value={selectedCompanyId}
+                    onChange={(e) => setSelectedCompanyId(e.target.value)}
+                    className="w-full rounded-md border border-white/10 bg-slate-900 px-3 py-3 text-sm text-white outline-none focus:border-cyan-300"
+                  >
+                    {companies.map((company) => (
+                      <option key={company.id} value={company.id}>
+                        {company.name}
+                      </option>
+                    ))}
+                  </select>
+                </FormField>
+              )}
+
+              <div className={showCompanySelector ? "mt-5" : ""}>
+                <FormField label="Question" dark>
+                  <textarea
+                    value={question}
+                    onChange={(e) => setQuestion(e.target.value)}
+                    placeholder="Ask Nava Eye about live fleet status, active journeys, offline assets, fuel risk, or profitability."
+                    className="min-h-[150px] w-full resize-y rounded-md border border-white/10 bg-slate-900 px-4 py-3 text-sm leading-6 text-white outline-none placeholder:text-slate-500 focus:border-cyan-300"
+                  />
+                </FormField>
+              </div>
+
+              <div className="mt-4 flex flex-wrap gap-2">
+                {suggestedQuestions.map((suggestion) => (
+                  <button
+                    key={suggestion}
+                    type="button"
+                    onClick={() => setQuestion(suggestion)}
+                    className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs font-medium text-slate-300 hover:border-cyan-200/30 hover:bg-cyan-300/10 hover:text-cyan-100"
+                  >
+                    {suggestion}
+                  </button>
+                ))}
+              </div>
+
+              <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center">
+                <PrimaryButton type="submit" disabled={loading || !question.trim()}>
+                  {loading ? "Thinking..." : "Ask Nava Eye"}
+                </PrimaryButton>
+                {question && (
+                  <SecondaryButton
+                    type="button"
+                    onClick={() => {
+                      setQuestion("");
+                      setAnswer("");
+                      setErrorDetail("");
+                    }}
+                  >
+                    Clear
+                  </SecondaryButton>
+                )}
+                {!answer && !errorDetail && (
+                  <span className="text-sm text-slate-400">
+                    Answers use only data available in your workspace.
+                  </span>
+                )}
+              </div>
+            </form>
+          </Panel>
+
+          <Panel dark className="p-6">
+            <p className="text-xs font-bold uppercase tracking-[0.18em] text-cyan-200">
+              Operating context
+            </p>
+            <h2 className="mt-3 text-xl font-semibold">Ask like an operator</h2>
+            <p className="mt-3 text-sm leading-6 text-slate-300">
+              Nava Eye works best with direct operational questions about location,
+              freshness, fuel, journey progress, client margin, and provider health.
+            </p>
+            <div className="mt-5 grid gap-3 text-sm text-slate-300">
+              <div className="rounded-md border border-white/10 bg-white/[0.04] p-3">
+                “Which trucks have not reported recently?”
+              </div>
+              <div className="rounded-md border border-white/10 bg-white/[0.04] p-3">
+                “Which client should we renegotiate with?”
+              </div>
+              <div className="rounded-md border border-white/10 bg-white/[0.04] p-3">
+                “Show fuel risk by active journey.”
+              </div>
+            </div>
+          </Panel>
+        </div>
+
+        <div className="mt-6">
+          {errorDetail && (
+            <Panel dark className="border-rose-300/30 bg-rose-500/10 p-5">
+              <p className="text-sm font-semibold text-rose-100">Nava Eye could not answer</p>
+              <pre className="mt-3 whitespace-pre-wrap text-sm leading-6 text-rose-100">
+                {errorDetail}
+              </pre>
+            </Panel>
+          )}
+
+          {answer && (
+            <Panel dark className="p-6">
+              <p className="text-xs font-bold uppercase tracking-[0.18em] text-cyan-200">
+                Answer
+              </p>
+              <pre className="mt-4 whitespace-pre-wrap text-sm leading-7 text-slate-100">
+                {answer}
+              </pre>
+            </Panel>
+          )}
+
+          {!answer && !errorDetail && !loading && (
+            <EmptyState
+              dark
+              title="No question asked yet"
+              body="Start with a direct fleet, journey, fuel, provider, or profitability question."
+            />
           )}
         </div>
-      </form>
-
-      {errorDetail && (
-        <pre style={errorBox}>
-          {errorDetail}
-        </pre>
-      )}
-
-      {answer && (
-        <pre style={answerBox}>
-          {answer}
-        </pre>
-      )}
+      </div>
     </main>
   );
 }
-
-const answerBox = {
-  whiteSpace: "pre-wrap" as const,
-  background: "#f8fafc",
-  border: "1px solid #e2e8f0",
-  padding: 20,
-  borderRadius: 10,
-  marginTop: 24,
-  color: "#0f172a",
-};
-
-const errorBox = {
-  whiteSpace: "pre-wrap" as const,
-  background: "#fef2f2",
-  border: "1px solid #fecaca",
-  padding: 16,
-  borderRadius: 10,
-  marginTop: 24,
-  color: "#991b1b",
-};
