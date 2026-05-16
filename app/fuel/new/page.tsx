@@ -2,6 +2,15 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../../../lib/supabase";
+import {
+  FormField,
+  PageHeader,
+  Panel,
+  PrimaryButton,
+} from "../../components/ui/Primitives";
+
+const inputClass =
+  "w-full rounded-md border border-white/10 bg-slate-900 px-3 py-3 text-sm text-white outline-none placeholder:text-slate-500 focus:border-cyan-300";
 
 export default function NewFuelPage() {
   const [journeys, setJourneys] = useState<any[]>([]);
@@ -140,171 +149,190 @@ export default function NewFuelPage() {
   }
 
   return (
-    <main style={{ padding: 40 }}>
-      <h1>Add Fuel</h1>
-
-      {loading && <p>Loading fuel data...</p>}
-      {message && <pre style={{ background: "#f4f4f4", padding: 12 }}>{message}</pre>}
-
-      <form onSubmit={handleSubmit}>
-        <select
-          value={client}
-          onChange={(e) => {
-            setClient(e.target.value);
-            setJourneyId("");
-          }}
-        >
-          <option value="">Select client optional</option>
-          {clients.map((c) => (
-            <option key={c} value={c}>
-              {c}
-            </option>
-          ))}
-        </select>
-
-        <br />
-        <br />
-
-        <input
-          placeholder="Truck e.g. KBJ123A"
-          value={truck}
-          onChange={(e) => {
-            setTruck(e.target.value.toUpperCase());
-            setJourneyId("");
-          }}
-          required
+    <main className="min-h-screen bg-slate-950 px-8 py-10 text-white">
+      <div className="mx-auto max-w-5xl">
+        <PageHeader
+          dark
+          eyebrow="Finance control"
+          title="Add Fuel"
+          body="Capture a fuel entry and optionally allocate it to an active journey."
         />
 
-        <br />
-        <br />
-
-        <div
-          style={{
-            border: "1px solid #ddd",
-            padding: 12,
-            borderRadius: 8,
-            marginBottom: 16,
-          }}
-        >
-          <strong>Nava Eye Suggestions</strong>
-          <p>
-            {suggestedJourneys.length === 0
-              ? "No matching active journey. Fuel can be saved as unallocated."
-              : `${suggestedJourneys.length} matching active journey/journeys found.`}
-          </p>
-
-          {suggestedJourneys.length > 0 && (
-            <select
-              value={journeyId}
-              onChange={(e) => setJourneyId(e.target.value)}
-            >
-              <option value="">Choose matching journey or leave unallocated</option>
-
-              {suggestedJourneys.map((j) => (
-                <option key={j.id} value={j.id}>
-                  {j.internal_trip_id ? `${j.internal_trip_id} — ` : ""}
-                  {j.client_name || "NO CLIENT"} — {j.truck} —{" "}
-                  {j.from_location} → {j.to_location}
-                </option>
-              ))}
-            </select>
-          )}
-        </div>
-
-        <input
-          placeholder="Liters e.g. 480"
-          value={liters}
-          onChange={(e) => setLiters(e.target.value)}
-          required
-        />
-
-        <br />
-        <br />
-
-        <select
-          value={selectedProviderId}
-          onChange={(e) => {
-            const id = e.target.value;
-            setSelectedProviderId(id);
-
-            const provider = providers.find((p) => p.id === id);
-
-            if (provider) {
-              setVendor(provider.name || "");
-
-              if (provider.current_price_per_liter) {
-                setPricePerLiter(provider.current_price_per_liter.toString());
-              }
-            }
-          }}
-        >
-          <option value="">Select fuel provider or type manually</option>
-
-          {providers.map((provider) => (
-            <option key={provider.id} value={provider.id}>
-              {provider.name} — {provider.location || "NO LOCATION"}
-            </option>
-          ))}
-        </select>
-
-        <br />
-        <br />
-
-        <input
-          placeholder="Fuel provider / station"
-          value={vendor}
-          onChange={(e) => setVendor(e.target.value.toUpperCase())}
-        />
-
-        <br />
-        <br />
-
-        <input
-          placeholder="Price per liter e.g. 197"
-          value={pricePerLiter}
-          onChange={(e) => setPricePerLiter(e.target.value)}
-        />
-
-        <br />
-        <br />
-
-        <label>
-          <input
-            type="checkbox"
-            checked={approved}
-            onChange={(e) => setApproved(e.target.checked)}
-          />{" "}
-          Approve extra fuel / second fueling
-        </label>
-
-        <br />
-        <br />
-
-        {approved && (
-          <>
-            <input
-              placeholder="Approval reason e.g. emergency top-up"
-              value={approvalReason}
-              onChange={(e) => setApprovalReason(e.target.value)}
-              required
-            />
-
-            <br />
-            <br />
-          </>
+        {loading && (
+          <Panel dark className="mt-8 p-6">
+            <div className="text-sm text-slate-300">Loading fuel data...</div>
+          </Panel>
+        )}
+        {message && (
+          <Panel dark className="mt-8 border-cyan-200/20 bg-cyan-300/10 p-4">
+            <div className="whitespace-pre-wrap text-sm text-cyan-50">{message}</div>
+          </Panel>
         )}
 
-        <input
-          placeholder="Notes e.g. MPesa, invoice, top-up"
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-        />
+        <Panel dark className="mt-8 p-6">
+          <form onSubmit={handleSubmit} className="grid gap-5">
+            <div className="grid gap-5 md:grid-cols-2">
+              <FormField label="Client optional" dark>
+                <select
+                  value={client}
+                  onChange={(e) => {
+                    setClient(e.target.value);
+                    setJourneyId("");
+                  }}
+                  className={inputClass}
+                >
+                  <option value="">Select client optional</option>
+                  {clients.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              </FormField>
 
-        <br />
-        <br />
+              <FormField label="Truck" dark>
+                <input
+                  placeholder="Truck e.g. KBJ123A"
+                  value={truck}
+                  onChange={(e) => {
+                    setTruck(e.target.value.toUpperCase());
+                    setJourneyId("");
+                  }}
+                  className={inputClass}
+                  required
+                />
+              </FormField>
+            </div>
 
-        <button type="submit">Save Fuel</button>
-      </form>
+            <Panel dark className="border-cyan-200/20 bg-cyan-300/10 p-4">
+              <h2 className="text-sm font-semibold text-cyan-50">
+                Nava Eye Suggestions
+              </h2>
+              <p className="mt-2 text-sm text-slate-300">
+                {suggestedJourneys.length === 0
+                  ? "No matching active journey. Fuel can be saved as unallocated."
+                  : `${suggestedJourneys.length} matching active journey/journeys found.`}
+              </p>
+
+              {suggestedJourneys.length > 0 && (
+                <div className="mt-4">
+                  <select
+                    value={journeyId}
+                    onChange={(e) => setJourneyId(e.target.value)}
+                    className={inputClass}
+                  >
+                    <option value="">Choose matching journey or leave unallocated</option>
+
+                    {suggestedJourneys.map((j) => (
+                      <option key={j.id} value={j.id}>
+                        {j.internal_trip_id ? `${j.internal_trip_id} — ` : ""}
+                        {j.client_name || "NO CLIENT"} — {j.truck} —{" "}
+                        {j.from_location} → {j.to_location}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </Panel>
+
+            <div className="grid gap-5 md:grid-cols-2">
+              <FormField label="Liters" dark>
+                <input
+                  placeholder="Liters e.g. 480"
+                  value={liters}
+                  onChange={(e) => setLiters(e.target.value)}
+                  className={inputClass}
+                  required
+                />
+              </FormField>
+
+              <FormField label="Fuel provider optional" dark>
+                <select
+                  value={selectedProviderId}
+                  onChange={(e) => {
+                    const id = e.target.value;
+                    setSelectedProviderId(id);
+
+                    const provider = providers.find((p) => p.id === id);
+
+                    if (provider) {
+                      setVendor(provider.name || "");
+
+                      if (provider.current_price_per_liter) {
+                        setPricePerLiter(provider.current_price_per_liter.toString());
+                      }
+                    }
+                  }}
+                  className={inputClass}
+                >
+                  <option value="">Select fuel provider or type manually</option>
+
+                  {providers.map((provider) => (
+                    <option key={provider.id} value={provider.id}>
+                      {provider.name} — {provider.location || "NO LOCATION"}
+                    </option>
+                  ))}
+                </select>
+              </FormField>
+            </div>
+
+            <div className="grid gap-5 md:grid-cols-2">
+              <FormField label="Fuel provider / station" dark>
+                <input
+                  placeholder="Fuel provider / station"
+                  value={vendor}
+                  onChange={(e) => setVendor(e.target.value.toUpperCase())}
+                  className={inputClass}
+                />
+              </FormField>
+
+              <FormField label="Price per liter" dark>
+                <input
+                  placeholder="Price per liter e.g. 197"
+                  value={pricePerLiter}
+                  onChange={(e) => setPricePerLiter(e.target.value)}
+                  className={inputClass}
+                />
+              </FormField>
+            </div>
+
+            <label className="flex items-center gap-3 rounded-md border border-white/10 bg-slate-900 px-3 py-3 text-sm text-slate-200">
+              <input
+                type="checkbox"
+                checked={approved}
+                onChange={(e) => setApproved(e.target.checked)}
+                className="h-4 w-4 accent-cyan-300"
+              />{" "}
+              Approve extra fuel / second fueling
+            </label>
+
+            {approved && (
+              <FormField label="Approval reason" dark>
+                <input
+                  placeholder="Approval reason e.g. emergency top-up"
+                  value={approvalReason}
+                  onChange={(e) => setApprovalReason(e.target.value)}
+                  className={inputClass}
+                  required
+                />
+              </FormField>
+            )}
+
+            <FormField label="Notes" dark>
+              <input
+                placeholder="Notes e.g. MPesa, invoice, top-up"
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                className={inputClass}
+              />
+            </FormField>
+
+            <div>
+              <PrimaryButton type="submit">Save Fuel</PrimaryButton>
+            </div>
+          </form>
+        </Panel>
+      </div>
     </main>
   );
 }
