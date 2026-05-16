@@ -6,12 +6,41 @@ import { supabase } from "../../lib/supabase";
 
 type AuthMode = "signin" | "signup";
 
+const PASSWORD_REQUIREMENT_MESSAGE =
+  "Use at least 10 characters with uppercase, lowercase, a number, and a symbol.";
+
+function validateSignupPassword(email: string, password: string) {
+  const localPart = email.split("@")[0]?.trim().toLowerCase() || "";
+  const passwordLower = password.toLowerCase();
+  const hasMinimumLength = password.length >= 10;
+  const hasUppercase = /[A-Z]/.test(password);
+  const hasLowercase = /[a-z]/.test(password);
+  const hasNumber = /[0-9]/.test(password);
+  const hasSymbol = /[^A-Za-z0-9]/.test(password);
+  const includesEmailLocalPart =
+    localPart.length >= 3 && passwordLower.includes(localPart);
+
+  if (
+    !hasMinimumLength ||
+    !hasUppercase ||
+    !hasLowercase ||
+    !hasNumber ||
+    !hasSymbol ||
+    includesEmailLocalPart
+  ) {
+    return PASSWORD_REQUIREMENT_MESSAGE;
+  }
+
+  return "";
+}
+
 export default function LoginPage() {
   const [mode, setMode] = useState<AuthMode>("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   useEffect(() => {
     if (window.location.search.includes("signup")) {
@@ -66,6 +95,15 @@ export default function LoginPage() {
     e.preventDefault();
     setLoading(true);
     setMessage(mode === "signin" ? "Signing in..." : "Creating account...");
+
+    if (mode === "signup") {
+      const passwordError = validateSignupPassword(email, password);
+      if (passwordError) {
+        setMessage(passwordError);
+        setLoading(false);
+        return;
+      }
+    }
 
     const authResult =
       mode === "signin"
@@ -179,15 +217,30 @@ export default function LoginPage() {
 
               <label className="block">
                 <span className="text-sm font-medium text-slate-200">Password</span>
-                <input
-                  type="password"
-                  placeholder="Your password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="mt-2 w-full rounded-md border border-white/10 bg-slate-950 px-4 py-3 text-white outline-none focus:border-cyan-300"
-                  required
-                  minLength={6}
-                />
+                <div className="mt-2 flex rounded-md border border-white/10 bg-slate-950 focus-within:border-cyan-300">
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    placeholder="Your password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="min-w-0 flex-1 rounded-l-md bg-transparent px-4 py-3 text-white outline-none"
+                    required
+                    minLength={mode === "signup" ? 10 : 6}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((current) => !current)}
+                    className="rounded-r-md border-l border-white/10 px-3 text-xs font-semibold uppercase tracking-[0.12em] text-cyan-100 hover:bg-white/10"
+                  >
+                    {showPassword ? "Hide" : "Show"}
+                  </button>
+                </div>
+                {mode === "signup" && (
+                  <p className="mt-2 text-xs leading-5 text-slate-400">
+                    Use at least 10 characters with uppercase, lowercase, a number,
+                    and a symbol.
+                  </p>
+                )}
               </label>
 
               <button
