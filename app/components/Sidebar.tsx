@@ -150,6 +150,11 @@ export default function Sidebar() {
       show: roles.isAdmin,
     },
     {
+      name: "Client Visibility",
+      href: "/admin/client-visibility",
+      show: roles.isAdmin,
+    },
+    {
       name: "Provider Requests",
       href: "/admin/provider-requests",
       show: roles.isPlatformOwner,
