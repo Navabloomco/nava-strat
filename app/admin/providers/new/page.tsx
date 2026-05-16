@@ -10,6 +10,10 @@ export default function NewProviderPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [loadError, setLoadError] = useState("");
+  const [requestOpen, setRequestOpen] = useState(false);
+  const [requestSaving, setRequestSaving] = useState(false);
+  const [requestSuccess, setRequestSuccess] = useState(false);
+  const [requestError, setRequestError] = useState("");
 
   const [form, setForm] = useState({
     username: "",
@@ -17,8 +21,21 @@ export default function NewProviderPage() {
     password: "",
     bearer_token: "",
   });
+  const [requestForm, setRequestForm] = useState({
+    provider_name: "",
+    provider_website: "",
+    provider_contact: "",
+    access_type_known: "unsure",
+    notes: "",
+  });
 
   useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("request") === "1") {
+        setRequestOpen(true);
+      }
+    }
     loadTemplates();
   }, []);
 
@@ -166,6 +183,62 @@ export default function NewProviderPage() {
     window.location.href = "/admin/providers";
   }
 
+  async function handleSubmitSetupRequest() {
+    const providerName = requestForm.provider_name.trim();
+    if (!providerName) {
+      setRequestError("Provider name is required.");
+      return;
+    }
+
+    setRequestSaving(true);
+    setRequestError("");
+
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    if (!session?.access_token) {
+      setRequestSaving(false);
+      window.location.href = "/login";
+      return;
+    }
+
+    try {
+      const res = await fetch("/api/providers/setup-requests", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          provider_name: providerName,
+          provider_website: requestForm.provider_website.trim() || null,
+          provider_contact: requestForm.provider_contact.trim() || null,
+          access_type_known: requestForm.access_type_known,
+          notes: requestForm.notes.trim() || null,
+        }),
+      });
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Failed to submit provider setup request");
+      }
+
+      setRequestSuccess(true);
+      setRequestForm({
+        provider_name: "",
+        provider_website: "",
+        provider_contact: "",
+        access_type_known: "unsure",
+        notes: "",
+      });
+    } catch (err: any) {
+      setRequestError(err.message || "Failed to submit provider setup request");
+    } finally {
+      setRequestSaving(false);
+    }
+  }
+
   if (loading) {
     return <main style={{ padding: 40 }}>Loading supported providers...</main>;
   }
@@ -183,7 +256,10 @@ export default function NewProviderPage() {
 
       <section style={cardStyle}>
         {templates.length === 0 ? (
-          <EmptyTemplateState error={loadError} />
+          <EmptyTemplateState
+            error={loadError}
+            onRequest={() => setRequestOpen(true)}
+          />
         ) : (
           <>
             <div style={fieldGroup}>
@@ -201,6 +277,17 @@ export default function NewProviderPage() {
                 ))}
               </select>
             </div>
+
+            <ProviderSetupRequestSection
+              requestOpen={requestOpen}
+              requestSuccess={requestSuccess}
+              requestError={requestError}
+              requestSaving={requestSaving}
+              requestForm={requestForm}
+              setRequestOpen={setRequestOpen}
+              setRequestForm={setRequestForm}
+              onSubmit={handleSubmitSetupRequest}
+            />
 
             {selectedTemplate && (
               <>
@@ -236,6 +323,17 @@ export default function NewProviderPage() {
             )}
           </>
         )}
+
+        {templates.length === 0 && requestOpen && (
+          <ProviderSetupRequestForm
+            requestSuccess={requestSuccess}
+            requestError={requestError}
+            requestSaving={requestSaving}
+            requestForm={requestForm}
+            setRequestForm={setRequestForm}
+            onSubmit={handleSubmitSetupRequest}
+          />
+        )}
       </section>
     </main>
   );
@@ -261,7 +359,13 @@ function getCredentialFields(template: any) {
   return fields.filter((field) => placeholders.has(field.name));
 }
 
-function EmptyTemplateState({ error }: { error: string }) {
+function EmptyTemplateState({
+  error,
+  onRequest,
+}: {
+  error: string;
+  onRequest: () => void;
+}) {
   return (
     <div style={emptyTemplateStyle}>
       <div style={emptyBadgeStyle}>Provider setup</div>
@@ -274,12 +378,13 @@ function EmptyTemplateState({ error }: { error: string }) {
       {error && <div style={errorStyle}>{error}</div>}
 
       <div style={emptyActionsStyle}>
-        <a
-          href="mailto:support@navabloom.co?subject=Nava%20provider%20setup%20request"
+        <button
+          type="button"
+          onClick={onRequest}
           style={buttonStyle}
         >
           Request provider setup
-        </a>
+        </button>
         <Link href="/onboarding" style={secondaryLinkStyle}>
           Back to onboarding
         </Link>
@@ -289,6 +394,166 @@ function EmptyTemplateState({ error }: { error: string }) {
         Provider access details should only be saved after Nava has verified the
         provider connection pattern and telemetry mapping.
       </div>
+    </div>
+  );
+}
+
+function ProviderSetupRequestSection({
+  requestOpen,
+  requestSuccess,
+  requestError,
+  requestSaving,
+  requestForm,
+  setRequestOpen,
+  setRequestForm,
+  onSubmit,
+}: {
+  requestOpen: boolean;
+  requestSuccess: boolean;
+  requestError: string;
+  requestSaving: boolean;
+  requestForm: any;
+  setRequestOpen: (open: boolean) => void;
+  setRequestForm: (form: any) => void;
+  onSubmit: () => void;
+}) {
+  return (
+    <div style={requestSectionStyle}>
+      <div>
+        <div style={requestTitleStyle}>Don&apos;t see your provider?</div>
+        <p style={requestCopyStyle}>
+          Nava can help set up a verified connection for your fleet.
+        </p>
+      </div>
+      <button
+        type="button"
+        style={secondaryButtonStyle}
+        onClick={() => setRequestOpen(!requestOpen)}
+      >
+        Request provider setup
+      </button>
+
+      {requestOpen && (
+        <ProviderSetupRequestForm
+          requestSuccess={requestSuccess}
+          requestError={requestError}
+          requestSaving={requestSaving}
+          requestForm={requestForm}
+          setRequestForm={setRequestForm}
+          onSubmit={onSubmit}
+        />
+      )}
+    </div>
+  );
+}
+
+function ProviderSetupRequestForm({
+  requestSuccess,
+  requestError,
+  requestSaving,
+  requestForm,
+  setRequestForm,
+  onSubmit,
+}: {
+  requestSuccess: boolean;
+  requestError: string;
+  requestSaving: boolean;
+  requestForm: any;
+  setRequestForm: (form: any) => void;
+  onSubmit: () => void;
+}) {
+  if (requestSuccess) {
+    return (
+      <div style={requestSuccessStyle}>
+        Request received. Nava will review the provider and prepare a verified
+        connection path before any credentials are collected.
+      </div>
+    );
+  }
+
+  return (
+    <div style={requestFormStyle}>
+      <div style={gridStyle}>
+        <div style={fieldGroup}>
+          <label style={labelStyle}>Provider Name</label>
+          <input
+            style={inputStyle}
+            value={requestForm.provider_name}
+            onChange={(e) =>
+              setRequestForm({ ...requestForm, provider_name: e.target.value })
+            }
+          />
+        </div>
+
+        <div style={fieldGroup}>
+          <label style={labelStyle}>Provider Website Optional</label>
+          <input
+            style={inputStyle}
+            value={requestForm.provider_website}
+            onChange={(e) =>
+              setRequestForm({
+                ...requestForm,
+                provider_website: e.target.value,
+              })
+            }
+          />
+        </div>
+
+        <div style={fieldGroup}>
+          <label style={labelStyle}>Provider Contact Optional</label>
+          <input
+            style={inputStyle}
+            value={requestForm.provider_contact}
+            onChange={(e) =>
+              setRequestForm({
+                ...requestForm,
+                provider_contact: e.target.value,
+              })
+            }
+          />
+        </div>
+
+        <div style={fieldGroup}>
+          <label style={labelStyle}>Access Type Known</label>
+          <select
+            style={inputStyle}
+            value={requestForm.access_type_known}
+            onChange={(e) =>
+              setRequestForm({
+                ...requestForm,
+                access_type_known: e.target.value,
+              })
+            }
+          >
+            <option value="unsure">Unsure</option>
+            <option value="username_password">Username/password</option>
+            <option value="api_key">API key</option>
+            <option value="token">Token</option>
+          </select>
+        </div>
+      </div>
+
+      <div style={fieldGroup}>
+        <label style={labelStyle}>Notes Optional</label>
+        <textarea
+          style={textareaStyle}
+          value={requestForm.notes}
+          onChange={(e) =>
+            setRequestForm({ ...requestForm, notes: e.target.value })
+          }
+        />
+      </div>
+
+      {requestError && <div style={requestErrorStyle}>{requestError}</div>}
+
+      <button
+        type="button"
+        onClick={onSubmit}
+        disabled={requestSaving}
+        style={buttonStyle}
+      >
+        {requestSaving ? "SUBMITTING REQUEST..." : "SUBMIT REQUEST"}
+      </button>
     </div>
   );
 }
@@ -343,6 +608,15 @@ const inputStyle = {
   borderRadius: 8,
   border: "1px solid #cbd5e1",
   fontSize: 14,
+};
+
+const textareaStyle = {
+  padding: "10px 12px",
+  borderRadius: 8,
+  border: "1px solid #cbd5e1",
+  fontSize: 14,
+  minHeight: 90,
+  resize: "vertical" as const,
 };
 
 const noticeStyle = {
@@ -443,5 +717,64 @@ const errorStyle = {
   borderRadius: 10,
   padding: 12,
   color: "#fecaca",
+  fontSize: 13,
+};
+
+const requestSectionStyle = {
+  marginTop: 18,
+  border: "1px solid #dbeafe",
+  borderRadius: 12,
+  background: "#f8fafc",
+  padding: 16,
+};
+
+const requestTitleStyle = {
+  color: "#0f172a",
+  fontWeight: 850,
+  fontSize: 15,
+};
+
+const requestCopyStyle = {
+  margin: "6px 0 0 0",
+  color: "#64748b",
+  fontSize: 13,
+  lineHeight: 1.6,
+};
+
+const secondaryButtonStyle = {
+  marginTop: 12,
+  background: "#ffffff",
+  color: "#0f172a",
+  border: "1px solid #cbd5e1",
+  borderRadius: 8,
+  padding: "10px 14px",
+  fontWeight: 800,
+  cursor: "pointer",
+};
+
+const requestFormStyle = {
+  marginTop: 16,
+  borderTop: "1px solid #e2e8f0",
+  paddingTop: 16,
+};
+
+const requestSuccessStyle = {
+  marginTop: 16,
+  background: "#ecfeff",
+  border: "1px solid #67e8f9",
+  borderRadius: 10,
+  padding: 14,
+  color: "#155e75",
+  fontSize: 13,
+  lineHeight: 1.6,
+};
+
+const requestErrorStyle = {
+  marginTop: 12,
+  background: "#fef2f2",
+  border: "1px solid #fecaca",
+  borderRadius: 10,
+  padding: 12,
+  color: "#991b1b",
   fontSize: 13,
 };

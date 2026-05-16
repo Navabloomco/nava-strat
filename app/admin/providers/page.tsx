@@ -159,6 +159,9 @@ function EmptyProviderState() {
           <Link href="/admin/providers/new" style={primaryLinkStyle}>
             Add Provider
           </Link>
+          <Link href="/admin/providers/new?request=1" style={secondaryLinkStyle}>
+            Request provider setup
+          </Link>
           <Link href="/onboarding" style={secondaryLinkStyle}>
             Back to onboarding
           </Link>
