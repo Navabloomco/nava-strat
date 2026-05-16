@@ -88,23 +88,29 @@ export async function runProviderSync(
 
         if (!sample_normalized) sample_normalized = normalized;
 
+        const assetPayload: Record<string, any> = {
+          provider_id: provider.id,
+          provider_name: provider.provider_name,
+          company_id: provider.company_id,
+          truck_id: normalized.truck_id,
+          registration: normalized.truck_id,
+          status: "active",                              // 🔥 needed for dashboard filtering
+          latitude: normalized.latitude,
+          longitude: normalized.longitude,
+          last_seen_at: normalized.recorded_at,
+          raw_payload: normalized.raw,
+          updated_at: new Date().toISOString(),
+        };
+
+        if (normalized.location_label) {
+          assetPayload.provider_location_label = normalized.location_label;
+        }
+
         // ✅ Upsert into fleet_assets with company_id and status = 'active'
         const { error: assetError } = await supabaseAdmin
           .from("fleet_assets")
           .upsert(
-            {
-              provider_id: provider.id,
-              provider_name: provider.provider_name,
-              company_id: provider.company_id,
-              truck_id: normalized.truck_id,
-              registration: normalized.truck_id,
-              status: "active",                              // 🔥 needed for dashboard filtering
-              latitude: normalized.latitude,
-              longitude: normalized.longitude,
-              last_seen_at: normalized.recorded_at,
-              raw_payload: normalized.raw,
-              updated_at: new Date().toISOString(),
-            },
+            assetPayload,
             { onConflict: "provider_id,truck_id" }
           );
 
@@ -121,6 +127,7 @@ export async function runProviderSync(
             longitude: normalized.longitude,
             speed: normalized.speed,
             fuel_level: normalized.fuel_level,
+            provider_location_label: normalized.location_label || null,
             recorded_at: normalized.recorded_at,
             raw_payload: normalized.raw,
             validation: normalized.validation,

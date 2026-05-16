@@ -220,7 +220,7 @@ export async function GET(req: Request) {
         supabaseAdmin
           .from("fleet_assets")
           .select(
-            "truck_id, registration, status, latitude, longitude, last_seen_at, provider_name"
+            "truck_id, registration, status, latitude, longitude, last_seen_at, provider_name, provider_location_label"
           )
           .eq("company_id", resolved.company.id)
           .eq("status", "active")
@@ -271,11 +271,9 @@ export async function GET(req: Request) {
         speed: telemetry?.speed ?? null,
         fuel_level: telemetry?.fuel_level ?? null,
         provider_name: matchingAsset?.provider_name || null,
-        location_label: getCachedLocationLabel(
-          locationLabels,
-          truck.latitude,
-          truck.longitude
-        ),
+        location_label:
+          matchingAsset?.provider_location_label ||
+          getCachedLocationLabel(locationLabels, truck.latitude, truck.longitude),
       };
     });
 
@@ -288,11 +286,9 @@ export async function GET(req: Request) {
         longitude: asset.longitude ?? null,
         last_seen_at: asset.last_seen_at || null,
         status: asset.status || null,
-        location_label: getCachedLocationLabel(
-          locationLabels,
-          asset.latitude,
-          asset.longitude
-        ),
+        location_label:
+          asset.provider_location_label ||
+          getCachedLocationLabel(locationLabels, asset.latitude, asset.longitude),
       }));
 
     return noStoreJson({

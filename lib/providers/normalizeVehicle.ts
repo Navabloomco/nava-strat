@@ -6,6 +6,7 @@ export type CanonicalVehicle = {
 
   speed: number | null;
   fuel_level: number | null;
+  location_label?: string | null;
 
   recorded_at: string;
 
@@ -26,6 +27,7 @@ type MappingConfig = {
  longitude?: string;
   speed?: string;
   fuel_level?: string;
+  location_label?: string;
   recorded_at?: string;
 };
 
@@ -42,6 +44,7 @@ export function normalizeVehicle(
   const longitude = getNumber(raw, mapping.longitude);
   const speed = getNullableNumber(raw, mapping.speed);
   const fuel_level = getNullableNumber(raw, mapping.fuel_level);
+  const location_label = getLocationLabel(raw, mapping);
   const recorded_at = getTimestamp(raw, mapping.recorded_at);
 
   // REQUIRED FIELDS
@@ -84,6 +87,7 @@ export function normalizeVehicle(
 
     speed,
     fuel_level,
+    location_label,
 
     recorded_at,
 
@@ -122,7 +126,25 @@ function getString(raw: any, path?: string): string | null {
     return null;
   }
 
-  return String(value).trim();
+  const text = String(value).trim();
+  return text || null;
+}
+
+function getLocationLabel(raw: any, mapping: MappingConfig): string | null {
+  if (mapping.location_label) {
+    return getString(raw, mapping.location_label);
+  }
+
+  return getFirstString(raw, ["location", "Location"]);
+}
+
+function getFirstString(raw: any, paths: string[]) {
+  for (const path of paths) {
+    const value = getString(raw, path);
+    if (value) return value;
+  }
+
+  return null;
 }
 
 function getNumber(raw: any, path?: string): number | null {
