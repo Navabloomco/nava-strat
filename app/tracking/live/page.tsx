@@ -230,6 +230,12 @@ export default function LiveTrackingPage() {
                           <div className="font-semibold text-slate-100">
                             {asset.registration || asset.truck_id}
                           </div>
+                          <div className="mt-1 text-sm text-slate-300">
+                            {asset.location_label || "Location not labeled yet"}
+                          </div>
+                          <div className="mt-1 text-xs text-slate-500">
+                            {formatCoordinate(asset.latitude)}, {formatCoordinate(asset.longitude)}
+                          </div>
                           <div className="mt-1 text-xs text-slate-400">
                             Last seen: {formatDateTime(asset.last_seen_at)}
                           </div>
@@ -281,7 +287,10 @@ function TruckRow({ truck }: { truck: any }) {
       </div>
 
       <div className="text-sm text-slate-200">
-        <div className="font-medium">Coordinates</div>
+        <div className="font-medium">Location</div>
+        <div className="mt-1 text-slate-100">
+          {truck.location_label || "Location not labeled yet"}
+        </div>
         <div className="mt-1 text-slate-400">
           {formatCoordinate(truck.latitude)}, {formatCoordinate(truck.longitude)}
         </div>

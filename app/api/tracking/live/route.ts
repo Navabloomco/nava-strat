@@ -132,6 +132,78 @@ function buildLatestTelemetryByTruck(logs: any[]) {
   return latest;
 }
 
+function roundedCoordinateKey(latitude: any, longitude: any) {
+  const lat = Number(latitude);
+  const lng = Number(longitude);
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+
+  // Match lib/location/reverseGeocode.ts cache precision without triggering external geocoding.
+  const roundedLat = Number(lat.toFixed(5));
+  const roundedLng = Number(lng.toFixed(5));
+
+  return {
+    key: `${roundedLat}:${roundedLng}`,
+    roundedLat,
+    roundedLng,
+  };
+}
+
+function locationLabelFromCache(row: any) {
+  return row?.town || row?.county || row?.display_name || null;
+}
+
+async function fetchCachedLocationLabels(points: Array<{ latitude: any; longitude: any }>) {
+  const uniquePoints = new Map<string, { roundedLat: number; roundedLng: number }>();
+
+  for (const point of points) {
+    const rounded = roundedCoordinateKey(point.latitude, point.longitude);
+    if (!rounded) continue;
+    uniquePoints.set(rounded.key, {
+      roundedLat: rounded.roundedLat,
+      roundedLng: rounded.roundedLng,
+    });
+  }
+
+  if (uniquePoints.size === 0) return new Map<string, string | null>();
+
+  const labels = new Map<string, string | null>();
+  const roundedPoints = Array.from(uniquePoints.values());
+  const roundedLats = Array.from(new Set(roundedPoints.map((point) => point.roundedLat)));
+  const roundedLngs = Array.from(new Set(roundedPoints.map((point) => point.roundedLng)));
+
+  try {
+    const { data, error } = await supabaseAdmin
+      .from("location_cache")
+      .select("rounded_lat, rounded_lng, town, county, display_name")
+      .in("rounded_lat", roundedLats)
+      .in("rounded_lng", roundedLngs)
+      .gt("expires_at", new Date().toISOString());
+
+    if (error) throw error;
+
+    for (const row of data || []) {
+      const key = `${Number(row.rounded_lat)}:${Number(row.rounded_lng)}`;
+      if (!uniquePoints.has(key)) continue;
+      labels.set(key, locationLabelFromCache(row));
+    }
+  } catch (err) {
+    console.warn("Location cache lookup skipped:", err);
+  }
+
+  return labels;
+}
+
+function getCachedLocationLabel(
+  labels: Map<string, string | null>,
+  latitude: any,
+  longitude: any
+) {
+  const rounded = roundedCoordinateKey(latitude, longitude);
+  if (!rounded) return null;
+  return labels.get(rounded.key) || null;
+}
+
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
@@ -177,6 +249,10 @@ export async function GET(req: Request) {
     const providers = providersResult.data || [];
     const telemetryByTruck = buildLatestTelemetryByTruck(telemetryLogs);
     const liveTruckIds = new Set(liveTrucks.map((truck) => truck.truck_id));
+    const locationLabels = await fetchCachedLocationLabels([
+      ...liveTrucks,
+      ...activeAssets,
+    ]);
 
     const trucks = liveTrucks.map((truck) => {
       const telemetry = telemetryByTruck[truck.truck_id] || null;
@@ -195,6 +271,11 @@ export async function GET(req: Request) {
         speed: telemetry?.speed ?? null,
         fuel_level: telemetry?.fuel_level ?? null,
         provider_name: matchingAsset?.provider_name || null,
+        location_label: getCachedLocationLabel(
+          locationLabels,
+          truck.latitude,
+          truck.longitude
+        ),
       };
     });
 
@@ -203,8 +284,15 @@ export async function GET(req: Request) {
       .map((asset) => ({
         truck_id: asset.truck_id,
         registration: asset.registration || asset.truck_id,
+        latitude: asset.latitude ?? null,
+        longitude: asset.longitude ?? null,
         last_seen_at: asset.last_seen_at || null,
         status: asset.status || null,
+        location_label: getCachedLocationLabel(
+          locationLabels,
+          asset.latitude,
+          asset.longitude
+        ),
       }));
 
     return noStoreJson({
