@@ -234,7 +234,7 @@ function JourneyCard({ journey }: { journey: ClientJourney }) {
       </div>
 
       <div className="mt-4 text-xs text-slate-500">
-        Journey updated {journey.updated_at ? formatDateTime(journey.updated_at) : "not available"}
+        Journey recorded {journey.updated_at ? formatDateTime(journey.updated_at) : "not available"}
       </div>
     </article>
   );

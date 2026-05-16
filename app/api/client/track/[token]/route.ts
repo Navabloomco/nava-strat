@@ -37,6 +37,15 @@ function isLinkUsable(link: any) {
   return new Date(link.expires_at).getTime() >= Date.now();
 }
 
+function linkUnavailableReason(link: any) {
+  if (!link) return "not_found";
+  if (link.revoked_at) return "revoked";
+  if (link.active_until_revoked) return null;
+  if (!link.expires_at) return "missing_expiry";
+  if (new Date(link.expires_at).getTime() < Date.now()) return "expired";
+  return null;
+}
+
 function roundedCoordinateKey(latitude: any, longitude: any) {
   const lat = Number(latitude);
   const lng = Number(longitude);
@@ -165,7 +174,12 @@ export async function GET(
 
     if (linkError) throw linkError;
 
-    if (!link || !isLinkUsable(link)) {
+    const unavailableReason = linkUnavailableReason(link);
+    if (!link || unavailableReason || !isLinkUsable(link)) {
+      console.warn("Client tracking link unavailable:", {
+        reason: unavailableReason || "invalid",
+        link_id: link?.id || null,
+      });
       return noStoreJson(
         { success: false, error: UNAVAILABLE_MESSAGE },
         { status: 404 }
@@ -185,12 +199,12 @@ export async function GET(
       supabaseAdmin
         .from("journeys")
         .select(
-          "id, internal_trip_id, status, from_location, to_location, truck, loaded_quantity, offloaded_quantity, billing_quantity, billing_unit, updated_at"
+          "id, internal_trip_id, status, from_location, to_location, truck, loaded_quantity, offloaded_quantity, billing_quantity, billing_unit, created_at"
         )
         .eq("company_id", link.company_id)
         .eq("is_demo", false)
         .eq("client_name", normalizedClientName)
-        .order("updated_at", { ascending: false }),
+        .order("created_at", { ascending: false }),
       supabaseAdmin
         .from("fleet_assets")
         .select("truck_id, registration, latitude, longitude, last_seen_at, provider_location_label")
@@ -267,7 +281,7 @@ export async function GET(
               : null,
           last_seen_at: asset?.last_seen_at || null,
         },
-        updated_at: journey.updated_at || null,
+        updated_at: journey.created_at || null,
       };
     });
 
