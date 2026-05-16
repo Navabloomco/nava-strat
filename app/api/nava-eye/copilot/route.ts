@@ -315,52 +315,60 @@ function buildFallbackAnswer(context: any): string {
       simulation.route?.from || simulation.route?.to
         ? `Route: ${simulation.route?.from || "unknown origin"} to ${
             simulation.route?.to || "unknown destination"
-          }.`
+          }`
         : null;
 
     if (simulation.missing_inputs?.length) {
-      parts.push(
-        `I can calculate that, but I need ${simulation.missing_inputs.join(
-          ", "
-        )}.`
-      );
-
-      if (routeText) parts.push(routeText);
+      parts.push(`I can calculate that, but I need: ${simulation.missing_inputs.join(", ")}.`);
+      parts.push("");
       if (knownInputs.length > 0) {
-        parts.push(`Known inputs: ${knownInputs.join("; ")}.`);
+        parts.push("Known inputs");
+        parts.push(...knownInputs);
+        if (routeText) parts.push(routeText);
+        parts.push("");
+      } else if (routeText) {
+        parts.push("Known inputs");
+        parts.push(routeText);
+        parts.push("");
       }
-      parts.push(
-        `Missing inputs: ${simulation.missing_inputs.join("; ")}.`
-      );
+      parts.push("Missing inputs");
+      parts.push(...simulation.missing_inputs.map(formatMissingInput));
       if (simulation.assumptions?.length) {
-        parts.push(`Assumptions: ${simulation.assumptions.join(" ")}`);
+        parts.push("");
+        parts.push("Assumptions");
+        parts.push(...simulation.assumptions);
       }
 
-      return parts.join(" ");
+      return parts.join("\n");
     }
 
     const result = simulation.result || {};
     const inputs = simulation.inputs || {};
     const costBreakdown = formatSimulationCosts(inputs);
 
-    if (routeText) parts.push(routeText);
+    parts.push("Estimated trip profit");
+    parts.push("");
+    if (routeText) {
+      parts.push(routeText);
+      parts.push("");
+    }
+    parts.push("Revenue");
     parts.push(
-      `Revenue calculation: ${formatMoney(inputs.rate_per_tonne)} per tonne × ${formatNumber(
-        inputs.tonnes
-      )} tonnes = ${formatMoney(result.revenue)}.`
+      `${formatMoney(inputs.rate_per_tonne)} × ${formatNumber(inputs.tonnes)} tonnes = ${formatMoney(result.revenue)}`
     );
-    parts.push(
-      `Cost breakdown: ${costBreakdown.length ? costBreakdown.join("; ") : "no costs detected"}. Total costs: ${formatMoney(
-        result.total_costs
-      )}.`
-    );
-    parts.push(`Estimated profit: ${formatMoney(result.profit)}.`);
+    parts.push("");
+    parts.push("Costs");
+    parts.push(...costBreakdown);
+    parts.push(`Total costs: ${formatMoney(result.total_costs)}`);
+    parts.push("");
+    parts.push("Result");
+    parts.push(`Estimated profit: ${formatMoney(result.profit)}`);
     parts.push(
       `Margin: ${
         result.margin_percent === null || result.margin_percent === undefined
           ? "not available"
           : `${Number(result.margin_percent).toFixed(1)}%`
-      }.`
+      }`
     );
     parts.push(
       `Break-even rate: ${
@@ -368,13 +376,15 @@ function buildFallbackAnswer(context: any): string {
         result.break_even_rate_per_tonne === undefined
           ? "not available"
           : `${formatMoney(result.break_even_rate_per_tonne)} per tonne`
-      }.`
+      }`
     );
     if (simulation.assumptions?.length) {
-      parts.push(`Assumptions: ${simulation.assumptions.join(" ")}`);
+      parts.push("");
+      parts.push("Assumptions");
+      parts.push(...simulation.assumptions);
     }
 
-    return parts.join(" ");
+    return parts.join("\n");
   }
   if (context.profitability) {
     const p = context.profitability;
@@ -507,16 +517,16 @@ function buildFallbackAnswer(context: any): string {
 
 function formatSimulationInputs(inputs: any) {
   const labels: Record<string, string> = {
-    rate_per_tonne: "rate per tonne",
-    tonnes: "tonnes",
-    fuel_cost: "fuel",
-    per_diem: "per diem",
-    tolls: "tolls",
-    parking: "parking",
-    loading: "loading",
-    offloading: "offloading",
-    transaction_cost: "transaction cost",
-    other_costs: "other costs",
+    rate_per_tonne: "Rate per tonne",
+    tonnes: "Tonnes",
+    fuel_cost: "Fuel",
+    per_diem: "Per diem",
+    tolls: "Tolls",
+    parking: "Parking",
+    loading: "Loading",
+    offloading: "Offloading",
+    transaction_cost: "Transaction cost",
+    other_costs: "Other costs",
   };
 
   return Object.entries(labels)
@@ -553,4 +563,8 @@ function formatMoney(value: any) {
 
 function formatNumber(value: any) {
   return Number(value || 0).toLocaleString();
+}
+
+function formatMissingInput(value: string) {
+  return value.charAt(0).toUpperCase() + value.slice(1);
 }
