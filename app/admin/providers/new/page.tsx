@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { supabase } from "../../../../lib/supabase";
 
 export default function NewProviderPage() {
@@ -8,6 +9,7 @@ export default function NewProviderPage() {
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [loadError, setLoadError] = useState("");
 
   const [form, setForm] = useState({
     username: "",
@@ -23,20 +25,37 @@ export default function NewProviderPage() {
   }, []);
 
   async function loadTemplates() {
-    const { data, error } = await supabase
-      .from("provider_templates")
-      .select("*")
-      .eq("is_public", true)
-      .eq("is_verified", true)
-      .order("display_name", { ascending: true });
+    setLoadError("");
 
-    if (error) {
-      alert(`Failed to load provider templates: ${error.message}`);
-    } else {
-      setTemplates(data || []);
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    if (!session?.access_token) {
+      window.location.href = "/login";
+      return;
     }
 
-    setLoading(false);
+    try {
+      const res = await fetch("/api/providers/templates", {
+        cache: "no-store",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+      });
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Failed to load provider templates");
+      }
+
+      setTemplates(data.templates || []);
+    } catch (err: any) {
+      setLoadError(err.message || "Failed to load provider templates");
+      setTemplates([]);
+    } finally {
+      setLoading(false);
+    }
   }
 
   const selectedTemplate = templates.find((t) => t.id === selectedTemplateId);
@@ -159,110 +178,148 @@ export default function NewProviderPage() {
       </header>
 
       <section style={cardStyle}>
-        <div style={fieldGroup}>
-          <label style={labelStyle}>Supported Provider</label>
-          <select
-            style={inputStyle}
-            value={selectedTemplateId}
-            onChange={(e) => setSelectedTemplateId(e.target.value)}
-          >
-            <option value="">Choose provider...</option>
-            {templates.map((template) => (
-              <option key={template.id} value={template.id}>
-                {template.display_name}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {selectedTemplate && (
+        {templates.length === 0 ? (
+          <EmptyTemplateState error={loadError} />
+        ) : (
           <>
-            <div style={noticeStyle}>
-              Template loaded: <strong>{selectedTemplate.display_name}</strong>.
-              Auth, fleet extraction, and telemetry mapping are preconfigured.
+            <div style={fieldGroup}>
+              <label style={labelStyle}>Supported Provider</label>
+              <select
+                style={inputStyle}
+                value={selectedTemplateId}
+                onChange={(e) => setSelectedTemplateId(e.target.value)}
+              >
+                <option value="">Choose provider...</option>
+                {templates.map((template) => (
+                  <option key={template.id} value={template.id}>
+                    {template.display_name}
+                  </option>
+                ))}
+              </select>
             </div>
 
-            <div style={gridStyle}>
-              <div style={fieldGroup}>
-                <label style={labelStyle}>Username</label>
-                <input
-                  style={inputStyle}
-                  value={form.username}
-                  onChange={(e) =>
-                    setForm({ ...form, username: e.target.value })
-                  }
-                />
-              </div>
+            {selectedTemplate && (
+              <>
+                <div style={noticeStyle}>
+                  Template loaded: <strong>{selectedTemplate.display_name}</strong>.
+                  Auth, fleet extraction, and telemetry mapping are preconfigured.
+                </div>
 
-              <div style={fieldGroup}>
-                <label style={labelStyle}>API Key / Secret</label>
-                <input
-                  type="password"
-                  style={inputStyle}
-                  value={form.api_key}
-                  onChange={(e) =>
-                    setForm({ ...form, api_key: e.target.value })
-                  }
-                />
-              </div>
+                <div style={gridStyle}>
+                  <div style={fieldGroup}>
+                    <label style={labelStyle}>Username</label>
+                    <input
+                      style={inputStyle}
+                      value={form.username}
+                      onChange={(e) =>
+                        setForm({ ...form, username: e.target.value })
+                      }
+                    />
+                  </div>
 
-              <div style={fieldGroup}>
-                <label style={labelStyle}>Password Optional</label>
-                <input
-                  type="password"
-                  style={inputStyle}
-                  value={form.password}
-                  onChange={(e) =>
-                    setForm({ ...form, password: e.target.value })
-                  }
-                />
-              </div>
+                  <div style={fieldGroup}>
+                    <label style={labelStyle}>API Key / Secret</label>
+                    <input
+                      type="password"
+                      style={inputStyle}
+                      value={form.api_key}
+                      onChange={(e) =>
+                        setForm({ ...form, api_key: e.target.value })
+                      }
+                    />
+                  </div>
 
-              <div style={fieldGroup}>
-                <label style={labelStyle}>Base URL Optional</label>
-                <input
-                  style={inputStyle}
-                  value={form.base_url}
-                  onChange={(e) =>
-                    setForm({ ...form, base_url: e.target.value })
-                  }
-                />
-              </div>
+                  <div style={fieldGroup}>
+                    <label style={labelStyle}>Password Optional</label>
+                    <input
+                      type="password"
+                      style={inputStyle}
+                      value={form.password}
+                      onChange={(e) =>
+                        setForm({ ...form, password: e.target.value })
+                      }
+                    />
+                  </div>
 
-              <div style={fieldGroup}>
-                <label style={labelStyle}>Login URL Optional Override</label>
-                <input
-                  style={inputStyle}
-                  value={form.login_url}
-                  onChange={(e) =>
-                    setForm({ ...form, login_url: e.target.value })
-                  }
-                />
-              </div>
+                  <div style={fieldGroup}>
+                    <label style={labelStyle}>Base URL Optional</label>
+                    <input
+                      style={inputStyle}
+                      value={form.base_url}
+                      onChange={(e) =>
+                        setForm({ ...form, base_url: e.target.value })
+                      }
+                    />
+                  </div>
 
-              <div style={fieldGroup}>
-                <label style={labelStyle}>Fleet URL Optional Override</label>
-                <input
-                  style={inputStyle}
-                  value={form.fleet_url}
-                  onChange={(e) =>
-                    setForm({ ...form, fleet_url: e.target.value })
-                  }
-                />
-              </div>
-            </div>
+                  <div style={fieldGroup}>
+                    <label style={labelStyle}>Login URL Optional Override</label>
+                    <input
+                      style={inputStyle}
+                      value={form.login_url}
+                      onChange={(e) =>
+                        setForm({ ...form, login_url: e.target.value })
+                      }
+                    />
+                  </div>
 
-            <button
-              onClick={handleCreateProvider}
-              disabled={saving}
-              style={buttonStyle}
-            >
-              {saving ? "ADDING PROVIDER..." : "ADD PROVIDER"}
-            </button>
+                  <div style={fieldGroup}>
+                    <label style={labelStyle}>Fleet URL Optional Override</label>
+                    <input
+                      style={inputStyle}
+                      value={form.fleet_url}
+                      onChange={(e) =>
+                        setForm({ ...form, fleet_url: e.target.value })
+                      }
+                    />
+                  </div>
+                </div>
+
+                <button
+                  onClick={handleCreateProvider}
+                  disabled={saving}
+                  style={buttonStyle}
+                >
+                  {saving ? "ADDING PROVIDER..." : "ADD PROVIDER"}
+                </button>
+              </>
+            )}
           </>
         )}
       </section>
     </main>
+  );
+}
+
+function EmptyTemplateState({ error }: { error: string }) {
+  return (
+    <div style={emptyTemplateStyle}>
+      <div style={emptyBadgeStyle}>Provider setup</div>
+      <h2 style={emptyTitleStyle}>No verified provider templates available yet</h2>
+      <p style={emptyBodyStyle}>
+        Nava needs a verified GPS/telemetry setup template before it can create
+        a secure connection for this provider.
+      </p>
+
+      {error && <div style={errorStyle}>{error}</div>}
+
+      <div style={emptyActionsStyle}>
+        <a
+          href="mailto:support@navabloom.co?subject=Nava%20provider%20setup%20request"
+          style={buttonStyle}
+        >
+          Request provider setup
+        </a>
+        <Link href="/onboarding" style={secondaryLinkStyle}>
+          Back to onboarding
+        </Link>
+      </div>
+
+      <div style={emptyNoteStyle}>
+        Provider access details should only be saved after Nava has verified the
+        provider connection pattern and telemetry mapping.
+      </div>
+    </div>
   );
 }
 
@@ -337,4 +394,84 @@ const buttonStyle = {
   padding: "12px 18px",
   fontWeight: 800,
   cursor: "pointer",
+  textDecoration: "none",
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+};
+
+const emptyTemplateStyle = {
+  background: "linear-gradient(135deg, #07111f 0%, #0f172a 58%, #155e75 100%)",
+  borderRadius: 18,
+  padding: 28,
+  color: "#e0f2fe",
+  border: "1px solid rgba(14, 165, 233, 0.28)",
+};
+
+const emptyBadgeStyle = {
+  display: "inline-flex",
+  border: "1px solid rgba(125, 211, 252, 0.35)",
+  borderRadius: 999,
+  padding: "6px 10px",
+  color: "#bae6fd",
+  fontSize: 11,
+  fontWeight: 800,
+  textTransform: "uppercase" as const,
+  letterSpacing: 0,
+  marginBottom: 16,
+};
+
+const emptyTitleStyle = {
+  margin: 0,
+  color: "#ffffff",
+  fontSize: 24,
+  fontWeight: 850,
+};
+
+const emptyBodyStyle = {
+  color: "#cbd5e1",
+  fontSize: 14,
+  lineHeight: 1.7,
+  maxWidth: 620,
+  marginTop: 10,
+};
+
+const emptyActionsStyle = {
+  display: "flex",
+  gap: 12,
+  flexWrap: "wrap" as const,
+  marginTop: 20,
+};
+
+const secondaryLinkStyle = {
+  marginTop: 24,
+  color: "#e0f2fe",
+  border: "1px solid rgba(226, 232, 240, 0.35)",
+  borderRadius: 8,
+  padding: "12px 18px",
+  fontWeight: 800,
+  textDecoration: "none",
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+};
+
+const emptyNoteStyle = {
+  marginTop: 22,
+  background: "rgba(15, 23, 42, 0.55)",
+  border: "1px solid rgba(148, 163, 184, 0.25)",
+  borderRadius: 12,
+  padding: 14,
+  color: "#bae6fd",
+  fontSize: 13,
+};
+
+const errorStyle = {
+  marginTop: 16,
+  background: "rgba(127, 29, 29, 0.45)",
+  border: "1px solid rgba(248, 113, 113, 0.35)",
+  borderRadius: 10,
+  padding: 12,
+  color: "#fecaca",
+  fontSize: 13,
 };
