@@ -119,12 +119,12 @@ export default function NewProviderPage() {
       originFromUrl(fleetUrl);
 
     if (!loginUrl) {
-      alert("Login URL is missing from the template. Add an override.");
+      alert("Provider setup is incomplete. Please request support.");
       return;
     }
 
     if (!fleetUrl) {
-      alert("Fleet URL is missing from the template. Add an override.");
+      alert("Provider setup is incomplete. Please request support.");
       return;
     }
 
@@ -249,8 +249,7 @@ export default function NewProviderPage() {
         <h1 style={titleStyle}>Add Provider</h1>
         <p style={subtitleStyle}>
           Enter the access details supplied by your GPS/telemetry provider.
-          Nava handles the provider URLs, sync rules, and telemetry mapping
-          behind the scenes.
+          Nava handles the technical setup behind the scenes.
         </p>
       </header>
 
@@ -351,9 +350,9 @@ function getCredentialFields(template: any) {
 
   const fields = [
     { name: "username", label: "API Username", secret: false },
-    { name: "api_key", label: "API Password / Secret", secret: true },
+    { name: "api_key", label: "Provider Password / Secret", secret: true },
     { name: "password", label: "Password", secret: true },
-    { name: "bearer_token", label: "Bearer Token", secret: true },
+    { name: "bearer_token", label: "Access Token", secret: true },
   ];
 
   return fields.filter((field) => placeholders.has(field.name));
@@ -369,7 +368,7 @@ function EmptyTemplateState({
   return (
     <div style={emptyTemplateStyle}>
       <div style={emptyBadgeStyle}>Provider setup</div>
-      <h2 style={emptyTitleStyle}>No verified provider templates available yet</h2>
+      <h2 style={emptyTitleStyle}>No verified provider setup available yet</h2>
       <p style={emptyBodyStyle}>
         Nava needs a verified GPS/telemetry setup template before it can create
         a secure connection for this provider.
@@ -392,7 +391,7 @@ function EmptyTemplateState({
 
       <div style={emptyNoteStyle}>
         Provider access details should only be saved after Nava has verified the
-        provider connection pattern and telemetry mapping.
+        provider connection safely.
       </div>
     </div>
   );

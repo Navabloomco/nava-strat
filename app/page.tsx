@@ -10,7 +10,7 @@ const capabilities = [
 const outcomes = [
   {
     title: "Know what is happening",
-    body: "Unify fleet assets, provider feeds, journeys, fuel, expenses, and alerts into one company-scoped operating picture.",
+    body: "Bring fleet activity, journeys, fuel, expenses, and alerts into one clear operating picture.",
   },
   {
     title: "Ask sharper questions",
@@ -18,7 +18,7 @@ const outcomes = [
   },
   {
     title: "Scale safely",
-    body: "Built around companies, roles, bearer-token APIs, and clean data boundaries for enterprise multi-tenant operations.",
+    body: "Built for secure access, team roles, and clean separation between customer workspaces.",
   },
 ];
 
@@ -86,7 +86,7 @@ export default function Home() {
                 <div className="mb-5 flex items-center justify-between border-b border-white/10 pb-4">
                   <div>
                     <div className="text-sm font-semibold text-white">Nava Eye</div>
-                    <div className="text-xs text-slate-400">Company-scoped copilot</div>
+                    <div className="text-xs text-slate-400">Private fleet copilot</div>
                   </div>
                   <div className="rounded-full bg-emerald-400/10 px-3 py-1 text-xs font-semibold text-emerald-200">
                     Live context

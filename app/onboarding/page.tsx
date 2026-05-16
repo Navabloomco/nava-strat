@@ -17,7 +17,7 @@ const checklistItems: Array<{ key: keyof Checklist; label: string; detail: strin
   {
     key: "company_created",
     label: "Company created",
-    detail: "Your workspace exists in the company-scoped SaaS model.",
+    detail: "Your secure company workspace is ready.",
   },
   {
     key: "tracking_provider_connected",
@@ -32,12 +32,12 @@ const checklistItems: Array<{ key: keyof Checklist; label: string; detail: strin
   {
     key: "fleet_assets_received",
     label: "Fleet assets received",
-    detail: "Nava has received real company-scoped fleet asset records.",
+    detail: "Nava has received your first fleet records.",
   },
   {
     key: "recent_telemetry_received",
     label: "Recent telemetry received",
-    detail: "At least one telemetry point has landed in the last 24 hours.",
+    detail: "Nava has received recent live location data.",
   },
   {
     key: "ready_to_create_first_journey",
@@ -179,7 +179,7 @@ export default function Onboarding() {
             <h2 className="text-xl font-semibold">Create company workspace</h2>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
               You do not have active company access yet. Create a company to start
-              onboarding with the new company-scoped architecture.
+              setting up your secure company workspace.
             </p>
 
             <form onSubmit={createCompany} className="mt-6 grid max-w-2xl gap-4">

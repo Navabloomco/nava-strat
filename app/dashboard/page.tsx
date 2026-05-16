@@ -150,7 +150,7 @@ export default function DashboardPage() {
       <div className="min-h-screen bg-slate-950 text-white p-8">
         <h1 className="text-xl text-red-500">Dashboard Error</h1>
         <pre className="mt-4 text-sm">{errorDetail}</pre>
-        <p className="mt-4">Check browser console for more details.</p>
+        <p className="mt-4">Please refresh or contact support if this continues.</p>
       </div>
     );
   }
@@ -360,7 +360,7 @@ export default function DashboardPage() {
               </div>
 
               <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-5">
-                <h2 className="text-lg font-semibold mb-4">💡 Active Operational Memories</h2>
+                <h2 className="text-lg font-semibold mb-4">💡 Active Insights</h2>
                 <div className="space-y-3">
                   {memories.map((m) => (
                     <div key={m.id} className="border border-slate-700 rounded-xl p-3">

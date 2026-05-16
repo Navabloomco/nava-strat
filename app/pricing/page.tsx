@@ -33,7 +33,7 @@ const tiers = [
     features: [
       "Multi-company operations",
       "Role-based access",
-      "Provider sync monitoring",
+      "Provider connection monitoring",
       "Executive intelligence dashboards",
     ],
     cta: "Talk to us",
@@ -46,7 +46,7 @@ const tiers = [
       "Custom provider integrations",
       "Dedicated onboarding support",
       "Custom reporting surfaces",
-      "Platform-owner controls",
+      "Administrative oversight controls",
     ],
     cta: "Talk to us",
   },
@@ -87,7 +87,7 @@ export default function PricingPage() {
               Choose the Nava Strat plan that matches your operating model.
             </h1>
             <p className="mt-5 text-lg leading-8 text-slate-300">
-              Start with company-scoped fleet intelligence, then expand into deeper
+              Start with secure fleet intelligence for your team, then expand into deeper
               journey, fuel, finance, provider, and Nava Eye workflows as your team grows.
             </p>
           </div>

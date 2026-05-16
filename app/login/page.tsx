@@ -82,7 +82,7 @@ export default function LoginPage() {
               Sign in to your fleet intelligence workspace.
             </h1>
             <p className="mt-5 text-lg leading-8 text-slate-300">
-              Access company-scoped operations, provider telemetry, fuel risk,
+              Access your fleet operations, live provider data, fuel risk,
               profitability context, and the Nava Eye copilot from one secure SaaS entry.
             </p>
           </div>

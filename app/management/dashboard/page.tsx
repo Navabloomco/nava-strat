@@ -94,7 +94,7 @@ export default function ManagementDashboard() {
         <section>
           <h2 style={{ fontSize: '18px', marginBottom: 20 }}>Journey Ranking (Worst First)</h2>
           {sortedJourneys.length === 0 ? (
-            <div style={listItemStyle}>No scoped journey revenue data yet.</div>
+            <div style={listItemStyle}>No journey revenue data yet.</div>
           ) : (
             sortedJourneys.map((journey: any) => (
               <div key={journey.id} style={{ ...listItemStyle, borderLeft: Number(journey.margin || 0) < 0 ? '5px solid #dc3545' : '5px solid #28a745' }}>
@@ -122,7 +122,7 @@ export default function ManagementDashboard() {
           <h2 style={{ fontSize: '18px', marginBottom: 20 }}>Top Clients by Profit</h2>
           <div style={{ background: '#fff', padding: 20, borderRadius: 12, border: '1px solid #eee' }}>
             {clientPerformance.length === 0 ? (
-              <div style={{ color: '#666' }}>No scoped client profitability data yet.</div>
+              <div style={{ color: '#666' }}>No client profitability data yet.</div>
             ) : (
               clientPerformance.map((c: any) => (
                 <div key={c.name} style={{ marginBottom: 20, borderBottom: '1px solid #f9f9f9', paddingBottom: 15 }}>

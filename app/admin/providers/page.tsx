@@ -43,7 +43,7 @@ export default function ProviderVault() {
         try {
           finalProvider.field_mapping = JSON.parse(finalProvider.field_mapping);
         } catch (e) {
-          throw new Error("Invalid JSON in Field Mapping");
+          throw new Error("Invalid connection setup.");
         }
       }
 
@@ -112,7 +112,7 @@ export default function ProviderVault() {
           <h1 style={pageTitleStyle}>Provider Vault</h1>
           <p style={pageSubtitleStyle}>
             Connect real GPS and telemetry feeds so Nava Strat can build a live,
-            company-scoped fleet picture.
+            secure fleet view.
           </p>
         </div>
         <Link href="/admin/providers/new" style={primaryLinkStyle}>
@@ -169,12 +169,12 @@ function EmptyProviderState() {
 
         <div style={noteGridStyle}>
           <div style={trustNoteStyle}>
-            Provider access details are handled server-side and are not shown back
-            in the browser after saving.
+            Provider access details are stored securely and not displayed after
+            saving.
           </div>
           <div style={readinessNoteStyle}>
-            After a successful test, Nava will check for fleet assets and recent
-            telemetry before marking onboarding as ready.
+            After a successful test, Nava will confirm that fleet data is flowing
+            before marking onboarding as ready.
           </div>
         </div>
       </div>
@@ -234,7 +234,7 @@ function ProviderCard({
       console.log("------------------------------------");
       console.log("FULL TEST RESULT:", result);
       console.log("NORMALIZED DATA:", result.sample_normalized);
-      console.log("RAW DEBUG DATA:", result.debug);
+      console.log("PROVIDER DIAGNOSTICS:", result.debug);
       console.log("------------------------------------");
 
       if (result.success) {
@@ -277,7 +277,7 @@ function ProviderCard({
 
       <div style={formGrid}>
         <div>
-          <label style={labelStyle}>Login URL</label>
+          <label style={labelStyle}>Provider Access Setup</label>
           <input 
             style={inputStyle}
             value={form.login_url || ""} 
@@ -285,7 +285,7 @@ function ProviderCard({
           />
         </div>
         <div>
-          <label style={labelStyle}>Fleet URL</label>
+          <label style={labelStyle}>Fleet Data Setup</label>
           <input 
             style={inputStyle}
             value={form.fleet_url || ""} 
@@ -295,10 +295,10 @@ function ProviderCard({
         
         {/* DETERMINISTIC CONFIG FIELD */}
         <div style={{ gridColumn: "span 2" }}>
-          <label style={labelStyle}>Vehicle List Path (e.g., 'data' or 'Result')</label>
+          <label style={labelStyle}>Provider Data Group</label>
           <input 
             style={inputStyle}
-            placeholder="Type the exact path found in RAW DEBUG"
+            placeholder="Enter the confirmed provider data path"
             value={form.fleet_config?.vehicle_paths?.[0] || ""} 
             onChange={(e) => {
               const newPath = e.target.value;
@@ -323,7 +323,7 @@ function ProviderCard({
         </div>
         <div>
           <label style={labelStyle}>
-            API Key / Secret {provider.has_api_key ? "(stored)" : ""}
+            Provider Password / Secret {provider.has_api_key ? "(stored)" : ""}
           </label>
           <input 
             type="password"
@@ -335,7 +335,7 @@ function ProviderCard({
         </div>
 
         <div style={{ gridColumn: "span 2" }}>
-          <label style={labelStyle}>Field Mapping (Telemetry Rules)</label>
+          <label style={labelStyle}>Connection Setup</label>
           <textarea 
             style={textareaStyle}
             value={typeof form.field_mapping === 'object' ? JSON.stringify(form.field_mapping, null, 2) : form.field_mapping}

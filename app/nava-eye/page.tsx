@@ -117,7 +117,7 @@ export default function NavaEyeChatPage() {
       <header style={{ marginBottom: 24 }}>
         <h1 style={{ fontSize: 30, fontWeight: 800, marginBottom: 8 }}>Nava Eye</h1>
         <p style={{ color: "#64748b", marginBottom: 16 }}>
-          Ask company-scoped questions about fleet health, journeys, fuel risk,
+          Ask questions about your fleet health, journeys, fuel risk,
           truck status, providers, and operations.
         </p>
 
@@ -186,7 +186,7 @@ export default function NavaEyeChatPage() {
           </button>
           {!answer && !errorDetail && (
             <span style={{ color: "#64748b", fontSize: 13 }}>
-              Answers use authenticated company data only.
+              Answers are based only on data available in your workspace.
             </span>
           )}
         </div>
