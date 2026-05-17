@@ -155,6 +155,11 @@ export default function Sidebar() {
       show: roles.isAdmin,
     },
     {
+      name: "Assets",
+      href: "/admin/assets",
+      show: roles.isAdmin,
+    },
+    {
       name: "Provider Requests",
       href: "/admin/provider-requests",
       show: roles.isPlatformOwner,
