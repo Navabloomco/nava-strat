@@ -38,12 +38,21 @@ export async function routeContext(question: string, tenantSlug: string) {
   const lower = question.toLowerCase();
   const detectedCountryName = detectSupportedCountryName(question);
   const intent = detectIntent(lower, detectedCountryName);
-  const truckId = await detectTruckId(question, companyId);
+  const truckAccess = await detectTruckAccess(question, companyId);
+  const truckId = truckAccess.truck_id;
+  const fleetAssetCounts = await fetchFleetAssetCounts(companyId);
   const context: any = {
     company,
     intent,
     detected_truck_id: truckId,
     detected_country_name: detectedCountryName,
+    asset_access_restricted: truckAccess.restricted,
+    asset_access_message: truckAccess.restricted
+      ? "I can only answer using assets enabled for Nava intelligence. This asset may be waiting for review."
+      : null,
+    fleet_asset_review_status: fleetAssetCounts,
+    no_enabled_intelligence_assets:
+      fleetAssetCounts.imported_assets > 0 && fleetAssetCounts.enabled_assets === 0,
     generated_at: new Date().toISOString(),
   };
 
@@ -53,7 +62,7 @@ export async function routeContext(question: string, tenantSlug: string) {
   if (intent === "offline_trucks") {
     context.offline_trucks = await fetchOfflineTrucks(companyId);
   }
-  if (intent === "fuel_risk") {
+  if (intent === "fuel_risk" && !truckAccess.restricted) {
     if (truckId) {
       context.fuel_risk = await analyzeTruckFuelRisk(truckId, 30, companyId);
     } else {
@@ -61,7 +70,7 @@ export async function routeContext(question: string, tenantSlug: string) {
       context.recent_fuel_events = await fetchRecentFuelEvents(companyId);
     }
   }
-  if (intent === "truck_status" && truckId) {
+  if (intent === "truck_status" && truckId && !truckAccess.restricted) {
     context.truck = await fetchTruckStatus(companyId, truckId);
     context.recent_events = await fetchTruckEvents(companyId, truckId);
     context.recent_telemetry = await fetchTruckTelemetry(companyId, truckId);
@@ -71,10 +80,9 @@ export async function routeContext(question: string, tenantSlug: string) {
     context.driver_related_events = await fetchRecentEvents(companyId);
   }
   if (intent === "journey_context") {
-    context.possible_journey_context = await fetchJourneyLikeContext(
-      companyId,
-      truckId
-    );
+    context.possible_journey_context = truckAccess.restricted
+      ? { asset_access_restricted: true }
+      : await fetchJourneyLikeContext(companyId, truckId);
   }
   if (intent === "country_trucks" && detectedCountryName) {
     context.country_fleet_location = {
@@ -167,18 +175,49 @@ function detectIntent(
   return "general";
 }
 
-async function detectTruckId(question: string, companyId: string) {
+function extractTruckCandidate(question: string) {
   const truckMatch = question.match(/[A-Z]{3}\s?\d{3}[A-Z]/i);
   if (!truckMatch) return null;
-  const candidate = truckMatch[0].toUpperCase();
+  return truckMatch[0].toUpperCase();
+}
+
+async function detectTruckAccess(question: string, companyId: string) {
+  const candidate = extractTruckCandidate(question);
+  if (!candidate) return { truck_id: null, restricted: false };
+  const compactCandidate = candidate.replace(/\s+/g, "");
+
   const { data } = await supabaseAdmin
     .from("fleet_assets")
-    .select("truck_id")
+    .select("truck_id, registration, intelligence_enabled")
     .eq("company_id", companyId)
-    .eq("status", "active")   // ✅ only active trucks
-    .ilike("truck_id", `%${candidate}%`)
-    .maybeSingle();
-  return data?.truck_id || candidate;
+    .eq("status", "active")
+    .or(
+      `truck_id.ilike.%${candidate}%,registration.ilike.%${candidate}%,truck_id.ilike.%${compactCandidate}%,registration.ilike.%${compactCandidate}%`
+    )
+    .limit(1);
+
+  const asset = data?.[0];
+  if (!asset) return { truck_id: null, restricted: false };
+
+  if (!asset.intelligence_enabled) {
+    return { truck_id: null, restricted: true };
+  }
+
+  return { truck_id: asset.truck_id || asset.registration || candidate, restricted: false };
+}
+
+async function fetchFleetAssetCounts(companyId: string) {
+  const { data } = await supabaseAdmin
+    .from("fleet_assets")
+    .select("intelligence_enabled")
+    .eq("company_id", companyId)
+    .eq("status", "active");
+
+  const assets = data || [];
+  return {
+    imported_assets: assets.length,
+    enabled_assets: assets.filter((asset) => asset.intelligence_enabled).length,
+  };
 }
 
 async function fetchFleetHealth(companyId: string) {
@@ -189,7 +228,8 @@ async function fetchFleetHealth(companyId: string) {
       .from("fleet_assets")
       .select("truck_id, last_seen_at, latitude, longitude, category")
       .eq("company_id", companyId)
-      .eq("status", "active"),   // ✅ only active trucks
+      .eq("status", "active")
+      .eq("intelligence_enabled", true),
     supabaseAdmin
       .from("telemetry_events")
       .select("truck_id, event_type, severity, location_name, created_at")
@@ -198,7 +238,10 @@ async function fetchFleetHealth(companyId: string) {
   ]);
 
   const assets = assetsResult.data || [];
-  const events = eventsResult.data || [];
+  const enabledTruckIds = new Set(assets.map((asset) => asset.truck_id).filter(Boolean));
+  const events = (eventsResult.data || []).filter((event) =>
+    enabledTruckIds.has(event.truck_id)
+  );
   const now = Date.now();
 
   const offline = assets.filter((asset) => {
@@ -229,7 +272,8 @@ async function fetchOfflineTrucks(companyId: string) {
     .from("fleet_assets")
     .select("truck_id, last_seen_at, latitude, longitude")
     .eq("company_id", companyId)
-    .eq("status", "active");   // ✅ only active trucks
+    .eq("status", "active")
+    .eq("intelligence_enabled", true);
 
   const now = Date.now();
   const offline =
@@ -248,20 +292,28 @@ async function fetchOfflineTrucks(companyId: string) {
 }
 
 async function fetchRecentFuelRiskScores(companyId: string) {
+  const enabledTruckIds = await fetchEnabledTruckIds(companyId);
+  if (enabledTruckIds.length === 0) return [];
+
   const { data } = await supabaseAdmin
     .from("fuel_risk_scores")
     .select("*")
     .eq("company_id", companyId)
+    .in("truck_id", enabledTruckIds)
     .order("created_at", { ascending: false })
     .limit(10);
   return data || [];
 }
 
 async function fetchRecentFuelEvents(companyId: string) {
+  const enabledTruckIds = await fetchEnabledTruckIds(companyId);
+  if (enabledTruckIds.length === 0) return [];
+
   const { data } = await supabaseAdmin
     .from("telemetry_events")
     .select("*")
     .eq("company_id", companyId)
+    .in("truck_id", enabledTruckIds)
     .in("event_type", ["fuel_drop_stationary", "low_fuel"])
     .order("created_at", { ascending: false })
     .limit(20);
@@ -274,8 +326,8 @@ async function fetchTruckStatus(companyId: string, truckId: string) {
     .select("*")
     .eq("company_id", companyId)
     .eq("truck_id", truckId)
+    .eq("intelligence_enabled", true)
     .maybeSingle();
-  // For individual truck status, we may want to see inactive as well, so no status filter here.
   return data;
 }
 
@@ -312,13 +364,28 @@ async function fetchRecentDriverAssignments(companyId: string) {
 }
 
 async function fetchRecentEvents(companyId: string) {
+  const enabledTruckIds = await fetchEnabledTruckIds(companyId);
+  if (enabledTruckIds.length === 0) return [];
+
   const { data } = await supabaseAdmin
     .from("telemetry_events")
     .select("truck_id, event_type, severity, location_name, created_at")
     .eq("company_id", companyId)
+    .in("truck_id", enabledTruckIds)
     .order("created_at", { ascending: false })
     .limit(30);
   return data || [];
+}
+
+async function fetchEnabledTruckIds(companyId: string) {
+  const { data } = await supabaseAdmin
+    .from("fleet_assets")
+    .select("truck_id")
+    .eq("company_id", companyId)
+    .eq("status", "active")
+    .eq("intelligence_enabled", true);
+
+  return (data || []).map((asset) => asset.truck_id).filter(Boolean);
 }
 
 async function fetchJourneyLikeContext(companyId: string, truckId: string | null) {

@@ -8,7 +8,8 @@ export async function getFleetHealth(companyId: string) {
       .from("fleet_assets")
       .select("truck_id, last_seen_at, latitude, longitude")
       .eq("company_id", companyId)
-      .eq("status", "active"),
+      .eq("status", "active")
+      .eq("intelligence_enabled", true),
     supabaseAdmin
       .from("telemetry_events")
       .select("truck_id, event_type, severity, location_name, created_at, duration_minutes")
@@ -17,7 +18,10 @@ export async function getFleetHealth(companyId: string) {
   ]);
 
   const assets = assetsResult.data || [];
-  const events = eventsResult.data || [];
+  const enabledTruckIds = new Set(assets.map((asset) => asset.truck_id).filter(Boolean));
+  const events = (eventsResult.data || []).filter((event) =>
+    enabledTruckIds.has(event.truck_id)
+  );
   const now = Date.now();
 
   const offline = assets.filter((a) => {

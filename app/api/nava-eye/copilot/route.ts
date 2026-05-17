@@ -141,7 +141,13 @@ export async function POST(req: Request) {
     let storePromises = [];
 
     // 6. Try AI if key exists and we have context
-    if (apiKey && Object.keys(context).length > 0 && !context.profit_simulation) {
+    if (
+      apiKey &&
+      Object.keys(context).length > 0 &&
+      !context.profit_simulation &&
+      !context.asset_access_restricted &&
+      !context.no_enabled_intelligence_assets
+    ) {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 8000);
       try {
@@ -308,6 +314,12 @@ export async function POST(req: Request) {
 
 function buildFallbackAnswer(context: any): string {
   const parts: string[] = [];
+  if (context.asset_access_restricted) {
+    return "I can only answer using assets enabled for Nava intelligence. This asset may be waiting for review.";
+  }
+  if (context.no_enabled_intelligence_assets) {
+    return "Fleet data has been imported, but no assets are enabled for Nava intelligence yet. Review assets before I use them in answers.";
+  }
   if (context.profit_simulation) {
     const simulation = context.profit_simulation;
     const knownInputs = formatSimulationInputs(simulation.inputs || {});
