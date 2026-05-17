@@ -179,14 +179,14 @@ export default function LiveTrackingPage() {
   const noLiveLocations = summary.enabled_assets > 0 && summary.live_assets === 0;
 
   return (
-    <main className="min-h-screen bg-slate-950 px-6 py-8 text-white">
+    <main className="min-h-screen bg-slate-950 px-4 py-6 text-white sm:px-6 sm:py-8">
       <div className="mx-auto max-w-7xl">
         <header className="flex flex-col gap-4 border-b border-white/10 pb-6 lg:flex-row lg:items-end lg:justify-between">
           <div>
-            <p className="text-xs font-bold uppercase tracking-[0.2em] text-cyan-200">
+            <p className="break-words text-xs font-bold uppercase tracking-[0.16em] text-cyan-200 sm:tracking-[0.2em]">
               Live Fleet
             </p>
-            <h1 className="mt-3 text-3xl font-semibold tracking-normal">
+            <h1 className="mt-3 break-words text-3xl font-semibold tracking-normal">
               Live Tracking
             </h1>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">
@@ -194,9 +194,9 @@ export default function LiveTrackingPage() {
             </p>
           </div>
 
-          <div className="flex flex-col gap-2 text-sm text-slate-300 lg:items-end">
-            <span>{data.company?.name || "Company workspace"}</span>
-            <span>
+          <div className="flex min-w-0 flex-col gap-2 text-sm text-slate-300 lg:items-end">
+            <span className="break-words">{data.company?.name || "Company workspace"}</span>
+            <span className="break-words">
               {refreshing ? "Refreshing..." : "Auto-refresh every 30 seconds"}
               {lastLoadedAt ? ` · ${formatDateTime(lastLoadedAt)}` : ""}
             </span>
@@ -205,7 +205,7 @@ export default function LiveTrackingPage() {
                 type="button"
                 onClick={enrichLocationLabels}
                 disabled={enrichingLocations}
-                className="rounded-md border border-cyan-200/30 px-3 py-2 text-xs font-bold uppercase tracking-[0.14em] text-cyan-100 hover:bg-cyan-300/10 disabled:cursor-not-allowed disabled:opacity-60"
+                className="self-start rounded-md border border-cyan-200/30 px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-cyan-100 hover:bg-cyan-300/10 disabled:cursor-not-allowed disabled:opacity-60 lg:self-auto"
               >
                 {enrichingLocations ? "Enriching..." : "Enrich location labels"}
               </button>
@@ -251,7 +251,7 @@ export default function LiveTrackingPage() {
 
             <section className="mt-8 grid gap-6 xl:grid-cols-[1fr_360px]">
               <div className="rounded-lg border border-white/10 bg-white/[0.06]">
-                <div className="flex items-center justify-between border-b border-white/10 px-5 py-4">
+                <div className="flex flex-col gap-3 border-b border-white/10 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <h2 className="text-lg font-semibold">Live trucks</h2>
                     <p className="mt-1 text-xs text-slate-400">
@@ -262,7 +262,7 @@ export default function LiveTrackingPage() {
                     type="button"
                     onClick={loadData}
                     disabled={refreshing}
-                    className="rounded-md border border-cyan-200/30 px-3 py-2 text-xs font-bold uppercase tracking-[0.14em] text-cyan-100 hover:bg-cyan-300/10 disabled:cursor-not-allowed disabled:opacity-60"
+                    className="self-start rounded-md border border-cyan-200/30 px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-cyan-100 hover:bg-cyan-300/10 disabled:cursor-not-allowed disabled:opacity-60 sm:self-auto"
                   >
                     Refresh
                   </button>
@@ -294,8 +294,8 @@ export default function LiveTrackingPage() {
                     <div className="divide-y divide-white/10">
                       {data.providers.map((provider) => (
                         <div key={provider.id} className="px-5 py-4">
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="font-semibold text-slate-100">
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div className="min-w-0 break-words font-semibold text-slate-100">
                               {provider.provider_name || "Provider"}
                             </div>
                             <StatusPill value={provider.status} />
@@ -459,8 +459,8 @@ function StatusPill({ value }: { value: string }) {
     <span
       className={
         active
-          ? "inline-flex rounded-full border border-emerald-300/30 bg-emerald-300/10 px-2.5 py-1 text-xs font-semibold text-emerald-100"
-          : "inline-flex rounded-full border border-amber-300/30 bg-amber-300/10 px-2.5 py-1 text-xs font-semibold text-amber-100"
+          ? "inline-flex max-w-full whitespace-normal break-words rounded-full border border-emerald-300/30 bg-emerald-300/10 px-2.5 py-1 text-center text-xs font-semibold leading-5 text-emerald-100"
+          : "inline-flex max-w-full whitespace-normal break-words rounded-full border border-amber-300/30 bg-amber-300/10 px-2.5 py-1 text-center text-xs font-semibold leading-5 text-amber-100"
       }
     >
       {value || "unknown"}

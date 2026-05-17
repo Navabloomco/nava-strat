@@ -27,15 +27,15 @@ export default function Home() {
     <main className="min-h-screen bg-[#08111f] text-white">
       <section className="relative overflow-hidden border-b border-white/10">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_15%,rgba(45,212,191,0.18),transparent_34%),radial-gradient(circle_at_75%_10%,rgba(59,130,246,0.16),transparent_30%)]" />
-        <div className="relative mx-auto flex min-h-[720px] max-w-7xl flex-col px-8 py-8">
-          <nav className="flex items-center justify-between">
-            <div>
-              <div className="text-lg font-semibold tracking-wide">Nava Strat</div>
-              <div className="text-xs uppercase tracking-[0.24em] text-cyan-200/70">
+        <div className="relative mx-auto flex min-h-[720px] max-w-7xl flex-col px-4 py-6 sm:px-8 sm:py-8">
+          <nav className="flex flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="truncate text-lg font-semibold tracking-wide">Nava Strat</div>
+              <div className="truncate text-xs uppercase tracking-[0.18em] text-cyan-200/70 sm:tracking-[0.24em]">
                 Fleet Intelligence SaaS
               </div>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex shrink-0 items-center gap-2 sm:gap-3">
               <Link
                 href="/pricing"
                 className="rounded-md px-4 py-2 text-sm font-medium text-slate-200 hover:bg-white/10"
@@ -53,10 +53,10 @@ export default function Home() {
 
           <div className="grid flex-1 items-center gap-12 py-16 lg:grid-cols-[1.05fr_0.95fr]">
             <div>
-              <p className="mb-5 inline-flex rounded-full border border-cyan-300/20 bg-cyan-300/10 px-4 py-2 text-sm font-medium text-cyan-100">
+              <p className="mb-5 inline-flex max-w-full whitespace-normal break-words rounded-full border border-cyan-300/20 bg-cyan-300/10 px-4 py-2 text-sm font-medium leading-6 text-cyan-100">
                 Enterprise intelligence for transport and logistics operators
               </p>
-              <h1 className="max-w-4xl text-5xl font-semibold leading-[1.02] tracking-normal text-white md:text-7xl">
+              <h1 className="max-w-4xl break-words text-4xl font-semibold leading-[1.05] tracking-normal text-white sm:text-5xl md:text-7xl">
                 The operating brain for modern fleet companies.
               </h1>
               <p className="mt-7 max-w-2xl text-lg leading-8 text-slate-300">
@@ -65,16 +65,16 @@ export default function Home() {
                 accountable SaaS workspace. Nava Eye turns that operational context
                 into answers leaders can act on.
               </p>
-              <div className="mt-9 flex flex-wrap gap-3">
+              <div className="mt-9 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
                 <Link
                   href="/login?signup"
-                  className="rounded-md bg-cyan-300 px-5 py-3 text-sm font-bold text-slate-950 shadow-lg shadow-cyan-950/30 hover:bg-cyan-200"
+                  className="rounded-md bg-cyan-300 px-5 py-3 text-center text-sm font-bold text-slate-950 shadow-lg shadow-cyan-950/30 hover:bg-cyan-200"
                 >
                   Start trial
                 </Link>
                 <Link
                   href="/login"
-                  className="rounded-md border border-white/20 px-5 py-3 text-sm font-semibold text-white hover:bg-white/10"
+                  className="rounded-md border border-white/20 px-5 py-3 text-center text-sm font-semibold text-white hover:bg-white/10"
                 >
                   Sign in
                 </Link>
@@ -83,8 +83,8 @@ export default function Home() {
 
             <div className="rounded-lg border border-white/10 bg-white/[0.06] p-5 shadow-2xl shadow-black/30 backdrop-blur">
               <div className="rounded-md border border-white/10 bg-slate-950/70 p-5">
-                <div className="mb-5 flex items-center justify-between border-b border-white/10 pb-4">
-                  <div>
+                <div className="mb-5 flex flex-wrap items-center justify-between gap-3 border-b border-white/10 pb-4">
+                  <div className="min-w-0">
                     <div className="text-sm font-semibold text-white">Nava Eye</div>
                     <div className="text-xs text-slate-400">Private fleet copilot</div>
                   </div>
@@ -96,10 +96,10 @@ export default function Home() {
                   {capabilities.map((item) => (
                     <div
                       key={item}
-                      className="flex items-center justify-between rounded-md border border-white/10 bg-white/[0.04] px-4 py-3"
+                      className="flex flex-col gap-2 rounded-md border border-white/10 bg-white/[0.04] px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
                     >
-                      <span className="text-sm text-slate-200">{item}</span>
-                      <span className="text-xs text-cyan-200">Ready</span>
+                      <span className="min-w-0 break-words text-sm text-slate-200">{item}</span>
+                      <span className="shrink-0 text-xs text-cyan-200">Ready</span>
                     </div>
                   ))}
                 </div>
@@ -109,7 +109,7 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="bg-slate-50 px-8 py-20 text-slate-950">
+      <section className="bg-slate-50 px-4 py-16 text-slate-950 sm:px-8 sm:py-20">
         <div className="mx-auto max-w-7xl">
           <div className="mb-10 max-w-3xl">
             <p className="text-sm font-bold uppercase tracking-[0.18em] text-cyan-700">

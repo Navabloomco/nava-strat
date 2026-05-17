@@ -192,7 +192,7 @@ export default function AssetReviewPage() {
 
   if (loading) {
     return (
-      <main className="min-h-screen bg-slate-950 px-8 py-10 text-white">
+      <main className="min-h-screen bg-slate-950 px-4 py-6 text-white sm:px-8 sm:py-10">
         <Panel dark className="p-6">
           <div className="text-sm text-slate-300">Loading imported assets...</div>
         </Panel>
@@ -201,7 +201,7 @@ export default function AssetReviewPage() {
   }
 
   return (
-    <main className="min-h-screen bg-slate-950 px-8 py-10 text-white">
+    <main className="min-h-screen bg-slate-950 px-4 py-6 text-white sm:px-8 sm:py-10">
       <div className="mx-auto max-w-7xl">
         <PageHeader
           dark
@@ -278,7 +278,7 @@ export default function AssetReviewPage() {
                   <div className="grid gap-5 xl:grid-cols-[1.2fr_0.9fr_1.2fr]">
                     <div>
                       <div className="flex flex-wrap items-center gap-3">
-                        <h2 className="text-lg font-semibold">
+                        <h2 className="min-w-0 break-words text-lg font-semibold">
                           {asset.registration || asset.truck_id || "Unknown asset"}
                         </h2>
                         <StatusPill tone={statusTone(asset.billing_status)}>

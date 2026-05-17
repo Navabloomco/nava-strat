@@ -68,14 +68,14 @@ export default function ClientTrackingPortalPage() {
   }
 
   return (
-    <main className="min-h-screen bg-slate-950 px-6 py-8 text-white">
+    <main className="min-h-screen bg-slate-950 px-4 py-6 text-white sm:px-6 sm:py-8">
       <div className="mx-auto max-w-6xl">
         <header className="flex flex-col gap-5 border-b border-white/10 pb-6 lg:flex-row lg:items-end lg:justify-between">
           <div>
-            <p className="text-xs font-bold uppercase tracking-[0.2em] text-cyan-200">
+            <p className="break-words text-xs font-bold uppercase tracking-[0.16em] text-cyan-200 sm:tracking-[0.2em]">
               Delivery visibility
             </p>
-            <h1 className="mt-3 text-3xl font-semibold tracking-normal sm:text-4xl">
+            <h1 className="mt-3 break-words text-3xl font-semibold tracking-normal sm:text-4xl">
               {data?.client.name || "Client tracking"}
             </h1>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-300">
@@ -84,8 +84,8 @@ export default function ClientTrackingPortalPage() {
             </p>
           </div>
 
-          <div className="rounded-lg border border-white/10 bg-white/[0.06] px-4 py-3 text-sm text-slate-300">
-            <div className="font-semibold text-white">
+          <div className="min-w-0 rounded-lg border border-white/10 bg-white/[0.06] px-4 py-3 text-sm text-slate-300">
+            <div className="break-words font-semibold text-white">
               {data?.company.name || "Nava Strat"}
             </div>
             <div className="mt-1">
@@ -179,9 +179,9 @@ function JourneyCard({ journey }: { journey: ClientJourney }) {
   return (
     <article className="rounded-lg border border-white/10 bg-white/[0.06] p-5">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div>
+        <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-3">
-            <h2 className="text-lg font-semibold text-white">
+            <h2 className="min-w-0 break-words text-lg font-semibold text-white">
               {journey.reference || "Delivery"}
             </h2>
             <StatusBadge status={journey.status} />
@@ -190,8 +190,8 @@ function JourneyCard({ journey }: { journey: ClientJourney }) {
             {journey.route.from || "Origin"} → {journey.route.to || "Destination"}
           </p>
         </div>
-        <div className="text-sm text-slate-300 lg:text-right">
-          <div className="font-semibold text-white">
+        <div className="min-w-0 text-sm text-slate-300 lg:text-right">
+          <div className="break-words font-semibold text-white">
             {journey.truck.registration || "Truck pending"}
           </div>
           <div className="mt-1">
@@ -219,7 +219,7 @@ function JourneyCard({ journey }: { journey: ClientJourney }) {
           <div className="text-xs font-bold uppercase tracking-[0.14em] text-slate-400">
             Quantity
           </div>
-          <div className="mt-3 grid grid-cols-3 gap-3 text-sm">
+          <div className="mt-3 grid gap-3 text-sm min-[420px]:grid-cols-3">
             <Quantity label="Loaded" value={journey.quantity.loaded} unit={journey.quantity.billing_unit} />
             <Quantity label="Offloaded" value={journey.quantity.offloaded} unit={journey.quantity.billing_unit} />
             <Quantity label="Remaining" value={journey.quantity.remaining} unit={journey.quantity.billing_unit} />
@@ -270,7 +270,7 @@ function StatusBadge({ status }: { status: string | null }) {
         : "border-slate-300/30 bg-slate-300/10 text-slate-200";
 
   return (
-    <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${tone}`}>
+    <span className={`inline-flex max-w-full whitespace-normal break-words rounded-full border px-2.5 py-1 text-center text-xs font-semibold leading-5 ${tone}`}>
       {status || "Pending"}
     </span>
   );

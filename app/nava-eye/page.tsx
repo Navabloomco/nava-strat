@@ -126,7 +126,7 @@ export default function NavaEyeChatPage() {
 
   if (initializing) {
     return (
-      <main className="min-h-screen bg-slate-950 px-8 py-10 text-white">
+      <main className="min-h-screen bg-slate-950 px-4 py-6 text-white sm:px-8 sm:py-10">
         <Panel dark className="p-6">
           <div className="text-sm text-slate-300">Loading Nava Eye...</div>
         </Panel>
@@ -135,7 +135,7 @@ export default function NavaEyeChatPage() {
   }
 
   return (
-    <main className="min-h-screen bg-slate-950 px-8 py-10 text-white">
+    <main className="min-h-screen bg-slate-950 px-4 py-6 text-white sm:px-8 sm:py-10">
       <div className="mx-auto max-w-5xl">
         <PageHeader
           dark
@@ -185,7 +185,7 @@ export default function NavaEyeChatPage() {
                     key={suggestion}
                     type="button"
                     onClick={() => setQuestion(suggestion)}
-                    className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs font-medium text-slate-300 hover:border-cyan-200/30 hover:bg-cyan-300/10 hover:text-cyan-100"
+                    className="max-w-full whitespace-normal break-words rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-left text-xs font-medium leading-5 text-slate-300 hover:border-cyan-200/30 hover:bg-cyan-300/10 hover:text-cyan-100"
                   >
                     {suggestion}
                   </button>
@@ -193,7 +193,7 @@ export default function NavaEyeChatPage() {
               </div>
 
               <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center">
-                <PrimaryButton type="submit" disabled={loading || !question.trim()}>
+                <PrimaryButton type="submit" disabled={loading || !question.trim()} className="w-full sm:w-auto">
                   {loading ? "Thinking..." : "Ask Nava Eye"}
                 </PrimaryButton>
                 {question && (
@@ -204,6 +204,7 @@ export default function NavaEyeChatPage() {
                       setAnswer("");
                       setErrorDetail("");
                     }}
+                    className="w-full sm:w-auto"
                   >
                     Clear
                   </SecondaryButton>

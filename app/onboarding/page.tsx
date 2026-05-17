@@ -147,22 +147,22 @@ export default function Onboarding() {
 
   if (loading) {
     return (
-      <main className="min-h-screen bg-slate-50 p-10 text-slate-950">
+      <main className="min-h-screen bg-slate-50 p-4 text-slate-950 sm:p-10">
         Loading onboarding...
       </main>
     );
   }
 
   return (
-    <main className="min-h-screen bg-slate-50 p-8 text-slate-950">
+    <main className="min-h-screen bg-slate-50 p-4 text-slate-950 sm:p-8">
       <div className="mx-auto max-w-6xl">
-        <header className="mb-8 rounded-lg border border-slate-200 bg-white p-8">
-          <p className="text-sm font-bold uppercase tracking-[0.18em] text-cyan-700">
+        <header className="mb-8 rounded-lg border border-slate-200 bg-white p-5 sm:p-8">
+          <p className="break-words text-sm font-bold uppercase tracking-[0.14em] text-cyan-700 sm:tracking-[0.18em]">
             SaaS onboarding
           </p>
           <div className="mt-3 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div>
-              <h1 className="text-4xl font-semibold tracking-normal">
+              <h1 className="break-words text-3xl font-semibold tracking-normal sm:text-4xl">
                 Set up your Nava Strat workspace
               </h1>
               <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600">
@@ -235,7 +235,7 @@ export default function Onboarding() {
         ) : (
           <div className="grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
             <section className="rounded-lg border border-slate-200 bg-white p-6">
-              <div className="mb-5 flex items-center justify-between">
+              <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <h2 className="text-xl font-semibold">Pilot readiness checklist</h2>
                   <p className="mt-1 text-sm text-slate-600">
@@ -411,11 +411,11 @@ function getNextBestStep(state: OnboardingState, status: any, onRefresh: () => v
 function NextBestStepCard({ step }: { step: any }) {
   return (
     <section className="rounded-lg border border-slate-200 bg-white p-6">
-      <p className="text-xs font-bold uppercase tracking-[0.18em] text-cyan-700">
+      <p className="break-words text-xs font-bold uppercase tracking-[0.14em] text-cyan-700 sm:tracking-[0.18em]">
         {step.eyebrow}
       </p>
       <h2 className="mt-3 text-xl font-semibold">Next best step</h2>
-      <h3 className="mt-4 text-2xl font-semibold tracking-normal text-slate-950">
+      <h3 className="mt-4 break-words text-2xl font-semibold tracking-normal text-slate-950">
         {step.title}
       </h3>
       <p className="mt-3 text-sm leading-6 text-slate-600">{step.body}</p>
@@ -451,7 +451,7 @@ function ActionButton({ action, primary = false }: { action: any; primary?: bool
 
 function Metric({ label, value }: { label: string; value: number }) {
   return (
-    <div className="flex items-center justify-between rounded-md border border-slate-200 px-4 py-3">
+    <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-slate-200 px-4 py-3">
       <span className="text-sm text-slate-600">{label}</span>
       <span className="text-lg font-bold">{value}</span>
     </div>

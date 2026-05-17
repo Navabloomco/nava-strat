@@ -70,12 +70,12 @@ const tiers = [
 export default function PricingPage() {
   return (
     <main className="min-h-screen bg-slate-950 text-white">
-      <section className="border-b border-white/10 px-8 py-8">
-        <div className="mx-auto flex max-w-7xl items-center justify-between">
-          <Link href="/" className="text-lg font-semibold">
+      <section className="border-b border-white/10 px-4 py-6 sm:px-8 sm:py-8">
+        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3">
+          <Link href="/" className="min-w-0 truncate text-lg font-semibold">
             Nava Strat
           </Link>
-          <div className="flex gap-3">
+          <div className="flex shrink-0 gap-2 sm:gap-3">
             <Link
               href="/login"
               className="rounded-md px-4 py-2 text-sm font-medium text-slate-200 hover:bg-white/10"
@@ -92,13 +92,13 @@ export default function PricingPage() {
         </div>
       </section>
 
-      <section className="px-8 py-20">
+      <section className="px-4 py-16 sm:px-8 sm:py-20">
         <div className="mx-auto max-w-7xl">
           <div className="max-w-3xl">
-            <p className="text-sm font-bold uppercase tracking-[0.18em] text-cyan-200">
+            <p className="break-words text-sm font-bold uppercase tracking-[0.14em] text-cyan-200 sm:tracking-[0.18em]">
               Enabled intelligence vehicle pricing
             </p>
-            <h1 className="mt-4 text-5xl font-semibold tracking-normal">
+            <h1 className="mt-4 break-words text-4xl font-semibold tracking-normal sm:text-5xl">
               Simple, transparent pricing for fleet intelligence.
             </h1>
             <p className="mt-5 text-lg leading-8 text-slate-300">
@@ -126,7 +126,7 @@ export default function PricingPage() {
                   {tier.price}
                 </div>
                 <div
-                  className={`mt-4 rounded-md border px-3 py-2 text-sm font-semibold ${
+                  className={`mt-4 whitespace-normal break-words rounded-md border px-3 py-2 text-sm font-semibold leading-6 ${
                     tier.featured
                       ? "border-slate-950/10 bg-slate-950/10 text-slate-900"
                       : "border-cyan-200/20 bg-cyan-300/10 text-cyan-100"
@@ -171,10 +171,10 @@ export default function PricingPage() {
 
           <div className="mt-12 grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
             <section className="rounded-lg border border-white/10 bg-white/[0.06] p-6">
-              <p className="text-sm font-bold uppercase tracking-[0.18em] text-cyan-200">
+              <p className="break-words text-sm font-bold uppercase tracking-[0.14em] text-cyan-200 sm:tracking-[0.18em]">
                 Fair billing promise
               </p>
-              <h2 className="mt-3 text-3xl font-semibold tracking-normal">
+              <h2 className="mt-3 break-words text-2xl font-semibold tracking-normal sm:text-3xl">
                 You stay in control of what becomes billable.
               </h2>
               <ul className="mt-6 grid gap-3 text-sm leading-6 text-slate-300 md:grid-cols-2">
@@ -187,10 +187,10 @@ export default function PricingPage() {
             </section>
 
             <section className="rounded-lg border border-cyan-200/20 bg-cyan-300/10 p-6">
-              <p className="text-sm font-bold uppercase tracking-[0.18em] text-cyan-200">
+              <p className="break-words text-sm font-bold uppercase tracking-[0.14em] text-cyan-200 sm:tracking-[0.18em]">
                 Pilot trial
               </p>
-              <h2 className="mt-3 text-3xl font-semibold tracking-normal">
+              <h2 className="mt-3 break-words text-2xl font-semibold tracking-normal sm:text-3xl">
                 30-day pilot with assisted onboarding.
               </h2>
               <p className="mt-5 text-sm leading-6 text-slate-300">
@@ -202,7 +202,7 @@ export default function PricingPage() {
           </div>
 
           <section className="mt-4 rounded-lg border border-white/10 bg-white/[0.06] p-6">
-            <p className="text-sm font-bold uppercase tracking-[0.18em] text-cyan-200">
+            <p className="break-words text-sm font-bold uppercase tracking-[0.14em] text-cyan-200 sm:tracking-[0.18em]">
               Proration example
             </p>
             <p className="mt-3 max-w-4xl text-sm leading-6 text-slate-300">
