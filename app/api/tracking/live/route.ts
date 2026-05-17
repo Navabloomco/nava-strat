@@ -212,11 +212,16 @@ export async function GET(req: Request) {
 
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
-    const [liveTrucks, assetsResult, telemetryResult, providersResult] =
+    const [liveTrucks, importedAssetsResult, enabledAssetsResult, providersResult] =
       await Promise.all([
         getCurrentFleetLocations(resolved.company.id, {
           maxAgeMinutes: FRESHNESS_MINUTES,
         }),
+        supabaseAdmin
+          .from("fleet_assets")
+          .select("truck_id, registration, status")
+          .eq("company_id", resolved.company.id)
+          .eq("status", "active"),
         supabaseAdmin
           .from("fleet_assets")
           .select(
@@ -224,13 +229,8 @@ export async function GET(req: Request) {
           )
           .eq("company_id", resolved.company.id)
           .eq("status", "active")
+          .eq("intelligence_enabled", true)
           .order("last_seen_at", { ascending: false }),
-        supabaseAdmin
-          .from("telemetry_logs")
-          .select("truck_id, recorded_at, speed, fuel_level")
-          .eq("company_id", resolved.company.id)
-          .gte("recorded_at", since)
-          .order("recorded_at", { ascending: false }),
         supabaseAdmin
           .from("tracking_providers")
           .select(
@@ -240,23 +240,41 @@ export async function GET(req: Request) {
           .order("created_at", { ascending: false }),
       ]);
 
-    if (assetsResult.error) throw assetsResult.error;
-    if (telemetryResult.error) throw telemetryResult.error;
+    if (importedAssetsResult.error) throw importedAssetsResult.error;
+    if (enabledAssetsResult.error) throw enabledAssetsResult.error;
     if (providersResult.error) throw providersResult.error;
 
-    const activeAssets = assetsResult.data || [];
-    const telemetryLogs = telemetryResult.data || [];
+    const importedAssets = importedAssetsResult.data || [];
+    const enabledAssets = enabledAssetsResult.data || [];
+    const enabledTruckIds = enabledAssets
+      .map((asset) => asset.truck_id)
+      .filter(Boolean);
+    let telemetryLogs: any[] = [];
+
+    if (enabledTruckIds.length > 0) {
+      const { data, error } = await supabaseAdmin
+        .from("telemetry_logs")
+        .select("truck_id, recorded_at, speed, fuel_level")
+        .eq("company_id", resolved.company.id)
+        .in("truck_id", enabledTruckIds)
+        .gte("recorded_at", since)
+        .order("recorded_at", { ascending: false });
+
+      if (error) throw error;
+      telemetryLogs = data || [];
+    }
+
     const providers = providersResult.data || [];
     const telemetryByTruck = buildLatestTelemetryByTruck(telemetryLogs);
     const liveTruckIds = new Set(liveTrucks.map((truck) => truck.truck_id));
     const locationLabels = await fetchCachedLocationLabels([
       ...liveTrucks,
-      ...activeAssets,
+      ...enabledAssets,
     ]);
 
     const trucks = liveTrucks.map((truck) => {
       const telemetry = telemetryByTruck[truck.truck_id] || null;
-      const matchingAsset = activeAssets.find(
+      const matchingAsset = enabledAssets.find(
         (asset) => asset.truck_id === truck.truck_id
       );
 
@@ -277,7 +295,7 @@ export async function GET(req: Request) {
       };
     });
 
-    const staleAssets = activeAssets
+    const staleAssets = enabledAssets
       .filter((asset) => !liveTruckIds.has(asset.truck_id))
       .map((asset) => ({
         truck_id: asset.truck_id,
@@ -296,7 +314,9 @@ export async function GET(req: Request) {
       company: resolved.company,
       freshness_minutes: FRESHNESS_MINUTES,
       summary: {
-        active_assets: activeAssets.length,
+        imported_assets: importedAssets.length,
+        enabled_assets: enabledAssets.length,
+        active_assets: enabledAssets.length,
         live_assets: trucks.length,
         stale_assets: staleAssets.length,
         telemetry_points_24h: telemetryLogs.length,

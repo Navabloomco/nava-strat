@@ -7,6 +7,8 @@ type LiveTrackingData = {
   company: { id: string; name: string; slug: string } | null;
   freshness_minutes: number;
   summary: {
+    imported_assets: number;
+    enabled_assets: number;
     active_assets: number;
     live_assets: number;
     stale_assets: number;
@@ -23,6 +25,8 @@ const emptyData: LiveTrackingData = {
   company: null,
   freshness_minutes: 30,
   summary: {
+    imported_assets: 0,
+    enabled_assets: 0,
     active_assets: 0,
     live_assets: 0,
     stale_assets: 0,
@@ -169,8 +173,10 @@ export default function LiveTrackingPage() {
 
   const summary = data.summary;
   const noProviders = summary.provider_count === 0;
-  const noAssets = summary.provider_count > 0 && summary.active_assets === 0;
-  const noLiveLocations = summary.active_assets > 0 && summary.live_assets === 0;
+  const noImportedAssets = summary.provider_count > 0 && summary.imported_assets === 0;
+  const importedButNoneEnabled =
+    summary.imported_assets > 0 && summary.enabled_assets === 0;
+  const noLiveLocations = summary.enabled_assets > 0 && summary.live_assets === 0;
 
   return (
     <main className="min-h-screen bg-slate-950 px-6 py-8 text-white">
@@ -225,18 +231,19 @@ export default function LiveTrackingPage() {
             )}
 
             <section className="mt-8 grid gap-4 md:grid-cols-3 xl:grid-cols-6">
-              <Metric label="Active assets" value={summary.active_assets} />
+              <Metric label="Imported assets" value={summary.imported_assets} />
+              <Metric label="Enabled assets" value={summary.enabled_assets} />
               <Metric label="Live now" value={summary.live_assets} accent />
               <Metric label="Stale assets" value={summary.stale_assets} />
               <Metric label="Telemetry 24h" value={summary.telemetry_points_24h} />
               <Metric label="Providers" value={summary.provider_count} />
-              <Metric label="Active providers" value={summary.active_provider_count} />
             </section>
 
-            {(noProviders || noAssets || noLiveLocations) && (
+            {(noProviders || noImportedAssets || importedButNoneEnabled || noLiveLocations) && (
               <EmptyState
                 noProviders={noProviders}
-                noAssets={noAssets}
+                noImportedAssets={noImportedAssets}
+                importedButNoneEnabled={importedButNoneEnabled}
                 noLiveLocations={noLiveLocations}
                 freshnessMinutes={data.freshness_minutes}
               />
@@ -405,12 +412,14 @@ function TruckRow({ truck }: { truck: any }) {
 
 function EmptyState({
   noProviders,
-  noAssets,
+  noImportedAssets,
+  importedButNoneEnabled,
   noLiveLocations,
   freshnessMinutes,
 }: {
   noProviders: boolean;
-  noAssets: boolean;
+  noImportedAssets: boolean;
+  importedButNoneEnabled: boolean;
   noLiveLocations: boolean;
   freshnessMinutes: number;
 }) {
@@ -420,12 +429,17 @@ function EmptyState({
   if (noProviders) {
     title = "No tracking provider connected";
     body = "Connect a GPS or telemetry provider so Nava can begin receiving fleet locations.";
-  } else if (noAssets) {
+  } else if (noImportedAssets) {
     title = "Provider connected, no fleet assets yet";
     body = "Your provider connection exists, but Nava has not received fleet assets yet.";
+  } else if (importedButNoneEnabled) {
+    title = "Review assets before live tracking";
+    body =
+      "Fleet assets have been imported, but none have been enabled for Nava intelligence yet. Review assets before they appear in live tracking.";
   } else if (noLiveLocations) {
     title = "No fresh live locations";
-    body = `Fleet assets exist, but none have fresh valid coordinates in the last ${freshnessMinutes} minutes.`;
+    body =
+      "Enabled assets exist, but no fresh live locations have arrived in the last 30 minutes.";
   }
 
   return (

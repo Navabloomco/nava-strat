@@ -117,6 +117,7 @@ export async function getCurrentFleetLocations(
     .select("truck_id, registration, latitude, longitude, last_seen_at, status")
     .eq("company_id", companyId)
     .eq("status", "active")
+    .eq("intelligence_enabled", true)
     .gte("last_seen_at", since.toISOString())
     .not("latitude", "is", null)
     .not("longitude", "is", null);
