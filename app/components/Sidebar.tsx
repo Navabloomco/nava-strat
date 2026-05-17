@@ -7,6 +7,7 @@ import { supabase } from "../../lib/supabase";
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   const [roles, setRoles] = useState({
     hasCompanyAccess: false,
@@ -165,39 +166,87 @@ export default function Sidebar() {
       show: roles.isPlatformOwner,
     },
   ];
+  const visibleNavItems = navItems.filter((item) => item.show);
+
+  function navLinkClass(active: boolean) {
+    return active
+      ? "rounded-md border border-cyan-200/20 bg-cyan-300/10 px-3 py-2.5 text-sm font-bold text-cyan-100"
+      : "rounded-md px-3 py-2.5 text-sm font-medium text-slate-400 transition hover:bg-white/[0.05] hover:text-white";
+  }
 
   return (
-    <aside className="fixed left-0 top-0 h-screen w-[240px] border-r border-slate-800 bg-slate-950 px-4 py-5 text-slate-100">
-      <div className="mb-7 rounded-lg border border-cyan-200/10 bg-white/[0.04] px-4 py-4">
-        <div className="text-lg font-semibold tracking-normal text-white">
-          Nava Strat
+    <>
+      <div className="sticky top-0 z-40 border-b border-slate-800 bg-slate-950/95 px-4 py-3 text-slate-100 backdrop-blur lg:hidden">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="text-base font-semibold tracking-normal text-white">
+              Nava Strat
+            </div>
+            <div className="mt-0.5 text-[9px] font-bold uppercase tracking-[0.18em] text-cyan-200/70">
+              Fleet Intelligence
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setMobileOpen((current) => !current)}
+            aria-expanded={mobileOpen}
+            aria-controls="mobile-nava-nav"
+            className="rounded-md border border-cyan-200/20 px-3 py-2 text-xs font-bold uppercase tracking-[0.14em] text-cyan-100 hover:bg-cyan-300/10"
+          >
+            {mobileOpen ? "Close" : "Menu"}
+          </button>
         </div>
-        <div className="mt-1 text-[10px] font-bold uppercase tracking-[0.2em] text-cyan-200/70">
-          Fleet Intelligence
-        </div>
+
+        {mobileOpen && (
+          <nav
+            id="mobile-nava-nav"
+            className="mt-3 grid max-h-[70vh] gap-1.5 overflow-y-auto rounded-lg border border-white/10 bg-slate-900 p-2 shadow-2xl shadow-black/30"
+          >
+            {visibleNavItems.map((item) => {
+              const active = pathname === item.href;
+
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  onClick={() => setMobileOpen(false)}
+                  className={navLinkClass(active)}
+                >
+                  {item.name}
+                </Link>
+              );
+            })}
+          </nav>
+        )}
       </div>
 
-      <nav className="flex flex-col gap-1.5">
-        {navItems
-          .filter((item) => item.show)
-          .map((item) => {
+      <aside className="fixed left-0 top-0 hidden h-screen w-[240px] border-r border-slate-800 bg-slate-950 px-4 py-5 text-slate-100 lg:block">
+        <div className="mb-7 rounded-lg border border-cyan-200/10 bg-white/[0.04] px-4 py-4">
+          <div className="text-lg font-semibold tracking-normal text-white">
+            Nava Strat
+          </div>
+          <div className="mt-1 text-[10px] font-bold uppercase tracking-[0.2em] text-cyan-200/70">
+            Fleet Intelligence
+          </div>
+        </div>
+
+        <nav className="flex flex-col gap-1.5">
+          {visibleNavItems.map((item) => {
             const active = pathname === item.href;
 
             return (
               <Link
                 key={item.href}
                 href={item.href}
-                className={
-                  active
-                    ? "rounded-md border border-cyan-200/20 bg-cyan-300/10 px-3 py-2.5 text-sm font-bold text-cyan-100"
-                    : "rounded-md px-3 py-2.5 text-sm font-medium text-slate-400 transition hover:bg-white/[0.05] hover:text-white"
-                }
+                className={navLinkClass(active)}
               >
                 {item.name}
               </Link>
             );
           })}
-      </nav>
-    </aside>
+        </nav>
+      </aside>
+    </>
   );
 }
