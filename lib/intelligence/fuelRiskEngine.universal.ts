@@ -23,19 +23,94 @@ interface ShiftWindow {
   journey_id: string | null;
 }
 
-export async function runUniversalFuelRiskEngine(shiftWindow?: ShiftWindow, lookbackHours: number = 168) {
+async function getEnabledTruckIds(companyId: string) {
+  const { data, error } = await supabaseAdmin
+    .from("fleet_assets")
+    .select("truck_id, registration")
+    .eq("company_id", companyId)
+    .eq("status", "active")
+    .eq("intelligence_enabled", true);
+
+  if (error) throw error;
+
+  return new Set(
+    (data || [])
+      .flatMap((asset) => [asset.truck_id, asset.registration])
+      .filter(Boolean)
+      .map((value) => String(value).trim())
+  );
+}
+
+async function isTruckEnabledForCompany(companyId: string, truckId: string) {
+  const { data: truckMatch, error: truckError } = await supabaseAdmin
+    .from("fleet_assets")
+    .select("id")
+    .eq("company_id", companyId)
+    .eq("status", "active")
+    .eq("intelligence_enabled", true)
+    .eq("truck_id", truckId)
+    .limit(1);
+
+  if (truckError) throw truckError;
+  if (truckMatch && truckMatch.length > 0) return true;
+
+  const { data: registrationMatch, error: registrationError } = await supabaseAdmin
+    .from("fleet_assets")
+    .select("id")
+    .eq("company_id", companyId)
+    .eq("status", "active")
+    .eq("intelligence_enabled", true)
+    .eq("registration", truckId)
+    .limit(1);
+
+  if (registrationError) throw registrationError;
+  return Boolean(registrationMatch && registrationMatch.length > 0);
+}
+
+function notEnabledFuelRiskResult(truckId: string) {
+  return {
+    truck_id: truckId,
+    message:
+      "I can only analyze fuel risk for assets enabled for Nava intelligence. This asset may be waiting for review.",
+    telemetry_points_found: 0,
+    risk_score: 0,
+    risk_level: "not_enabled",
+    not_enabled: true,
+  };
+}
+
+export async function runUniversalFuelRiskEngine(
+  shiftWindow?: ShiftWindow,
+  lookbackHours: number = 168,
+  companyId?: string
+) {
   if (!shiftWindow) {
     const since = new Date(Date.now() - lookbackHours * 60 * 60 * 1000);
-    
-    const { data: shifts, error } = await supabaseAdmin
+
+    let shiftQuery = supabaseAdmin
       .from("asset_driver_assignments")
       .select("*")
       .gte("assigned_from", since.toISOString());
+
+    if (companyId) {
+      shiftQuery = shiftQuery.eq("company_id", companyId);
+    }
+
+    const { data: shifts, error } = await shiftQuery;
     
     if (error) throw error;
+
+    const enabledTruckIds = companyId ? await getEnabledTruckIds(companyId) : null;
+    if (companyId && (!enabledTruckIds || enabledTruckIds.size === 0)) {
+      return { success: true, scores: [], lookback_hours: lookbackHours };
+    }
     
     const results = [];
     for (const shift of shifts || []) {
+      if (enabledTruckIds && !enabledTruckIds.has(String(shift.truck_id).trim())) {
+        continue;
+      }
+
       const result = await analyzeShiftUniversal({
         start: new Date(shift.assigned_from),
         end: shift.assigned_to ? new Date(shift.assigned_to) : new Date(),
@@ -43,19 +118,31 @@ export async function runUniversalFuelRiskEngine(shiftWindow?: ShiftWindow, look
         driver_id: shift.driver_id,
         driver_name: shift.driver_name,
         journey_id: shift.journey_id
-      });
+      }, companyId);
       if (result) results.push(result);
     }
     
     return { success: true, scores: results, lookback_hours: lookbackHours };
   }
   
-  const score = await analyzeShiftUniversal(shiftWindow);
+  if (companyId) {
+    const enabled = await isTruckEnabledForCompany(companyId, shiftWindow.truck_id);
+    if (!enabled) {
+      return { success: true, score: notEnabledFuelRiskResult(shiftWindow.truck_id) };
+    }
+  }
+
+  const score = await analyzeShiftUniversal(shiftWindow, companyId);
   return { success: true, score };
 }
 
-async function analyzeShiftUniversal(shift: ShiftWindow) {
-  const { data: telemetry, error } = await supabaseAdmin
+async function analyzeShiftUniversal(shift: ShiftWindow, companyId?: string) {
+  if (companyId) {
+    const enabled = await isTruckEnabledForCompany(companyId, shift.truck_id);
+    if (!enabled) return null;
+  }
+
+  let telemetryQuery = supabaseAdmin
     .from("telemetry_logs")
     .select("*")
     .eq("truck_id", shift.truck_id)
@@ -63,6 +150,12 @@ async function analyzeShiftUniversal(shift: ShiftWindow) {
     .lte("recorded_at", shift.end.toISOString())
     .not("fuel_level", "is", null)
     .order("recorded_at", { ascending: true });
+
+  if (companyId) {
+    telemetryQuery = telemetryQuery.eq("company_id", companyId);
+  }
+
+  const { data: telemetry, error } = await telemetryQuery;
   
   if (error || !telemetry || telemetry.length < 2) return null;
   
@@ -210,6 +303,7 @@ async function analyzeShiftUniversal(shift: ShiftWindow) {
   };
   
   await supabaseAdmin.from("fuel_risk_scores").insert({
+    ...(companyId ? { company_id: companyId } : {}),
     truck_id: score.truck_id,
     driver_id: score.driver_id,
     driver_name: score.driver_name,
@@ -235,16 +329,46 @@ async function analyzeShiftUniversal(shift: ShiftWindow) {
   return score;
 }
 
-export async function getUniversalDriverFuelRisk(driverName: string, days: number = 30) {
+export async function getUniversalDriverFuelRisk(
+  driverName: string,
+  days: number = 30,
+  companyId?: string
+) {
   const since = new Date();
   since.setDate(since.getDate() - days);
-  
-  const { data: scores, error } = await supabaseAdmin
+
+  const enabledTruckIds = companyId ? await getEnabledTruckIds(companyId) : null;
+  if (companyId && (!enabledTruckIds || enabledTruckIds.size === 0)) {
+    return {
+      driver_name: driverName,
+      period_days: days,
+      total_shifts_analyzed: 0,
+      high_risk_shifts: 0,
+      average_risk_score: "0",
+      total_small_drops: 0,
+      total_suspected_fuel_loss_units: "0.0",
+      fuel_unit: "unknown",
+      overall_risk_level: "LOW",
+      shifts: [],
+    };
+  }
+
+  let scoresQuery = supabaseAdmin
     .from("fuel_risk_scores")
     .select("*")
     .eq("driver_name", driverName)
     .gte("analysis_window_start", since.toISOString())
     .order("analysis_window_start", { ascending: true });
+
+  if (companyId) {
+    scoresQuery = scoresQuery.eq("company_id", companyId);
+  }
+
+  if (enabledTruckIds && enabledTruckIds.size > 0) {
+    scoresQuery = scoresQuery.in("truck_id", Array.from(enabledTruckIds));
+  }
+
+  const { data: scores, error } = await scoresQuery;
   
   if (error) throw error;
   
@@ -285,6 +409,13 @@ export async function analyzeTruckFuelRisk(
 ) {
   const since = new Date();
   since.setDate(since.getDate() - days);
+
+  if (companyId) {
+    const enabled = await isTruckEnabledForCompany(companyId, truckId);
+    if (!enabled) {
+      return notEnabledFuelRiskResult(truckId);
+    }
+  }
 
   // Fetch telemetry for this truck with fuel data
   let telemetryQuery = supabaseAdmin

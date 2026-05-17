@@ -3,6 +3,7 @@ import { reverseGeocode } from "../location/reverseGeocode";
 
 type TelemetryLog = {
   id: string;
+  company_id?: string | null;
   provider_id: string | null;
   truck_id: string;
   latitude: number | null;
@@ -13,19 +14,39 @@ type TelemetryLog = {
   created_at: string;
 };
 
-export async function runNavaEyeEventEngine() {
-  const { data: trucks, error: truckError } = await supabaseAdmin
+export async function runNavaEyeEventEngine(companyId?: string) {
+  let truckQuery = supabaseAdmin
     .from("fleet_assets")
-    .select("provider_id, truck_id, latitude, longitude, last_seen_at");
+    .select("company_id, provider_id, truck_id, latitude, longitude, last_seen_at")
+    .eq("status", "active")
+    .eq("intelligence_enabled", true);
+
+  if (companyId) {
+    truckQuery = truckQuery.eq("company_id", companyId);
+  }
+
+  const { data: trucks, error: truckError } = await truckQuery;
 
   if (truckError) {
     throw new Error(`Failed to load fleet assets: ${truckError.message}`);
   }
 
+  if (!trucks || trucks.length === 0) {
+    return {
+      success: true,
+      trucks_checked: 0,
+      trucks_analyzed: 0,
+      results: [],
+    };
+  }
+
   const results = [];
 
-  for (const truck of trucks || []) {
-    const truckResult = await analyzeTruck(truck.truck_id);
+  for (const truck of trucks) {
+    const truckResult = await analyzeTruck(
+      truck.truck_id,
+      truck.company_id || companyId
+    );
     results.push({
       truck_id: truck.truck_id,
       ...truckResult,
@@ -34,18 +55,25 @@ export async function runNavaEyeEventEngine() {
 
   return {
     success: true,
-    trucks_checked: results.length,
+    trucks_checked: trucks.length,
+    trucks_analyzed: results.length,
     results,
   };
 }
 
-async function analyzeTruck(truckId: string) {
-  const { data: logs, error } = await supabaseAdmin
+async function analyzeTruck(truckId: string, companyId?: string | null) {
+  let telemetryQuery = supabaseAdmin
     .from("telemetry_logs")
     .select("*")
     .eq("truck_id", truckId)
     .order("recorded_at", { ascending: false })
     .limit(50);
+
+  if (companyId) {
+    telemetryQuery = telemetryQuery.eq("company_id", companyId);
+  }
+
+  const { data: logs, error } = await telemetryQuery;
 
   if (error) {
     return {
@@ -117,6 +145,7 @@ async function detectOffline(latest: TelemetryLog) {
   }
 
   return createEventIfNotExists({
+    company_id: latest.company_id || null,
     provider_id: latest.provider_id,
     truck_id: latest.truck_id,
     event_type: "offline",
@@ -155,6 +184,7 @@ async function detectSpeeding(latest: TelemetryLog) {
   }
 
   return createEventIfNotExists({
+    company_id: latest.company_id || null,
     provider_id: latest.provider_id,
     truck_id: latest.truck_id,
     event_type: "overspeed",
@@ -194,6 +224,7 @@ async function detectLowFuel(latest: TelemetryLog) {
   }
 
   return createEventIfNotExists({
+    company_id: latest.company_id || null,
     provider_id: latest.provider_id,
     truck_id: latest.truck_id,
     event_type: "low_fuel",
@@ -245,6 +276,7 @@ async function detectExcessiveIdle(logs: TelemetryLog[]) {
   }
 
   return createEventIfNotExists({
+    company_id: newest.company_id || null,
     provider_id: newest.provider_id,
     truck_id: newest.truck_id,
     event_type: "excessive_idle",
@@ -319,6 +351,7 @@ async function detectFuelDropWhileStationary(logs: TelemetryLog[]) {
       }
 
       return createEventIfNotExists({
+        company_id: current.company_id || null,
         provider_id: current.provider_id,
         truck_id: current.truck_id,
         event_type: "fuel_drop_stationary",
@@ -347,6 +380,7 @@ async function detectFuelDropWhileStationary(logs: TelemetryLog[]) {
 }
 
 async function createEventIfNotExists(event: {
+  company_id?: string | null;
   provider_id: string | null;
   truck_id: string;
   event_type: string;
@@ -398,6 +432,7 @@ async function createEventIfNotExists(event: {
   const { error } = await supabaseAdmin
     .from("telemetry_events")
     .insert({
+      ...(event.company_id ? { company_id: event.company_id } : {}),
       provider_id: event.provider_id,
       truck_id: event.truck_id,
       event_type: event.event_type,
