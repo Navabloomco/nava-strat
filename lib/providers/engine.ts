@@ -88,6 +88,17 @@ export async function runProviderSync(
 
         if (!sample_normalized) sample_normalized = normalized;
 
+        const { data: existingAsset, error: existingAssetError } = await supabaseAdmin
+          .from("fleet_assets")
+          .select("id")
+          .eq("provider_id", provider.id)
+          .eq("truck_id", normalized.truck_id)
+          .maybeSingle();
+
+        if (existingAssetError) {
+          throw new Error(`Asset registry lookup failed: ${existingAssetError.message}`);
+        }
+
         const assetPayload: Record<string, any> = {
           provider_id: provider.id,
           provider_name: provider.provider_name,
@@ -102,11 +113,18 @@ export async function runProviderSync(
           updated_at: new Date().toISOString(),
         };
 
+        if (!existingAsset) {
+          assetPayload.asset_category = "unknown";
+          assetPayload.billing_status = "unreviewed";
+          assetPayload.intelligence_enabled = false;
+          assetPayload.first_seen_at = new Date().toISOString();
+        }
+
         if (normalized.location_label) {
           assetPayload.provider_location_label = normalized.location_label;
         }
 
-        // ✅ Upsert into fleet_assets with company_id and status = 'active'
+        // ✅ Upsert telemetry fields only; reviewed billing/classification fields are not overwritten.
         const { error: assetError } = await supabaseAdmin
           .from("fleet_assets")
           .upsert(
