@@ -3,50 +3,65 @@ import Link from "next/link";
 const tiers = [
   {
     name: "Starter",
-    price: "For small fleets",
-    description: "A clean operating base for companies getting their fleet data under control.",
+    price: "From KES 20,000/month",
+    included: "Includes 5 enabled intelligence vehicles",
+    extra: "KES 2,000 per additional enabled vehicle",
+    description: "A clean operating base for smaller teams starting with fleet intelligence.",
     features: [
-      "Company workspace",
-      "Core fleet and journey visibility",
-      "Provider connection checklist",
+      "Fuel & expense capture",
+      "Live tracking list",
       "Basic Nava Eye questions",
+      "5 client visibility links",
+      "1 provider connection",
     ],
     cta: "Start trial",
   },
   {
     name: "Growth",
-    price: "For scaling operators",
-    description: "More intelligence for teams managing more trucks, clients, and operational exceptions.",
+    price: "From KES 60,000/month",
+    included: "Includes 25 enabled intelligence vehicles",
+    extra: "KES 1,500 per additional enabled vehicle",
+    description: "More operating intelligence for teams managing more vehicles, clients, and exceptions.",
     features: [
       "Everything in Starter",
-      "Fuel, expense, and revenue workflows",
-      "Profitability and leakage analytics",
-      "Advanced Nava Eye context",
+      "Profitability dashboard",
+      "Nava Eye profit simulator",
+      "Management dashboard",
+      "25 client visibility links",
+      "2 provider connections",
+      "Priority onboarding support",
     ],
     cta: "Start trial",
     featured: true,
   },
   {
-    name: "Enterprise",
-    price: "For complex fleets",
-    description: "Controls and visibility for multi-region operations with stricter governance needs.",
+    name: "Scale",
+    price: "From KES 150,000/month",
+    included: "Includes 100 enabled intelligence vehicles",
+    extra: "KES 1,200 per additional enabled vehicle",
+    description: "Command-center capability for larger operations with multiple teams and providers.",
     features: [
-      "Multi-company operations",
-      "Role-based access",
-      "Provider connection monitoring",
-      "Executive intelligence dashboards",
+      "Everything in Growth",
+      "Advanced role access",
+      "Multi-provider operations",
+      "Provider request queue",
+      "100 client visibility links",
+      "Priority support",
     ],
     cta: "Talk to us",
   },
   {
-    name: "Platform / Custom",
-    price: "For networks",
-    description: "Custom deployment, integrations, and operating models for logistics platforms.",
+    name: "Enterprise",
+    price: "Custom pricing",
+    included: "For 150+ vehicles",
+    extra: "Terms confirmed with your team",
+    description: "For fleets with multiple depots, custom integrations, dedicated onboarding, and support terms.",
     features: [
-      "Custom provider integrations",
-      "Dedicated onboarding support",
-      "Custom reporting surfaces",
-      "Administrative oversight controls",
+      "150+ enabled intelligence vehicles",
+      "Multiple depot operations",
+      "Custom integrations",
+      "Dedicated onboarding",
+      "Dedicated support terms",
     ],
     cta: "Talk to us",
   },
@@ -81,14 +96,14 @@ export default function PricingPage() {
         <div className="mx-auto max-w-7xl">
           <div className="max-w-3xl">
             <p className="text-sm font-bold uppercase tracking-[0.18em] text-cyan-200">
-              SaaS pricing
+              Enabled intelligence vehicle pricing
             </p>
             <h1 className="mt-4 text-5xl font-semibold tracking-normal">
-              Choose the Nava Strat plan that matches your operating model.
+              Simple, transparent pricing for fleet intelligence.
             </h1>
             <p className="mt-5 text-lg leading-8 text-slate-300">
-              Start with secure fleet intelligence for your team, then expand into deeper
-              journey, fuel, finance, provider, and Nava Eye workflows as your team grows.
+              Only pay for vehicles you enable for Nava intelligence. Imported provider
+              vehicles remain unbilled until reviewed and enabled.
             </p>
           </div>
 
@@ -109,6 +124,22 @@ export default function PricingPage() {
                   }`}
                 >
                   {tier.price}
+                </div>
+                <div
+                  className={`mt-4 rounded-md border px-3 py-2 text-sm font-semibold ${
+                    tier.featured
+                      ? "border-slate-950/10 bg-slate-950/10 text-slate-900"
+                      : "border-cyan-200/20 bg-cyan-300/10 text-cyan-100"
+                  }`}
+                >
+                  {tier.included}
+                </div>
+                <div
+                  className={`mt-2 text-xs ${
+                    tier.featured ? "text-slate-800" : "text-slate-400"
+                  }`}
+                >
+                  {tier.extra}
                 </div>
                 <p
                   className={`mt-5 text-sm leading-6 ${
@@ -137,6 +168,49 @@ export default function PricingPage() {
               </div>
             ))}
           </div>
+
+          <div className="mt-12 grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
+            <section className="rounded-lg border border-white/10 bg-white/[0.06] p-6">
+              <p className="text-sm font-bold uppercase tracking-[0.18em] text-cyan-200">
+                Fair billing promise
+              </p>
+              <h2 className="mt-3 text-3xl font-semibold tracking-normal">
+                You stay in control of what becomes billable.
+              </h2>
+              <ul className="mt-6 grid gap-3 text-sm leading-6 text-slate-300 md:grid-cols-2">
+                <li>Only enabled intelligence vehicles are billed.</li>
+                <li>Imported provider vehicles are not billed automatically.</li>
+                <li>New vehicles can be reviewed before they affect billing.</li>
+                <li>Mid-cycle additions are prorated.</li>
+                <li>Trial customers see estimates before any charge.</li>
+              </ul>
+            </section>
+
+            <section className="rounded-lg border border-cyan-200/20 bg-cyan-300/10 p-6">
+              <p className="text-sm font-bold uppercase tracking-[0.18em] text-cyan-200">
+                Pilot trial
+              </p>
+              <h2 className="mt-3 text-3xl font-semibold tracking-normal">
+                30-day pilot with assisted onboarding.
+              </h2>
+              <p className="mt-5 text-sm leading-6 text-slate-300">
+                Billing starts only after vehicles are enabled and terms are confirmed.
+                Your team can review the fleet, provider connection, and estimated monthly
+                pricing before moving beyond the pilot.
+              </p>
+            </section>
+          </div>
+
+          <section className="mt-4 rounded-lg border border-white/10 bg-white/[0.06] p-6">
+            <p className="text-sm font-bold uppercase tracking-[0.18em] text-cyan-200">
+              Proration example
+            </p>
+            <p className="mt-3 max-w-4xl text-sm leading-6 text-slate-300">
+              If an extra vehicle is enabled halfway through the month, Nava estimates
+              only the remaining days for that billing period and shows the next monthly
+              estimate before confirmation.
+            </p>
+          </section>
         </div>
       </section>
 
