@@ -351,7 +351,7 @@ export default function AssetReviewPage() {
                         <div className="mt-4 rounded-lg border border-cyan-200/20 bg-cyan-300/10 p-3">
                           <div className="flex flex-wrap items-center gap-2">
                             <span className="text-xs font-bold uppercase tracking-[0.12em] text-cyan-100">
-                              Nava suggestion
+                              Review suggestion
                             </span>
                             <StatusPill tone="info">
                               {categoryLabel(asset.ai_suggested_category)}
@@ -364,7 +364,7 @@ export default function AssetReviewPage() {
                             {asset.ai_suggested_reason || "Not enough evidence"}
                           </p>
                           <p className="mt-2 text-xs leading-5 text-slate-400">
-                            Suggestions are guidance only. A human must still confirm the category and review action.
+                            Review and confirm before enabling this asset for Nava intelligence.
                           </p>
                         </div>
                       )}
