@@ -131,6 +131,10 @@ export default function OpsDashboard() {
       });
   }, [assetsByTruck, data.alerts, data.journeys]);
 
+  const importedButNoneEnabled =
+    (data.summary?.imported_assets || 0) > 0 &&
+    (data.summary?.enabled_assets || 0) === 0;
+
   if (loading) {
     return (
       <main className="min-h-screen bg-slate-950 px-8 py-10 text-white">
@@ -169,6 +173,16 @@ export default function OpsDashboard() {
           <Metric label="Online assets" value={data.summary?.online_assets || 0} accent />
           <Metric label="Alerts" value={data.summary?.alert_count || 0} />
         </section>
+
+        {importedButNoneEnabled && (
+          <section className="mt-8">
+            <EmptyState
+              dark
+              title="No enabled intelligence vehicles yet"
+              body="No enabled intelligence vehicles yet. Imported provider assets must be reviewed before they appear in operations."
+            />
+          </section>
+        )}
 
         <section className="mt-8 grid gap-6 xl:grid-cols-[0.8fr_1.2fr]">
           <Panel dark className="p-5">

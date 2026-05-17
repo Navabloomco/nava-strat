@@ -129,10 +129,9 @@ export async function GET(req: Request) {
 
     const [
       journeysResult,
-      assetsResult,
+      importedAssetsResult,
+      enabledAssetsResult,
       providersResult,
-      alertsResult,
-      telemetryResult,
     ] = await Promise.all([
       supabaseAdmin
         .from("journeys")
@@ -142,37 +141,62 @@ export async function GET(req: Request) {
         .order("created_at", { ascending: false }),
       supabaseAdmin
         .from("fleet_assets")
+        .select("truck_id, registration, status")
+        .eq("company_id", resolved.company.id)
+        .eq("status", "active")
+        .order("last_seen_at", { ascending: false }),
+      supabaseAdmin
+        .from("fleet_assets")
         .select("*")
         .eq("company_id", resolved.company.id)
         .eq("status", "active")
+        .eq("intelligence_enabled", true)
         .order("last_seen_at", { ascending: false }),
       supabaseAdmin
         .from("tracking_providers")
         .select("*")
         .eq("company_id", resolved.company.id)
         .order("created_at", { ascending: false }),
-      supabaseAdmin
-        .from("telemetry_events")
-        .select("*")
-        .eq("company_id", resolved.company.id)
-        .order("created_at", { ascending: false })
-        .limit(20),
-      supabaseAdmin
-        .from("telemetry_logs")
-        .select("id")
-        .eq("company_id", resolved.company.id)
-        .gte("recorded_at", since),
     ]);
 
     if (journeysResult.error) throw journeysResult.error;
-    if (assetsResult.error) throw assetsResult.error;
+    if (importedAssetsResult.error) throw importedAssetsResult.error;
+    if (enabledAssetsResult.error) throw enabledAssetsResult.error;
     if (providersResult.error) throw providersResult.error;
-    if (alertsResult.error) throw alertsResult.error;
-    if (telemetryResult.error) throw telemetryResult.error;
 
     const journeys = journeysResult.data || [];
-    const fleetAssets = assetsResult.data || [];
-    const alerts = alertsResult.data || [];
+    const importedAssets = importedAssetsResult.data || [];
+    const fleetAssets = enabledAssetsResult.data || [];
+    const enabledTruckIds = fleetAssets
+      .map((asset) => asset.truck_id)
+      .filter(Boolean);
+    let alerts: any[] = [];
+    let telemetryPoints24h = 0;
+
+    if (enabledTruckIds.length > 0) {
+      const [alertsResult, telemetryResult] = await Promise.all([
+        supabaseAdmin
+          .from("telemetry_events")
+          .select("*")
+          .eq("company_id", resolved.company.id)
+          .in("truck_id", enabledTruckIds)
+          .order("created_at", { ascending: false })
+          .limit(20),
+        supabaseAdmin
+          .from("telemetry_logs")
+          .select("id")
+          .eq("company_id", resolved.company.id)
+          .in("truck_id", enabledTruckIds)
+          .gte("recorded_at", since),
+      ]);
+
+      if (alertsResult.error) throw alertsResult.error;
+      if (telemetryResult.error) throw telemetryResult.error;
+
+      alerts = alertsResult.data || [];
+      telemetryPoints24h = telemetryResult.data?.length || 0;
+    }
+
     const providers = providersResult.data || [];
     const activeJourneys = journeys.filter(
       (journey) => String(journey.status || "").toLowerCase() === "active"
@@ -195,6 +219,8 @@ export async function GET(req: Request) {
       summary: {
         total_journeys: journeys.length,
         active_journeys: activeJourneys.length,
+        imported_assets: importedAssets.length,
+        enabled_assets: fleetAssets.length,
         active_assets: fleetAssets.length,
         online_assets: onlineAssets.length,
         offline_assets: fleetAssets.length - onlineAssets.length,
@@ -202,7 +228,7 @@ export async function GET(req: Request) {
         active_provider_count: providers.filter((provider) => provider.is_active).length,
         alert_count: alerts.length,
         high_alert_count: alerts.filter((alert) => alert.severity === "high").length,
-        telemetry_points_24h: telemetryResult.data?.length || 0,
+        telemetry_points_24h: telemetryPoints24h,
       },
     });
   } catch (err: any) {
