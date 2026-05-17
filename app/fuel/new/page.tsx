@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../../../lib/supabase";
+import JourneyPicker from "../../components/JourneyPicker";
 import {
   FormField,
   PageHeader,
@@ -216,21 +217,13 @@ export default function NewFuelPage() {
 
               {suggestedJourneys.length > 0 && (
                 <div className="mt-4">
-                  <select
+                  <JourneyPicker
+                    journeys={suggestedJourneys}
                     value={journeyId}
-                    onChange={(e) => setJourneyId(e.target.value)}
-                    className={inputClass}
-                  >
-                    <option value="">Choose matching journey or leave unallocated</option>
-
-                    {suggestedJourneys.map((j) => (
-                      <option key={j.id} value={j.id}>
-                        {j.internal_trip_id ? `${j.internal_trip_id} — ` : ""}
-                        {j.client_name || "NO CLIENT"} — {j.truck} —{" "}
-                        {j.from_location} → {j.to_location}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={(nextJourneyId) => setJourneyId(nextJourneyId)}
+                    allowUnallocated
+                    placeholder="Search matching trips by reference, truck, client, route, or status"
+                  />
                 </div>
               )}
             </Panel>

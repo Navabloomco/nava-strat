@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "../../../lib/supabase";
+import JourneyPicker from "../../components/JourneyPicker";
 import {
   FormField,
   PageHeader,
@@ -156,19 +157,13 @@ export default function NewExpensePage() {
         <Panel dark className="mt-8 p-6">
           <form onSubmit={handleSubmit} className="grid gap-5">
             <FormField label="Journey optional" dark>
-              <select
+              <JourneyPicker
+                journeys={journeys}
                 value={journeyId}
-                onChange={(e) => handleJourneySelect(e.target.value)}
-                className={inputClass}
-              >
-                <option value="">Select journey / or leave unallocated</option>
-
-                {journeys.map((j) => (
-                  <option key={j.id} value={j.id}>
-                    {j.internal_trip_id || "NO TRIP ID"} — {j.client_name || "NO CLIENT"} — {j.truck} — {j.from_location} → {j.to_location}
-                  </option>
-                ))}
-              </select>
+                onChange={(nextJourneyId) => handleJourneySelect(nextJourneyId)}
+                allowUnallocated
+                placeholder="Search open trips by reference, truck, client, route, or status"
+              />
             </FormField>
 
             <div className="grid gap-5 md:grid-cols-2">
