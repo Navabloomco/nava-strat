@@ -145,14 +145,14 @@ export default function LoginPage() {
           </Link>
           <div className="max-w-xl py-16">
             <p className="text-sm font-bold uppercase tracking-[0.18em] text-cyan-200">
-              Nava Eye ready
+              Fleet answers ready
             </p>
             <h1 className="mt-4 text-5xl font-semibold leading-tight tracking-normal">
               Sign in to your fleet intelligence workspace.
             </h1>
             <p className="mt-5 text-lg leading-8 text-slate-300">
               Access your fleet operations, live provider data, fuel risk,
-              profitability context, and the Nava Eye copilot from one secure SaaS entry.
+              profitability context, and Nava Eye fleet answers from one secure workspace.
             </p>
           </div>
           <Link href="/pricing" className="text-sm font-medium text-slate-300 hover:text-white">

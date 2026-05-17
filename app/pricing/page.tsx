@@ -10,7 +10,7 @@ const tiers = [
     features: [
       "Fuel & expense capture",
       "Live tracking list",
-      "Basic Nava Eye questions",
+      "Nava Eye fleet answers",
       "5 client visibility links",
       "1 provider connection",
     ],
@@ -25,7 +25,7 @@ const tiers = [
     features: [
       "Everything in Starter",
       "Profitability dashboard",
-      "Nava Eye profit simulator",
+      "Trip profit simulator",
       "Management dashboard",
       "25 client visibility links",
       "2 provider connections",

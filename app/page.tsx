@@ -4,7 +4,7 @@ const capabilities = [
   "Multi-company fleet intelligence",
   "Provider onboarding and telemetry health",
   "Journey, fuel, expense, and revenue visibility",
-  "Nava Eye operational copilot",
+  "Nava Eye fleet answers",
 ];
 
 const outcomes = [
@@ -86,7 +86,7 @@ export default function Home() {
                 <div className="mb-5 flex flex-wrap items-center justify-between gap-3 border-b border-white/10 pb-4">
                   <div className="min-w-0">
                     <div className="text-sm font-semibold text-white">Nava Eye</div>
-                    <div className="text-xs text-slate-400">Private fleet copilot</div>
+                    <div className="text-xs text-slate-400">Private fleet answers</div>
                   </div>
                   <div className="rounded-full bg-emerald-400/10 px-3 py-1 text-xs font-semibold text-emerald-200">
                     Live context
@@ -116,7 +116,7 @@ export default function Home() {
               Built for real operators
             </p>
             <h2 className="mt-3 text-3xl font-semibold tracking-normal md:text-4xl">
-              One system for operational truth, financial discipline, and AI-assisted decisions.
+              One system for operational truth, financial discipline, and decisions from live fleet context.
             </h2>
           </div>
           <div className="grid gap-4 md:grid-cols-3">

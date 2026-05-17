@@ -140,8 +140,8 @@ export default function NavaEyeChatPage() {
         <PageHeader
           dark
           eyebrow="Nava Eye"
-          title="Fleet intelligence copilot"
-          body="Ask questions about fleet health, journeys, fuel risk, truck status, providers, and operating performance."
+          title="Fleet answers"
+          body="Ask questions about your fleet, trips, fuel, expenses, locations, and operating performance."
           actions={
             selectedCompany ? (
               <StatusPill tone="info">{selectedCompany.name}</StatusPill>
@@ -173,7 +173,7 @@ export default function NavaEyeChatPage() {
                   <textarea
                     value={question}
                     onChange={(e) => setQuestion(e.target.value)}
-                    placeholder="Ask Nava Eye about live fleet status, active journeys, offline assets, fuel risk, or profitability."
+                    placeholder="Ask Nava Eye about live fleet status, active trips, offline assets, fuel risk, or profitability."
                     className="min-h-[150px] w-full resize-y rounded-md border border-white/10 bg-slate-900 px-4 py-3 text-sm leading-6 text-white outline-none placeholder:text-slate-500 focus:border-cyan-300"
                   />
                 </FormField>
@@ -194,7 +194,7 @@ export default function NavaEyeChatPage() {
 
               <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center">
                 <PrimaryButton type="submit" disabled={loading || !question.trim()} className="w-full sm:w-auto">
-                  {loading ? "Thinking..." : "Ask Nava Eye"}
+                  {loading ? "Checking your fleet data..." : "Ask Nava Eye"}
                 </PrimaryButton>
                 {question && (
                   <SecondaryButton
@@ -225,7 +225,7 @@ export default function NavaEyeChatPage() {
             <h2 className="mt-3 text-xl font-semibold">Ask like an operator</h2>
             <p className="mt-3 text-sm leading-6 text-slate-300">
               Nava Eye works best with direct operational questions about location,
-              freshness, fuel, journey progress, client margin, and provider health.
+              freshness, fuel, trip progress, client margin, and fleet data health.
             </p>
             <div className="mt-5 grid gap-3 text-sm text-slate-300">
               <div className="rounded-md border border-white/10 bg-white/[0.04] p-3">
