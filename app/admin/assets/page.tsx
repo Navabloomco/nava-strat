@@ -56,6 +56,7 @@ export default function AssetReviewPage() {
   const [forms, setForms] = useState<Record<string, AssetFormState>>({});
   const [loading, setLoading] = useState(true);
   const [actionId, setActionId] = useState("");
+  const [suggesting, setSuggesting] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
@@ -171,6 +172,43 @@ export default function AssetReviewPage() {
     }
   }
 
+  async function suggestClassifications() {
+    setSuggesting(true);
+    setError("");
+    setMessage("");
+
+    const token = await getAccessToken();
+    if (!token) return;
+
+    try {
+      const res = await fetch("/api/fleet-assets/suggest-classification", {
+        method: "POST",
+        cache: "no-store",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({}),
+      });
+      const json = await res.json();
+
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || "Failed to suggest classifications.");
+      }
+
+      setMessage(
+        `Classification suggestions updated for ${
+          json.suggestions?.length || 0
+        } asset${json.suggestions?.length === 1 ? "" : "s"}.`
+      );
+      await loadAssets();
+    } catch (err: any) {
+      setError(err.message || "Failed to suggest classifications.");
+    } finally {
+      setSuggesting(false);
+    }
+  }
+
   const billingPreview = useMemo(() => {
     const includedAssets = Number(billing?.included_assets || 0);
     const unitPrice = Number(billing?.asset_unit_price || 0);
@@ -208,6 +246,16 @@ export default function AssetReviewPage() {
           eyebrow="Fleet assets"
           title="Asset review"
           body="Imported assets are not billed until enabled for Nava intelligence."
+          actions={
+            <SecondaryButton
+              type="button"
+              onClick={suggestClassifications}
+              disabled={suggesting || assets.length === 0}
+              className="w-full sm:w-auto"
+            >
+              {suggesting ? "Suggesting..." : "Suggest classifications"}
+            </SecondaryButton>
+          }
         />
 
         {error && (
@@ -299,6 +347,27 @@ export default function AssetReviewPage() {
                           value={asset.provider_location_label || "Not labeled yet"}
                         />
                       </div>
+                      {asset.ai_suggested_category && (
+                        <div className="mt-4 rounded-lg border border-cyan-200/20 bg-cyan-300/10 p-3">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-xs font-bold uppercase tracking-[0.12em] text-cyan-100">
+                              Nava suggestion
+                            </span>
+                            <StatusPill tone="info">
+                              {categoryLabel(asset.ai_suggested_category)}
+                            </StatusPill>
+                            <span className="text-xs text-slate-300">
+                              {formatConfidence(asset.ai_confidence)} confidence
+                            </span>
+                          </div>
+                          <p className="mt-2 text-sm leading-6 text-slate-200">
+                            {asset.ai_suggested_reason || "Not enough evidence"}
+                          </p>
+                          <p className="mt-2 text-xs leading-5 text-slate-400">
+                            Suggestions are guidance only. A human must still confirm the category and review action.
+                          </p>
+                        </div>
+                      )}
                     </div>
 
                     <div className="grid gap-4">
@@ -457,6 +526,19 @@ function statusLabel(status: string) {
   if (status === "disabled") return "Disabled";
   if (status === "unreviewed") return "Unreviewed";
   return status || "Unknown";
+}
+
+function categoryLabel(value: string) {
+  return (
+    assetCategories.find((category) => category.value === value)?.label ||
+    "Unknown"
+  );
+}
+
+function formatConfidence(value: any) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return "Low";
+  return `${Math.round(numeric * 100)}%`;
 }
 
 function formatDate(value?: string | null) {

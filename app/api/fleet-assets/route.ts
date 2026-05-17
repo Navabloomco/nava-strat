@@ -43,6 +43,12 @@ function sanitizeAsset(asset: any) {
     billing_status: asset.billing_status || "unreviewed",
     intelligence_enabled: Boolean(asset.intelligence_enabled),
     excluded_reason: asset.excluded_reason || null,
+    ai_suggested_category: asset.ai_suggested_category || null,
+    ai_suggested_reason: asset.ai_suggested_reason || null,
+    ai_confidence:
+      asset.ai_confidence === null || asset.ai_confidence === undefined
+        ? null
+        : Number(asset.ai_confidence),
     first_seen_at: asset.first_seen_at || null,
     reviewed_at: asset.reviewed_at || null,
     billing_enabled_at: asset.billing_enabled_at || null,
@@ -181,7 +187,7 @@ export async function GET(req: Request) {
     const { data: assets, error } = await supabaseAdmin
       .from("fleet_assets")
       .select(
-        "id, registration, truck_id, provider_name, status, last_seen_at, provider_location_label, asset_category, billing_status, intelligence_enabled, excluded_reason, first_seen_at, reviewed_at, billing_enabled_at, billing_disabled_at"
+        "id, registration, truck_id, provider_name, status, last_seen_at, provider_location_label, asset_category, billing_status, intelligence_enabled, excluded_reason, ai_suggested_category, ai_suggested_reason, ai_confidence, first_seen_at, reviewed_at, billing_enabled_at, billing_disabled_at"
       )
       .eq("company_id", resolved.company.id);
 
