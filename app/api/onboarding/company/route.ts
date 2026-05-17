@@ -97,6 +97,9 @@ async function buildStatus(company: any) {
       counts: {
         providers: 0,
         fleet_assets: 0,
+        imported_assets: 0,
+        enabled_intelligence_assets: 0,
+        unreviewed_assets: 0,
         recent_telemetry: 0,
         provider_setup_requests: 0,
       },
@@ -109,6 +112,7 @@ async function buildStatus(company: any) {
         tracking_provider_connected: false,
         provider_tested_successfully: false,
         fleet_assets_received: false,
+        intelligence_vehicles_enabled: false,
         recent_telemetry_received: false,
         ready_to_create_first_journey: false,
       },
@@ -120,7 +124,6 @@ async function buildStatus(company: any) {
   const [
     providersResult,
     assetsResult,
-    telemetryResult,
     providerRequestsResult,
     providerRequestCountResult,
   ] = await Promise.all([
@@ -133,16 +136,8 @@ async function buildStatus(company: any) {
       .order("created_at", { ascending: false }),
     supabaseAdmin
       .from("fleet_assets")
-      .select("id, truck_id, registration, status, last_seen_at")
-      .eq("company_id", company.id)
-      .limit(50),
-    supabaseAdmin
-      .from("telemetry_logs")
-      .select("id, recorded_at")
-      .eq("company_id", company.id)
-      .gte("recorded_at", since)
-      .order("recorded_at", { ascending: false })
-      .limit(50),
+      .select("id, truck_id, registration, status, last_seen_at, intelligence_enabled, billing_status")
+      .eq("company_id", company.id),
     supabaseAdmin
       .from("provider_setup_requests")
       .select("provider_name, status, created_at")
@@ -157,21 +152,45 @@ async function buildStatus(company: any) {
 
   if (providersResult.error) throw providersResult.error;
   if (assetsResult.error) throw assetsResult.error;
-  if (telemetryResult.error) throw telemetryResult.error;
   if (providerRequestsResult.error) throw providerRequestsResult.error;
   if (providerRequestCountResult.error) throw providerRequestCountResult.error;
 
   const providers = providersResult.data || [];
   const fleetAssets = assetsResult.data || [];
-  const recentTelemetry = telemetryResult.data || [];
   const latestProviderRequest = providerRequestsResult.data?.[0] || null;
   const providerRequestsCount = providerRequestCountResult.count || 0;
   const providerTestedSuccessfully = providers.some(
     (provider) =>
       provider.last_test_status === "success" || Boolean(provider.last_sync_at)
   );
-  const recentTelemetryReceived = recentTelemetry.length > 0;
   const fleetAssetsReceived = fleetAssets.length > 0;
+  const enabledIntelligenceAssets = fleetAssets.filter((asset) =>
+    Boolean(asset.intelligence_enabled)
+  );
+  const unreviewedAssets = fleetAssets.filter(
+    (asset) => String(asset.billing_status || "unreviewed") === "unreviewed"
+  );
+  const enabledTruckIds = new Set(
+    enabledIntelligenceAssets.map((asset) => asset.truck_id).filter(Boolean)
+  );
+  let enabledRecentTelemetry: any[] = [];
+
+  if (enabledTruckIds.size > 0) {
+    const { data, error } = await supabaseAdmin
+      .from("telemetry_logs")
+      .select("id, truck_id, recorded_at")
+      .eq("company_id", company.id)
+      .in("truck_id", Array.from(enabledTruckIds))
+      .gte("recorded_at", since)
+      .order("recorded_at", { ascending: false })
+      .limit(50);
+
+    if (error) throw error;
+    enabledRecentTelemetry = data || [];
+  }
+
+  const intelligenceVehiclesEnabled = enabledIntelligenceAssets.length > 0;
+  const recentTelemetryReceived = enabledRecentTelemetry.length > 0;
 
   return {
     company,
@@ -189,10 +208,16 @@ async function buildStatus(company: any) {
     counts: {
       providers: providers.length,
       fleet_assets: fleetAssets.length,
-      recent_telemetry: recentTelemetry.length,
+      imported_assets: fleetAssets.length,
+      imported_assets_count: fleetAssets.length,
+      enabled_intelligence_assets: enabledIntelligenceAssets.length,
+      enabled_intelligence_assets_count: enabledIntelligenceAssets.length,
+      unreviewed_assets: unreviewedAssets.length,
+      unreviewed_assets_count: unreviewedAssets.length,
+      recent_telemetry: enabledRecentTelemetry.length,
       provider_setup_requests: providerRequestsCount,
     },
-    latest_telemetry_at: recentTelemetry[0]?.recorded_at || null,
+    latest_telemetry_at: enabledRecentTelemetry[0]?.recorded_at || null,
     provider_setup_requests_count: providerRequestsCount,
     latest_provider_setup_request_status: latestProviderRequest?.status || null,
     latest_provider_setup_request_provider_name:
@@ -204,9 +229,13 @@ async function buildStatus(company: any) {
       tracking_provider_connected: providers.length > 0,
       provider_tested_successfully: providerTestedSuccessfully,
       fleet_assets_received: fleetAssetsReceived,
+      intelligence_vehicles_enabled: intelligenceVehiclesEnabled,
       recent_telemetry_received: recentTelemetryReceived,
       ready_to_create_first_journey:
-        providerTestedSuccessfully && fleetAssetsReceived && recentTelemetryReceived,
+        providerTestedSuccessfully &&
+        fleetAssetsReceived &&
+        intelligenceVehiclesEnabled &&
+        recentTelemetryReceived,
     },
   };
 }

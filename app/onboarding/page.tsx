@@ -9,6 +9,7 @@ type Checklist = {
   tracking_provider_connected: boolean;
   provider_tested_successfully: boolean;
   fleet_assets_received: boolean;
+  intelligence_vehicles_enabled: boolean;
   recent_telemetry_received: boolean;
   ready_to_create_first_journey: boolean;
 };
@@ -19,6 +20,7 @@ type OnboardingState =
   | "provider_request_submitted"
   | "provider_connected_not_tested"
   | "provider_tested_no_fleet"
+  | "assets_imported_not_enabled"
   | "fleet_no_recent_location"
   | "live_tracking_ready";
 
@@ -40,8 +42,13 @@ const checklistItems: Array<{ key: keyof Checklist; label: string; detail: strin
   },
   {
     key: "fleet_assets_received",
-    label: "Fleet assets received",
-    detail: "Nava has received your first fleet records.",
+    label: "Provider assets imported",
+    detail: "Nava has received assets from your provider.",
+  },
+  {
+    key: "intelligence_vehicles_enabled",
+    label: "Intelligence vehicles enabled",
+    detail: "Review imported assets and enable the vehicles Nava should use.",
   },
   {
     key: "recent_telemetry_received",
@@ -166,8 +173,9 @@ export default function Onboarding() {
                 Set up your Nava Strat workspace
               </h1>
               <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600">
-                Create the company workspace, connect a real tracking provider, and
-                verify live fleet data before creating the first operational journey.
+                Create the company workspace, connect a real tracking provider,
+                review imported assets, and enable vehicles before creating the
+                first operational journey.
               </p>
             </div>
             {status?.company && (
@@ -285,7 +293,12 @@ export default function Onboarding() {
                 <h2 className="text-xl font-semibold">Live data status</h2>
                 <div className="mt-5 grid gap-3">
                   <Metric label="Providers" value={status.counts?.providers || 0} />
-                  <Metric label="Fleet assets" value={status.counts?.fleet_assets || 0} />
+                  <Metric label="Imported assets" value={status.counts?.imported_assets || status.counts?.fleet_assets || 0} />
+                  <Metric
+                    label="Enabled vehicles"
+                    value={status.counts?.enabled_intelligence_assets || 0}
+                  />
+                  <Metric label="Unreviewed assets" value={status.counts?.unreviewed_assets || 0} />
                   <Metric
                     label="Recent telemetry"
                     value={status.counts?.recent_telemetry || 0}
@@ -326,6 +339,10 @@ function getOnboardingState(status: any): OnboardingState {
 
   if (!checklist.fleet_assets_received) {
     return "provider_tested_no_fleet";
+  }
+
+  if (!checklist.intelligence_vehicles_enabled) {
+    return "assets_imported_not_enabled";
   }
 
   if (!checklist.recent_telemetry_received) {
@@ -387,10 +404,18 @@ function getNextBestStep(state: OnboardingState, status: any, onRefresh: () => v
       secondary: { label: "Refresh Onboarding", onClick: onRefresh },
       tertiary: null,
     },
+    assets_imported_not_enabled: {
+      eyebrow: "Asset review",
+      title: "Review imported assets",
+      body: "Fleet records have arrived. Review imported assets and enable the operational vehicles Nava should use in live tracking, operations, and intelligence.",
+      primary: { label: "Review Assets", href: "/admin/assets" },
+      secondary: { label: "Refresh Onboarding", onClick: onRefresh },
+      tertiary: null,
+    },
     fleet_no_recent_location: {
       eyebrow: "Live movement",
       title: "Check live tracking",
-      body: "Fleet records are present. Open Live Tracking to confirm fresh movement is arriving.",
+      body: "Enabled vehicles are ready. Open Live Tracking to confirm fresh movement is arriving.",
       primary: { label: "Open Live Tracking", href: "/tracking/live" },
       secondary: { label: "Refresh Onboarding", onClick: onRefresh },
       tertiary: null,
