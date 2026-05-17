@@ -209,7 +209,8 @@ export async function GET(
         .from("fleet_assets")
         .select("truck_id, registration, latitude, longitude, last_seen_at, provider_location_label")
         .eq("company_id", link.company_id)
-        .eq("status", "active"),
+        .eq("status", "active")
+        .eq("intelligence_enabled", true),
     ]);
 
     if (companyResult.error) throw companyResult.error;

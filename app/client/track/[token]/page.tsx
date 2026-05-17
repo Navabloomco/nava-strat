@@ -174,7 +174,7 @@ function JourneyCard({ journey }: { journey: ClientJourney }) {
       ? `${formatCoordinate(journey.location.coordinates.latitude)}, ${formatCoordinate(
           journey.location.coordinates.longitude
         )}`
-      : "Location not available yet");
+      : "Location not currently available.");
 
   return (
     <article className="rounded-lg border border-white/10 bg-white/[0.06] p-5">
@@ -197,7 +197,7 @@ function JourneyCard({ journey }: { journey: ClientJourney }) {
           <div className="mt-1">
             {journey.location.last_seen_at
               ? `Last seen ${formatDateTime(journey.location.last_seen_at)}`
-              : "No recent location timestamp"}
+              : "Location not currently available."}
           </div>
         </div>
       </div>
