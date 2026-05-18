@@ -33,8 +33,32 @@ type Driver = {
   status: string;
 };
 
+type EnabledAsset = {
+  id: string;
+  truck_id: string | null;
+  registration: string | null;
+  asset_category: string | null;
+  provider_name: string | null;
+  status: string | null;
+  last_seen_at: string | null;
+  assigned_driver: {
+    id: string;
+    driver_id: string | null;
+    driver_name: string | null;
+    assigned_from: string | null;
+  } | null;
+};
+
 function routeLabel(route: SavedRoute) {
   return `${route.from_location || "—"} → ${route.to_location || "—"}`;
+}
+
+function labelize(value: string | null | undefined) {
+  if (!value) return null;
+
+  return String(value)
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 export default function NewJourneyPage() {
@@ -51,11 +75,16 @@ export default function NewJourneyPage() {
   const [drivers, setDrivers] = useState<Driver[]>([]);
   const [driverSearch, setDriverSearch] = useState("");
   const [selectedDriverId, setSelectedDriverId] = useState("");
+  const [enabledAssets, setEnabledAssets] = useState<EnabledAsset[]>([]);
+  const [vehicleSearch, setVehicleSearch] = useState("");
+  const [selectedVehicleId, setSelectedVehicleId] = useState("");
+  const [vehicleAssignmentHint, setVehicleAssignmentHint] = useState("");
   const router = useRouter();
 
   useEffect(() => {
     loadSavedRoutes();
     loadDrivers();
+    loadEnabledAssets();
   }, []);
 
   async function loadSavedRoutes() {
@@ -102,6 +131,25 @@ export default function NewJourneyPage() {
     );
   }
 
+  async function loadEnabledAssets() {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData.session?.access_token;
+
+    if (!token) return;
+
+    const res = await fetch("/api/ops/enabled-assets", {
+      cache: "no-store",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    const json = await res.json();
+
+    if (!res.ok || !json.success) return;
+
+    setEnabledAssets(json.assets || []);
+  }
+
   const filteredSavedRoutes = useMemo(() => {
     const query = savedRouteSearch.trim().toLowerCase();
 
@@ -142,6 +190,29 @@ export default function NewJourneyPage() {
       .slice(0, 8);
   }, [drivers, driverSearch]);
 
+  const filteredVehicles = useMemo(() => {
+    const query = vehicleSearch.trim().toLowerCase();
+
+    const assets = enabledAssets.slice(0, query ? enabledAssets.length : 6);
+    if (!query) return assets;
+
+    return enabledAssets
+      .filter((asset) => {
+        const haystack = [
+          asset.registration,
+          asset.truck_id,
+          asset.provider_name,
+          asset.asset_category,
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+
+        return haystack.includes(query);
+      })
+      .slice(0, 8);
+  }, [enabledAssets, vehicleSearch]);
+
   function applySavedRoute(route: SavedRoute) {
     setSelectedSavedRouteId(route.id);
     setClient((route.client_name || "").toUpperCase());
@@ -156,6 +227,20 @@ export default function NewJourneyPage() {
   function applyDriver(selectedDriver: Driver) {
     setSelectedDriverId(selectedDriver.id);
     setDriver((selectedDriver.full_name || "").toUpperCase());
+    setVehicleAssignmentHint("");
+  }
+
+  function applyVehicle(asset: EnabledAsset) {
+    setSelectedVehicleId(asset.id);
+    setTruck((asset.registration || asset.truck_id || "").toUpperCase());
+
+    if (asset.assigned_driver?.driver_name) {
+      setSelectedDriverId(asset.assigned_driver.driver_id || "");
+      setDriver(asset.assigned_driver.driver_name.toUpperCase());
+      setVehicleAssignmentHint("Using current vehicle assignment.");
+    } else {
+      setVehicleAssignmentHint("");
+    }
   }
 
   function makeTripId() {
@@ -331,7 +416,11 @@ export default function NewJourneyPage() {
                   <input
                     placeholder="Vehicle e.g. KBJ123A"
                     value={truck}
-                    onChange={(e) => setTruck(e.target.value.toUpperCase())}
+                    onChange={(e) => {
+                      setSelectedVehicleId("");
+                      setVehicleAssignmentHint("");
+                      setTruck(e.target.value.toUpperCase());
+                    }}
                     className={inputClass}
                     required
                   />
@@ -350,6 +439,89 @@ export default function NewJourneyPage() {
                 </FormField>
               </div>
             </section>
+
+            <Panel dark className="border-cyan-200/20 bg-cyan-300/10 p-4">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <h2 className="text-lg font-semibold text-white">
+                    Choose vehicle
+                  </h2>
+                  <p className="mt-1 text-sm leading-6 text-slate-300">
+                    Select an enabled vehicle to avoid typing registration details manually.
+                  </p>
+                </div>
+                {enabledAssets.length === 0 && (
+                  <Link href="/admin/assets">
+                    <SecondaryButton type="button" className="w-full sm:w-auto">
+                      Review assets
+                    </SecondaryButton>
+                  </Link>
+                )}
+              </div>
+
+              {vehicleAssignmentHint && (
+                <div className="mt-4 rounded-md border border-emerald-300/20 bg-emerald-300/10 px-3 py-2 text-sm font-semibold text-emerald-100">
+                  {vehicleAssignmentHint}
+                </div>
+              )}
+
+              {enabledAssets.length > 0 ? (
+                <div className="mt-5 grid gap-4">
+                  <input
+                    value={vehicleSearch}
+                    onChange={(e) => setVehicleSearch(e.target.value)}
+                    placeholder="Search by registration, truck ID, provider, or category"
+                    className={inputClass}
+                  />
+
+                  <div className="grid gap-3">
+                    {filteredVehicles.length === 0 ? (
+                      <div className="rounded-md border border-white/10 bg-slate-950/60 p-4 text-sm text-slate-300">
+                        No enabled vehicles match that search.
+                      </div>
+                    ) : (
+                      filteredVehicles.map((asset) => (
+                        <button
+                          key={asset.id}
+                          type="button"
+                          onClick={() => applyVehicle(asset)}
+                          className={`rounded-md border p-4 text-left transition ${
+                            selectedVehicleId === asset.id
+                              ? "border-cyan-200 bg-cyan-300/15"
+                              : "border-white/10 bg-slate-950/60 hover:border-cyan-200/40 hover:bg-white/10"
+                          }`}
+                        >
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                            <div className="min-w-0">
+                              <div className="break-words text-sm font-semibold text-white">
+                                {asset.registration || asset.truck_id || "Unnamed vehicle"}
+                              </div>
+                              <div className="mt-1 text-xs text-slate-400">
+                                {[asset.truck_id, asset.provider_name, labelize(asset.asset_category)]
+                                  .filter(Boolean)
+                                  .join(" · ") || "Enabled vehicle"}
+                              </div>
+                              {asset.assigned_driver?.driver_name && (
+                                <div className="mt-2 text-xs font-semibold text-emerald-100">
+                                  Current driver: {asset.assigned_driver.driver_name}
+                                </div>
+                              )}
+                            </div>
+                            <div className="text-xs font-semibold text-cyan-100">
+                              Use vehicle
+                            </div>
+                          </div>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <p className="mt-4 text-sm leading-6 text-slate-300">
+                  Enabled vehicles will appear here once assets have been reviewed.
+                </p>
+              )}
+            </Panel>
 
             <Panel dark className="border-cyan-200/20 bg-cyan-300/10 p-4">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
