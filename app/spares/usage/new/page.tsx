@@ -22,6 +22,18 @@ type EnabledAsset = {
   last_seen_at: string | null;
 };
 
+type SparePart = {
+  id: string;
+  name: string | null;
+  category: string | null;
+  brand: string | null;
+  model: string | null;
+  part_number: string | null;
+  default_unit: string | null;
+  retreadable: boolean;
+  is_active: boolean;
+};
+
 const eventTypes = [
   { value: "installed", label: "Installed" },
   { value: "removed", label: "Removed" },
@@ -40,8 +52,12 @@ const inputClass =
 export default function NewSpareUsagePage() {
   const router = useRouter();
   const [assets, setAssets] = useState<EnabledAsset[]>([]);
+  const [parts, setParts] = useState<SparePart[]>([]);
   const [assetSearch, setAssetSearch] = useState("");
+  const [partSearch, setPartSearch] = useState("");
+  const [selectedPartId, setSelectedPartId] = useState("");
   const [loadingAssets, setLoadingAssets] = useState(true);
+  const [loadingParts, setLoadingParts] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -64,6 +80,7 @@ export default function NewSpareUsagePage() {
 
   useEffect(() => {
     loadAssets();
+    loadParts();
   }, []);
 
   async function getAccessToken() {
@@ -106,6 +123,37 @@ export default function NewSpareUsagePage() {
     }
   }
 
+  async function loadParts() {
+    setLoadingParts(true);
+
+    const token = await getAccessToken();
+    if (!token) return;
+
+    try {
+      const res = await fetch("/api/spares/parts", {
+        cache: "no-store",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      const json = await res.json();
+
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || "Failed to load saved parts.");
+      }
+
+      setParts(
+        (json.parts || []).filter((part: SparePart) => part.is_active !== false)
+      );
+    } catch (err: any) {
+      setMessage(
+        err.message || "Saved parts unavailable. You can still type the part name manually."
+      );
+    } finally {
+      setLoadingParts(false);
+    }
+  }
+
   const filteredAssets = useMemo(() => {
     const query = assetSearch.trim().toLowerCase();
     const list = query ? assets : assets.slice(0, 8);
@@ -123,6 +171,29 @@ export default function NewSpareUsagePage() {
         .some((value) => String(value).toLowerCase().includes(query))
     );
   }, [assets, assetSearch]);
+
+  const filteredParts = useMemo(() => {
+    const query = partSearch.trim().toLowerCase();
+    const list = query ? parts : parts.slice(0, 6);
+
+    if (!query) return list;
+
+    return parts.filter((part) =>
+      [part.name, part.category, part.brand, part.model, part.part_number]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(query))
+    );
+  }, [parts, partSearch]);
+
+  const selectedPart = useMemo(
+    () => parts.find((part) => part.id === selectedPartId) || null,
+    [parts, selectedPartId]
+  );
+
+  function selectPart(part: SparePart) {
+    setSelectedPartId(part.id);
+    setPartName(part.name || "");
+  }
 
   async function handleSubmit(event: any) {
     event.preventDefault();
@@ -240,11 +311,82 @@ export default function NewSpareUsagePage() {
               </FormField>
             </div>
 
+            <Panel dark className="border-cyan-200/20 bg-cyan-300/10 p-4">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <h3 className="text-base font-semibold text-cyan-50">
+                    Choose saved part
+                  </h3>
+                  <p className="mt-2 text-sm leading-6 text-slate-300">
+                    Pick a saved catalog part to fill the part name, or type a new part manually below.
+                  </p>
+                </div>
+                {parts.length === 0 && !loadingParts && (
+                  <Link href="/spares/parts">
+                    <SecondaryButton type="button" className="w-full sm:w-auto">
+                      Add saved part
+                    </SecondaryButton>
+                  </Link>
+                )}
+              </div>
+
+              {parts.length > 0 && (
+                <div className="mt-4 grid gap-4">
+                  <input
+                    value={partSearch}
+                    onChange={(event) => setPartSearch(event.target.value)}
+                    placeholder="Search saved parts by name, category, brand, model, or part number"
+                    className={inputClass}
+                  />
+
+                  <div className="grid gap-3 md:grid-cols-2">
+                    {filteredParts.map((part) => (
+                      <button
+                        key={part.id}
+                        type="button"
+                        onClick={() => selectPart(part)}
+                        className={
+                          selectedPartId === part.id
+                            ? "rounded-md border border-cyan-200/40 bg-cyan-300/10 px-3 py-3 text-left text-sm text-cyan-50"
+                            : "rounded-md border border-white/10 bg-slate-900 px-3 py-3 text-left text-sm text-slate-300 hover:bg-white/10"
+                        }
+                      >
+                        <div className="font-semibold text-white">
+                          {part.name || "Saved part"}
+                        </div>
+                        <div className="mt-1 text-xs text-slate-400">
+                          {[labelize(part.category), part.brand, part.model, part.part_number]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+
+                  {selectedPart && (
+                    <div className="rounded-md border border-cyan-200/20 bg-slate-950/50 px-3 py-3 text-sm text-slate-200">
+                      {selectedPart.default_unit && (
+                        <div>Default unit: {selectedPart.default_unit}</div>
+                      )}
+                      {selectedPart.retreadable && (
+                        <div className="mt-1 text-cyan-100">
+                          Retread tracking available for this part type.
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </Panel>
+
             <div className="grid gap-5 md:grid-cols-2">
               <FormField label="Part name" dark>
                 <input
                   value={partName}
-                  onChange={(event) => setPartName(event.target.value)}
+                  onChange={(event) => {
+                    setPartName(event.target.value);
+                    setSelectedPartId("");
+                  }}
                   placeholder="e.g. TYRE 315/80R22.5, BATTERY, BRAKE PADS"
                   className={inputClass}
                   required
