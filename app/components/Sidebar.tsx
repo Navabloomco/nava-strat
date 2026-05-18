@@ -111,6 +111,12 @@ export default function Sidebar() {
       show: roles.isOps || roles.isAdmin,
     },
     {
+      name: "Drivers",
+      href: "/ops/drivers",
+      show:
+        roles.isOps || roles.isFinance || roles.isManagement || roles.isAdmin,
+    },
+    {
       name: "Live Tracking",
       href: "/tracking/live",
       show: roles.isOps || roles.isAdmin,
