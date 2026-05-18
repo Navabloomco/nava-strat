@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { supabase } from "../../../lib/supabase";
 import {
   EmptyState,
   PageHeader,
   Panel,
+  PrimaryButton,
   StatusPill,
 } from "../../components/ui/Primitives";
 
@@ -339,8 +341,13 @@ export default function OpsDashboard() {
           {operations.length === 0 ? (
             <EmptyState
               dark
-              title="No active journeys"
-              body="No active journeys or saved operations found."
+              title="No active operations yet"
+              body="Create a journey to start tracking movement, fuel, expenses, and delivery progress."
+              action={
+                <Link href="/ops/journey/new">
+                  <PrimaryButton type="button">Create journey</PrimaryButton>
+                </Link>
+              }
             />
           ) : (
             <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
