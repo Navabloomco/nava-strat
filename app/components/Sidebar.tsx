@@ -142,6 +142,12 @@ export default function Sidebar() {
       show: roles.isFinance || roles.isAdmin,
     },
     {
+      name: "Spares",
+      href: "/spares",
+      show:
+        roles.isOps || roles.isFinance || roles.isManagement || roles.isAdmin,
+    },
+    {
       name: "Revenue",
       href: "/finance/revenue",
       show: roles.isFinance || roles.isAdmin,
