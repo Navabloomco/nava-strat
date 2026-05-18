@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { supabase } from "../../../lib/supabase";
 import JourneyPicker from "../../components/JourneyPicker";
 import {
@@ -232,8 +233,13 @@ export default function RevenuePage() {
           <div className="mt-8">
             <EmptyState
               dark
-              title="No active journeys for revenue yet"
-              body="Active journeys will appear here once they are ready for rate and quantity capture."
+              title="No active journeys to price"
+              body="Create a journey first, then return here to set rates, quantities, and revenue."
+              action={
+                <Link href="/ops/journey/new">
+                  <PrimaryButton type="button">Create journey</PrimaryButton>
+                </Link>
+              }
             />
           </div>
         ) : (
