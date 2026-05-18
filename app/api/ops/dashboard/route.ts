@@ -14,6 +14,20 @@ type ResolveCompanyResult =
   | { company: ResolvedCompany; isPlatformOwner: boolean; error?: never }
   | { error: NextResponse; company?: never; isPlatformOwner?: never };
 
+const SHARED_DISRUPTION_REASONS = [
+  "Road disruption",
+  "Traffic congestion",
+  "Police checkpoint",
+  "Port delay",
+  "Border delay",
+  "Loading queue",
+  "Weather delay",
+  "Dispatch hold",
+  "Client delay",
+  "Security disruption",
+  "Other",
+];
+
 function sanitizeProvider(provider: any) {
   return {
     id: provider.id,
@@ -30,6 +44,79 @@ function sanitizeProvider(provider: any) {
     has_api_key: Boolean(provider.api_key),
     has_password: Boolean(provider.password),
     has_bearer_token: Boolean(provider.bearer_token),
+  };
+}
+
+function buildSharedDisruptionCandidate(
+  alerts: any[],
+  enabledAssetsCount: number
+) {
+  const windowMinutes = 90;
+  const emptyCandidate = {
+    detected: false,
+    event_type: "excessive_idle",
+    affected_count: 0,
+    enabled_assets: enabledAssetsCount,
+    affected_percentage: 0,
+    window_minutes: windowMinutes,
+    affected_truck_ids: [],
+    event_ids: [],
+    started_at: null,
+    latest_event_at: null,
+    suggested_reasons: SHARED_DISRUPTION_REASONS,
+  };
+
+  if (enabledAssetsCount < 3) return emptyCandidate;
+
+  const since = Date.now() - windowMinutes * 60 * 1000;
+  const recentIdleAlerts = alerts.filter((alert) => {
+    const timestamp = new Date(alert.created_at || alert.started_at || 0).getTime();
+    return (
+      alert.event_type === "excessive_idle" &&
+      alert.truck_id &&
+      Number.isFinite(timestamp) &&
+      timestamp >= since
+    );
+  });
+
+  const affectedTruckIds = Array.from(
+    new Set(recentIdleAlerts.map((alert) => alert.truck_id).filter(Boolean))
+  );
+  const affectedCount = affectedTruckIds.length;
+  const affectedPercentage =
+    enabledAssetsCount > 0
+      ? Math.round((affectedCount / enabledAssetsCount) * 100)
+      : 0;
+  const detected = affectedCount >= 3 && affectedPercentage >= 60;
+
+  if (!detected) {
+    return {
+      ...emptyCandidate,
+      affected_count: affectedCount,
+      affected_percentage: affectedPercentage,
+      affected_truck_ids: affectedTruckIds,
+      event_ids: recentIdleAlerts.map((alert) => alert.id).filter(Boolean),
+    };
+  }
+
+  const times = recentIdleAlerts
+    .map((alert) => alert.created_at || alert.started_at)
+    .filter(Boolean)
+    .map((value) => new Date(value).getTime())
+    .filter(Number.isFinite);
+
+  return {
+    detected: true,
+    event_type: "excessive_idle",
+    affected_count: affectedCount,
+    enabled_assets: enabledAssetsCount,
+    affected_percentage: affectedPercentage,
+    window_minutes: windowMinutes,
+    affected_truck_ids: affectedTruckIds,
+    event_ids: recentIdleAlerts.map((alert) => alert.id).filter(Boolean),
+    started_at: times.length ? new Date(Math.min(...times)).toISOString() : null,
+    latest_event_at: times.length ? new Date(Math.max(...times)).toISOString() : null,
+    suggested_reasons: SHARED_DISRUPTION_REASONS,
   };
 }
 
@@ -196,6 +283,10 @@ export async function GET(req: Request) {
       alerts = alertsResult.data || [];
       telemetryPoints24h = telemetryResult.data?.length || 0;
     }
+    const sharedDisruptionCandidate = buildSharedDisruptionCandidate(
+      alerts,
+      fleetAssets.length
+    );
 
     const providers = providersResult.data || [];
     const activeJourneys = journeys.filter(
@@ -216,6 +307,7 @@ export async function GET(req: Request) {
       fleet_assets: fleetAssets,
       provider_statuses: providers.map(sanitizeProvider),
       alerts,
+      shared_disruption_candidate: sharedDisruptionCandidate,
       summary: {
         total_journeys: journeys.length,
         active_journeys: activeJourneys.length,

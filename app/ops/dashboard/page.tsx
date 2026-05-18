@@ -15,6 +15,7 @@ type OpsData = {
   fleet_assets: any[];
   provider_statuses: any[];
   alerts: any[];
+  shared_disruption_candidate?: any;
   summary?: any;
 };
 
@@ -40,6 +41,8 @@ export default function OpsDashboard() {
   });
   const [loading, setLoading] = useState(true);
   const [errorDetail, setErrorDetail] = useState("");
+  const [sharedDisruptionDismissed, setSharedDisruptionDismissed] =
+    useState(false);
 
   useEffect(() => {
     load();
@@ -77,6 +80,7 @@ export default function OpsDashboard() {
       fleet_assets: json.fleet_assets || [],
       provider_statuses: json.provider_statuses || [],
       alerts: json.alerts || [],
+      shared_disruption_candidate: json.shared_disruption_candidate || null,
       summary: json.summary || {},
     });
     setLoading(false);
@@ -134,6 +138,9 @@ export default function OpsDashboard() {
   const importedButNoneEnabled =
     (data.summary?.imported_assets || 0) > 0 &&
     (data.summary?.enabled_assets || 0) === 0;
+  const sharedDisruption = data.shared_disruption_candidate;
+  const showSharedDisruption =
+    Boolean(sharedDisruption?.detected) && !sharedDisruptionDismissed;
 
   if (loading) {
     return (
@@ -182,6 +189,77 @@ export default function OpsDashboard() {
               body="No enabled intelligence vehicles yet. Imported provider assets must be reviewed before they appear in operations."
             />
           </section>
+        )}
+
+        {showSharedDisruption && (
+          <Panel dark className="mt-8 border-amber-300/30 bg-amber-300/10 p-5">
+            <div className="grid gap-5 lg:grid-cols-[1fr_auto] lg:items-start">
+              <div>
+                <div className="text-xs font-bold uppercase tracking-[0.16em] text-amber-100">
+                  Shared delay watch
+                </div>
+                <h2 className="mt-3 text-2xl font-semibold text-white">
+                  Shared delay pattern detected
+                </h2>
+                <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-200">
+                  Multiple enabled assets are stopped or idle around the same period.
+                  This may be a shared operational delay rather than separate vehicle issues.
+                </p>
+                <div className="mt-4 flex flex-wrap gap-2 text-sm">
+                  <span className="rounded-full border border-amber-200/30 bg-amber-200/10 px-3 py-1 font-semibold text-amber-100">
+                    {sharedDisruption.affected_count} of{" "}
+                    {sharedDisruption.enabled_assets} assets affected
+                  </span>
+                  <span className="rounded-full border border-cyan-200/30 bg-cyan-300/10 px-3 py-1 font-semibold text-cyan-100">
+                    {sharedDisruption.affected_percentage}% in last{" "}
+                    {sharedDisruption.window_minutes} minutes
+                  </span>
+                </div>
+                <div className="mt-5">
+                  <div className="text-xs font-bold uppercase tracking-[0.14em] text-slate-400">
+                    Suggested context labels
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {(sharedDisruption.suggested_reasons || []).map((reason: string) => (
+                      <span
+                        key={reason}
+                        className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs font-semibold text-slate-200"
+                      >
+                        {reason}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+                <p className="mt-4 text-xs leading-5 text-slate-400">
+                  Context application is coming next. No alerts are changed yet.
+                </p>
+              </div>
+
+              <div className="flex flex-col gap-2 lg:min-w-48">
+                <button
+                  type="button"
+                  disabled
+                  className="rounded-md border border-white/10 px-4 py-2 text-sm font-semibold text-slate-400 opacity-70"
+                >
+                  Apply to all affected
+                </button>
+                <button
+                  type="button"
+                  disabled
+                  className="rounded-md border border-white/10 px-4 py-2 text-sm font-semibold text-slate-400 opacity-70"
+                >
+                  Choose assets
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSharedDisruptionDismissed(true)}
+                  className="rounded-md border border-white/15 px-4 py-2 text-sm font-semibold text-slate-100 hover:bg-white/10"
+                >
+                  Dismiss for now
+                </button>
+              </div>
+            </div>
+          </Panel>
         )}
 
         <section className="mt-8 grid gap-6 xl:grid-cols-[0.8fr_1.2fr]">
