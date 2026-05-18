@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../../../lib/supabase";
@@ -15,6 +15,20 @@ import {
 const inputClass =
   "w-full rounded-md border border-white/10 bg-slate-900 px-3 py-3 text-sm text-white outline-none placeholder:text-slate-500 focus:border-cyan-300";
 
+type SavedRoute = {
+  id: string;
+  name: string | null;
+  client_name: string | null;
+  from_location: string | null;
+  to_location: string | null;
+  expected_fuel_liters: number | null;
+  is_active: boolean;
+};
+
+function routeLabel(route: SavedRoute) {
+  return `${route.from_location || "—"} → ${route.to_location || "—"}`;
+}
+
 export default function NewJourneyPage() {
   const [client, setClient] = useState("");
   const [truck, setTruck] = useState("");
@@ -23,7 +37,68 @@ export default function NewJourneyPage() {
   const [toLocation, setToLocation] = useState("");
   const [expectedFuel, setExpectedFuel] = useState("");
   const [message, setMessage] = useState("");
+  const [savedRoutes, setSavedRoutes] = useState<SavedRoute[]>([]);
+  const [savedRouteSearch, setSavedRouteSearch] = useState("");
+  const [selectedSavedRouteId, setSelectedSavedRouteId] = useState("");
   const router = useRouter();
+
+  useEffect(() => {
+    loadSavedRoutes();
+  }, []);
+
+  async function loadSavedRoutes() {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData.session?.access_token;
+
+    if (!token) return;
+
+    const res = await fetch("/api/journey-templates", {
+      cache: "no-store",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    const json = await res.json();
+
+    if (!res.ok || !json.success) return;
+
+    setSavedRoutes(
+      (json.templates || []).filter((route: SavedRoute) => route.is_active)
+    );
+  }
+
+  const filteredSavedRoutes = useMemo(() => {
+    const query = savedRouteSearch.trim().toLowerCase();
+
+    if (!query) return savedRoutes.slice(0, 6);
+
+    return savedRoutes
+      .filter((route) => {
+        const haystack = [
+          route.name,
+          route.client_name,
+          route.from_location,
+          route.to_location,
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+
+        return haystack.includes(query);
+      })
+      .slice(0, 8);
+  }, [savedRoutes, savedRouteSearch]);
+
+  function applySavedRoute(route: SavedRoute) {
+    setSelectedSavedRouteId(route.id);
+    setClient((route.client_name || "").toUpperCase());
+    setFromLocation((route.from_location || "").toUpperCase());
+    setToLocation((route.to_location || "").toUpperCase());
+
+    if (route.expected_fuel_liters) {
+      setExpectedFuel(route.expected_fuel_liters.toString());
+    }
+  }
 
   function makeTripId() {
     const today = new Date().toISOString().slice(0, 10).replaceAll("-", "");
@@ -104,6 +179,78 @@ export default function NewJourneyPage() {
 
         <Panel dark className="mt-8 p-6">
           <form onSubmit={handleSubmit} className="grid gap-8">
+            <Panel dark className="border-cyan-200/20 bg-cyan-300/10 p-4">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <h2 className="text-lg font-semibold text-white">
+                    Use saved route
+                  </h2>
+                  <p className="mt-1 text-sm leading-6 text-slate-300">
+                    Choose a frequent route to fill the boring parts.
+                  </p>
+                </div>
+                {savedRoutes.length === 0 && (
+                  <Link href="/ops/journey/templates">
+                    <SecondaryButton type="button" className="w-full sm:w-auto">
+                      Create saved route
+                    </SecondaryButton>
+                  </Link>
+                )}
+              </div>
+
+              {savedRoutes.length > 0 ? (
+                <div className="mt-5 grid gap-4">
+                  <input
+                    value={savedRouteSearch}
+                    onChange={(e) => setSavedRouteSearch(e.target.value)}
+                    placeholder="Search by route, client, loading point, or destination"
+                    className={inputClass}
+                  />
+
+                  <div className="grid gap-3">
+                    {filteredSavedRoutes.length === 0 ? (
+                      <div className="rounded-md border border-white/10 bg-slate-950/60 p-4 text-sm text-slate-300">
+                        No saved routes match that search.
+                      </div>
+                    ) : (
+                      filteredSavedRoutes.map((route) => (
+                        <button
+                          key={route.id}
+                          type="button"
+                          onClick={() => applySavedRoute(route)}
+                          className={`rounded-md border p-4 text-left transition ${
+                            selectedSavedRouteId === route.id
+                              ? "border-cyan-200 bg-cyan-300/15"
+                              : "border-white/10 bg-slate-950/60 hover:border-cyan-200/40 hover:bg-white/10"
+                          }`}
+                        >
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                            <div className="min-w-0">
+                              <div className="break-words text-sm font-semibold text-white">
+                                {route.name || routeLabel(route)}
+                              </div>
+                              <div className="mt-1 text-xs text-slate-400">
+                                {route.client_name || "No client"} · {routeLabel(route)}
+                              </div>
+                            </div>
+                            <div className="text-xs font-semibold text-cyan-100">
+                              {route.expected_fuel_liters
+                                ? `${Number(route.expected_fuel_liters).toLocaleString()} L`
+                                : "No fuel estimate"}
+                            </div>
+                          </div>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <p className="mt-4 text-sm leading-6 text-slate-300">
+                  Saved routes will appear here once your team creates route presets.
+                </p>
+              )}
+            </Panel>
+
             <section>
               <h2 className="text-lg font-semibold text-white">
                 Client & vehicle
