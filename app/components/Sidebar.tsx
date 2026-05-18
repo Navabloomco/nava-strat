@@ -18,6 +18,10 @@ export default function Sidebar() {
     isPlatformOwner: false,
   });
 
+  function normalizeRole(role: any) {
+    return String(role || "").trim().toLowerCase();
+  }
+
   useEffect(() => {
     async function checkRoles() {
       const {
@@ -56,16 +60,12 @@ export default function Sidebar() {
         return;
       }
 
-      const activeRoles = new Set(
-        (json.roles || []).map((role: string) => String(role).toLowerCase())
-      );
-      const isAdminRole =
-        Boolean(json.is_platform_owner) ||
-        activeRoles.has("platform_owner") ||
-        activeRoles.has("owner") ||
-        activeRoles.has("admin");
+      const activeRoles = new Set((json.roles || []).map(normalizeRole));
       const isPlatformOwner =
-        Boolean(json.is_platform_owner) || activeRoles.has("platform_owner");
+        json.is_platform_owner === true ||
+        activeRoles.has("platform_owner");
+      const isAdminRole =
+        isPlatformOwner || activeRoles.has("owner") || activeRoles.has("admin");
 
       setRoles({
         hasCompanyAccess: (json.companies || []).length > 0,

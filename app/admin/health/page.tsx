@@ -73,27 +73,52 @@ export default function PlatformHealthPage() {
     setError("");
 
     const token = await getToken();
-    if (!token) return;
+    if (!token) {
+      setLoading(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 20000);
 
     try {
       const res = await fetch("/api/platform/health", {
         cache: "no-store",
+        signal: controller.signal,
         headers: {
           Authorization: `Bearer ${token}`,
         },
       });
-      const json = await res.json();
+      const text = await res.text();
+      let json: any = {};
+
+      try {
+        json = text ? JSON.parse(text) : {};
+      } catch {
+        json = {};
+      }
 
       if (!res.ok || !json.success) {
-        throw new Error(json.error || "Unable to run platform health check.");
+        const message =
+          json.error ||
+          json.message ||
+          `Platform health check failed with HTTP ${res.status}.`;
+        throw new Error(`${message} (${res.status})`);
       }
 
       setChecks(json.checks || []);
       setOverallStatus(json.overall_status || "warn");
       setCheckedAt(json.checked_at || "");
     } catch (err: any) {
-      setError(err.message || "Unable to run platform health check.");
+      if (err?.name === "AbortError") {
+        setError(
+          "Platform health check timed out. The endpoint may be slow or blocked."
+        );
+      } else {
+        setError(err.message || "Unable to run platform health check.");
+      }
     } finally {
+      window.clearTimeout(timeout);
       setLoading(false);
     }
   }

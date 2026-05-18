@@ -15,6 +15,10 @@ function noStoreJson(body: any, init?: ResponseInit) {
   });
 }
 
+function normalizeRole(role: any) {
+  return String(role || "").trim().toLowerCase();
+}
+
 export async function GET(req: Request) {
   try {
     const authHeader = req.headers.get("authorization");
@@ -45,19 +49,17 @@ export async function GET(req: Request) {
     const activeMemberships = memberships || [];
     const membershipSummary = activeMemberships.map((membership) => ({
       company_id: membership.company_id,
-      role: membership.role,
+      role: normalizeRole(membership.role),
       is_active: Boolean(membership.is_active),
     }));
     const roles = Array.from(
       new Set(
         activeMemberships
-          .map((membership) => membership.role)
+          .map((membership) => normalizeRole(membership.role))
           .filter(Boolean)
       )
     );
-    const isPlatformOwner = activeMemberships.some(
-      (membership) => membership.role === "platform_owner"
-    );
+    const isPlatformOwner = roles.includes("platform_owner");
 
     if (isPlatformOwner) {
       const { data: companies, error: companiesError } = await supabaseAdmin

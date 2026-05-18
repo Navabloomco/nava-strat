@@ -211,6 +211,9 @@ const OPTIONAL_COLUMN_CHECKS = [
   },
 ];
 
+const PROBE_CONCURRENCY = 8;
+const PROBE_TIMEOUT_MS = 5000;
+
 function noStoreJson(body: any, init?: ResponseInit) {
   return NextResponse.json(body, {
     ...init,
@@ -227,6 +230,48 @@ function sanitizeError(error: any) {
 
 function present(value: string | undefined, placeholder?: string) {
   return Boolean(value && value.trim() && value !== placeholder);
+}
+
+async function withTimeout<T>(
+  promise: PromiseLike<T>,
+  timeoutMs: number,
+  timeoutValue: T
+): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((resolve) => {
+        timeout = setTimeout(() => resolve(timeoutValue), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+async function runLimited<T, R>(
+  items: T[],
+  limit: number,
+  worker: (item: T) => Promise<R>
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+
+  async function runWorker() {
+    while (nextIndex < items.length) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      results[currentIndex] = await worker(items[currentIndex]);
+    }
+  }
+
+  const workerCount = Math.min(limit, items.length);
+  await Promise.all(
+    Array.from({ length: workerCount }, () => runWorker())
+  );
+
+  return results;
 }
 
 function buildEnvironmentChecks(): HealthCheck[] {
@@ -277,82 +322,101 @@ function buildEnvironmentChecks(): HealthCheck[] {
   });
 }
 
-async function probeTable(table: string) {
-  const { error } = await supabaseAdmin
-    .from(table)
-    .select("*", { head: true, count: "exact" })
-    .limit(0);
-
-  return error;
+async function probeTable(table: string): Promise<any> {
+  return withTimeout<any>(
+    supabaseAdmin
+      .from(table)
+      .select("*", { head: true, count: "exact" })
+      .limit(0)
+      .then(({ error }) => error),
+    PROBE_TIMEOUT_MS,
+    { message: `Timed out checking ${table}` }
+  );
 }
 
-async function probeColumn(table: string, column: string) {
-  const { error } = await supabaseAdmin
-    .from(table)
-    .select(column, { head: true })
-    .limit(0);
-
-  return error;
+async function probeColumn(table: string, column: string): Promise<any> {
+  return withTimeout<any>(
+    supabaseAdmin
+      .from(table)
+      .select(column, { head: true })
+      .limit(0)
+      .then(({ error }) => error),
+    PROBE_TIMEOUT_MS,
+    { message: `Timed out checking ${table}.${column}` }
+  );
 }
 
 async function buildTableColumnChecks(): Promise<HealthCheck[]> {
-  const checks: HealthCheck[] = [];
+  type ProbeTask =
+    | { kind: "table"; table: string }
+    | {
+        kind: "column";
+        table: string;
+        column: string;
+        optional?: boolean;
+        optionalDetail?: string;
+      };
 
-  for (const table of REQUIRED_TABLES) {
-    const tableError = await probeTable(table.table);
-    if (tableError) {
-      checks.push({
-        category: "Tables/Columns",
-        name: `${table.table} table`,
-        status: "fail",
-        detail: `Missing or inaccessible table: ${sanitizeError(tableError)}`,
-      });
-      continue;
-    }
+  const tasks: ProbeTask[] = [];
 
-    checks.push({
-      category: "Tables/Columns",
-      name: `${table.table} table`,
-      status: "pass",
-      detail: "Table is reachable.",
-    });
-
-    for (const column of table.columns) {
-      const columnError = await probeColumn(table.table, column);
-      checks.push({
-        category: "Tables/Columns",
-        name: `${table.table}.${column}`,
-        status: columnError ? "fail" : "pass",
-        detail: columnError
-          ? `Missing or inaccessible column: ${sanitizeError(columnError)}`
-          : "Column is reachable.",
-      });
+  for (const required of REQUIRED_TABLES) {
+    tasks.push({ kind: "table", table: required.table });
+    for (const column of required.columns) {
+      tasks.push({ kind: "column", table: required.table, column });
     }
   }
 
   for (const check of OPTIONAL_COLUMN_CHECKS) {
-    const columnError = await probeColumn(check.table, check.column);
-    checks.push({
-      category: "Tables/Columns",
-      name: `${check.table}.${check.column}`,
-      status: columnError ? "warn" : "pass",
-      detail: columnError ? check.detail : "Column is reachable.",
+    tasks.push({
+      kind: "column",
+      table: check.table,
+      column: check.column,
+      optional: true,
+      optionalDetail: check.detail,
     });
   }
 
-  return checks;
+  return runLimited(tasks, PROBE_CONCURRENCY, async (task) => {
+    if (task.kind === "table") {
+      const tableError = await probeTable(task.table);
+      return {
+        category: "Tables/Columns",
+        name: `${task.table} table`,
+        status: tableError ? "fail" : "pass",
+        detail: tableError
+          ? `Missing, inaccessible, or slow table: ${sanitizeError(tableError)}`
+          : "Table is reachable.",
+      } as HealthCheck;
+    }
+
+    const columnError = await probeColumn(task.table, task.column);
+    return {
+      category: "Tables/Columns",
+      name: `${task.table}.${task.column}`,
+      status: columnError ? (task.optional ? "warn" : "fail") : "pass",
+      detail: columnError
+        ? task.optional
+          ? task.optionalDetail || `Optional column unavailable: ${sanitizeError(columnError)}`
+          : `Missing, inaccessible, or slow column: ${sanitizeError(columnError)}`
+        : "Column is reachable.",
+    } as HealthCheck;
+  });
 }
 
 async function checkFleetAssetsUniqueIndex(): Promise<HealthCheck> {
   const metadataErrors: string[] = [];
 
   try {
-    const { data, error } = await (supabaseAdmin as any)
+    const { data, error } = await withTimeout<any>(
+      (supabaseAdmin as any)
       .schema("pg_catalog")
       .from("pg_indexes")
       .select("indexname,indexdef")
       .eq("schemaname", "public")
-      .eq("tablename", "fleet_assets");
+        .eq("tablename", "fleet_assets"),
+      PROBE_TIMEOUT_MS,
+      { data: null, error: { message: "Timed out checking pg_indexes" } }
+    );
 
     if (error) throw error;
 
@@ -378,25 +442,39 @@ async function checkFleetAssetsUniqueIndex(): Promise<HealthCheck> {
   }
 
   try {
-    const { data: constraints, error: constraintError } = await (supabaseAdmin as any)
+    const { data: constraints, error: constraintError } = await withTimeout<any>(
+      (supabaseAdmin as any)
       .schema("information_schema")
       .from("table_constraints")
       .select("constraint_name,constraint_type,table_schema,table_name")
       .eq("table_schema", "public")
       .eq("table_name", "fleet_assets")
-      .eq("constraint_type", "UNIQUE");
+        .eq("constraint_type", "UNIQUE"),
+      PROBE_TIMEOUT_MS,
+      {
+        data: null,
+        error: { message: "Timed out checking information_schema.table_constraints" },
+      }
+    );
 
     if (constraintError) throw constraintError;
 
     const constraintNames = (constraints || []).map((item: any) => item.constraint_name);
     if (constraintNames.length > 0) {
-      const { data: columns, error: columnError } = await (supabaseAdmin as any)
+      const { data: columns, error: columnError } = await withTimeout<any>(
+        (supabaseAdmin as any)
         .schema("information_schema")
         .from("key_column_usage")
         .select("constraint_name,column_name,ordinal_position")
         .eq("table_schema", "public")
         .eq("table_name", "fleet_assets")
-        .in("constraint_name", constraintNames);
+          .in("constraint_name", constraintNames),
+        PROBE_TIMEOUT_MS,
+        {
+          data: null,
+          error: { message: "Timed out checking information_schema.key_column_usage" },
+        }
+      );
 
       if (columnError) throw columnError;
 
@@ -440,13 +518,17 @@ async function checkFleetAssetsUniqueIndex(): Promise<HealthCheck> {
 
 async function checkClientVisibilityRpc(): Promise<HealthCheck> {
   try {
-    const { data, error } = await (supabaseAdmin as any)
+    const { data, error } = await withTimeout<any>(
+      (supabaseAdmin as any)
       .schema("information_schema")
       .from("routines")
       .select("routine_name,routine_schema")
       .eq("routine_schema", "public")
       .eq("routine_name", "record_client_visibility_link_access")
-      .limit(1);
+        .limit(1),
+      PROBE_TIMEOUT_MS,
+      { data: null, error: { message: "Timed out checking information_schema.routines" } }
+    );
 
     if (error) throw error;
 
@@ -504,7 +586,8 @@ async function requirePlatformOwner(req: Request) {
   if (membershipError) throw membershipError;
 
   const isPlatformOwner = (memberships || []).some(
-    (membership) => String(membership.role || "").toLowerCase() === "platform_owner"
+    (membership) =>
+      String(membership.role || "").trim().toLowerCase() === "platform_owner"
   );
 
   if (!isPlatformOwner) {
