@@ -25,6 +25,14 @@ type SavedRoute = {
   is_active: boolean;
 };
 
+type Driver = {
+  id: string;
+  full_name: string | null;
+  phone: string | null;
+  employee_code: string | null;
+  status: string;
+};
+
 function routeLabel(route: SavedRoute) {
   return `${route.from_location || "—"} → ${route.to_location || "—"}`;
 }
@@ -40,10 +48,14 @@ export default function NewJourneyPage() {
   const [savedRoutes, setSavedRoutes] = useState<SavedRoute[]>([]);
   const [savedRouteSearch, setSavedRouteSearch] = useState("");
   const [selectedSavedRouteId, setSelectedSavedRouteId] = useState("");
+  const [drivers, setDrivers] = useState<Driver[]>([]);
+  const [driverSearch, setDriverSearch] = useState("");
+  const [selectedDriverId, setSelectedDriverId] = useState("");
   const router = useRouter();
 
   useEffect(() => {
     loadSavedRoutes();
+    loadDrivers();
   }, []);
 
   async function loadSavedRoutes() {
@@ -64,6 +76,29 @@ export default function NewJourneyPage() {
 
     setSavedRoutes(
       (json.templates || []).filter((route: SavedRoute) => route.is_active)
+    );
+  }
+
+  async function loadDrivers() {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData.session?.access_token;
+
+    if (!token) return;
+
+    const res = await fetch("/api/drivers", {
+      cache: "no-store",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    const json = await res.json();
+
+    if (!res.ok || !json.success) return;
+
+    setDrivers(
+      (json.drivers || []).filter(
+        (item: Driver) => String(item.status || "").toLowerCase() === "active"
+      )
     );
   }
 
@@ -89,6 +124,24 @@ export default function NewJourneyPage() {
       .slice(0, 8);
   }, [savedRoutes, savedRouteSearch]);
 
+  const filteredDrivers = useMemo(() => {
+    const query = driverSearch.trim().toLowerCase();
+
+    const activeDrivers = drivers.slice(0, query ? drivers.length : 6);
+    if (!query) return activeDrivers;
+
+    return drivers
+      .filter((item) => {
+        const haystack = [item.full_name, item.phone, item.employee_code]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+
+        return haystack.includes(query);
+      })
+      .slice(0, 8);
+  }, [drivers, driverSearch]);
+
   function applySavedRoute(route: SavedRoute) {
     setSelectedSavedRouteId(route.id);
     setClient((route.client_name || "").toUpperCase());
@@ -98,6 +151,11 @@ export default function NewJourneyPage() {
     if (route.expected_fuel_liters) {
       setExpectedFuel(route.expected_fuel_liters.toString());
     }
+  }
+
+  function applyDriver(selectedDriver: Driver) {
+    setSelectedDriverId(selectedDriver.id);
+    setDriver((selectedDriver.full_name || "").toUpperCase());
   }
 
   function makeTripId() {
@@ -283,12 +341,87 @@ export default function NewJourneyPage() {
                   <input
                     placeholder="Driver e.g. KARIUKI"
                     value={driver}
-                    onChange={(e) => setDriver(e.target.value.toUpperCase())}
+                    onChange={(e) => {
+                      setSelectedDriverId("");
+                      setDriver(e.target.value.toUpperCase());
+                    }}
                     className={inputClass}
                   />
                 </FormField>
               </div>
             </section>
+
+            <Panel dark className="border-cyan-200/20 bg-cyan-300/10 p-4">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <h2 className="text-lg font-semibold text-white">
+                    Assign driver
+                  </h2>
+                  <p className="mt-1 text-sm leading-6 text-slate-300">
+                    Select from your driver directory or keep typing manually above.
+                  </p>
+                </div>
+                {drivers.length === 0 && (
+                  <Link href="/ops/drivers">
+                    <SecondaryButton type="button" className="w-full sm:w-auto">
+                      Add driver
+                    </SecondaryButton>
+                  </Link>
+                )}
+              </div>
+
+              {drivers.length > 0 ? (
+                <div className="mt-5 grid gap-4">
+                  <input
+                    value={driverSearch}
+                    onChange={(e) => setDriverSearch(e.target.value)}
+                    placeholder="Search by name, phone, or employee code"
+                    className={inputClass}
+                  />
+
+                  <div className="grid gap-3">
+                    {filteredDrivers.length === 0 ? (
+                      <div className="rounded-md border border-white/10 bg-slate-950/60 p-4 text-sm text-slate-300">
+                        No active drivers match that search.
+                      </div>
+                    ) : (
+                      filteredDrivers.map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => applyDriver(item)}
+                          className={`rounded-md border p-4 text-left transition ${
+                            selectedDriverId === item.id
+                              ? "border-cyan-200 bg-cyan-300/15"
+                              : "border-white/10 bg-slate-950/60 hover:border-cyan-200/40 hover:bg-white/10"
+                          }`}
+                        >
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                            <div className="min-w-0">
+                              <div className="break-words text-sm font-semibold text-white">
+                                {item.full_name || "Unnamed driver"}
+                              </div>
+                              <div className="mt-1 text-xs text-slate-400">
+                                {[item.phone, item.employee_code]
+                                  .filter(Boolean)
+                                  .join(" · ") || "No phone or employee code"}
+                              </div>
+                            </div>
+                            <div className="text-xs font-semibold text-cyan-100">
+                              Use driver
+                            </div>
+                          </div>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <p className="mt-4 text-sm leading-6 text-slate-300">
+                  Driver directory entries will appear here once your team adds them.
+                </p>
+              )}
+            </Panel>
 
             <section>
               <h2 className="text-lg font-semibold text-white">Route</h2>
