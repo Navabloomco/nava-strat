@@ -101,8 +101,19 @@ export async function POST(req: Request) {
       company = assignedCompany;
     }
 
+    const companyRoles = Array.from(
+      new Set(
+        activeMemberships
+          .filter((membership) => isPlatformOwner || membership.company_id === company.id)
+          .map((membership) => String(membership.role || "").toLowerCase())
+          .filter(Boolean)
+      )
+    );
+
     // 2. Get deterministic context from router
-    const context = await routeContext(question, company.slug);
+    const context = await routeContext(question, company.slug, {
+      roles: companyRoles,
+    });
     console.log("Context from router:", JSON.stringify(context, null, 2));
 
     // 3. Fetch active memories for this company (up to 5 most recent)
@@ -145,6 +156,7 @@ export async function POST(req: Request) {
       apiKey &&
       Object.keys(context).length > 0 &&
       !context.profit_simulation &&
+      !context.spares &&
       !context.asset_access_restricted &&
       !context.no_enabled_intelligence_assets
     ) {
@@ -317,7 +329,7 @@ function buildFallbackAnswer(context: any): string {
   if (context.asset_access_restricted) {
     return "I can only answer using assets enabled for Nava intelligence. This asset may be waiting for review.";
   }
-  if (context.no_enabled_intelligence_assets) {
+  if (context.no_enabled_intelligence_assets && !context.spares) {
     return "Fleet data has been imported, but no assets are enabled for Nava intelligence yet. Review assets before I use them in answers.";
   }
   if (context.profit_simulation) {
@@ -397,6 +409,9 @@ function buildFallbackAnswer(context: any): string {
     }
 
     return parts.join("\n");
+  }
+  if (context.spares) {
+    return buildSparesFallbackAnswer(context);
   }
   if (context.profitability) {
     const p = context.profitability;
@@ -560,6 +575,200 @@ function buildFallbackAnswer(context: any): string {
     return "Nava Eye found limited context. Ask about fleet health, offline trucks, fuel risk, truck status, driver activity, or journeys.";
   }
   return parts.join(" ");
+}
+
+function buildSparesFallbackAnswer(context: any): string {
+  const spares = context.spares || {};
+  const parts: string[] = [];
+  const truckHistory = spares.truck_spare_history || [];
+  const recentEvents = spares.recent_spare_events || [];
+  const vendorSummary = spares.vendor_mechanic_summary?.vendors || [];
+  const mechanicSummary = spares.vendor_mechanic_summary?.mechanics || [];
+  const retreadSummary = spares.retread_summary || {};
+  const catalogMatches = spares.part_catalog_matches || [];
+
+  if (spares.unsupported_lifespan_question) {
+    parts.push(
+      "Nava needs more install/removal or replacement history before estimating lifespan reliably."
+    );
+    parts.push("");
+  }
+
+  if (context.detected_truck_id) {
+    parts.push(`Spare history for ${context.detected_truck_id}`);
+    if (truckHistory.length) {
+      parts.push(...truckHistory.slice(0, 10).map(formatSpareEventLine));
+    } else {
+      parts.push("No spare usage records found for this enabled vehicle yet.");
+    }
+    parts.push("");
+  }
+
+  if (!context.detected_truck_id) {
+    parts.push("Recent spares usage");
+    if (recentEvents.length) {
+      parts.push(formatSpareEventCounts(recentEvents));
+      parts.push(...recentEvents.slice(0, 5).map(formatSpareEventLine));
+    } else {
+      parts.push("No spare usage records found yet.");
+    }
+    parts.push("");
+  }
+
+  if (mechanicSummary.length || vendorSummary.length) {
+    parts.push("Mechanic/vendor summary");
+    if (mechanicSummary.length) {
+      parts.push(
+        `Mechanics: ${mechanicSummary
+          .slice(0, 5)
+          .map(formatSpareNameCount)
+          .join("; ")}.`
+      );
+    }
+    if (vendorSummary.length) {
+      parts.push(
+        `Vendors: ${vendorSummary
+          .slice(0, 5)
+          .map(formatSpareNameCount)
+          .join("; ")}.`
+      );
+    }
+    parts.push("These are counts only, not quality or lifespan rankings.");
+    parts.push("");
+  }
+
+  if (retreadSummary.event_count || retreadSummary.catalog_reference?.length) {
+    parts.push("Retread context");
+    if (retreadSummary.event_count) {
+      parts.push(
+        `${retreadSummary.event_count} retread event(s) recorded. ${(
+          retreadSummary.by_part || []
+        )
+          .slice(0, 5)
+          .map(
+            (item: any) =>
+              `${item.part_name || "Unknown part"} (${item.retread_count || 0})`
+          )
+          .join("; ")}.`
+      );
+    }
+    if (retreadSummary.catalog_reference?.length) {
+      parts.push(
+        `Catalog retread references: ${retreadSummary.catalog_reference
+          .slice(0, 5)
+          .map(formatSpareCatalogPart)
+          .join("; ")}.`
+      );
+    }
+    parts.push("");
+  }
+
+  if (catalogMatches.length) {
+    parts.push("Catalog matches");
+    parts.push(...catalogMatches.slice(0, 5).map(formatSpareCatalogPart));
+    parts.push("");
+  }
+
+  if (!spares.cost_visible) {
+    parts.push("Cost details are hidden for this role.");
+  }
+
+  return parts.join("\n").trim();
+}
+
+function formatSpareEventLine(event: any) {
+  const pieces = [
+    formatReadableDate(event.event_at || event.created_at),
+    formatSpareEventType(event.event_type),
+    event.part_name || "Spare part",
+  ];
+  const vehicle = event.truck_id ? `vehicle ${event.truck_id}` : null;
+  const quantity =
+    event.quantity === null || event.quantity === undefined
+      ? null
+      : `qty ${formatNumber(event.quantity)}`;
+  const vendor = event.vendor_name ? `vendor ${event.vendor_name}` : null;
+  const mechanic = event.mechanic_name ? `mechanic ${event.mechanic_name}` : null;
+  const condition =
+    event.condition_before || event.condition_after
+      ? `condition ${[event.condition_before, event.condition_after]
+          .filter(Boolean)
+          .join(" to ")}`
+      : null;
+  const odometer = event.odometer ? `${formatNumber(event.odometer)} km` : null;
+  const engineHours = event.engine_hours
+    ? `${formatNumber(event.engine_hours)} engine hours`
+    : null;
+  const cost = Object.prototype.hasOwnProperty.call(event, "cost") && event.cost
+    ? `cost ${formatMoney(event.cost)}`
+    : null;
+
+  return `- ${pieces.filter(Boolean).join(" · ")}${[
+    vehicle,
+    quantity,
+    vendor,
+    mechanic,
+    condition,
+    odometer,
+    engineHours,
+    cost,
+  ]
+    .filter(Boolean)
+    .map((value) => ` · ${value}`)
+    .join("")}`;
+}
+
+function formatSpareEventCounts(events: any[]) {
+  const counts = events.reduce((acc: Record<string, number>, event: any) => {
+    const key = formatSpareEventType(event.event_type);
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+
+  return Object.entries(counts)
+    .map(([eventType, count]) => `${eventType}: ${count}`)
+    .join("; ");
+}
+
+function formatSpareNameCount(item: any) {
+  const cost = Object.prototype.hasOwnProperty.call(item, "total_cost")
+    ? `, cost ${formatMoney(item.total_cost)}`
+    : "";
+  return `${item.name} (${item.event_count || 0}${cost})`;
+}
+
+function formatSpareCatalogPart(part: any) {
+  const base = [
+    part.name || "Part",
+    part.category ? part.category.replace(/_/g, " ") : null,
+    [part.brand, part.model].filter(Boolean).join(" / ") || null,
+    part.part_number ? `part no. ${part.part_number}` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const expectedLife = [
+    part.expected_life_km
+      ? `${formatNumber(part.expected_life_km)} km expected life`
+      : null,
+    part.expected_life_days
+      ? `${formatNumber(part.expected_life_days)} days expected life`
+      : null,
+  ]
+    .filter(Boolean)
+    .join(", ");
+  const retread =
+    part.retreadable && part.max_retreads !== null && part.max_retreads !== undefined
+      ? `max ${part.max_retreads} retread(s)`
+      : part.retreadable
+        ? "retreadable"
+        : null;
+  return [base, expectedLife, retread].filter(Boolean).join(" · ");
+}
+
+function formatSpareEventType(value: any) {
+  return String(value || "event")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 function formatSimulationInputs(inputs: any) {

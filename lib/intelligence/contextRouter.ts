@@ -22,7 +22,12 @@ export type ContextIntent =
   | "country_trucks"
   | "profit_simulation"
   | "profitability"
+  | "spares_context"
   | "general";
+
+type RouteContextOptions = {
+  roles?: string[];
+};
 
 export async function getCompanyBySlug(slug: string) {
   const { data, error } = await supabaseAdmin
@@ -36,7 +41,11 @@ export async function getCompanyBySlug(slug: string) {
   return data;
 }
 
-export async function routeContext(question: string, tenantSlug: string) {
+export async function routeContext(
+  question: string,
+  tenantSlug: string,
+  options: RouteContextOptions = {}
+) {
   const company = await getCompanyBySlug(tenantSlug);
   const companyId = company.id;
   const lower = question.toLowerCase();
@@ -51,6 +60,7 @@ export async function routeContext(question: string, tenantSlug: string) {
   const assignmentLookup = usesDriverAssignmentContext(intent)
     ? await fetchDriverAssignmentLookup(companyId)
     : null;
+  const sparesCostVisible = canViewSparesCost(options.roles || []);
   const context: any = {
     company,
     intent,
@@ -63,6 +73,7 @@ export async function routeContext(question: string, tenantSlug: string) {
     fleet_asset_review_status: fleetAssetCounts,
     no_enabled_intelligence_assets:
       fleetAssetCounts.imported_assets > 0 && fleetAssetCounts.enabled_assets === 0,
+    spares_cost_visible: sparesCostVisible,
     generated_at: new Date().toISOString(),
   };
 
@@ -132,6 +143,14 @@ export async function routeContext(question: string, tenantSlug: string) {
   if (intent === "profitability") {
     context.profitability = await getCompanyProfitability(companyId);
   }
+  if (intent === "spares_context" && !truckAccess.restricted) {
+    context.spares = await fetchSparesContext(
+      companyId,
+      question,
+      truckId,
+      sparesCostVisible
+    );
+  }
   if (intent === "general") {
     context.fleet_health = await fetchFleetHealth(companyId);
     context.recent_events = await fetchRecentEvents(
@@ -151,6 +170,20 @@ function usesDriverAssignmentContext(intent: ContextIntent) {
   return ["truck_status", "journey_context", "driver_activity", "offline_trucks", "general"].includes(intent);
 }
 
+function canViewSparesCost(roles: string[]) {
+  const normalizedRoles = new Set(
+    roles.map((role) => String(role || "").toLowerCase())
+  );
+
+  return (
+    normalizedRoles.has("platform_owner") ||
+    normalizedRoles.has("owner") ||
+    normalizedRoles.has("admin") ||
+    normalizedRoles.has("finance") ||
+    normalizedRoles.has("management")
+  );
+}
+
 function detectIntent(
   lower: string,
   detectedCountryName: string | null
@@ -160,6 +193,9 @@ function detectIntent(
   }
   if (detectProfitSimulation(lower)) {
     return "profit_simulation";
+  }
+  if (detectSparesIntent(lower)) {
+    return "spares_context";
   }
   if (
     lower.includes("profit") ||
@@ -220,6 +256,10 @@ function detectIntent(
   return "general";
 }
 
+function detectSparesIntent(lower: string) {
+  return /\b(spare|spares|part|parts|maintenance|repair|repaired|fixed|fitted|installed|removed|replaced|tyre|tire|retread|battery|brake|filter|mechanic|workshop|vendor|supplier)\b/.test(lower);
+}
+
 function extractTruckCandidate(question: string) {
   const truckMatch = question.match(/[A-Z]{3}\s?\d{3}[A-Z]/i);
   if (!truckMatch) return null;
@@ -228,20 +268,24 @@ function extractTruckCandidate(question: string) {
 
 async function detectTruckAccess(question: string, companyId: string) {
   const candidate = extractTruckCandidate(question);
-  if (!candidate) return { truck_id: null, restricted: false };
-  const compactCandidate = candidate.replace(/\s+/g, "");
+  const compactCandidate = candidate ? normalizeTruckKey(candidate) : null;
+  const compactQuestion = normalizeTruckKey(question);
 
   const { data } = await supabaseAdmin
     .from("fleet_assets")
-    .select("truck_id, registration, intelligence_enabled")
+    .select("id, truck_id, registration, intelligence_enabled")
     .eq("company_id", companyId)
     .eq("status", "active")
-    .or(
-      `truck_id.ilike.%${candidate}%,registration.ilike.%${candidate}%,truck_id.ilike.%${compactCandidate}%,registration.ilike.%${compactCandidate}%`
-    )
-    .limit(1);
+    .limit(500);
 
-  const asset = data?.[0];
+  const assets = data || [];
+  const asset = assets.find((item) =>
+    getAssetMatchKeys(item).some((key) => {
+      if (compactCandidate && key.includes(compactCandidate)) return true;
+      return compactQuestion.includes(key);
+    })
+  );
+
   if (!asset) return { truck_id: null, restricted: false };
 
   if (!asset.intelligence_enabled) {
@@ -249,6 +293,11 @@ async function detectTruckAccess(question: string, companyId: string) {
   }
 
   return { truck_id: asset.truck_id || asset.registration || candidate, restricted: false };
+}
+
+function getAssetMatchKeys(asset: any) {
+  return [normalizeTruckKey(asset?.truck_id), normalizeTruckKey(asset?.registration)]
+    .filter((key) => key.length >= 4);
 }
 
 async function fetchFleetAssetCounts(companyId: string) {
@@ -675,4 +724,371 @@ async function fetchJourneyLikeContext(
     );
   }
   return context;
+}
+
+async function fetchSparesContext(
+  companyId: string,
+  question: string,
+  truckId: string | null,
+  costVisible: boolean
+) {
+  const enabledAssetLookup = await fetchEnabledAssetLookup(companyId);
+
+  const [
+    recentSpareEvents,
+    truckSpareHistory,
+    partCatalogMatches,
+    vendorMechanicSummary,
+    retreadSummary,
+  ] = await Promise.all([
+    fetchRecentSpareEvents(companyId, costVisible, enabledAssetLookup),
+    truckId
+      ? fetchTruckSpareHistory(companyId, truckId, costVisible, enabledAssetLookup)
+      : Promise.resolve([]),
+    fetchPartCatalogMatches(companyId, question),
+    fetchVendorMechanicSummary(companyId, costVisible),
+    fetchRetreadSummary(companyId, costVisible, enabledAssetLookup),
+  ]);
+
+  return {
+    cost_visible: costVisible,
+    unsupported_lifespan_question: asksForUnsupportedSparesAnalytics(question),
+    recent_spare_events: recentSpareEvents,
+    truck_spare_history: truckSpareHistory,
+    part_catalog_matches: partCatalogMatches,
+    vendor_mechanic_summary: vendorMechanicSummary,
+    retread_summary: retreadSummary,
+  };
+}
+
+async function fetchEnabledAssetLookup(companyId: string) {
+  const { data, error } = await supabaseAdmin
+    .from("fleet_assets")
+    .select("id, truck_id, registration")
+    .eq("company_id", companyId)
+    .eq("status", "active")
+    .eq("intelligence_enabled", true);
+
+  if (error) throw error;
+
+  const assets = data || [];
+  const assetIds = new Set(assets.map((asset) => asset.id).filter(Boolean));
+  const byTruckKey = new Map<string, any>();
+
+  for (const asset of assets) {
+    for (const key of getAssetMatchKeys(asset)) {
+      byTruckKey.set(key, asset);
+    }
+  }
+
+  return { assets, assetIds, byTruckKey };
+}
+
+async function fetchRecentSpareEvents(
+  companyId: string,
+  costVisible: boolean,
+  enabledAssetLookup: any
+) {
+  const { data, error } = await supabaseAdmin
+    .from("spare_lifecycle_events")
+    .select(spareEventSelect())
+    .eq("company_id", companyId)
+    .order("event_at", { ascending: false })
+    .limit(20);
+
+  if (error) throw error;
+
+  return (data || []).map((event) =>
+    sanitizeSpareEvent(event, costVisible, enabledAssetLookup)
+  );
+}
+
+async function fetchTruckSpareHistory(
+  companyId: string,
+  truckId: string,
+  costVisible: boolean,
+  enabledAssetLookup: any
+) {
+  const truckKey = normalizeTruckKey(truckId);
+  const asset = enabledAssetLookup.byTruckKey.get(truckKey);
+  if (!asset) return [];
+
+  const { data, error } = await supabaseAdmin
+    .from("spare_lifecycle_events")
+    .select(spareEventSelect())
+    .eq("company_id", companyId)
+    .order("event_at", { ascending: false })
+    .limit(200);
+
+  if (error) throw error;
+
+  return (data || [])
+    .filter((event) => spareEventMatchesEnabledAsset(event, asset, enabledAssetLookup))
+    .slice(0, 20)
+    .map((event) => sanitizeSpareEvent(event, costVisible, enabledAssetLookup));
+}
+
+async function fetchPartCatalogMatches(companyId: string, question: string) {
+  const { data, error } = await supabaseAdmin
+    .from("spare_catalog_parts")
+    .select(
+      "name, category, brand, model, part_number, expected_life_km, expected_life_days, retreadable, max_retreads, is_active"
+    )
+    .eq("company_id", companyId)
+    .eq("is_active", true)
+    .order("name", { ascending: true })
+    .limit(100);
+
+  if (error) throw error;
+
+  const lowerQuestion = question.toLowerCase();
+  return (data || [])
+    .filter((part) =>
+      [
+        part.name,
+        part.category,
+        part.brand,
+        part.model,
+        part.part_number,
+      ]
+        .filter(Boolean)
+        .some((value) => {
+          const text = String(value).toLowerCase();
+          return text.length >= 3 && lowerQuestion.includes(text);
+        })
+    )
+    .slice(0, 8)
+    .map(sanitizeCatalogPart);
+}
+
+async function fetchVendorMechanicSummary(companyId: string, costVisible: boolean) {
+  const { data, error } = await supabaseAdmin
+    .from("spare_lifecycle_events")
+    .select("event_type, event_at, vendor_name, mechanic_name, cost")
+    .eq("company_id", companyId)
+    .order("event_at", { ascending: false })
+    .limit(200);
+
+  if (error) throw error;
+
+  return {
+    vendors: summarizeSpareNameCounts(data || [], "vendor_name", costVisible),
+    mechanics: summarizeSpareNameCounts(data || [], "mechanic_name", costVisible),
+  };
+}
+
+async function fetchRetreadSummary(
+  companyId: string,
+  costVisible: boolean,
+  enabledAssetLookup: any
+) {
+  const [eventsResult, catalogResult] = await Promise.all([
+    supabaseAdmin
+      .from("spare_lifecycle_events")
+      .select(spareEventSelect())
+      .eq("company_id", companyId)
+      .eq("event_type", "retreaded")
+      .order("event_at", { ascending: false })
+      .limit(100),
+    supabaseAdmin
+      .from("spare_catalog_parts")
+      .select(
+        "name, category, brand, model, part_number, expected_life_km, expected_life_days, retreadable, max_retreads, is_active"
+      )
+      .eq("company_id", companyId)
+      .eq("is_active", true)
+      .eq("retreadable", true)
+      .order("name", { ascending: true })
+      .limit(20),
+  ]);
+
+  if (eventsResult.error) throw eventsResult.error;
+  if (catalogResult.error) throw catalogResult.error;
+
+  const retreadEvents = (eventsResult.data || []).map((event) =>
+    sanitizeSpareEvent(event, costVisible, enabledAssetLookup)
+  );
+
+  return {
+    event_count: retreadEvents.length,
+    events: retreadEvents.slice(0, 10),
+    by_part: summarizeRetreadsByPart(retreadEvents),
+    catalog_reference: (catalogResult.data || []).map(sanitizeCatalogPart),
+  };
+}
+
+function spareEventSelect() {
+  return "event_type, event_at, part_name, quantity, asset_id, truck_id, vendor_name, mechanic_name, condition_before, condition_after, odometer, engine_hours, cost, from_asset_id, to_asset_id, created_at";
+}
+
+function sanitizeSpareEvent(
+  event: any,
+  costVisible: boolean,
+  enabledAssetLookup: any
+) {
+  const safeEvent: any = {
+    event_type: event.event_type || null,
+    event_at: event.event_at || null,
+    part_name: event.part_name || null,
+    quantity:
+      event.quantity === null || event.quantity === undefined
+        ? null
+        : Number(event.quantity),
+    truck_id: resolveEnabledTruckLabel(event, enabledAssetLookup),
+    vendor_name: event.vendor_name || null,
+    mechanic_name: event.mechanic_name || null,
+    condition_before: event.condition_before || null,
+    condition_after: event.condition_after || null,
+    odometer:
+      event.odometer === null || event.odometer === undefined
+        ? null
+        : Number(event.odometer),
+    engine_hours:
+      event.engine_hours === null || event.engine_hours === undefined
+        ? null
+        : Number(event.engine_hours),
+    created_at: event.created_at || null,
+  };
+
+  if (costVisible) {
+    safeEvent.cost =
+      event.cost === null || event.cost === undefined ? null : Number(event.cost);
+  }
+
+  return safeEvent;
+}
+
+function sanitizeCatalogPart(part: any) {
+  return {
+    name: part.name || null,
+    category: part.category || null,
+    brand: part.brand || null,
+    model: part.model || null,
+    part_number: part.part_number || null,
+    expected_life_km:
+      part.expected_life_km === null || part.expected_life_km === undefined
+        ? null
+        : Number(part.expected_life_km),
+    expected_life_days:
+      part.expected_life_days === null || part.expected_life_days === undefined
+        ? null
+        : Number(part.expected_life_days),
+    retreadable: Boolean(part.retreadable),
+    max_retreads:
+      part.max_retreads === null || part.max_retreads === undefined
+        ? null
+        : Number(part.max_retreads),
+    is_active: part.is_active !== false,
+  };
+}
+
+function spareEventMatchesEnabledAsset(event: any, asset: any, lookup: any) {
+  if (event.asset_id && asset.id && event.asset_id === asset.id) return true;
+
+  const eventKey = normalizeTruckKey(event.truck_id);
+  if (!eventKey) return false;
+
+  return getAssetMatchKeys(asset).some((key) => key === eventKey) ||
+    lookup.byTruckKey.get(eventKey)?.id === asset.id;
+}
+
+function resolveEnabledTruckLabel(event: any, lookup: any) {
+  if (event.asset_id && lookup.assetIds.has(event.asset_id)) {
+    const asset = lookup.assets.find((item: any) => item.id === event.asset_id);
+    return asset?.registration || asset?.truck_id || null;
+  }
+
+  const eventKey = normalizeTruckKey(event.truck_id);
+  if (!eventKey) return null;
+
+  const asset = lookup.byTruckKey.get(eventKey);
+  return asset?.registration || asset?.truck_id || null;
+}
+
+function summarizeSpareNameCounts(
+  events: any[],
+  field: "vendor_name" | "mechanic_name",
+  costVisible: boolean
+) {
+  const summary = new Map<string, any>();
+
+  for (const event of events) {
+    const name = String(event[field] || "").trim();
+    if (!name) continue;
+
+    const current =
+      summary.get(name) ||
+      {
+        name,
+        event_count: 0,
+        last_event_at: null,
+        event_types: {},
+        total_cost: 0,
+      };
+
+    current.event_count += 1;
+    current.last_event_at = current.last_event_at || event.event_at || null;
+    current.event_types[event.event_type || "event"] =
+      (current.event_types[event.event_type || "event"] || 0) + 1;
+    if (costVisible && event.cost !== null && event.cost !== undefined) {
+      current.total_cost += Number(event.cost || 0);
+    }
+    summary.set(name, current);
+  }
+
+  return Array.from(summary.values())
+    .sort((a, b) => b.event_count - a.event_count)
+    .slice(0, 8)
+    .map((item) => {
+      const formatted: any = {
+        name: item.name,
+        event_count: item.event_count,
+        last_event_at: item.last_event_at,
+        event_types: item.event_types,
+      };
+      if (costVisible) formatted.total_cost = item.total_cost;
+      return formatted;
+    });
+}
+
+function summarizeRetreadsByPart(events: any[]) {
+  const summary = new Map<string, any>();
+
+  for (const event of events) {
+    const partName = event.part_name || "Unknown part";
+    const current =
+      summary.get(partName) ||
+      {
+        part_name: partName,
+        retread_count: 0,
+        latest_event_at: null,
+      };
+
+    current.retread_count += 1;
+    current.latest_event_at = current.latest_event_at || event.event_at || null;
+    summary.set(partName, current);
+  }
+
+  return Array.from(summary.values())
+    .sort((a, b) => b.retread_count - a.retread_count)
+    .slice(0, 10);
+}
+
+function asksForUnsupportedSparesAnalytics(question: string) {
+  const lower = question.toLowerCase();
+  return [
+    "lifespan",
+    "life span",
+    "how long",
+    "last longer",
+    "lasts longer",
+    "fail faster",
+    "fails faster",
+    "better",
+    "worse",
+    "perform better",
+    "performance",
+    "recommend replacement",
+    "replacement recommendation",
+  ].some((phrase) => lower.includes(phrase));
 }
