@@ -1,94 +1,209 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import FinancialEvidenceUploader from "../../components/FinancialEvidenceUploader";
-import FinanceVerificationQueue from "../../components/FinanceVerificationQueue";
-import { requirePermission } from "../../../lib/hooks/requirePermission";
+import Link from "next/link";
+import { supabase } from "../../../lib/supabase";
+import {
+  EmptyState,
+  PageHeader,
+  Panel,
+  PrimaryButton,
+  StatusPill,
+} from "../../components/ui/Primitives";
+
+const financeCards = [
+  {
+    title: "Revenue Management",
+    body: "Set trip rates, quantities, and revenue for active journeys.",
+    href: "/finance/revenue",
+  },
+  {
+    title: "Fuel Ledger",
+    body: "Review fuel records, allocation, and journey-level fuel totals.",
+    href: "/fuel",
+  },
+  {
+    title: "Add Fuel",
+    body: "Capture a fuel entry and link it to an open journey when available.",
+    href: "/fuel/new",
+  },
+  {
+    title: "Add Expense",
+    body: "Record trip costs, transaction fees, advances, and operating expenses.",
+    href: "/expenses/new",
+  },
+  {
+    title: "Management Dashboard",
+    body: "Review profitability, revenue, costs, and client performance.",
+    href: "/management/dashboard",
+  },
+  {
+    title: "Create Journey",
+    body: "Start a new journey so finance can price and track the trip.",
+    href: "/ops/journey/new",
+  },
+];
+
+const allowedFinanceRoles = new Set([
+  "platform_owner",
+  "owner",
+  "admin",
+  "finance",
+  "management",
+]);
 
 export default function FinanceDashboard() {
-  const [allowed, setAllowed] = useState<boolean | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [roles, setRoles] = useState<string[]>([]);
+  const [companies, setCompanies] = useState<any[]>([]);
+  const [isPlatformOwner, setIsPlatformOwner] = useState(false);
 
   useEffect(() => {
-    async function check() {
-      const result = await requirePermission(
-        "contact@navabloomco.com",
-        "finance"
-      );
-
-      setAllowed(result.allowed);
-    }
-
-    check();
+    loadFinanceAccess();
   }, []);
 
-  if (allowed === null) {
-    return <main style={{ padding: 40 }}>Checking finance access...</main>;
+  async function loadFinanceAccess() {
+    setLoading(true);
+    setError("");
+
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    if (!session?.access_token) {
+      window.location.href = "/login";
+      return;
+    }
+
+    try {
+      const res = await fetch("/api/companies", {
+        cache: "no-store",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+      });
+      const json = await res.json();
+
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || "Unable to load finance access.");
+      }
+
+      setRoles(
+        (json.roles || []).map((role: string) => String(role).toLowerCase())
+      );
+      setCompanies(json.companies || []);
+      setIsPlatformOwner(Boolean(json.is_platform_owner));
+    } catch (err: any) {
+      setError(err.message || "Unable to load finance access.");
+    } finally {
+      setLoading(false);
+    }
   }
 
-  if (!allowed) {
+  const roleSet = new Set(roles);
+  const canUseFinanceHub =
+    isPlatformOwner || roles.some((role) => allowedFinanceRoles.has(role));
+  const primaryCompany = companies[0];
+
+  if (loading) {
     return (
-      <main style={{ padding: 40 }}>
-        <h1 style={{ color: "#dc2626" }}>Access Denied</h1>
-        <p>Your role does not have Finance clearance.</p>
+      <main className="min-h-screen bg-slate-950 px-4 py-6 text-white sm:px-8 sm:py-10">
+        <Panel dark className="p-6">
+          <div className="text-sm text-slate-300">Loading finance tools...</div>
+        </Panel>
+      </main>
+    );
+  }
+
+  if (error) {
+    return (
+      <main className="min-h-screen bg-slate-950 px-4 py-6 text-white sm:px-8 sm:py-10">
+        <Panel dark className="border-rose-300/30 bg-rose-500/10 p-6">
+          <h1 className="text-2xl font-semibold text-rose-100">
+            Finance tools unavailable
+          </h1>
+          <p className="mt-3 text-sm leading-6 text-rose-100">{error}</p>
+          <div className="mt-5">
+            <Link href="/dashboard">
+              <PrimaryButton type="button">Back to Dashboard</PrimaryButton>
+            </Link>
+          </div>
+        </Panel>
+      </main>
+    );
+  }
+
+  if (!canUseFinanceHub) {
+    return (
+      <main className="min-h-screen bg-slate-950 px-4 py-6 text-white sm:px-8 sm:py-10">
+        <div className="mx-auto max-w-4xl">
+          <EmptyState
+            dark
+            title="Finance tools are for finance and management roles"
+            body="Your current role can use the operational workspace, but finance setup and reporting tools are reserved for finance, management, and company admin roles."
+            action={
+              <Link href="/dashboard">
+                <PrimaryButton type="button">Back to Dashboard</PrimaryButton>
+              </Link>
+            }
+          />
+        </div>
       </main>
     );
   }
 
   return (
-    <main
-      style={{
-        padding: 40,
-        background: "#f8fafc",
-        minHeight: "100vh",
-        fontFamily: "sans-serif"
-      }}
-    >
-      <header style={{ marginBottom: 30 }}>
-        <h1
-          style={{
-            fontSize: 32,
-            fontWeight: "bold",
-            marginBottom: 8,
-            color: "#1e293b"
-          }}
-        >
-          Finance Intelligence Center
-        </h1>
+    <main className="min-h-screen bg-slate-950 px-4 py-6 text-white sm:px-8 sm:py-10">
+      <div className="mx-auto max-w-7xl">
+        <PageHeader
+          dark
+          eyebrow="Finance workspace"
+          title="Finance Hub"
+          body="Manage trip revenue, fuel, expenses, and profitability from one place."
+          actions={
+            <Link href="/finance/revenue">
+              <PrimaryButton type="button" className="w-full sm:w-auto">
+                Open Revenue Management
+              </PrimaryButton>
+            </Link>
+          }
+        />
 
-        <p
-          style={{
-            color: "#64748b",
-            fontSize: 14
-          }}
-        >
-          Financial evidence, verification, reconciliation and audit workflows.
-        </p>
-      </header>
+        <Panel dark className="mt-6 border-cyan-200/20 bg-cyan-300/10 p-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="min-w-0 text-sm text-cyan-50">
+              {isPlatformOwner
+                ? "Platform owner access"
+                : primaryCompany?.name || "Finance workspace"}
+            </span>
+            {roles.map((role) => (
+              <StatusPill key={role} tone={roleSet.has("finance") ? "success" : "info"}>
+                {role}
+              </StatusPill>
+            ))}
+          </div>
+        </Panel>
 
-      <section style={{ marginBottom: 40 }}>
-        <FinancialEvidenceUploader />
-      </section>
-
-      <hr
-        style={{
-          border: "0",
-          borderTop: "1px solid #e2e8f0",
-          margin: "40px 0"
-        }}
-      />
-
-      <section>
-        <header style={{ marginBottom: 15 }}>
-          <h2 style={{ fontSize: 20, fontWeight: "bold", color: "#1e293b" }}>
-            Audit & Verification
-          </h2>
-          <p style={{ color: "#64748b", fontSize: 13 }}>
-            Review pending evidence and approve for financial reconciliation.
-          </p>
-        </header>
-
-        <FinanceVerificationQueue />
-      </section>
+        <section className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {financeCards.map((card) => (
+            <Link key={card.href} href={card.href} className="group block">
+              <Panel
+                dark
+                className="h-full p-5 transition group-hover:border-cyan-200/40 group-hover:bg-cyan-300/10"
+              >
+                <h2 className="text-lg font-semibold text-white">{card.title}</h2>
+                <p className="mt-3 text-sm leading-6 text-slate-300">
+                  {card.body}
+                </p>
+                <div className="mt-5 text-sm font-semibold text-cyan-100">
+                  Open
+                </div>
+              </Panel>
+            </Link>
+          ))}
+        </section>
+      </div>
     </main>
   );
 }
