@@ -3,6 +3,7 @@ import { supabase } from "../../../../lib/supabase";
 import { supabaseAdmin } from "../../../../lib/supabaseAdmin";
 
 export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 type ResolvedCompany = {
   id: string;
@@ -11,8 +12,20 @@ type ResolvedCompany = {
 };
 
 type ResolveCompanyResult =
-  | { company: ResolvedCompany; isPlatformOwner: boolean; error?: never }
-  | { error: NextResponse; company?: never; isPlatformOwner?: never };
+  | {
+      company: ResolvedCompany;
+      isPlatformOwner: boolean;
+      roles: string[];
+      capabilities: { can_apply_alert_context: boolean };
+      error?: never;
+    }
+  | {
+      error: NextResponse;
+      company?: never;
+      isPlatformOwner?: never;
+      roles?: never;
+      capabilities?: never;
+    };
 
 const SHARED_DISRUPTION_REASONS = [
   "Road disruption",
@@ -27,6 +40,29 @@ const SHARED_DISRUPTION_REASONS = [
   "Security disruption",
   "Other",
 ];
+
+function noStoreJson(body: any, init?: ResponseInit) {
+  return NextResponse.json(body, {
+    ...init,
+    headers: {
+      ...(init?.headers || {}),
+      "Cache-Control": "no-store",
+    },
+  });
+}
+
+function buildCapabilities(roles: string[], isPlatformOwner: boolean) {
+  const normalizedRoles = new Set(roles.map((role) => role.toLowerCase()));
+
+  return {
+    can_apply_alert_context:
+      isPlatformOwner ||
+      normalizedRoles.has("platform_owner") ||
+      normalizedRoles.has("owner") ||
+      normalizedRoles.has("admin") ||
+      normalizedRoles.has("ops"),
+  };
+}
 
 function sanitizeProvider(provider: any) {
   return {
@@ -73,6 +109,7 @@ function buildSharedDisruptionCandidate(
     const timestamp = new Date(alert.created_at || alert.started_at || 0).getTime();
     return (
       alert.event_type === "excessive_idle" &&
+      !alert.context_applied_at &&
       alert.truck_id &&
       Number.isFinite(timestamp) &&
       timestamp >= since
@@ -126,7 +163,9 @@ async function resolveCompany(
 ): Promise<ResolveCompanyResult> {
   const authHeader = req.headers.get("authorization");
   if (!authHeader?.startsWith("Bearer ")) {
-    return { error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
+    return {
+      error: noStoreJson({ success: false, error: "Unauthorized" }, { status: 401 }),
+    };
   }
 
   const token = authHeader.replace("Bearer ", "");
@@ -136,7 +175,9 @@ async function resolveCompany(
   } = await supabase.auth.getUser(token);
 
   if (userError || !user) {
-    return { error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
+    return {
+      error: noStoreJson({ success: false, error: "Unauthorized" }, { status: 401 }),
+    };
   }
 
   const { data: memberships, error: membershipError } = await supabaseAdmin
@@ -148,9 +189,15 @@ async function resolveCompany(
   if (membershipError) throw membershipError;
 
   const activeMemberships = memberships || [];
-  const isPlatformOwner = activeMemberships.some(
-    (membership) => membership.role === "platform_owner"
+  const roles = Array.from(
+    new Set(
+      activeMemberships
+        .map((membership) => String(membership.role || "").toLowerCase())
+        .filter(Boolean)
+    )
   );
+  const isPlatformOwner = roles.includes("platform_owner");
+  const capabilities = buildCapabilities(roles, isPlatformOwner);
 
   if (isPlatformOwner) {
     const companyQuery = supabaseAdmin
@@ -164,14 +211,14 @@ async function resolveCompany(
     if (companyError) throw companyError;
     if (!company) {
       return {
-        error: NextResponse.json(
+        error: noStoreJson(
           { success: false, error: "Company not found" },
           { status: 404 }
         ),
       };
     }
 
-    return { company: company as ResolvedCompany, isPlatformOwner };
+    return { company: company as ResolvedCompany, isPlatformOwner, roles, capabilities };
   }
 
   const companyId = activeMemberships
@@ -180,7 +227,7 @@ async function resolveCompany(
 
   if (!companyId) {
     return {
-      error: NextResponse.json(
+      error: noStoreJson(
         { success: false, error: "Unable to resolve company access" },
         { status: 403 }
       ),
@@ -196,14 +243,14 @@ async function resolveCompany(
   if (companyError) throw companyError;
   if (!company) {
     return {
-      error: NextResponse.json(
+      error: noStoreJson(
         { success: false, error: "Unable to resolve company access" },
         { status: 403 }
       ),
     };
   }
 
-  return { company: company as ResolvedCompany, isPlatformOwner };
+  return { company: company as ResolvedCompany, isPlatformOwner, roles, capabilities };
 }
 
 export async function GET(req: Request) {
@@ -264,7 +311,9 @@ export async function GET(req: Request) {
       const [alertsResult, telemetryResult] = await Promise.all([
         supabaseAdmin
           .from("telemetry_events")
-          .select("*")
+          .select(
+            "id, company_id, truck_id, event_type, severity, location_name, created_at, started_at, context_type, context_label, context_note, context_applied_by, context_applied_at"
+          )
           .eq("company_id", resolved.company.id)
           .in("truck_id", enabledTruckIds)
           .order("created_at", { ascending: false })
@@ -299,10 +348,12 @@ export async function GET(req: Request) {
       return minutes <= 30;
     });
 
-    return NextResponse.json({
+    return noStoreJson({
       success: true,
       company: resolved.company,
       is_platform_owner: resolved.isPlatformOwner,
+      roles: resolved.roles,
+      capabilities: resolved.capabilities,
       journeys,
       fleet_assets: fleetAssets,
       provider_statuses: providers.map(sanitizeProvider),
@@ -325,7 +376,7 @@ export async function GET(req: Request) {
     });
   } catch (err: any) {
     console.error("Ops dashboard error:", err);
-    return NextResponse.json(
+    return noStoreJson(
       { success: false, error: err.message || "Failed to load ops dashboard" },
       { status: 500 }
     );
