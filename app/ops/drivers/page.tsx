@@ -27,6 +27,32 @@ type Driver = {
 type Capabilities = {
   can_view_drivers?: boolean;
   can_manage_drivers?: boolean;
+  can_view_driver_assignments?: boolean;
+  can_manage_driver_assignments?: boolean;
+};
+
+type EnabledAsset = {
+  id: string;
+  registration: string | null;
+  truck_id: string | null;
+  provider_name: string | null;
+  status: string | null;
+};
+
+type DriverAssignment = {
+  id: string;
+  asset_id: string | null;
+  truck_id: string | null;
+  driver_id: string | null;
+  driver_name: string | null;
+  journey_id: string | null;
+  assigned_from: string | null;
+  assigned_to: string | null;
+  assignment_status: string;
+  created_at: string | null;
+  ended_at: string | null;
+  asset_registration: string | null;
+  asset_provider_name: string | null;
 };
 
 const inputClass =
@@ -48,6 +74,13 @@ function emptyForm(driver?: Driver) {
   };
 }
 
+function emptyAssignmentForm() {
+  return {
+    driver_id: "",
+    asset_id: "",
+  };
+}
+
 function statusTone(status: string) {
   const normalized = String(status || "").toLowerCase();
   if (normalized === "active") return "success";
@@ -62,15 +95,26 @@ function formatDate(value: string | null) {
   return date.toLocaleDateString();
 }
 
+function formatDateTime(value: string | null) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleString();
+}
+
 export default function DriversPage() {
   const [drivers, setDrivers] = useState<Driver[]>([]);
+  const [assignments, setAssignments] = useState<DriverAssignment[]>([]);
+  const [enabledAssets, setEnabledAssets] = useState<EnabledAsset[]>([]);
   const [capabilities, setCapabilities] = useState<Capabilities>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [assignmentSaving, setAssignmentSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
   const [createForm, setCreateForm] = useState(emptyForm());
+  const [assignmentForm, setAssignmentForm] = useState(emptyAssignmentForm());
   const [editingId, setEditingId] = useState("");
   const [editForm, setEditForm] = useState(emptyForm());
 
@@ -99,20 +143,39 @@ export default function DriversPage() {
     if (!token) return;
 
     try {
-      const res = await fetch("/api/drivers", {
-        cache: "no-store",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-      const json = await res.json();
+      const [driverRes, assignmentRes] = await Promise.all([
+        fetch("/api/drivers", {
+          cache: "no-store",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }),
+        fetch("/api/driver-assignments", {
+          cache: "no-store",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }),
+      ]);
+      const json = await driverRes.json();
+      const assignmentJson = await assignmentRes.json();
 
-      if (!res.ok || !json.success) {
+      if (!driverRes.ok || !json.success) {
         throw new Error(json.error || "Failed to load drivers.");
+      }
+      if (!assignmentRes.ok || !assignmentJson.success) {
+        throw new Error(
+          assignmentJson.error || "Failed to load driver assignments."
+        );
       }
 
       setDrivers(json.drivers || []);
-      setCapabilities(json.capabilities || {});
+      setAssignments(assignmentJson.assignments || []);
+      setEnabledAssets(assignmentJson.enabled_assets || []);
+      setCapabilities({
+        ...(json.capabilities || {}),
+        ...(assignmentJson.capabilities || {}),
+      });
     } catch (err: any) {
       setError(err.message || "Failed to load drivers.");
     } finally {
@@ -194,6 +257,78 @@ export default function DriversPage() {
     }
   }
 
+  async function handleCreateAssignment(e: any) {
+    e.preventDefault();
+    setAssignmentSaving(true);
+    setError("");
+    setMessage("");
+
+    const token = await getAccessToken();
+    if (!token) {
+      setAssignmentSaving(false);
+      return;
+    }
+
+    try {
+      const res = await fetch("/api/driver-assignments", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(assignmentForm),
+      });
+      const json = await res.json();
+
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || "Failed to assign driver.");
+      }
+
+      setAssignmentForm(emptyAssignmentForm());
+      setMessage("Driver assigned to asset.");
+      await loadDrivers();
+    } catch (err: any) {
+      setError(err.message || "Failed to assign driver.");
+    } finally {
+      setAssignmentSaving(false);
+    }
+  }
+
+  async function endAssignment(assignmentId: string) {
+    setAssignmentSaving(true);
+    setError("");
+    setMessage("");
+
+    const token = await getAccessToken();
+    if (!token) {
+      setAssignmentSaving(false);
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/driver-assignments/${assignmentId}`, {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ action: "end" }),
+      });
+      const json = await res.json();
+
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || "Failed to end assignment.");
+      }
+
+      setMessage("Driver assignment ended.");
+      await loadDrivers();
+    } catch (err: any) {
+      setError(err.message || "Failed to end assignment.");
+    } finally {
+      setAssignmentSaving(false);
+    }
+  }
+
   function startEditing(driver: Driver) {
     setEditingId(driver.id);
     setEditForm(emptyForm(driver));
@@ -201,9 +336,28 @@ export default function DriversPage() {
     setError("");
   }
 
-  const canManage = Boolean(capabilities.can_manage_drivers);
+  const canManageDrivers = Boolean(capabilities.can_manage_drivers);
+  const canManageAssignments = Boolean(capabilities.can_manage_driver_assignments);
   const activeCount = drivers.filter((driver) => driver.status === "active").length;
   const inactiveCount = drivers.length - activeCount;
+  const activeDrivers = drivers.filter((driver) => driver.status === "active");
+  const activeAssignments = assignments.filter(
+    (assignment) =>
+      assignment.assignment_status === "active" && !assignment.assigned_to
+  );
+  const assignedAssetIds = new Set(
+    activeAssignments.map((assignment) => assignment.asset_id).filter(Boolean)
+  );
+  const assignedTruckIds = new Set(
+    activeAssignments
+      .map((assignment) => String(assignment.truck_id || "").toLowerCase())
+      .filter(Boolean)
+  );
+  const assignableAssets = enabledAssets.filter(
+    (asset) =>
+      !assignedAssetIds.has(asset.id) &&
+      !assignedTruckIds.has(String(asset.truck_id || "").toLowerCase())
+  );
   const filteredDrivers = useMemo(() => {
     const query = search.trim().toLowerCase();
     if (!query) return drivers;
@@ -276,14 +430,130 @@ export default function DriversPage() {
                   Access
                 </div>
                 <div className="mt-4">
-                  <StatusPill tone={canManage ? "success" : "info"}>
-                    {canManage ? "Can manage" : "View only"}
+                  <StatusPill tone={canManageDrivers ? "success" : "info"}>
+                    {canManageDrivers ? "Can manage" : "View only"}
                   </StatusPill>
                 </div>
               </Panel>
             </section>
 
-            {canManage && (
+            <Panel dark className="mt-8 p-6">
+              <div className="grid gap-6">
+                <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-start">
+                  <div>
+                    <h2 className="text-lg font-semibold text-white">
+                      Current assignments
+                    </h2>
+                    <p className="mt-2 text-sm leading-6 text-slate-300">
+                      Assign drivers to enabled assets so alerts and fuel risk can show who was responsible.
+                    </p>
+                  </div>
+                  <StatusPill tone={canManageAssignments ? "success" : "info"}>
+                    {canManageAssignments ? "Assignment controls" : "View only"}
+                  </StatusPill>
+                </div>
+
+                {canManageAssignments && (
+                  <form
+                    onSubmit={handleCreateAssignment}
+                    className="grid gap-4 rounded-lg border border-white/10 bg-slate-950/50 p-4 lg:grid-cols-[1fr_1fr_auto] lg:items-end"
+                  >
+                    <FormField label="Driver" dark>
+                      <select
+                        value={assignmentForm.driver_id}
+                        onChange={(e) =>
+                          setAssignmentForm({
+                            ...assignmentForm,
+                            driver_id: e.target.value,
+                          })
+                        }
+                        className={inputClass}
+                        disabled={assignmentSaving || activeDrivers.length === 0}
+                        required
+                      >
+                        <option value="">Select active driver</option>
+                        {activeDrivers.map((driver) => (
+                          <option key={driver.id} value={driver.id}>
+                            {driver.full_name || "Unnamed driver"}
+                            {driver.employee_code ? ` · ${driver.employee_code}` : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </FormField>
+
+                    <FormField label="Enabled asset" dark>
+                      <select
+                        value={assignmentForm.asset_id}
+                        onChange={(e) =>
+                          setAssignmentForm({
+                            ...assignmentForm,
+                            asset_id: e.target.value,
+                          })
+                        }
+                        className={inputClass}
+                        disabled={assignmentSaving || assignableAssets.length === 0}
+                        required
+                      >
+                        <option value="">Select enabled asset</option>
+                        {assignableAssets.map((asset) => (
+                          <option key={asset.id} value={asset.id}>
+                            {assetLabel(asset)}
+                          </option>
+                        ))}
+                      </select>
+                    </FormField>
+
+                    <PrimaryButton
+                      type="submit"
+                      disabled={
+                        assignmentSaving ||
+                        activeDrivers.length === 0 ||
+                        assignableAssets.length === 0
+                      }
+                      className="w-full lg:w-auto"
+                    >
+                      {assignmentSaving ? "Assigning..." : "Assign driver"}
+                    </PrimaryButton>
+                  </form>
+                )}
+
+                {canManageAssignments && enabledAssets.length === 0 && (
+                  <div className="rounded-md border border-amber-300/20 bg-amber-300/10 p-4 text-sm leading-6 text-amber-50">
+                    No enabled assets are available yet. Assets must be reviewed before drivers can be assigned.
+                  </div>
+                )}
+
+                {canManageAssignments &&
+                  enabledAssets.length > 0 &&
+                  assignableAssets.length === 0 && (
+                    <div className="rounded-md border border-cyan-200/20 bg-cyan-300/10 p-4 text-sm leading-6 text-cyan-50">
+                      All enabled assets already have active driver assignments.
+                    </div>
+                  )}
+
+                {activeAssignments.length === 0 ? (
+                  <EmptyState
+                    dark
+                    title="No active driver assignments"
+                    body="Assign drivers to enabled assets so alerts and fuel risk can show who was responsible."
+                  />
+                ) : (
+                  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                    {activeAssignments.map((assignment) => (
+                      <AssignmentCard
+                        key={assignment.id}
+                        assignment={assignment}
+                        canManage={canManageAssignments}
+                        saving={assignmentSaving}
+                        onEnd={() => endAssignment(assignment.id)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            </Panel>
+
+            {canManageDrivers && (
               <Panel dark className="mt-8 p-6">
                 <form onSubmit={handleCreate} className="grid gap-5">
                   <div>
@@ -381,7 +651,7 @@ export default function DriversPage() {
                         ) : (
                           <DriverCard
                             driver={driver}
-                            canManage={canManage}
+                            canManage={canManageDrivers}
                             onEdit={() => startEditing(driver)}
                           />
                         )}
@@ -491,6 +761,66 @@ function DriverForm({
   );
 }
 
+function AssignmentCard({
+  assignment,
+  canManage,
+  saving,
+  onEnd,
+}: {
+  assignment: DriverAssignment;
+  canManage: boolean;
+  saving: boolean;
+  onEnd: () => void;
+}) {
+  const assetName =
+    assignment.asset_registration ||
+    assignment.truck_id ||
+    "Assigned asset";
+
+  return (
+    <article className="rounded-lg border border-white/10 bg-white/[0.04] p-4">
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <h3 className="break-words text-base font-semibold text-white">
+            {assignment.driver_name || "Assigned driver"}
+          </h3>
+          <p className="mt-1 break-words text-sm text-slate-400">
+            {assetName}
+          </p>
+        </div>
+        <StatusPill tone="success">
+          {labelize(assignment.assignment_status || "active")}
+        </StatusPill>
+      </div>
+
+      <div className="mt-5 grid gap-3 text-sm">
+        <Detail label="Truck ID" value={assignment.truck_id || "Not available"} />
+        <Detail
+          label="Provider"
+          value={assignment.asset_provider_name || "Not available"}
+        />
+        <Detail
+          label="Assigned from"
+          value={formatDateTime(assignment.assigned_from)}
+        />
+      </div>
+
+      {canManage && (
+        <div className="mt-5">
+          <SecondaryButton
+            type="button"
+            disabled={saving}
+            onClick={onEnd}
+            className="w-full sm:w-auto"
+          >
+            {saving ? "Ending..." : "End assignment"}
+          </SecondaryButton>
+        </div>
+      )}
+    </article>
+  );
+}
+
 function DriverCard({
   driver,
   canManage,
@@ -550,4 +880,11 @@ function labelize(value: string) {
   return String(value || "unknown")
     .replace(/_/g, " ")
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function assetLabel(asset: EnabledAsset) {
+  const registration = asset.registration || "Unregistered asset";
+  const truck = asset.truck_id ? ` · ${asset.truck_id}` : "";
+  const provider = asset.provider_name ? ` · ${asset.provider_name}` : "";
+  return `${registration}${truck}${provider}`;
 }
