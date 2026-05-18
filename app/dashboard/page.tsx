@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { supabase } from "../../lib/supabase";
 import { useRouter } from "next/navigation";
 
@@ -17,6 +18,14 @@ interface CompanyOption {
   name: string;
   slug: string;
 }
+
+const dashboardLinks = [
+  { label: "Fleet / live tracking", href: "/tracking/live" },
+  { label: "Journeys", href: "/ops/journey" },
+  { label: "Fuel", href: "/fuel" },
+  { label: "Nava Eye", href: "/nava-eye" },
+  { label: "Settings", href: "/admin/company" },
+];
 
 export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
@@ -138,13 +147,13 @@ export default function DashboardPage() {
       const json = await res.json();
       setCopilotAnswer(json.answer || "No answer");
     } catch {
-      setCopilotAnswer("Error contacting Nava Eye.");
+      setCopilotAnswer("Nava Eye could not answer right now.");
     } finally {
       setCopilotLoading(false);
     }
   };
 
-  if (loading) return <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center">Loading Nava Eye...</div>;
+  if (loading) return <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center">Loading dashboard...</div>;
   if (errorDetail) {
     return (
       <div className="min-h-screen bg-slate-950 text-white p-8">
@@ -264,16 +273,16 @@ export default function DashboardPage() {
       <div className="flex">
         <aside className="w-64 border-r border-slate-800 p-6 space-y-6">
           <nav className="space-y-2">
-            <div className="text-slate-400 text-sm font-semibold uppercase tracking-wider">Main</div>
-            <a href="#" className="block text-slate-300 hover:text-white py-1">Fleet</a>
-            <a href="#" className="block text-slate-300 hover:text-white py-1">Live Map</a>
-            <a href="#" className="block text-slate-300 hover:text-white py-1">Journeys</a>
-            <a href="#" className="block text-slate-300 hover:text-white py-1">Fuel Intelligence</a>
-            <div className="pt-4 text-slate-400 text-sm font-semibold uppercase tracking-wider">Operations</div>
-            <a href="#" className="block text-slate-300 hover:text-white py-1">Drivers</a>
-            <a href="#" className="block text-slate-300 hover:text-white py-1">Copilot</a>
-            <div className="pt-4 text-slate-400 text-sm font-semibold uppercase tracking-wider">System</div>
-            <a href="#" className="block text-slate-300 hover:text-white py-1">Settings</a>
+            <div className="text-slate-400 text-sm font-semibold uppercase tracking-wider">Quick links</div>
+            {dashboardLinks.map((item) => (
+              <Link
+                key={`${item.label}-${item.href}`}
+                href={item.href}
+                className="block text-slate-300 hover:text-white py-1"
+              >
+                {item.label}
+              </Link>
+            ))}
           </nav>
         </aside>
 
@@ -337,7 +346,7 @@ export default function DashboardPage() {
               </div>
 
               <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-5">
-                <h2 className="text-lg font-semibold mb-4">🧠 Nava Eye Copilot</h2>
+                <h2 className="text-lg font-semibold mb-4">🧠 Nava Eye fleet answers</h2>
                 <textarea
                   value={copilotQuery}
                   onChange={(e) => setCopilotQuery(e.target.value)}
@@ -350,7 +359,7 @@ export default function DashboardPage() {
                   disabled={copilotLoading || !copilotQuery.trim()}
                   className="mt-3 w-full bg-blue-600 hover:bg-blue-500 disabled:bg-blue-800 text-white font-medium py-2 rounded-xl transition"
                 >
-                  {copilotLoading ? "Thinking..." : "Ask Nava Eye"}
+                  {copilotLoading ? "Checking your fleet data..." : "Ask Nava Eye"}
                 </button>
                 {copilotAnswer && (
                   <div className="mt-4 bg-slate-800/50 rounded-xl p-4 border border-slate-700">
