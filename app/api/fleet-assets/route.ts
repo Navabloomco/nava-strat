@@ -12,6 +12,11 @@ type ResolvedCompany = {
   name: string;
   slug: string;
   subscription_plan?: string | null;
+  business_type?: string | null;
+  primary_asset_types?: string[] | null;
+  main_billing_unit?: string | null;
+  operating_regions?: string[] | null;
+  primary_use_case?: string | null;
   asset_unit_price?: number | null;
   billing_currency?: string | null;
   included_assets?: number | null;
@@ -121,7 +126,7 @@ async function resolveReviewAccess(req: Request, requestedCompanyId?: string | n
   if (isPlatformOwner) {
     const companyQuery = supabaseAdmin
       .from("companies")
-      .select("id, name, slug, subscription_plan, asset_unit_price, billing_currency, included_assets, trial_starts_at, trial_ends_at, billing_cycle_day");
+      .select("id, name, slug, subscription_plan, business_type, primary_asset_types, main_billing_unit, operating_regions, primary_use_case, asset_unit_price, billing_currency, included_assets, trial_starts_at, trial_ends_at, billing_cycle_day");
 
     const { data: company, error: companyError } = requestedCompanyId
       ? await companyQuery.eq("id", requestedCompanyId).maybeSingle()
@@ -157,7 +162,7 @@ async function resolveReviewAccess(req: Request, requestedCompanyId?: string | n
 
   const { data: company, error: companyError } = await supabaseAdmin
     .from("companies")
-    .select("id, name, slug, subscription_plan, asset_unit_price, billing_currency, included_assets, trial_starts_at, trial_ends_at, billing_cycle_day")
+    .select("id, name, slug, subscription_plan, business_type, primary_asset_types, main_billing_unit, operating_regions, primary_use_case, asset_unit_price, billing_currency, included_assets, trial_starts_at, trial_ends_at, billing_cycle_day")
     .eq("id", companyId)
     .maybeSingle();
 
@@ -202,6 +207,13 @@ export async function GET(req: Request) {
         id: resolved.company.id,
         name: resolved.company.name,
         slug: resolved.company.slug,
+      },
+      operating_context: {
+        business_type: resolved.company.business_type || null,
+        primary_asset_types: resolved.company.primary_asset_types || [],
+        main_billing_unit: resolved.company.main_billing_unit || null,
+        operating_regions: resolved.company.operating_regions || [],
+        primary_use_case: resolved.company.primary_use_case || null,
       },
       is_platform_owner: resolved.isPlatformOwner,
       billing: {

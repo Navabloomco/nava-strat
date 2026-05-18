@@ -46,6 +46,7 @@ type AssetFormState = {
 export default function AssetReviewPage() {
   const [assets, setAssets] = useState<any[]>([]);
   const [billing, setBilling] = useState<any>(null);
+  const [operatingContext, setOperatingContext] = useState<any>(null);
   const [summary, setSummary] = useState({
     imported_count: 0,
     unreviewed_count: 0,
@@ -110,6 +111,7 @@ export default function AssetReviewPage() {
 
       setAssets(json.assets || []);
       setBilling(json.billing || null);
+      setOperatingContext(json.operating_context || null);
       setSummary(json.summary || summary);
       seedForms(json.assets || []);
     } catch (err: any) {
@@ -257,6 +259,14 @@ export default function AssetReviewPage() {
             </SecondaryButton>
           }
         />
+
+        {operatingContext?.business_type && (
+          <Panel dark className="mt-6 border-cyan-200/20 bg-cyan-300/10 p-4">
+            <div className="text-sm leading-6 text-cyan-50">
+              Suggestions consider your operating context, but review decisions stay under your control.
+            </div>
+          </Panel>
+        )}
 
         {error && (
           <Panel dark className="mt-6 border-rose-300/30 bg-rose-500/10 p-4">

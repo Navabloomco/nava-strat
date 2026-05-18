@@ -29,6 +29,14 @@ type AssetClassificationSuggestion = {
   };
 };
 
+type CompanyOperatingContext = {
+  business_type?: string | null;
+  primary_asset_types?: string[] | null;
+  main_billing_unit?: string | null;
+  operating_regions?: string[] | null;
+  primary_use_case?: string | null;
+};
+
 function normalizeKey(value: any) {
   return String(value || "")
     .trim()
@@ -202,6 +210,53 @@ function categoryFromLabels(labelText: string): {
   return null;
 }
 
+function normalizeArray(value: any): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => String(item || "").trim()).filter(Boolean);
+}
+
+function preferredMovementCategory(
+  context: CompanyOperatingContext | null
+): AssetSuggestionCategory {
+  const primaryTypes = normalizeArray(context?.primary_asset_types);
+
+  for (const category of [
+    "truck",
+    "van",
+    "pickup",
+    "car",
+    "motorcycle",
+    "equipment",
+    "trailer",
+  ] as AssetSuggestionCategory[]) {
+    if (primaryTypes.includes(category)) return category;
+  }
+
+  if (context?.business_type === "construction_equipment") return "equipment";
+  if (context?.business_type === "sales_fleet") return "car";
+  if (context?.business_type === "courier_delivery") return "van";
+
+  return "truck";
+}
+
+function boostForOperatingContext(
+  category: AssetSuggestionCategory,
+  confidence: number,
+  context: CompanyOperatingContext | null
+) {
+  if (!context || category === "unknown") return confidence;
+  const primaryTypes = normalizeArray(context.primary_asset_types);
+  const directMatch = primaryTypes.includes(category);
+  const businessMatch =
+    (context.business_type === "courier_delivery" &&
+      ["motorcycle", "van", "pickup"].includes(category)) ||
+    (context.business_type === "sales_fleet" && category === "car") ||
+    (context.business_type === "construction_equipment" &&
+      category === "equipment");
+
+  return directMatch || businessMatch ? Math.min(confidence + 0.05, 0.8) : confidence;
+}
+
 function buildIdentifierSet(asset: any) {
   return new Set(
     [asset.truck_id, asset.registration].map(normalizeKey).filter(Boolean)
@@ -225,7 +280,7 @@ export async function suggestAssetClassifications(
     assetQuery = assetQuery.in("id", options.assetIds);
   }
 
-  const [assetsResult, journeysResult] = await Promise.all([
+  const [assetsResult, journeysResult, companyResult] = await Promise.all([
     assetQuery,
     supabaseAdmin
       .from("journeys")
@@ -233,13 +288,20 @@ export async function suggestAssetClassifications(
       .eq("company_id", companyId)
       .eq("is_demo", false)
       .gte("created_at", since),
+    supabaseAdmin
+      .from("companies")
+      .select("business_type, primary_asset_types, main_billing_unit, operating_regions, primary_use_case")
+      .eq("id", companyId)
+      .maybeSingle(),
   ]);
 
   if (assetsResult.error) throw assetsResult.error;
   if (journeysResult.error) throw journeysResult.error;
+  if (companyResult.error) throw companyResult.error;
 
   const assets = assetsResult.data || [];
   if (assets.length === 0) return [];
+  const operatingContext = companyResult.data || null;
 
   const identifierCounts = new Map<string, number>();
   for (const asset of assets) {
@@ -311,20 +373,24 @@ export async function suggestAssetClassifications(
     if (labelSuggestion && labelSuggestion.confidence > confidence) {
       category = labelSuggestion.category;
       reason = labelSuggestion.reason;
-      confidence = labelSuggestion.confidence;
+      confidence = boostForOperatingContext(
+        labelSuggestion.category,
+        labelSuggestion.confidence,
+        operatingContext
+      );
       providerLabelMatch = labelSuggestion.match;
     }
 
     if (movementKm >= 100 && telemetryCount >= 12 && confidence < 0.58) {
-      category = "truck";
+      category = preferredMovementCategory(operatingContext);
       reason = "Frequent long-distance movement";
-      confidence = 0.58;
+      confidence = boostForOperatingContext(category, 0.55, operatingContext);
     }
 
     if (matchedJourney) {
-      category = "truck";
+      category = preferredMovementCategory(operatingContext);
       reason = "Matched to recent journeys";
-      confidence = 0.74;
+      confidence = boostForOperatingContext(category, 0.72, operatingContext);
     } else if (staleLastSeen && telemetryCount < 3 && confidence < 0.3) {
       category = "unknown";
       reason = "Low activity / stale tracker";

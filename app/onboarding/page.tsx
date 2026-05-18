@@ -62,9 +62,48 @@ const checklistItems: Array<{ key: keyof Checklist; label: string; detail: strin
   },
 ];
 
+const businessTypeOptions = [
+  { value: "long_haul_transport", label: "Long-haul transport" },
+  { value: "passenger_transport", label: "Passenger transport" },
+  { value: "courier_delivery", label: "Courier / delivery" },
+  { value: "field_service", label: "Field service" },
+  { value: "construction_equipment", label: "Construction equipment" },
+  { value: "sales_fleet", label: "Sales fleet" },
+  { value: "mixed_fleet", label: "Mixed fleet" },
+  { value: "other", label: "Other" },
+];
+
+const primaryAssetTypeOptions = [
+  { value: "truck", label: "Truck" },
+  { value: "trailer", label: "Trailer" },
+  { value: "bus", label: "Bus" },
+  { value: "van", label: "Van" },
+  { value: "pickup", label: "Pickup" },
+  { value: "car", label: "Car" },
+  { value: "motorcycle", label: "Motorcycle" },
+  { value: "equipment", label: "Equipment" },
+  { value: "other", label: "Other" },
+];
+
+const billingUnitOptions = [
+  { value: "trip", label: "Trip" },
+  { value: "tonne", label: "Tonne" },
+  { value: "passenger", label: "Passenger" },
+  { value: "delivery", label: "Delivery" },
+  { value: "hour", label: "Hour" },
+  { value: "day", label: "Day" },
+  { value: "asset", label: "Asset" },
+  { value: "other", label: "Other" },
+];
+
 export default function Onboarding() {
   const [companyName, setCompanyName] = useState("");
   const [subscriptionPlan, setSubscriptionPlan] = useState("starter");
+  const [businessType, setBusinessType] = useState("long_haul_transport");
+  const [primaryAssetTypes, setPrimaryAssetTypes] = useState<string[]>(["truck"]);
+  const [mainBillingUnit, setMainBillingUnit] = useState("trip");
+  const [operatingRegions, setOperatingRegions] = useState("");
+  const [primaryUseCase, setPrimaryUseCase] = useState("");
   const [status, setStatus] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -130,6 +169,11 @@ export default function Onboarding() {
       body: JSON.stringify({
         name: companyName,
         subscription_plan: subscriptionPlan,
+        business_type: businessType,
+        primary_asset_types: primaryAssetTypes,
+        main_billing_unit: mainBillingUnit,
+        operating_regions: operatingRegions,
+        primary_use_case: primaryUseCase,
       }),
     });
     const json = await res.json();
@@ -142,7 +186,19 @@ export default function Onboarding() {
 
     setStatus(json);
     setCompanyName("");
+    setOperatingRegions("");
+    setPrimaryUseCase("");
     setSaving(false);
+  }
+
+  function togglePrimaryAssetType(value: string) {
+    setPrimaryAssetTypes((current) => {
+      if (current.includes(value)) {
+        const next = current.filter((item) => item !== value);
+        return next.length > 0 ? next : current;
+      }
+      return [...current, value];
+    });
   }
 
   const checklist = status?.checklist || {};
@@ -230,6 +286,100 @@ export default function Onboarding() {
                   <option value="platform_custom">Platform / Custom</option>
                 </select>
               </label>
+
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                <h3 className="text-sm font-semibold text-slate-900">
+                  Operating context
+                </h3>
+                <p className="mt-1 text-sm leading-6 text-slate-600">
+                  This helps Nava tailor asset review suggestions and future workflow defaults.
+                </p>
+
+                <div className="mt-4 grid gap-4">
+                  <label className="block">
+                    <span className="text-sm font-semibold text-slate-700">
+                      Business type
+                    </span>
+                    <select
+                      value={businessType}
+                      onChange={(e) => setBusinessType(e.target.value)}
+                      className="mt-2 w-full rounded-md border border-slate-300 px-4 py-3 outline-none focus:border-cyan-600"
+                    >
+                      {businessTypeOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <div>
+                    <div className="text-sm font-semibold text-slate-700">
+                      Primary asset types
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {primaryAssetTypeOptions.map((option) => {
+                        const selected = primaryAssetTypes.includes(option.value);
+                        return (
+                          <button
+                            key={option.value}
+                            type="button"
+                            onClick={() => togglePrimaryAssetType(option.value)}
+                            className={`rounded-md border px-3 py-2 text-sm font-semibold ${
+                              selected
+                                ? "border-cyan-600 bg-cyan-50 text-cyan-800"
+                                : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                            }`}
+                          >
+                            {option.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <label className="block">
+                    <span className="text-sm font-semibold text-slate-700">
+                      Main billing unit
+                    </span>
+                    <select
+                      value={mainBillingUnit}
+                      onChange={(e) => setMainBillingUnit(e.target.value)}
+                      className="mt-2 w-full rounded-md border border-slate-300 px-4 py-3 outline-none focus:border-cyan-600"
+                    >
+                      {billingUnitOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="block">
+                    <span className="text-sm font-semibold text-slate-700">
+                      Operating regions
+                    </span>
+                    <input
+                      value={operatingRegions}
+                      onChange={(e) => setOperatingRegions(e.target.value)}
+                      placeholder="Kenya, Uganda, Tanzania"
+                      className="mt-2 w-full rounded-md border border-slate-300 px-4 py-3 outline-none focus:border-cyan-600"
+                    />
+                  </label>
+
+                  <label className="block">
+                    <span className="text-sm font-semibold text-slate-700">
+                      Primary use case
+                    </span>
+                    <input
+                      value={primaryUseCase}
+                      onChange={(e) => setPrimaryUseCase(e.target.value)}
+                      placeholder="Example: Cement deliveries, field service, passenger routes"
+                      className="mt-2 w-full rounded-md border border-slate-300 px-4 py-3 outline-none focus:border-cyan-600"
+                    />
+                  </label>
+                </div>
+              </div>
 
               <button
                 type="submit"

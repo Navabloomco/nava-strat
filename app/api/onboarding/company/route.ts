@@ -24,6 +24,71 @@ function slugify(value: string) {
     .slice(0, 48);
 }
 
+const companySelect =
+  "id, name, slug, business_type, primary_asset_types, main_billing_unit, operating_regions, primary_use_case";
+
+const BUSINESS_TYPES = new Set([
+  "long_haul_transport",
+  "passenger_transport",
+  "courier_delivery",
+  "field_service",
+  "construction_equipment",
+  "sales_fleet",
+  "mixed_fleet",
+  "other",
+]);
+
+const PRIMARY_ASSET_TYPES = new Set([
+  "truck",
+  "trailer",
+  "bus",
+  "van",
+  "pickup",
+  "car",
+  "motorcycle",
+  "equipment",
+  "other",
+]);
+
+const BILLING_UNITS = new Set([
+  "trip",
+  "tonne",
+  "passenger",
+  "delivery",
+  "hour",
+  "day",
+  "asset",
+  "other",
+]);
+
+function normalizeOptionalChoice(value: any, allowed: Set<string>) {
+  const text = String(value || "").trim();
+  if (!text) return null;
+  return allowed.has(text) ? text : null;
+}
+
+function normalizeStringArray(value: any, allowed?: Set<string>) {
+  const rawValues = Array.isArray(value)
+    ? value
+    : String(value || "")
+        .split(",")
+        .map((item) => item.trim());
+
+  return Array.from(
+    new Set(
+      rawValues
+        .map((item) => String(item || "").trim())
+        .filter(Boolean)
+        .filter((item) => !allowed || allowed.has(item))
+    )
+  ).slice(0, 20);
+}
+
+function normalizeShortText(value: any) {
+  const text = String(value || "").trim();
+  return text ? text.slice(0, 240) : null;
+}
+
 async function getUserFromRequest(req: Request) {
   const authHeader = req.headers.get("authorization");
   if (!authHeader?.startsWith("Bearer ")) {
@@ -64,7 +129,7 @@ async function getCompanyForMemberships(memberships: any[]) {
   if (isPlatformOwner) {
     const { data, error } = await supabaseAdmin
       .from("companies")
-      .select("id, name, slug")
+      .select(companySelect)
       .order("name", { ascending: true })
       .limit(1)
       .maybeSingle();
@@ -81,7 +146,7 @@ async function getCompanyForMemberships(memberships: any[]) {
 
   const { data, error } = await supabaseAdmin
     .from("companies")
-    .select("id, name, slug")
+    .select(companySelect)
     .eq("id", companyId)
     .maybeSingle();
 
@@ -304,6 +369,20 @@ export async function POST(req: Request) {
     const body = await req.json();
     const name = String(body.name || body.company_name || "").trim();
     const subscriptionPlan = String(body.subscription_plan || "starter").trim();
+    const businessType = normalizeOptionalChoice(
+      body.business_type,
+      BUSINESS_TYPES
+    );
+    const primaryAssetTypes = normalizeStringArray(
+      body.primary_asset_types,
+      PRIMARY_ASSET_TYPES
+    );
+    const mainBillingUnit = normalizeOptionalChoice(
+      body.main_billing_unit,
+      BILLING_UNITS
+    );
+    const operatingRegions = normalizeStringArray(body.operating_regions);
+    const primaryUseCase = normalizeShortText(body.primary_use_case);
 
     if (!name) {
       return noStoreJson(
@@ -320,8 +399,13 @@ export async function POST(req: Request) {
         name,
         slug,
         subscription_plan: subscriptionPlan,
+        business_type: businessType,
+        primary_asset_types: primaryAssetTypes,
+        main_billing_unit: mainBillingUnit,
+        operating_regions: operatingRegions,
+        primary_use_case: primaryUseCase,
       })
-      .select("id, name, slug")
+      .select(companySelect)
       .single();
 
     if (companyError) throw companyError;
