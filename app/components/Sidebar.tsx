@@ -116,6 +116,11 @@ export default function Sidebar() {
       show: roles.isOps || roles.isAdmin,
     },
     {
+      name: "Geofences",
+      href: "/geofences",
+      show: roles.isOps || roles.isManagement || roles.isAdmin,
+    },
+    {
       name: "Finance",
       href: "/finance/dashboard",
       show: roles.isFinance || roles.isAdmin,
