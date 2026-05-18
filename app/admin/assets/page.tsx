@@ -45,6 +45,7 @@ type AssetFormState = {
 
 export default function AssetReviewPage() {
   const [assets, setAssets] = useState<any[]>([]);
+  const [company, setCompany] = useState<any>(null);
   const [billing, setBilling] = useState<any>(null);
   const [operatingContext, setOperatingContext] = useState<any>(null);
   const [summary, setSummary] = useState({
@@ -110,6 +111,7 @@ export default function AssetReviewPage() {
       }
 
       setAssets(json.assets || []);
+      setCompany(json.company || null);
       setBilling(json.billing || null);
       setOperatingContext(json.operating_context || null);
       setSummary(json.summary || summary);
@@ -245,7 +247,7 @@ export default function AssetReviewPage() {
       <div className="mx-auto max-w-7xl">
         <PageHeader
           dark
-          eyebrow="Fleet assets"
+          eyebrow={`Fleet assets · ${company?.name || "Company workspace"}`}
           title="Asset review"
           body="Imported assets are not billed until enabled for Nava intelligence."
           actions={
@@ -330,9 +332,18 @@ export default function AssetReviewPage() {
                 asset_category: asset.asset_category || "unknown",
                 excluded_reason: asset.excluded_reason || "",
               };
+              const isUnreviewed = asset.billing_status === "unreviewed";
 
               return (
-                <Panel key={asset.id} dark className="p-5">
+                <Panel
+                  key={asset.id}
+                  dark
+                  className={
+                    isUnreviewed
+                      ? "border-amber-300/30 bg-amber-300/10 p-5"
+                      : "p-5"
+                  }
+                >
                   <div className="grid gap-5 xl:grid-cols-[1.2fr_0.9fr_1.2fr]">
                     <div>
                       <div className="flex flex-wrap items-center gap-3">
@@ -346,6 +357,11 @@ export default function AssetReviewPage() {
                           <StatusPill tone="success">Intelligence enabled</StatusPill>
                         )}
                       </div>
+                      {isUnreviewed && (
+                        <div className="mt-3 rounded-md border border-amber-300/25 bg-amber-300/10 px-3 py-2 text-sm text-amber-50">
+                          Waiting for review before this asset can appear in live tracking.
+                        </div>
+                      )}
                       <div className="mt-3 grid gap-2 text-sm text-slate-300 md:grid-cols-2">
                         <Detail label="Truck ID" value={asset.truck_id || "Not available"} />
                         <Detail label="Provider" value={asset.provider_name || "Not available"} />

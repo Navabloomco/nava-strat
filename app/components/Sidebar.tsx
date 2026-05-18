@@ -172,7 +172,7 @@ export default function Sidebar() {
       show: roles.isAdmin,
     },
     {
-      name: "Assets",
+      name: "Asset Review",
       href: "/admin/assets",
       show: roles.isAdmin,
     },

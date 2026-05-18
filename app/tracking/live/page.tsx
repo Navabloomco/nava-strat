@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { supabase } from "../../../lib/supabase";
 
 type LiveTrackingData = {
@@ -176,6 +177,8 @@ export default function LiveTrackingPage() {
   const noImportedAssets = summary.provider_count > 0 && summary.imported_assets === 0;
   const importedButNoneEnabled =
     summary.imported_assets > 0 && summary.enabled_assets === 0;
+  const importedAssetsAwaitingReview =
+    summary.imported_assets > summary.enabled_assets;
   const noLiveLocations = summary.enabled_assets > 0 && summary.live_assets === 0;
 
   return (
@@ -238,6 +241,27 @@ export default function LiveTrackingPage() {
               <Metric label="Telemetry 24h" value={summary.telemetry_points_24h} />
               <Metric label="Providers" value={summary.provider_count} />
             </section>
+
+            {importedAssetsAwaitingReview && (
+              <section className="mt-8 rounded-lg border border-amber-300/25 bg-amber-300/10 p-5">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <h2 className="text-lg font-semibold text-amber-100">
+                      Imported assets waiting for review
+                    </h2>
+                    <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-300">
+                      Some imported assets are waiting for review before they appear in live tracking.
+                    </p>
+                  </div>
+                  <Link
+                    href="/admin/assets"
+                    className="inline-flex w-full items-center justify-center rounded-md bg-cyan-300 px-4 py-3 text-sm font-bold text-slate-950 hover:bg-cyan-200 sm:w-auto"
+                  >
+                    Review imported assets
+                  </Link>
+                </div>
+              </section>
+            )}
 
             {(noProviders || noImportedAssets || importedButNoneEnabled || noLiveLocations) && (
               <EmptyState
@@ -450,9 +474,9 @@ function EmptyState({
     title = "Provider connected, no fleet assets yet";
     body = "Your provider connection exists, but Nava has not received fleet assets yet.";
   } else if (importedButNoneEnabled) {
-    title = "Review assets before live tracking";
+    title = "You have imported assets waiting for review";
     body =
-      "Fleet assets have been imported, but none have been enabled for Nava intelligence yet. Review assets before they appear in live tracking.";
+      "Fleet assets have been imported, but none have been enabled for Nava intelligence yet. Review imported assets before they appear in live tracking.";
   } else if (noLiveLocations) {
     title = "No fresh live locations";
     body =
@@ -463,6 +487,14 @@ function EmptyState({
     <section className="mt-8 rounded-lg border border-cyan-200/20 bg-cyan-300/10 p-5">
       <h2 className="text-lg font-semibold text-cyan-100">{title}</h2>
       <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-300">{body}</p>
+      {importedButNoneEnabled && (
+        <Link
+          href="/admin/assets"
+          className="mt-4 inline-flex w-full items-center justify-center rounded-md bg-cyan-300 px-4 py-3 text-sm font-bold text-slate-950 hover:bg-cyan-200 sm:w-auto"
+        >
+          Review imported assets
+        </Link>
+      )}
     </section>
   );
 }

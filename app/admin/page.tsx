@@ -24,7 +24,7 @@ const platformCards = [
   },
   {
     title: "Asset Review",
-    body: "Review imported fleet assets before enabling intelligence.",
+    body: "Review imported provider assets waiting to become Nava intelligence vehicles.",
     href: "/admin/assets",
   },
   {
@@ -57,7 +57,7 @@ const companyCards = [
   },
   {
     title: "Asset Review",
-    body: "Choose which imported assets become Nava intelligence vehicles.",
+    body: "Review imported provider assets waiting to become Nava intelligence vehicles.",
     href: "/admin/assets",
   },
   {
