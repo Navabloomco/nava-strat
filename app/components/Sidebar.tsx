@@ -132,7 +132,7 @@ export default function Sidebar() {
     },
     {
       name: "Expenses",
-      href: "/expenses/new",
+      href: "/expenses",
       show: roles.isFinance || roles.isAdmin,
     },
     {

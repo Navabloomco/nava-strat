@@ -106,20 +106,31 @@ export async function GET(req: Request) {
     const resolved = await resolveCompany(req, searchParams.get("companyId"));
     if (resolved.error) return resolved.error;
 
-    const { data: journeys, error } = await supabaseAdmin
-      .from("journeys")
-      .select("*")
-      .eq("company_id", resolved.company.id)
-      .eq("is_demo", false)
-      .order("created_at", { ascending: false });
+    const [journeysResult, expensesResult] = await Promise.all([
+      supabaseAdmin
+        .from("journeys")
+        .select("*")
+        .eq("company_id", resolved.company.id)
+        .eq("is_demo", false)
+        .order("created_at", { ascending: false }),
+      supabaseAdmin
+        .from("expenses")
+        .select(
+          "id, journey_id, truck, expense_type, amount, vendor, payment_method, reference_number, trip_reference, notes, created_at"
+        )
+        .eq("company_id", resolved.company.id)
+        .order("created_at", { ascending: false }),
+    ]);
 
-    if (error) throw error;
+    if (journeysResult.error) throw journeysResult.error;
+    if (expensesResult.error) throw expensesResult.error;
 
     return NextResponse.json({
       success: true,
       company: resolved.company,
       is_platform_owner: resolved.isPlatformOwner,
-      journeys: journeys || [],
+      journeys: journeysResult.data || [],
+      expenses: expensesResult.data || [],
     });
   } catch (err: any) {
     console.error("Expenses GET error:", err);
