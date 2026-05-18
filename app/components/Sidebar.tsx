@@ -151,6 +151,11 @@ export default function Sidebar() {
       show: roles.isAdmin,
     },
     {
+      name: "Company Settings",
+      href: "/admin/company",
+      show: roles.isAdmin,
+    },
+    {
       name: "Client Visibility",
       href: "/admin/client-visibility",
       show: roles.isAdmin,
