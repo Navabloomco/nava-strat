@@ -442,10 +442,10 @@ export default function DriversPage() {
                 <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-start">
                   <div>
                     <h2 className="text-lg font-semibold text-white">
-                      Current assignments
+                      Current vehicle assignments
                     </h2>
                     <p className="mt-2 text-sm leading-6 text-slate-300">
-                      Assign drivers to enabled assets so alerts and fuel risk can show who was responsible.
+                      This driver stays assigned to the vehicle until you end the assignment. Nava uses this for alerts, fuel risk, and fleet answers.
                     </p>
                   </div>
                   <StatusPill tone={canManageAssignments ? "success" : "info"}>
@@ -534,8 +534,8 @@ export default function DriversPage() {
                 {activeAssignments.length === 0 ? (
                   <EmptyState
                     dark
-                    title="No active driver assignments"
-                    body="Assign drivers to enabled assets so alerts and fuel risk can show who was responsible."
+                    title="No current vehicle assignments"
+                    body="Assign drivers to enabled vehicles once, then Nava can reuse that responsibility context until the assignment is ended."
                   />
                 ) : (
                   <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
