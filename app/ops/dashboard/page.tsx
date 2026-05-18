@@ -493,6 +493,7 @@ export default function OpsDashboard() {
                     <div className="mt-2 text-xs text-slate-400">
                       {alert.location_name || alert.created_at || "No event detail"}
                     </div>
+                    <GeofenceBadge match={alert.geofence_match} />
                     {alert.context_label && (
                       <div className="mt-3 rounded-md border border-cyan-200/20 bg-cyan-300/10 px-3 py-2">
                         <div className="text-xs font-semibold text-cyan-100">
@@ -579,6 +580,21 @@ export default function OpsDashboard() {
   );
 }
 
+function GeofenceBadge({ match }: { match?: any }) {
+  if (!match?.name) return null;
+
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-2">
+      <span className="inline-flex max-w-full whitespace-normal break-words rounded-full border border-cyan-200/25 bg-cyan-300/10 px-2.5 py-1 text-xs font-semibold leading-5 text-cyan-100">
+        Inside {match.name}
+      </span>
+      {match.type && (
+        <span className="text-xs text-slate-400">{formatGeofenceType(match.type)}</span>
+      )}
+    </div>
+  );
+}
+
 function Metric({
   label,
   value,
@@ -617,4 +633,10 @@ function Detail({ label, value }: { label: string; value: string }) {
       <div className="mt-1 text-slate-200">{value}</div>
     </div>
   );
+}
+
+function formatGeofenceType(value: string) {
+  return String(value || "")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }

@@ -1,4 +1,8 @@
 import { NextResponse } from "next/server";
+import {
+  fetchActiveGeofences,
+  matchPointToGeofence,
+} from "../../../../lib/intelligence/geofenceMatcher";
 import { supabase } from "../../../../lib/supabase";
 import { supabaseAdmin } from "../../../../lib/supabaseAdmin";
 
@@ -266,6 +270,7 @@ export async function GET(req: Request) {
       importedAssetsResult,
       enabledAssetsResult,
       providersResult,
+      geofences,
     ] = await Promise.all([
       supabaseAdmin
         .from("journeys")
@@ -291,6 +296,7 @@ export async function GET(req: Request) {
         .select("*")
         .eq("company_id", resolved.company.id)
         .order("created_at", { ascending: false }),
+      fetchActiveGeofences(supabaseAdmin, resolved.company.id),
     ]);
 
     if (journeysResult.error) throw journeysResult.error;
@@ -312,7 +318,7 @@ export async function GET(req: Request) {
         supabaseAdmin
           .from("telemetry_events")
           .select(
-            "id, company_id, truck_id, event_type, severity, location_name, created_at, started_at, context_type, context_label, context_note, context_applied_by, context_applied_at"
+            "id, company_id, truck_id, event_type, severity, location_name, latitude, longitude, created_at, started_at, context_type, context_label, context_note, context_applied_by, context_applied_at"
           )
           .eq("company_id", resolved.company.id)
           .in("truck_id", enabledTruckIds)
@@ -332,6 +338,10 @@ export async function GET(req: Request) {
       alerts = alertsResult.data || [];
       telemetryPoints24h = telemetryResult.data?.length || 0;
     }
+    const alertsWithGeofences = alerts.map((alert) => ({
+      ...alert,
+      geofence_match: matchPointToGeofence(alert, geofences),
+    }));
     const sharedDisruptionCandidate = buildSharedDisruptionCandidate(
       alerts,
       fleetAssets.length
@@ -357,7 +367,7 @@ export async function GET(req: Request) {
       journeys,
       fleet_assets: fleetAssets,
       provider_statuses: providers.map(sanitizeProvider),
-      alerts,
+      alerts: alertsWithGeofences,
       shared_disruption_candidate: sharedDisruptionCandidate,
       summary: {
         total_journeys: journeys.length,
