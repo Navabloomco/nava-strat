@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { supabase } from "../../lib/supabase";
 import {
   EmptyState,
   PageHeader,
   Panel,
+  PrimaryButton,
   StatusPill,
 } from "../components/ui/Primitives";
 
@@ -96,6 +98,11 @@ export default function FuelControlPage() {
           eyebrow="Finance control"
           title="Fuel Control"
           body="Allocated and unallocated fuel records, duplicate detection, and expected fuel variance."
+          actions={
+            <Link href="/fuel/new">
+              <PrimaryButton type="button">Add fuel</PrimaryButton>
+            </Link>
+          }
         />
 
         {loading ? (
@@ -124,7 +131,12 @@ export default function FuelControlPage() {
                 <EmptyState
                   dark
                   title="No fuel records yet"
-                  body="Fuel entries will appear here once they are captured for your fleet."
+                  body="Add your first fuel entry and link it to an open journey when available."
+                  action={
+                    <Link href="/fuel/new">
+                      <PrimaryButton type="button">Add first fuel entry</PrimaryButton>
+                    </Link>
+                  }
                 />
               </div>
             ) : (
