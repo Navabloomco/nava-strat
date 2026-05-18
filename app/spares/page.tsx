@@ -8,6 +8,7 @@ import {
   PageHeader,
   Panel,
   PrimaryButton,
+  SecondaryButton,
   StatusPill,
 } from "../components/ui/Primitives";
 
@@ -133,11 +134,18 @@ export default function SparesPage() {
           title="Spares & Repairs"
           body="Record what was fitted, repaired, transferred, retreaded, or removed so Nava can build each spare's life history over time."
           actions={
-            <Link href="/spares/usage/new">
-              <PrimaryButton type="button" className="w-full sm:w-auto">
-                Record spare usage
-              </PrimaryButton>
-            </Link>
+            <div className="flex flex-col gap-3 sm:flex-row">
+              <Link href="/spares/parts">
+                <SecondaryButton type="button" className="w-full sm:w-auto">
+                  Parts Catalog
+                </SecondaryButton>
+              </Link>
+              <Link href="/spares/usage/new">
+                <PrimaryButton type="button" className="w-full sm:w-auto">
+                  Record spare usage
+                </PrimaryButton>
+              </Link>
+            </div>
           }
         />
 
