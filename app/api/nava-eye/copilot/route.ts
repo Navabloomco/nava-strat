@@ -476,7 +476,12 @@ function buildFallbackAnswer(context: any): string {
       `Offline trucks: ${context.offline_trucks
         .map((t: any) => {
           const location = formatOperationalLocation(t);
-          return location ? `${t.truck_id} ${location}` : t.truck_id;
+          const driver = t.assigned_driver?.driver_name
+            ? `, assigned driver: ${t.assigned_driver.driver_name}`
+            : "";
+          return location
+            ? `${t.truck_id} ${location}${driver}`
+            : `${t.truck_id}${driver}`;
         })
         .join(", ")}.`
     );
@@ -521,16 +526,34 @@ function buildFallbackAnswer(context: any): string {
         ? `Truck ${context.detected_truck_id} was last seen ${location} at ${context.truck.last_seen_at}.`
         : `Truck ${context.detected_truck_id} was last seen at ${context.truck.last_seen_at}.`
     );
+    if (context.truck.assigned_driver?.driver_name) {
+      parts.push(`Assigned driver: ${context.truck.assigned_driver.driver_name}.`);
+    }
   }
   if (context.recent_events?.length) {
     const eventPlaces = context.recent_events
       .map((event: any) => formatEventLocation(event))
       .filter(Boolean)
       .slice(0, 3);
+    const eventDriverNotes = context.recent_events
+      .map((event: any) => formatEventDriverContext(event))
+      .filter(Boolean)
+      .slice(0, 3);
     parts.push(
       eventPlaces.length
         ? `${context.recent_events.length} recent operational events found, including ${eventPlaces.join("; ")}.`
         : `${context.recent_events.length} recent operational events found.`
+    );
+    if (eventDriverNotes.length) {
+      parts.push(eventDriverNotes.join(" "));
+    }
+  }
+  if (context.driver_assignments?.length) {
+    parts.push(
+      `Current/recent driver assignments: ${context.driver_assignments
+        .slice(0, 5)
+        .map(formatDriverAssignment)
+        .join("; ")}.`
     );
   }
   if (parts.length === 0) {
@@ -617,6 +640,32 @@ function formatEventLocation(event: any) {
   const location = formatOperationalLocation(event);
   if (!location) return null;
   return `${event.event_type || "event"} ${location}`;
+}
+
+function formatEventDriverContext(event: any) {
+  const driverName = event?.assigned_driver?.driver_name;
+  if (!driverName) return null;
+
+  const eventName = event.event_type
+    ? event.event_type.replace(/_/g, " ")
+    : "This event";
+  const truck = event.truck_id ? ` for ${event.truck_id}` : "";
+  return `${eventName}${truck}: This happened while ${driverName} was assigned.`;
+}
+
+function formatDriverAssignment(assignment: any) {
+  const driver = assignment.driver_name || "Driver";
+  const truck = assignment.truck_id || "an enabled asset";
+  const since = assignment.assigned_from
+    ? ` since ${formatReadableDate(assignment.assigned_from)}`
+    : "";
+  return `${driver} assigned to ${truck}${since}`;
+}
+
+function formatReadableDate(value: any) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "an unknown time";
+  return date.toLocaleString();
 }
 
 function hasCoordinates(value: any) {
