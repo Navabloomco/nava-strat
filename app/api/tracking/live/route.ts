@@ -1,4 +1,8 @@
 import { NextResponse } from "next/server";
+import {
+  fetchActiveGeofences,
+  matchPointToGeofence,
+} from "../../../../lib/intelligence/geofenceMatcher";
 import { getCurrentFleetLocations } from "../../../../lib/intelligence/fleetLocationService";
 import { supabase } from "../../../../lib/supabase";
 import { supabaseAdmin } from "../../../../lib/supabaseAdmin";
@@ -212,7 +216,13 @@ export async function GET(req: Request) {
 
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
-    const [liveTrucks, importedAssetsResult, enabledAssetsResult, providersResult] =
+    const [
+      liveTrucks,
+      importedAssetsResult,
+      enabledAssetsResult,
+      providersResult,
+      geofences,
+    ] =
       await Promise.all([
         getCurrentFleetLocations(resolved.company.id, {
           maxAgeMinutes: FRESHNESS_MINUTES,
@@ -238,6 +248,7 @@ export async function GET(req: Request) {
           )
           .eq("company_id", resolved.company.id)
           .order("created_at", { ascending: false }),
+        fetchActiveGeofences(supabaseAdmin, resolved.company.id),
       ]);
 
     if (importedAssetsResult.error) throw importedAssetsResult.error;
@@ -292,6 +303,7 @@ export async function GET(req: Request) {
         location_label:
           matchingAsset?.provider_location_label ||
           getCachedLocationLabel(locationLabels, truck.latitude, truck.longitude),
+        geofence_match: matchPointToGeofence(truck, geofences),
       };
     });
 
@@ -307,6 +319,7 @@ export async function GET(req: Request) {
         location_label:
           asset.provider_location_label ||
           getCachedLocationLabel(locationLabels, asset.latitude, asset.longitude),
+        geofence_match: matchPointToGeofence(asset, geofences),
       }));
 
     return noStoreJson({

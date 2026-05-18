@@ -327,6 +327,7 @@ export default function LiveTrackingPage() {
                           <div className="font-semibold text-slate-100">
                             {asset.registration || asset.truck_id}
                           </div>
+                          <GeofenceBadge match={asset.geofence_match} />
                           <div className="mt-1 text-sm text-slate-300">
                             {asset.location_label || "Location not labeled yet"}
                           </div>
@@ -385,6 +386,7 @@ function TruckRow({ truck }: { truck: any }) {
 
       <div className="text-sm text-slate-200">
         <div className="font-medium">Location</div>
+        <GeofenceBadge match={truck.geofence_match} />
         <div className="mt-1 text-slate-100">
           {truck.location_label || "Location not labeled yet"}
         </div>
@@ -407,6 +409,21 @@ function TruckRow({ truck }: { truck: any }) {
         </div>
       </div>
     </article>
+  );
+}
+
+function GeofenceBadge({ match }: { match?: any }) {
+  if (!match?.name) return null;
+
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-2">
+      <span className="inline-flex max-w-full whitespace-normal break-words rounded-full border border-cyan-200/25 bg-cyan-300/10 px-2.5 py-1 text-xs font-semibold leading-5 text-cyan-100">
+        Inside {match.name}
+      </span>
+      {match.type && (
+        <span className="text-xs text-slate-400">{formatGeofenceType(match.type)}</span>
+      )}
+    </div>
   );
 }
 
@@ -486,4 +503,10 @@ function formatValue(value: any, suffix: string) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return "—";
   return `${numeric.toFixed(0)} ${suffix}`;
+}
+
+function formatGeofenceType(value: string) {
+  return String(value || "")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
