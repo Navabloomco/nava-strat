@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../../../lib/supabase";
+import JourneyPicker from "../../components/JourneyPicker";
 import {
   EmptyState,
   FormField,
@@ -21,6 +22,7 @@ export default function RevenuePage() {
   const [message, setMessage] = useState("");
   const [client, setClient] = useState("");
   const [route, setRoute] = useState("");
+  const [quickJourneyId, setQuickJourneyId] = useState("");
 
   const [rateType, setRateType] = useState("per_tonne");
   const [rateAmount, setRateAmount] = useState("");
@@ -250,6 +252,28 @@ export default function RevenuePage() {
               </div>
 
               <form onSubmit={applyRateToSelected} className="grid gap-5">
+                <Panel dark className="border-cyan-200/20 bg-cyan-300/10 p-4">
+                  <div className="mb-4">
+                    <h3 className="text-sm font-semibold text-cyan-50">
+                      Find a trip fast
+                    </h3>
+                    <p className="mt-1 text-sm leading-6 text-slate-300">
+                      Search by trip, truck, client, or route. Selecting a trip only sets the client and route filters below.
+                    </p>
+                  </div>
+                  <JourneyPicker
+                    journeys={journeys}
+                    value={quickJourneyId}
+                    onChange={(journeyId, journey) => {
+                      setQuickJourneyId(journeyId);
+                      if (!journey) return;
+                      setClient(journey.client_name || "");
+                      setRoute(`${journey.from_location} → ${journey.to_location}`);
+                    }}
+                    placeholder="Search active trips by truck, client, route, or reference"
+                  />
+                </Panel>
+
                 <div className="grid gap-5 md:grid-cols-2">
                   <FormField label="Client" dark>
                     <select
