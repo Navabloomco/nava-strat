@@ -474,7 +474,10 @@ function buildFallbackAnswer(context: any): string {
   if (context.offline_trucks?.length) {
     parts.push(
       `Offline trucks: ${context.offline_trucks
-        .map((t: any) => t.truck_id)
+        .map((t: any) => {
+          const location = formatOperationalLocation(t);
+          return location ? `${t.truck_id} ${location}` : t.truck_id;
+        })
         .join(", ")}.`
     );
   }
@@ -512,13 +515,22 @@ function buildFallbackAnswer(context: any): string {
     );
   }
   if (context.truck) {
+    const location = formatOperationalLocation(context.truck);
     parts.push(
-      `Truck ${context.detected_truck_id} was last seen at ${context.truck.last_seen_at}.`
+      location
+        ? `Truck ${context.detected_truck_id} was last seen ${location} at ${context.truck.last_seen_at}.`
+        : `Truck ${context.detected_truck_id} was last seen at ${context.truck.last_seen_at}.`
     );
   }
   if (context.recent_events?.length) {
+    const eventPlaces = context.recent_events
+      .map((event: any) => formatEventLocation(event))
+      .filter(Boolean)
+      .slice(0, 3);
     parts.push(
-      `${context.recent_events.length} recent operational events found.`
+      eventPlaces.length
+        ? `${context.recent_events.length} recent operational events found, including ${eventPlaces.join("; ")}.`
+        : `${context.recent_events.length} recent operational events found.`
     );
   }
   if (parts.length === 0) {
@@ -579,4 +591,38 @@ function formatNumber(value: any) {
 
 function formatMissingInput(value: string) {
   return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function formatOperationalLocation(value: any) {
+  if (!value) return null;
+  if (value.geofence_match?.name) {
+    return `inside ${value.geofence_match.name}`;
+  }
+  if (value.provider_location_label) {
+    return `at ${value.provider_location_label}`;
+  }
+  if (value.location_label) {
+    return `at ${value.location_label}`;
+  }
+  if (value.location_name) {
+    return `near ${value.location_name}`;
+  }
+  if (hasCoordinates(value)) {
+    return `at ${formatCoordinate(value.latitude)}, ${formatCoordinate(value.longitude)}`;
+  }
+  return null;
+}
+
+function formatEventLocation(event: any) {
+  const location = formatOperationalLocation(event);
+  if (!location) return null;
+  return `${event.event_type || "event"} ${location}`;
+}
+
+function hasCoordinates(value: any) {
+  return Number.isFinite(Number(value?.latitude)) && Number.isFinite(Number(value?.longitude));
+}
+
+function formatCoordinate(value: any) {
+  return Number(value).toFixed(5);
 }

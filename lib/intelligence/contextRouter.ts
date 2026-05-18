@@ -2,6 +2,10 @@
 import { supabaseAdmin } from "../supabaseAdmin";
 import { analyzeTruckFuelRisk } from "./fuelRiskEngine.universal";
 import {
+  fetchActiveGeofences,
+  matchPointToGeofence,
+} from "./geofenceMatcher";
+import {
   detectSupportedCountryName,
   getCurrentTrucksInCountry,
 } from "./fleetLocationService";
@@ -41,6 +45,9 @@ export async function routeContext(question: string, tenantSlug: string) {
   const truckAccess = await detectTruckAccess(question, companyId);
   const truckId = truckAccess.truck_id;
   const fleetAssetCounts = await fetchFleetAssetCounts(companyId);
+  const geofences = usesLocationContext(intent)
+    ? await fetchActiveGeofences(supabaseAdmin, companyId)
+    : [];
   const context: any = {
     company,
     intent,
@@ -60,7 +67,7 @@ export async function routeContext(question: string, tenantSlug: string) {
     context.fleet_health = await fetchFleetHealth(companyId);
   }
   if (intent === "offline_trucks") {
-    context.offline_trucks = await fetchOfflineTrucks(companyId);
+    context.offline_trucks = await fetchOfflineTrucks(companyId, geofences);
   }
   if (intent === "fuel_risk" && !truckAccess.restricted) {
     if (truckId) {
@@ -71,8 +78,8 @@ export async function routeContext(question: string, tenantSlug: string) {
     }
   }
   if (intent === "truck_status" && truckId && !truckAccess.restricted) {
-    context.truck = await fetchTruckStatus(companyId, truckId);
-    context.recent_events = await fetchTruckEvents(companyId, truckId);
+    context.truck = await fetchTruckStatus(companyId, truckId, geofences);
+    context.recent_events = await fetchTruckEvents(companyId, truckId, geofences);
     context.recent_telemetry = await fetchTruckTelemetry(companyId, truckId);
   }
   if (intent === "driver_activity") {
@@ -82,7 +89,7 @@ export async function routeContext(question: string, tenantSlug: string) {
   if (intent === "journey_context") {
     context.possible_journey_context = truckAccess.restricted
       ? { asset_access_restricted: true }
-      : await fetchJourneyLikeContext(companyId, truckId);
+      : await fetchJourneyLikeContext(companyId, truckId, geofences);
   }
   if (intent === "country_trucks" && detectedCountryName) {
     context.country_fleet_location = {
@@ -101,9 +108,13 @@ export async function routeContext(question: string, tenantSlug: string) {
   }
   if (intent === "general") {
     context.fleet_health = await fetchFleetHealth(companyId);
-    context.recent_events = await fetchRecentEvents(companyId);
+    context.recent_events = await fetchRecentEvents(companyId, geofences);
   }
   return context;
+}
+
+function usesLocationContext(intent: ContextIntent) {
+  return ["truck_status", "journey_context", "offline_trucks", "general"].includes(intent);
 }
 
 function detectIntent(
@@ -267,7 +278,7 @@ async function fetchFleetHealth(companyId: string) {
   };
 }
 
-async function fetchOfflineTrucks(companyId: string) {
+async function fetchOfflineTrucks(companyId: string, geofences: any[] = []) {
   const { data } = await supabaseAdmin
     .from("fleet_assets")
     .select("truck_id, last_seen_at, latitude, longitude")
@@ -288,6 +299,7 @@ async function fetchOfflineTrucks(companyId: string) {
     last_seen_at: asset.last_seen_at,
     latitude: asset.latitude,
     longitude: asset.longitude,
+    geofence_match: matchPointToGeofence(asset, geofences),
   }));
 }
 
@@ -320,7 +332,7 @@ async function fetchRecentFuelEvents(companyId: string) {
   return data || [];
 }
 
-async function fetchTruckStatus(companyId: string, truckId: string) {
+async function fetchTruckStatus(companyId: string, truckId: string, geofences: any[] = []) {
   const { data } = await supabaseAdmin
     .from("fleet_assets")
     .select("*")
@@ -328,10 +340,15 @@ async function fetchTruckStatus(companyId: string, truckId: string) {
     .eq("truck_id", truckId)
     .eq("intelligence_enabled", true)
     .maybeSingle();
-  return data;
+  if (!data) return data;
+
+  return {
+    ...data,
+    geofence_match: matchPointToGeofence(data, geofences),
+  };
 }
 
-async function fetchTruckEvents(companyId: string, truckId: string) {
+async function fetchTruckEvents(companyId: string, truckId: string, geofences: any[] = []) {
   const { data } = await supabaseAdmin
     .from("telemetry_events")
     .select("*")
@@ -339,7 +356,10 @@ async function fetchTruckEvents(companyId: string, truckId: string) {
     .eq("truck_id", truckId)
     .order("created_at", { ascending: false })
     .limit(20);
-  return data || [];
+  return (data || []).map((event) => ({
+    ...event,
+    geofence_match: matchPointToGeofence(event, geofences),
+  }));
 }
 
 async function fetchTruckTelemetry(companyId: string, truckId: string) {
@@ -363,18 +383,21 @@ async function fetchRecentDriverAssignments(companyId: string) {
   return data || [];
 }
 
-async function fetchRecentEvents(companyId: string) {
+async function fetchRecentEvents(companyId: string, geofences: any[] = []) {
   const enabledTruckIds = await fetchEnabledTruckIds(companyId);
   if (enabledTruckIds.length === 0) return [];
 
   const { data } = await supabaseAdmin
     .from("telemetry_events")
-    .select("truck_id, event_type, severity, location_name, created_at")
+    .select("truck_id, event_type, severity, location_name, latitude, longitude, created_at")
     .eq("company_id", companyId)
     .in("truck_id", enabledTruckIds)
     .order("created_at", { ascending: false })
     .limit(30);
-  return data || [];
+  return (data || []).map((event) => ({
+    ...event,
+    geofence_match: matchPointToGeofence(event, geofences),
+  }));
 }
 
 async function fetchEnabledTruckIds(companyId: string) {
@@ -388,14 +411,18 @@ async function fetchEnabledTruckIds(companyId: string) {
   return (data || []).map((asset) => asset.truck_id).filter(Boolean);
 }
 
-async function fetchJourneyLikeContext(companyId: string, truckId: string | null) {
+async function fetchJourneyLikeContext(
+  companyId: string,
+  truckId: string | null,
+  geofences: any[] = []
+) {
   const context: any = {};
   if (truckId) {
-    context.truck = await fetchTruckStatus(companyId, truckId);
-    context.recent_events = await fetchTruckEvents(companyId, truckId);
+    context.truck = await fetchTruckStatus(companyId, truckId, geofences);
+    context.recent_events = await fetchTruckEvents(companyId, truckId, geofences);
     context.recent_telemetry = await fetchTruckTelemetry(companyId, truckId);
   } else {
-    context.recent_events = await fetchRecentEvents(companyId);
+    context.recent_events = await fetchRecentEvents(companyId, geofences);
   }
   return context;
 }
