@@ -2,10 +2,32 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "../../../../lib/supabaseAdmin";
 import { runProviderSync, ProviderRecord } from "../../../../lib/providers/engine";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
+function noStoreJson(body: any, init?: ResponseInit) {
+  return NextResponse.json(body, {
+    ...init,
+    headers: {
+      ...(init?.headers || {}),
+      "Cache-Control": "no-store",
+    },
+  });
+}
+
 export async function GET(req: Request) {
   const authHeader = req.headers.get("authorization");
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-    return new Response("Unauthorized", { status: 401 });
+  const cronSecret = process.env.CRON_SECRET;
+
+  if (!cronSecret) {
+    return noStoreJson(
+      { success: false, error: "Provider sync is not configured" },
+      { status: 503 }
+    );
+  }
+
+  if (authHeader !== `Bearer ${cronSecret}`) {
+    return noStoreJson({ success: false, error: "Unauthorized" }, { status: 401 });
   }
 
   try {
@@ -19,7 +41,7 @@ export async function GET(req: Request) {
       .not("company_id", "is", null);
 
     if (error) {
-      return NextResponse.json(
+      return noStoreJson(
         { success: false, message: "Failed to load active providers", debug: error },
         { status: 500 }
       );
@@ -50,14 +72,14 @@ export async function GET(req: Request) {
       });
     }
 
-    return NextResponse.json({
+    return noStoreJson({
       success: true,
       provider_count: providers?.length || 0,
       latency_ms: Date.now() - startedAt,
       summary,
     });
   } catch (err: any) {
-    return NextResponse.json(
+    return noStoreJson(
       { success: false, message: err.message || "Unknown sync error" },
       { status: 500 }
     );
