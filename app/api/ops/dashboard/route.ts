@@ -87,6 +87,85 @@ function sanitizeProvider(provider: any) {
   };
 }
 
+function normalizeTruckKey(value: string | null | undefined) {
+  return String(value || "").trim().toUpperCase().replace(/\s+/g, "");
+}
+
+function sanitizeAssignedDriver(assignment: any) {
+  if (!assignment) return null;
+
+  return {
+    id: assignment.id,
+    driver_id: assignment.driver_id || null,
+    driver_name: assignment.driver_name || null,
+    assigned_from: assignment.assigned_from || null,
+  };
+}
+
+function buildAssignedDriverLookup(assignments: any[], assets: any[]) {
+  const assetIds = new Set(assets.map((asset) => asset.id).filter(Boolean));
+  const enabledTruckKeys = new Set(
+    assets
+      .flatMap((asset) => [asset.truck_id, asset.registration])
+      .map(normalizeTruckKey)
+      .filter(Boolean)
+  );
+  const byAssetId = new Map<string, any>();
+  const byTruckKey = new Map<string, any>();
+  const now = Date.now();
+
+  for (const assignment of assignments) {
+    const assignedTo = assignment.assigned_to
+      ? new Date(assignment.assigned_to).getTime()
+      : null;
+    const isCurrent =
+      assignment.assignment_status === "active" &&
+      (!assignedTo || assignedTo > now);
+
+    if (!isCurrent) continue;
+
+    const assetId = assignment.asset_id || "";
+    const truckKey = normalizeTruckKey(assignment.truck_id);
+    const belongsToEnabledAsset =
+      (assetId && assetIds.has(assetId)) ||
+      (truckKey && enabledTruckKeys.has(truckKey));
+
+    if (!belongsToEnabledAsset) continue;
+
+    if (assetId && !byAssetId.has(assetId)) {
+      byAssetId.set(assetId, assignment);
+    }
+    if (truckKey && !byTruckKey.has(truckKey)) {
+      byTruckKey.set(truckKey, assignment);
+    }
+  }
+
+  return { byAssetId, byTruckKey };
+}
+
+function findAssignedDriverForAsset(asset: any, lookup: ReturnType<typeof buildAssignedDriverLookup>) {
+  const assignment =
+    (asset?.id && lookup.byAssetId.get(asset.id)) ||
+    lookup.byTruckKey.get(normalizeTruckKey(asset?.truck_id)) ||
+    lookup.byTruckKey.get(normalizeTruckKey(asset?.registration));
+
+  return sanitizeAssignedDriver(assignment);
+}
+
+function findAssignedDriverForTruck(
+  truckValue: string | null | undefined,
+  lookup: ReturnType<typeof buildAssignedDriverLookup>,
+  assetsByTruckKey: Map<string, any>
+) {
+  const truckKey = normalizeTruckKey(truckValue);
+  const asset = assetsByTruckKey.get(truckKey);
+
+  return (
+    (asset && findAssignedDriverForAsset(asset, lookup)) ||
+    sanitizeAssignedDriver(lookup.byTruckKey.get(truckKey))
+  );
+}
+
 function buildSharedDisruptionCandidate(
   alerts: any[],
   enabledAssetsCount: number
@@ -270,6 +349,7 @@ export async function GET(req: Request) {
       importedAssetsResult,
       enabledAssetsResult,
       providersResult,
+      assignmentsResult,
       geofences,
     ] = await Promise.all([
       supabaseAdmin
@@ -296,6 +376,13 @@ export async function GET(req: Request) {
         .select("*")
         .eq("company_id", resolved.company.id)
         .order("created_at", { ascending: false }),
+      supabaseAdmin
+        .from("asset_driver_assignments")
+        .select(
+          "id, asset_id, truck_id, driver_id, driver_name, assigned_from, assigned_to, assignment_status"
+        )
+        .eq("company_id", resolved.company.id)
+        .eq("assignment_status", "active"),
       fetchActiveGeofences(supabaseAdmin, resolved.company.id),
     ]);
 
@@ -303,10 +390,29 @@ export async function GET(req: Request) {
     if (importedAssetsResult.error) throw importedAssetsResult.error;
     if (enabledAssetsResult.error) throw enabledAssetsResult.error;
     if (providersResult.error) throw providersResult.error;
+    if (assignmentsResult.error) throw assignmentsResult.error;
 
     const journeys = journeysResult.data || [];
     const importedAssets = importedAssetsResult.data || [];
     const fleetAssets = enabledAssetsResult.data || [];
+    const activeAssignments = assignmentsResult.data || [];
+    const assetsByTruckKey = new Map<string, any>();
+    for (const asset of fleetAssets) {
+      for (const key of [
+        normalizeTruckKey(asset.truck_id),
+        normalizeTruckKey(asset.registration),
+      ].filter(Boolean)) {
+        assetsByTruckKey.set(key, asset);
+      }
+    }
+    const assignedDriverLookup = buildAssignedDriverLookup(
+      activeAssignments,
+      fleetAssets
+    );
+    const fleetAssetsWithDrivers = fleetAssets.map((asset) => ({
+      ...asset,
+      assigned_driver: findAssignedDriverForAsset(asset, assignedDriverLookup),
+    }));
     const enabledTruckIds = fleetAssets
       .map((asset) => asset.truck_id)
       .filter(Boolean);
@@ -341,6 +447,11 @@ export async function GET(req: Request) {
     const alertsWithGeofences = alerts.map((alert) => ({
       ...alert,
       geofence_match: matchPointToGeofence(alert, geofences),
+      assigned_driver: findAssignedDriverForTruck(
+        alert.truck_id,
+        assignedDriverLookup,
+        assetsByTruckKey
+      ),
     }));
     const sharedDisruptionCandidate = buildSharedDisruptionCandidate(
       alerts,
@@ -351,6 +462,20 @@ export async function GET(req: Request) {
     const activeJourneys = journeys.filter(
       (journey) => String(journey.status || "").toLowerCase() === "active"
     );
+    const journeysWithDrivers = journeys.map((journey) => ({
+      ...journey,
+      assigned_driver:
+        findAssignedDriverForTruck(
+          journey.truck,
+          assignedDriverLookup,
+          assetsByTruckKey
+        ) ||
+        findAssignedDriverForTruck(
+          journey.truck_id,
+          assignedDriverLookup,
+          assetsByTruckKey
+        ),
+    }));
     const now = Date.now();
     const onlineAssets = fleetAssets.filter((asset) => {
       if (!asset.last_seen_at) return false;
@@ -364,8 +489,8 @@ export async function GET(req: Request) {
       is_platform_owner: resolved.isPlatformOwner,
       roles: resolved.roles,
       capabilities: resolved.capabilities,
-      journeys,
-      fleet_assets: fleetAssets,
+      journeys: journeysWithDrivers,
+      fleet_assets: fleetAssetsWithDrivers,
       provider_statuses: providers.map(sanitizeProvider),
       alerts: alertsWithGeofences,
       shared_disruption_candidate: sharedDisruptionCandidate,

@@ -130,6 +130,7 @@ export default function OpsDashboard() {
       const asset =
         assetsByTruck.get(normalizeTruck(journey.truck)) ||
         assetsByTruck.get(normalizeTruck(journey.truck_id));
+      const assignedDriver = journey.assigned_driver || asset?.assigned_driver || null;
       const relatedAlerts = data.alerts.filter(
         (alert) =>
           normalizeTruck(alert.truck_id) === normalizeTruck(journey.truck) ||
@@ -149,7 +150,8 @@ export default function OpsDashboard() {
                 journey.to_location || "Unknown destination"
               }`
             : "No route saved",
-        driver: journey.driver || "No driver",
+        driver: assignedDriver?.driver_name || journey.driver || "No driver",
+        assignedDriver,
         location:
           asset?.latitude && asset?.longitude
             ? `${Number(asset.latitude).toFixed(5)}, ${Number(asset.longitude).toFixed(5)}`
@@ -493,6 +495,7 @@ export default function OpsDashboard() {
                     <div className="mt-2 text-xs text-slate-400">
                       {alert.location_name || alert.created_at || "No event detail"}
                     </div>
+                    <DriverBadge driver={alert.assigned_driver} />
                     <GeofenceBadge match={alert.geofence_match} />
                     {alert.context_label && (
                       <div className="mt-3 rounded-md border border-cyan-200/20 bg-cyan-300/10 px-3 py-2">
@@ -591,6 +594,18 @@ function GeofenceBadge({ match }: { match?: any }) {
       {match.type && (
         <span className="text-xs text-slate-400">{formatGeofenceType(match.type)}</span>
       )}
+    </div>
+  );
+}
+
+function DriverBadge({ driver }: { driver?: any }) {
+  if (!driver?.driver_name) return null;
+
+  return (
+    <div className="mt-3">
+      <span className="inline-flex max-w-full whitespace-normal break-words rounded-full border border-cyan-200/25 bg-cyan-300/10 px-2.5 py-1 text-xs font-semibold leading-5 text-cyan-100">
+        Driver: {driver.driver_name}
+      </span>
     </div>
   );
 }
