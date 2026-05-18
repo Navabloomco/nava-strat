@@ -187,6 +187,11 @@ export default function Sidebar() {
       href: "/admin/provider-requests",
       show: roles.isPlatformOwner,
     },
+    {
+      name: "Platform Health",
+      href: "/admin/health",
+      show: roles.isPlatformOwner,
+    },
   ];
   const visibleNavItems = navItems.filter((item) => item.show);
 

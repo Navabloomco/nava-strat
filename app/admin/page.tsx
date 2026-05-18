@@ -13,6 +13,11 @@ import {
 
 const platformCards = [
   {
+    title: "Platform Health",
+    body: "Check environment, database schema, constraints, and pilot readiness before launch.",
+    href: "/admin/health",
+  },
+  {
     title: "Provider Requests",
     body: "Review client requests for provider setup.",
     href: "/admin/provider-requests",
