@@ -45,6 +45,8 @@ type ResolveCompanyResult =
       capabilities?: never;
     };
 
+const USERNAME_OVERRIDE_REDACTION = "__configured__";
+
 function getProviderCapabilities(roles: string[], isPlatformOwner: boolean) {
   const normalizedRoles = new Set(roles.map((role) => role.toLowerCase()));
   const isCompanyAdmin =
@@ -114,10 +116,57 @@ function sanitizeProvider(provider: any, capabilities: ProviderCapabilities) {
     baseProvider.fleet_url = provider.fleet_url || null;
     baseProvider.is_active = Boolean(provider.is_active);
     baseProvider.field_mapping = provider.field_mapping || {};
-    baseProvider.fleet_config = provider.fleet_config || {};
+    baseProvider.fleet_config = sanitizeFleetConfigForResponse(
+      provider.fleet_config || {}
+    );
   }
 
   return baseProvider;
+}
+
+function sanitizeFleetConfigForResponse(fleetConfig: any) {
+  if (!fleetConfig || typeof fleetConfig !== "object" || Array.isArray(fleetConfig)) {
+    return fleetConfig || {};
+  }
+
+  const safeConfig = JSON.parse(JSON.stringify(fleetConfig));
+  const profiles = safeConfig.supplemental_auth_profiles;
+  if (!profiles || typeof profiles !== "object" || Array.isArray(profiles)) {
+    return safeConfig;
+  }
+
+  for (const profile of Object.values(profiles) as any[]) {
+    if (!profile || typeof profile !== "object" || Array.isArray(profile)) continue;
+    if (profile.username_override) {
+      profile.username_override = USERNAME_OVERRIDE_REDACTION;
+    }
+  }
+
+  return safeConfig;
+}
+
+function validateSupplementalUsernameOverrides(
+  fleetConfig: any,
+  isPlatformOwner: boolean
+) {
+  const profiles = fleetConfig?.supplemental_auth_profiles;
+  if (!profiles || typeof profiles !== "object" || Array.isArray(profiles)) {
+    return null;
+  }
+
+  for (const [profileName, profile] of Object.entries(profiles) as any[]) {
+    if (!profile || typeof profile !== "object" || Array.isArray(profile)) continue;
+    if (profile.username_override === undefined) continue;
+    if (!isPlatformOwner) {
+      return "Only platform owners can configure supplemental auth username overrides.";
+    }
+    const value = String(profile.username_override || "").trim();
+    if (!value || value.length > 255) {
+      return `supplemental auth profile '${profileName}' username_override must be a short value.`;
+    }
+  }
+
+  return null;
 }
 
 async function resolveCompany(
@@ -293,6 +342,17 @@ export async function POST(req: Request) {
           error: "provider_name, provider_type, base_url, and auth_type are required",
         },
         { status: 400 }
+      );
+    }
+
+    const usernameOverrideError = validateSupplementalUsernameOverrides(
+      body.fleet_config,
+      resolved.isPlatformOwner
+    );
+    if (usernameOverrideError) {
+      return noStoreJson(
+        { success: false, error: usernameOverrideError },
+        { status: usernameOverrideError.startsWith("Only platform owners") ? 403 : 400 }
       );
     }
 

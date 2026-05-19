@@ -92,6 +92,7 @@ const AUTH_METADATA_KEYS = new Set([
 ]);
 
 const SAFE_AUTH_PROFILE_NAME = /^[A-Za-z0-9_-]{1,64}$/;
+const USERNAME_OVERRIDE_REDACTION = "__configured__";
 
 const BLOCKED_HEADER_TEMPLATE_MACROS = new Set([
   "api_key",
@@ -171,10 +172,60 @@ function sanitizeProvider(provider: any, capabilities: ProviderCapabilities) {
     baseProvider.fleet_url = provider.fleet_url || null;
     baseProvider.is_active = Boolean(provider.is_active);
     baseProvider.field_mapping = provider.field_mapping || {};
-    baseProvider.fleet_config = provider.fleet_config || {};
+    baseProvider.fleet_config = sanitizeFleetConfigForResponse(
+      provider.fleet_config || {}
+    );
   }
 
   return baseProvider;
+}
+
+function sanitizeFleetConfigForResponse(fleetConfig: any) {
+  if (!fleetConfig || typeof fleetConfig !== "object" || Array.isArray(fleetConfig)) {
+    return fleetConfig || {};
+  }
+
+  const safeConfig = JSON.parse(JSON.stringify(fleetConfig));
+  const profiles = safeConfig.supplemental_auth_profiles;
+  if (!profiles || typeof profiles !== "object" || Array.isArray(profiles)) {
+    return safeConfig;
+  }
+
+  for (const profile of Object.values(profiles) as any[]) {
+    if (!profile || typeof profile !== "object" || Array.isArray(profile)) continue;
+    if (profile.username_override) {
+      profile.username_override = USERNAME_OVERRIDE_REDACTION;
+    }
+  }
+
+  return safeConfig;
+}
+
+function preserveRedactedUsernameOverrides(fleetConfig: any, existingFleetConfig: any) {
+  if (!fleetConfig || typeof fleetConfig !== "object" || Array.isArray(fleetConfig)) {
+    return fleetConfig;
+  }
+
+  const nextConfig = JSON.parse(JSON.stringify(fleetConfig));
+  const nextProfiles = nextConfig.supplemental_auth_profiles;
+  const existingProfiles = existingFleetConfig?.supplemental_auth_profiles;
+  if (!nextProfiles || typeof nextProfiles !== "object" || Array.isArray(nextProfiles)) {
+    return nextConfig;
+  }
+
+  for (const [profileName, profile] of Object.entries(nextProfiles) as any[]) {
+    if (!profile || typeof profile !== "object" || Array.isArray(profile)) continue;
+    if (profile.username_override !== USERNAME_OVERRIDE_REDACTION) continue;
+
+    const existingOverride = existingProfiles?.[profileName]?.username_override;
+    if (typeof existingOverride === "string" && existingOverride.trim()) {
+      profile.username_override = existingOverride;
+    } else {
+      delete profile.username_override;
+    }
+  }
+
+  return nextConfig;
 }
 
 function hasSupplementalFeedConfig(fleetConfig: any) {
@@ -298,6 +349,13 @@ function validateSupplementalAuthProfiles(
     const method = String((profile as any).method || "POST").toUpperCase();
     if (!["GET", "POST"].includes(method)) {
       return `${label} method must be GET or POST.`;
+    }
+
+    if ((profile as any).username_override !== undefined) {
+      const usernameOverride = String((profile as any).username_override || "").trim();
+      if (!usernameOverride || usernameOverride.length > 255) {
+        return `${label} username_override must be a short value.`;
+      }
     }
 
     const urlError = validateSupplementalUrl(
@@ -801,6 +859,10 @@ export async function PATCH(
     }
 
     if (Object.prototype.hasOwnProperty.call(updates, "fleet_config")) {
+      updates.fleet_config = preserveRedactedUsernameOverrides(
+        updates.fleet_config,
+        existingProvider.fleet_config
+      );
       const validationError = validateFleetConfigForSave(updates.fleet_config, {
         provider: existingProvider,
         body,

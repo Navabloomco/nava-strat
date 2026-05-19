@@ -402,6 +402,9 @@ function ProviderEnrichmentDiagnostics({
                   feed.auth_profile_used
                     ? `Token captured: ${feed.auth_profile_token_captured ? "yes" : "no"}`
                     : "",
+                  typeof feed.auth_profile_username_override_configured === "boolean"
+                    ? `Username override: ${feed.auth_profile_username_override_configured ? "configured" : "not configured"}`
+                    : "",
                   feed.auth_profile_error
                     ? `Auth issue: ${feed.auth_profile_error}`
                     : "",

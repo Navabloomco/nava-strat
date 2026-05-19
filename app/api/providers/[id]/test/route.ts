@@ -114,6 +114,10 @@ function sanitizeSupplementalDiagnostics(diagnostics: any, includeAvailableKeys:
       auth_profile_credential_macros_available: Array.isArray(feed.auth_profile_credential_macros_available)
         ? feed.auth_profile_credential_macros_available.map((key: any) => String(key)).slice(0, 10)
         : [],
+      auth_profile_username_override_configured:
+        typeof feed.auth_profile_username_override_configured === "boolean"
+          ? feed.auth_profile_username_override_configured
+          : undefined,
       auth_http_status: feed.auth_http_status ? Number(feed.auth_http_status) : undefined,
       auth_response_type: feed.auth_response_type
         ? String(feed.auth_response_type)

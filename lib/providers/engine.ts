@@ -47,6 +47,7 @@ type AuthMetadata = {
 type SupplementalAuthProfileConfig = {
   name: string;
   type?: string;
+  username_override?: string;
   login_url?: string;
   method?: string;
   headers?: Record<string, any>;
@@ -114,6 +115,7 @@ type SupplementalDiagnostics = {
     auth_profile_token_captured?: boolean;
     auth_profile_metadata_available?: string[];
     auth_profile_credential_macros_available?: string[];
+    auth_profile_username_override_configured?: boolean;
     auth_http_status?: number;
     auth_response_type?: string;
     auth_top_level_keys?: string[];
@@ -189,6 +191,10 @@ type SupplementalAuthDiagnostics = {
   auth_token_paths_checked?: string[];
   auth_metadata_paths_checked?: string[];
   auth_token_candidate_paths_found?: string[];
+};
+
+type TemplateCredentialOverrides = {
+  username?: string | null;
 };
 
 const SUPPLEMENTAL_FIELDS = [
@@ -796,6 +802,11 @@ async function resolveSupplementalAuthContext(
     return null;
   }
 
+  if (feedDiagnostics) {
+    feedDiagnostics.auth_profile_username_override_configured =
+      Boolean(profile.username_override);
+  }
+
   let authPromise = profileCache.get(profileName);
   if (!authPromise) {
     authPromise = authenticateSupplementalAuthProfile(
@@ -871,7 +882,9 @@ async function authenticateSupplementalAuthProfile(
     profile.payload || {},
     provider,
     primaryToken,
-    primaryMetadata
+    primaryMetadata,
+    {},
+    { username: profile.username_override }
   );
 
   if (
@@ -891,7 +904,9 @@ async function authenticateSupplementalAuthProfile(
     profile.headers || {},
     provider,
     primaryToken,
-    primaryMetadata
+    primaryMetadata,
+    {},
+    { username: profile.username_override }
   );
 
   const response = await fetch(profile.login_url, {
@@ -1139,6 +1154,10 @@ function getSupplementalAuthProfile(
   return {
     name: profileName,
     type: profile.type || "post_login",
+    username_override:
+      typeof profile.username_override === "string"
+        ? profile.username_override.trim()
+        : undefined,
     login_url: profile.login_url,
     method: profile.method || "POST",
     headers: profile.headers || {},
@@ -1178,6 +1197,9 @@ function createSupplementalDiagnostics(
       auth_profile_metadata_available: [],
       auth_profile_credential_macros_available: feed.auth_profile
         ? []
+        : undefined,
+      auth_profile_username_override_configured: feed.auth_profile
+        ? false
         : undefined,
     })),
   };
@@ -2103,13 +2125,15 @@ function buildPayloadWithDiagnostics(
   provider: ProviderRecord,
   token: string | null = null,
   authMetadata: AuthMetadata = {},
-  fallbackAuthMetadata: AuthMetadata = {}
+  fallbackAuthMetadata: AuthMetadata = {},
+  credentialOverrides: TemplateCredentialOverrides = {}
 ): TemplateRenderResult {
   return renderTemplateValue(template || {}, {
     provider,
     token,
     authMetadata,
     fallbackAuthMetadata,
+    credentialOverrides,
     now: new Date(),
   });
 }
@@ -2119,7 +2143,8 @@ function buildHeaders(
   provider: ProviderRecord,
   token: string | null,
   authMetadata: AuthMetadata = {},
-  fallbackAuthMetadata: AuthMetadata = {}
+  fallbackAuthMetadata: AuthMetadata = {},
+  credentialOverrides: TemplateCredentialOverrides = {}
 ) {
   const output: Record<string, string> = {};
   const rendered = renderTemplateValue(template || {}, {
@@ -2127,6 +2152,7 @@ function buildHeaders(
     token,
     authMetadata,
     fallbackAuthMetadata,
+    credentialOverrides,
     now: new Date(),
   });
 
@@ -2153,6 +2179,7 @@ function renderTemplateValue(
     token: string | null;
     authMetadata: AuthMetadata;
     fallbackAuthMetadata: AuthMetadata;
+    credentialOverrides: TemplateCredentialOverrides;
     now: Date;
   }
 ): TemplateRenderResult {
@@ -2191,6 +2218,7 @@ function renderTemplateString(
     token: string | null;
     authMetadata: AuthMetadata;
     fallbackAuthMetadata: AuthMetadata;
+    credentialOverrides: TemplateCredentialOverrides;
     now: Date;
   },
   missingMacros: Set<string>,
@@ -2225,6 +2253,7 @@ function resolveTemplateMacro(
     token: string | null;
     authMetadata: AuthMetadata;
     fallbackAuthMetadata: AuthMetadata;
+    credentialOverrides: TemplateCredentialOverrides;
     now: Date;
   },
   missingMacros: Set<string>,
@@ -2253,10 +2282,18 @@ function getTemplateMacroValue(
     token: string | null;
     authMetadata: AuthMetadata;
     fallbackAuthMetadata: AuthMetadata;
+    credentialOverrides: TemplateCredentialOverrides;
     now: Date;
   }
 ) {
-  const { provider, token, authMetadata, fallbackAuthMetadata, now } = context;
+  const {
+    provider,
+    token,
+    authMetadata,
+    fallbackAuthMetadata,
+    credentialOverrides,
+    now,
+  } = context;
 
   if (
     macro === "username" ||
@@ -2264,7 +2301,7 @@ function getTemplateMacroValue(
     macro === "provider_secret" ||
     macro === "api_secret"
   ) {
-    return getCredentialMacroValue(provider, macro);
+    return getCredentialMacroValue(provider, macro, credentialOverrides);
   }
 
   if (macro === "api_key") return provider.api_key || "";
@@ -2285,12 +2322,17 @@ function getTemplateMacroValue(
   return "";
 }
 
-function getCredentialMacroValue(provider: ProviderRecord, macro: string) {
+function getCredentialMacroValue(
+  provider: ProviderRecord,
+  macro: string,
+  overrides: TemplateCredentialOverrides = {}
+) {
   const anyProvider = provider as any;
   const authConfig = provider.auth_config || {};
 
   if (macro === "username") {
     return firstNonEmptyValue([
+      overrides.username,
       provider.username,
       authConfig.username,
       authConfig.user_name,
