@@ -99,6 +99,16 @@ function sanitizeSupplementalDiagnostics(diagnostics: any, includeAvailableKeys:
       mapped_fields_merged: feed.mapped_fields_merged || {},
       mapped_fields_skipped: feed.mapped_fields_skipped || {},
       unmatched_supplemental_rows: Number(feed.unmatched_supplemental_rows || 0),
+      skipped: Boolean(feed.skipped),
+      skipped_reason: feed.skipped_reason
+        ? String(feed.skipped_reason)
+        : undefined,
+      missing_macros: Array.isArray(feed.missing_macros)
+        ? feed.missing_macros.map((macro: any) => String(macro))
+        : [],
+      unknown_macros: Array.isArray(feed.unknown_macros)
+        ? feed.unknown_macros.map((macro: any) => String(macro))
+        : [],
       unmapped_available_keys: includeAvailableKeys
         ? (feed.unmapped_available_keys || []).slice(0, 50)
         : [],

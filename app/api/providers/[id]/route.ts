@@ -52,6 +52,22 @@ const BLOCKED_SUPPLEMENTAL_HEADER_NAMES = new Set([
   "token",
 ]);
 
+const SUPPORTED_TEMPLATE_MACROS = new Set([
+  "username",
+  "api_key",
+  "password",
+  "bearer_token",
+  "token",
+  "now_iso",
+  "now_minus_1h_iso",
+  "now_minus_24h_iso",
+  "now_minus_7d_iso",
+  "now_plus_1h_iso",
+  "auth_user_id",
+  "provider_user_id",
+  "analytics_user_id",
+]);
+
 function getProviderCapabilities(roles: string[], isPlatformOwner: boolean) {
   const normalizedRoles = new Set(roles.map((role) => role.toLowerCase()));
   const isCompanyAdmin =
@@ -240,9 +256,50 @@ function validateSupplementalFeed(feed: any, label: string, knownHosts: Set<stri
     } catch {
       return `${label} payload must be valid JSON.`;
     }
+
+    const macroError = validateTemplateMacros(feed.payload, `${label} payload`);
+    if (macroError) return macroError;
   }
 
   return null;
+}
+
+function validateTemplateMacros(value: any, label: string) {
+  const macros = collectTemplateMacros(value);
+  const unknownMacros = macros.filter(
+    (macro) => !SUPPORTED_TEMPLATE_MACROS.has(macro)
+  );
+
+  if (unknownMacros.length > 0) {
+    return `${label} contains unsupported template macro '${unknownMacros[0]}'.`;
+  }
+
+  return null;
+}
+
+function collectTemplateMacros(value: any, output = new Set<string>()) {
+  if (typeof value === "string") {
+    const macroPattern = /{{\s*([a-zA-Z0-9_]+)\s*}}/g;
+    let match = macroPattern.exec(value);
+    while (match) {
+      output.add(match[1]);
+      match = macroPattern.exec(value);
+    }
+    return Array.from(output);
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) collectTemplateMacros(item, output);
+    return Array.from(output);
+  }
+
+  if (value && typeof value === "object") {
+    for (const nested of Object.values(value)) {
+      collectTemplateMacros(nested, output);
+    }
+  }
+
+  return Array.from(output);
 }
 
 function validateSupplementalUrl(value: any, label: string, knownHosts: Set<string>) {

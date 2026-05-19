@@ -31,8 +31,15 @@ export type SyncResult = {
 type AuthResult = {
   success: boolean;
   token?: string | null;
+  metadata?: AuthMetadata;
   message?: string;
   debug?: any;
+};
+
+type AuthMetadata = {
+  auth_user_id?: string | number;
+  provider_user_id?: string | number;
+  analytics_user_id?: string | number;
 };
 
 type FleetResult = {
@@ -77,8 +84,18 @@ type SupplementalDiagnostics = {
     mapped_fields_skipped: Record<string, number>;
     unmatched_supplemental_rows: number;
     unmapped_available_keys: string[];
+    skipped?: boolean;
+    skipped_reason?: string;
+    missing_macros?: string[];
+    unknown_macros?: string[];
     error?: string;
   }>;
+};
+
+type TemplateRenderResult<T = any> = {
+  value: T;
+  missingMacros: string[];
+  unknownMacros: string[];
 };
 
 type SupplementalFetchResult = {
@@ -110,6 +127,81 @@ const DEFAULT_SUPPLEMENTAL_MATCH_KEYS = [
   "device_id",
 ];
 
+const SUPPORTED_TEMPLATE_MACROS = new Set([
+  "username",
+  "api_key",
+  "password",
+  "bearer_token",
+  "token",
+  "now_iso",
+  "now_minus_1h_iso",
+  "now_minus_24h_iso",
+  "now_minus_7d_iso",
+  "now_plus_1h_iso",
+  "auth_user_id",
+  "provider_user_id",
+  "analytics_user_id",
+]);
+
+const AUTH_METADATA_PATHS: Record<keyof AuthMetadata, string[]> = {
+  auth_user_id: [
+    "auth_user_id",
+    "user_id",
+    "userId",
+    "user.id",
+    "data.user_id",
+    "data.userId",
+    "data.user.id",
+    "result.user_id",
+    "result.userId",
+    "data.selectUsersByUsernamePassword.0.user_id",
+    "data.selectUsersByUsernamePassword.0.userId",
+    "data.selectUsersByUsernamePassword.0.id",
+    "result.selectUsersByUsernamePassword.0.user_id",
+    "result.selectUsersByUsernamePassword.0.userId",
+    "result.selectUsersByUsernamePassword.0.id",
+    "selectUsersByUsernamePassword.0.user_id",
+    "selectUsersByUsernamePassword.0.userId",
+    "selectUsersByUsernamePassword.0.id",
+  ],
+  provider_user_id: [
+    "provider_user_id",
+    "user_id",
+    "userId",
+    "user.id",
+    "data.user_id",
+    "data.userId",
+    "result.user_id",
+    "result.userId",
+    "data.selectUsersByUsernamePassword.0.user_id",
+    "data.selectUsersByUsernamePassword.0.userId",
+    "data.selectUsersByUsernamePassword.0.id",
+    "result.selectUsersByUsernamePassword.0.user_id",
+    "result.selectUsersByUsernamePassword.0.userId",
+    "result.selectUsersByUsernamePassword.0.id",
+    "selectUsersByUsernamePassword.0.user_id",
+    "selectUsersByUsernamePassword.0.userId",
+  ],
+  analytics_user_id: [
+    "analytics_user_id",
+    "analyticsUserId",
+    "user_id",
+    "userId",
+    "data.user_id",
+    "data.userId",
+    "result.user_id",
+    "result.userId",
+    "data.selectUsersByUsernamePassword.0.user_id",
+    "data.selectUsersByUsernamePassword.0.userId",
+    "data.selectUsersByUsernamePassword.0.id",
+    "result.selectUsersByUsernamePassword.0.user_id",
+    "result.selectUsersByUsernamePassword.0.userId",
+    "result.selectUsersByUsernamePassword.0.id",
+    "selectUsersByUsernamePassword.0.user_id",
+    "selectUsersByUsernamePassword.0.userId",
+  ],
+};
+
 export async function runProviderSync(
   provider: ProviderRecord
 ): Promise<SyncResult> {
@@ -133,7 +225,8 @@ export async function runProviderSync(
       };
     }
 
-    const fleet = await fetchFleet(provider, auth.token || null);
+    const authMetadata = auth.metadata || {};
+    const fleet = await fetchFleet(provider, auth.token || null, authMetadata);
     if (!fleet.success) {
       return {
         success: false,
@@ -143,7 +236,11 @@ export async function runProviderSync(
       };
     }
 
-    const supplemental = await fetchSupplementalFeeds(provider, auth.token || null);
+    const supplemental = await fetchSupplementalFeeds(
+      provider,
+      auth.token || null,
+      authMetadata
+    );
     let sample_normalized = null;
     let syncedCount = 0;
     const errors: string[] = [];
@@ -271,16 +368,20 @@ async function authenticateProvider(provider: ProviderRecord): Promise<AuthResul
   const config = provider.auth_config || {};
 
   if (authType === "NONE") {
-    return { success: true, token: null };
+    return { success: true, token: null, metadata: buildAuthMetadata(provider) };
   }
   if (authType === "BEARER") {
     const token = provider.bearer_token || provider.api_key;
     if (!token) return { success: false, message: "Bearer token missing" };
-    return { success: true, token };
+    return { success: true, token, metadata: buildAuthMetadata(provider) };
   }
   if (authType === "API_KEY") {
     if (!provider.api_key) return { success: false, message: "API key missing" };
-    return { success: true, token: provider.api_key };
+    return {
+      success: true,
+      token: provider.api_key,
+      metadata: buildAuthMetadata(provider),
+    };
   }
   if (authType === "BASIC_AUTH") {
     if (!provider.username || !(provider.password || provider.api_key)) {
@@ -288,7 +389,7 @@ async function authenticateProvider(provider: ProviderRecord): Promise<AuthResul
     }
     const raw = `${provider.username}:${provider.password || provider.api_key}`;
     const token = Buffer.from(raw).toString("base64");
-    return { success: true, token };
+    return { success: true, token, metadata: buildAuthMetadata(provider) };
   }
   if (authType === "POST_LOGIN") {
     const loginUrl = provider.login_url || provider.auth_config?.login_url || provider.default_login_url;
@@ -301,7 +402,7 @@ async function authenticateProvider(provider: ProviderRecord): Promise<AuthResul
     const headers = buildHeaders(config.headers || {}, provider, null);
     const response = await fetch(loginUrl, {
       method,
-      headers: { "Content-Type": "application/json", ...headers },
+      headers: withJsonContentType(headers),
       body: method === "GET" ? undefined : JSON.stringify(payload),
       cache: "no-store",
     });
@@ -310,34 +411,53 @@ async function authenticateProvider(provider: ProviderRecord): Promise<AuthResul
       ? config.token_paths
       : defaultTokenPaths();
     const token = getByPaths(data, tokenPaths);
+    const metadata = buildAuthMetadata(provider, data);
     if (!response.ok || !token) {
       return {
         success: false,
         message: "No token returned",
-        debug: { status: response.status, loginUrl, payload_sent: maskPayload(payload), token_paths_checked: tokenPaths, auth_response: data },
+        debug: {
+          status: response.status,
+          loginUrl,
+          payload_sent: maskPayload(payload),
+          token_paths_checked: tokenPaths,
+          auth_response_keys: collectSafeResponseKeys(data),
+        },
       };
     }
-    return { success: true, token, debug: data };
+    return {
+      success: true,
+      token,
+      metadata,
+      debug: {
+        auth_metadata_available: Object.keys(metadata),
+        auth_response_keys: collectSafeResponseKeys(data),
+      },
+    };
   }
   return { success: false, message: `Unsupported auth_type: ${authType}` };
 }
 
-async function fetchFleet(provider: ProviderRecord, token: string | null): Promise<FleetResult> {
+async function fetchFleet(
+  provider: ProviderRecord,
+  token: string | null,
+  authMetadata: AuthMetadata = {}
+): Promise<FleetResult> {
   const fleetUrl = provider.fleet_url || provider.fleet_config?.fleet_url || provider.default_fleet_url;
   if (!fleetUrl) return { success: false, vehicles: [], message: "Fleet URL missing" };
   const authType = (provider.auth_type || "POST_LOGIN").toUpperCase();
   const config = provider.fleet_config || {};
   const method = String(config.method || "POST").toUpperCase();
-  const headers = buildHeaders(config.headers || {}, provider, token);
+  const headers = buildHeaders(config.headers || {}, provider, token, authMetadata);
   if (token) {
     if (authType === "API_KEY") headers[config.api_key_header || "x-api-key"] = token;
     else if (authType === "BASIC_AUTH") headers.Authorization = `Basic ${token}`;
     else headers.Authorization = `Bearer ${token}`;
   }
-  const payload = buildPayload(config.payload || {}, provider);
+  const payload = buildPayload(config.payload || {}, provider, token, authMetadata);
   const response = await fetch(fleetUrl, {
     method,
-    headers: { "Content-Type": "application/json", ...headers },
+    headers: withJsonContentType(headers),
     body: method === "GET" ? undefined : JSON.stringify(payload),
     cache: "no-store",
   });
@@ -363,7 +483,8 @@ async function fetchFleet(provider: ProviderRecord, token: string | null): Promi
 
 async function fetchSupplementalFeeds(
   provider: ProviderRecord,
-  token: string | null
+  token: string | null,
+  authMetadata: AuthMetadata = {}
 ): Promise<SupplementalFetchResult> {
   const configs = getSupplementalFeedConfigs(provider);
   const diagnostics = createSupplementalDiagnostics(configs);
@@ -378,11 +499,45 @@ async function fetchSupplementalFeeds(
     const feedDiagnostics = diagnostics.feeds.find(
       (feed) => feed.name === config.name
     );
+
+    const payloadResult = buildPayloadWithDiagnostics(
+      config.payload || {},
+      provider,
+      token,
+      authMetadata
+    );
+
+    if (
+      payloadResult.missingMacros.length > 0 ||
+      payloadResult.unknownMacros.length > 0
+    ) {
+      const skippedReason =
+        payloadResult.unknownMacros.length > 0
+          ? `Unknown template macro(s): ${payloadResult.unknownMacros.join(", ")}`
+          : `Missing required template macro(s): ${payloadResult.missingMacros.join(", ")}`;
+
+      if (feedDiagnostics) {
+        feedDiagnostics.skipped = true;
+        feedDiagnostics.skipped_reason = skippedReason;
+        feedDiagnostics.success = false;
+        feedDiagnostics.error = skippedReason;
+        feedDiagnostics.missing_macros = payloadResult.missingMacros;
+        feedDiagnostics.unknown_macros = payloadResult.unknownMacros;
+      }
+      continue;
+    }
+
     if (feedDiagnostics) feedDiagnostics.attempted = true;
     diagnostics.supplemental_feeds_attempted++;
 
     try {
-      const rows = await fetchSupplementalFeed(provider, token, config);
+      const rows = await fetchSupplementalFeed(
+        provider,
+        token,
+        config,
+        payloadResult.value,
+        authMetadata
+      );
       feeds.push({ config, rows });
       diagnostics.supplemental_rows_found += rows.length;
 
@@ -413,11 +568,18 @@ async function fetchSupplementalFeeds(
 async function fetchSupplementalFeed(
   provider: ProviderRecord,
   token: string | null,
-  config: SupplementalFeedConfig
+  config: SupplementalFeedConfig,
+  payload: any,
+  authMetadata: AuthMetadata = {}
 ) {
   const authType = (provider.auth_type || "POST_LOGIN").toUpperCase();
   const method = String(config.method || "GET").toUpperCase();
-  const headers = buildHeaders(config.headers || {}, provider, token);
+  const headers = buildHeaders(
+    config.headers || {},
+    provider,
+    token,
+    authMetadata
+  );
 
   if (token) {
     if (authType === "API_KEY") {
@@ -429,10 +591,9 @@ async function fetchSupplementalFeed(
     }
   }
 
-  const payload = buildPayload(config.payload || {}, provider, token);
   const response = await fetch(config.url, {
     method,
-    headers: { "Content-Type": "application/json", ...headers },
+    headers: withJsonContentType(headers),
     body: method === "GET" ? undefined : JSON.stringify(payload),
     cache: "no-store",
   });
@@ -1010,32 +1171,341 @@ function defaultSupplementalVehiclePaths() {
   ];
 }
 
-function buildPayload(template: any, provider: ProviderRecord, token: string | null = null) {
-  const output: any = {};
-  if (!template || typeof template !== "object") return output;
-  Object.keys(template).forEach(key => {
-    output[key] = resolveTemplateValue(template[key], provider, token);
-  });
-  return output;
+function buildPayload(
+  template: any,
+  provider: ProviderRecord,
+  token: string | null = null,
+  authMetadata: AuthMetadata = {}
+) {
+  return buildPayloadWithDiagnostics(template, provider, token, authMetadata)
+    .value;
 }
 
-function buildHeaders(template: any, provider: ProviderRecord, token: string | null) {
+function buildPayloadWithDiagnostics(
+  template: any,
+  provider: ProviderRecord,
+  token: string | null = null,
+  authMetadata: AuthMetadata = {}
+): TemplateRenderResult {
+  return renderTemplateValue(template || {}, {
+    provider,
+    token,
+    authMetadata,
+    now: new Date(),
+  });
+}
+
+function buildHeaders(
+  template: any,
+  provider: ProviderRecord,
+  token: string | null,
+  authMetadata: AuthMetadata = {}
+) {
   const output: Record<string, string> = {};
-  if (!template || typeof template !== "object") return output;
-  Object.keys(template).forEach(key => {
-    output[key] = String(resolveTemplateValue(template[key], provider, token));
+  const rendered = renderTemplateValue(template || {}, {
+    provider,
+    token,
+    authMetadata,
+    now: new Date(),
   });
+
+  if (
+    !rendered.value ||
+    typeof rendered.value !== "object" ||
+    Array.isArray(rendered.value)
+  ) {
+    return output;
+  }
+
+  for (const [key, value] of Object.entries(rendered.value)) {
+    if (value === undefined || value === null) continue;
+    output[key] = String(value);
+  }
+
   return output;
 }
 
-function resolveTemplateValue(value: any, provider: ProviderRecord, token: string | null) {
-  if (typeof value !== "string") return value;
-  return value
-    .replaceAll("{{username}}", provider.username || "")
-    .replaceAll("{{api_key}}", provider.api_key || "")
-    .replaceAll("{{password}}", provider.password || "")
-    .replaceAll("{{bearer_token}}", provider.bearer_token || "")
-    .replaceAll("{{token}}", token || "");
+function renderTemplateValue(
+  template: any,
+  context: {
+    provider: ProviderRecord;
+    token: string | null;
+    authMetadata: AuthMetadata;
+    now: Date;
+  }
+): TemplateRenderResult {
+  const missingMacros = new Set<string>();
+  const unknownMacros = new Set<string>();
+
+  const render = (value: any): any => {
+    if (typeof value === "string") {
+      return renderTemplateString(value, context, missingMacros, unknownMacros);
+    }
+
+    if (Array.isArray(value)) {
+      return value.map((item) => render(item));
+    }
+
+    if (value && typeof value === "object") {
+      return Object.fromEntries(
+        Object.entries(value).map(([key, nested]) => [key, render(nested)])
+      );
+    }
+
+    return value;
+  };
+
+  return {
+    value: render(template),
+    missingMacros: Array.from(missingMacros),
+    unknownMacros: Array.from(unknownMacros),
+  };
+}
+
+function renderTemplateString(
+  value: string,
+  context: {
+    provider: ProviderRecord;
+    token: string | null;
+    authMetadata: AuthMetadata;
+    now: Date;
+  },
+  missingMacros: Set<string>,
+  unknownMacros: Set<string>
+) {
+  const wholeMacro = value.match(/^{{\s*([a-zA-Z0-9_]+)\s*}}$/);
+  if (wholeMacro) {
+    const resolved = resolveTemplateMacro(
+      wholeMacro[1],
+      context,
+      missingMacros,
+      unknownMacros
+    );
+    return resolved === undefined || resolved === null ? "" : resolved;
+  }
+
+  return value.replace(/{{\s*([a-zA-Z0-9_]+)\s*}}/g, (_match, macro) => {
+    const resolved = resolveTemplateMacro(
+      macro,
+      context,
+      missingMacros,
+      unknownMacros
+    );
+    return resolved === undefined || resolved === null ? "" : String(resolved);
+  });
+}
+
+function resolveTemplateMacro(
+  macro: string,
+  context: {
+    provider: ProviderRecord;
+    token: string | null;
+    authMetadata: AuthMetadata;
+    now: Date;
+  },
+  missingMacros: Set<string>,
+  unknownMacros: Set<string>
+) {
+  const normalizedMacro = String(macro || "").trim();
+
+  if (!SUPPORTED_TEMPLATE_MACROS.has(normalizedMacro)) {
+    unknownMacros.add(normalizedMacro || "(empty)");
+    return "";
+  }
+
+  const value = getTemplateMacroValue(normalizedMacro, context);
+  if (value === undefined || value === null || value === "") {
+    missingMacros.add(normalizedMacro);
+    return "";
+  }
+
+  return value;
+}
+
+function getTemplateMacroValue(
+  macro: string,
+  context: {
+    provider: ProviderRecord;
+    token: string | null;
+    authMetadata: AuthMetadata;
+    now: Date;
+  }
+) {
+  const { provider, token, authMetadata, now } = context;
+
+  if (macro === "username") return provider.username || "";
+  if (macro === "api_key") return provider.api_key || "";
+  if (macro === "password") return provider.password || "";
+  if (macro === "bearer_token") return provider.bearer_token || "";
+  if (macro === "token") return token || "";
+
+  const dateValue = getDateMacroValue(macro, now);
+  if (dateValue) return dateValue;
+
+  if (
+    macro === "auth_user_id" ||
+    macro === "provider_user_id" ||
+    macro === "analytics_user_id"
+  ) {
+    return getAuthMacroValue(macro, provider, authMetadata);
+  }
+
+  return "";
+}
+
+function getDateMacroValue(macro: string, now: Date) {
+  const date = new Date(now);
+
+  if (macro === "now_iso") return date.toISOString();
+  if (macro === "now_minus_1h_iso") {
+    date.setHours(date.getHours() - 1);
+    return date.toISOString();
+  }
+  if (macro === "now_minus_24h_iso") {
+    date.setHours(date.getHours() - 24);
+    return date.toISOString();
+  }
+  if (macro === "now_minus_7d_iso") {
+    date.setDate(date.getDate() - 7);
+    return date.toISOString();
+  }
+  if (macro === "now_plus_1h_iso") {
+    date.setHours(date.getHours() + 1);
+    return date.toISOString();
+  }
+
+  return "";
+}
+
+function getAuthMacroValue(
+  macro: keyof AuthMetadata,
+  provider: ProviderRecord,
+  authMetadata: AuthMetadata
+) {
+  const metadataPriority: Array<keyof AuthMetadata> =
+    macro === "auth_user_id"
+      ? ["auth_user_id", "provider_user_id", "analytics_user_id"]
+      : macro === "provider_user_id"
+        ? ["provider_user_id", "auth_user_id", "analytics_user_id"]
+        : ["analytics_user_id", "auth_user_id", "provider_user_id"];
+
+  for (const key of metadataPriority) {
+    const value = sanitizeMacroScalar(authMetadata[key]);
+    if (value !== null) return value;
+  }
+
+  return getConfiguredAuthMacroValue(provider, macro);
+}
+
+function getConfiguredAuthMacroValue(
+  provider: ProviderRecord,
+  macro: keyof AuthMetadata
+) {
+  const sources = [provider.fleet_config || {}, provider.auth_config || {}];
+  const paths =
+    macro === "analytics_user_id"
+      ? [
+          "analytics_user_id",
+          "analyticsUserId",
+          "auth_user_id",
+          "authUserId",
+          "provider_user_id",
+          "providerUserId",
+          "user_id",
+          "userId",
+          "user.id",
+        ]
+      : macro === "provider_user_id"
+        ? [
+            "provider_user_id",
+            "providerUserId",
+            "auth_user_id",
+            "authUserId",
+            "analytics_user_id",
+            "analyticsUserId",
+            "user_id",
+            "userId",
+            "user.id",
+          ]
+        : [
+            "auth_user_id",
+            "authUserId",
+            "analytics_user_id",
+            "analyticsUserId",
+            "provider_user_id",
+            "providerUserId",
+            "user_id",
+            "userId",
+            "user.id",
+          ];
+
+  for (const source of sources) {
+    const value = firstSafeValueByPaths(source, paths);
+    if (value !== null) return value;
+  }
+
+  return "";
+}
+
+function buildAuthMetadata(
+  provider: ProviderRecord,
+  authResponse?: any
+): AuthMetadata {
+  const metadata: AuthMetadata = {};
+
+  for (const key of Object.keys(AUTH_METADATA_PATHS) as Array<
+    keyof AuthMetadata
+  >) {
+    const responseValue = firstSafeValueByPaths(
+      authResponse,
+      AUTH_METADATA_PATHS[key]
+    );
+    const configuredValue = getConfiguredAuthMacroValue(provider, key);
+    const value = responseValue !== null ? responseValue : configuredValue;
+
+    if (value !== null && value !== "") {
+      metadata[key] = value;
+    }
+  }
+
+  return metadata;
+}
+
+function firstSafeValueByPaths(source: any, paths: string[]) {
+  if (!source || typeof source !== "object") return null;
+
+  for (const path of paths) {
+    const value = sanitizeMacroScalar(getByPath(source, path));
+    if (value !== null) return value;
+  }
+
+  return null;
+}
+
+function sanitizeMacroScalar(value: any): string | number | null {
+  if (value === undefined || value === null || value === "") return null;
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value !== "string") return null;
+
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > 240) return null;
+  return trimmed;
+}
+
+function collectSafeResponseKeys(data: any) {
+  const keys = new Map<string, string>();
+  collectSafeKeyNames(data, keys, 0);
+  return Array.from(keys.values()).slice(0, MAX_UNMAPPED_AVAILABLE_KEYS);
+}
+
+function withJsonContentType(headers: Record<string, string>) {
+  const output = { ...headers };
+  const hasContentType = Object.keys(output).some(
+    (key) => key.toLowerCase() === "content-type"
+  );
+
+  if (!hasContentType) output["Content-Type"] = "application/json";
+  return output;
 }
 
 async function safeJson(response: Response) {
@@ -1063,11 +1533,21 @@ function defaultVehiclePaths() {
   return ["$", "data", "result", "vehicles", "items", "data.vehicles", "data.items", "result.vehicles", "result.items"];
 }
 
-function maskPayload(payload: any) {
-  const masked = { ...payload };
-  if (masked.key) masked.key = "***MASKED***";
-  if (masked.api_key) masked.api_key = "***MASKED***";
-  if (masked.password) masked.password = "***MASKED***";
-  if (masked.token) masked.token = "***MASKED***";
-  return masked;
+function maskPayload(payload: any, depth = 0): any {
+  if (depth > 6) return "[truncated]";
+  if (Array.isArray(payload)) {
+    return payload.map((item) => maskPayload(item, depth + 1));
+  }
+  if (!payload || typeof payload !== "object") return payload;
+
+  return Object.fromEntries(
+    Object.entries(payload).map(([key, value]) => {
+      const normalizedKey = normalizeProviderKey(key);
+      if (isSensitiveProviderKey(normalizedKey) || normalizedKey === "key") {
+        return [key, "***MASKED***"];
+      }
+
+      return [key, maskPayload(value, depth + 1)];
+    })
+  );
 }
