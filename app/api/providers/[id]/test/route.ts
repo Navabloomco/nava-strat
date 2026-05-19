@@ -118,6 +118,28 @@ function sanitizeSupplementalDiagnostics(diagnostics: any, includeAvailableKeys:
         typeof feed.auth_profile_username_override_configured === "boolean"
           ? feed.auth_profile_username_override_configured
           : undefined,
+      auth_username_source: feed.auth_username_source
+        ? String(feed.auth_username_source).slice(0, 80)
+        : null,
+      auth_password_source: feed.auth_password_source
+        ? String(feed.auth_password_source).slice(0, 80)
+        : null,
+      auth_username_present:
+        typeof feed.auth_username_present === "boolean"
+          ? feed.auth_username_present
+          : undefined,
+      auth_password_present:
+        typeof feed.auth_password_present === "boolean"
+          ? feed.auth_password_present
+          : undefined,
+      auth_username_length:
+        typeof feed.auth_username_length === "number"
+          ? Number(feed.auth_username_length)
+          : null,
+      auth_password_length:
+        typeof feed.auth_password_length === "number"
+          ? Number(feed.auth_password_length)
+          : null,
       auth_http_status: feed.auth_http_status ? Number(feed.auth_http_status) : undefined,
       auth_response_type: feed.auth_response_type
         ? String(feed.auth_response_type)
@@ -157,6 +179,17 @@ function sanitizeSupplementalDiagnostics(diagnostics: any, includeAvailableKeys:
       auth_payload_key_paths_sent: Array.isArray(feed.auth_payload_key_paths_sent)
         ? feed.auth_payload_key_paths_sent.map((path: any) => String(path)).slice(0, 100)
         : [],
+      auth_variable_keys_sent: Array.isArray(feed.auth_variable_keys_sent)
+        ? feed.auth_variable_keys_sent.map((key: any) => String(key)).slice(0, 50)
+        : [],
+      auth_variable_value_types: feed.auth_variable_value_types &&
+        typeof feed.auth_variable_value_types === "object"
+        ? sanitizeStringMap(feed.auth_variable_value_types, 50)
+        : {},
+      auth_variable_value_lengths: feed.auth_variable_value_lengths &&
+        typeof feed.auth_variable_value_lengths === "object"
+        ? sanitizeCountMap(feed.auth_variable_value_lengths)
+        : {},
       auth_token_paths_checked: Array.isArray(feed.auth_token_paths_checked)
         ? feed.auth_token_paths_checked.map((path: any) => String(path)).slice(0, 20)
         : [],

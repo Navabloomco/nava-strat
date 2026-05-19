@@ -116,6 +116,12 @@ type SupplementalDiagnostics = {
     auth_profile_metadata_available?: string[];
     auth_profile_credential_macros_available?: string[];
     auth_profile_username_override_configured?: boolean;
+    auth_username_source?: string | null;
+    auth_password_source?: string | null;
+    auth_username_present?: boolean;
+    auth_password_present?: boolean;
+    auth_username_length?: number | null;
+    auth_password_length?: number | null;
     auth_http_status?: number;
     auth_response_type?: string;
     auth_top_level_keys?: string[];
@@ -128,6 +134,9 @@ type SupplementalDiagnostics = {
     auth_error_keys?: string[];
     auth_operation_name_sent?: string | null;
     auth_payload_key_paths_sent?: string[];
+    auth_variable_keys_sent?: string[];
+    auth_variable_value_types?: Record<string, string>;
+    auth_variable_value_lengths?: Record<string, number>;
     auth_token_paths_checked?: string[];
     auth_metadata_paths_checked?: string[];
     auth_token_candidate_paths_found?: string[];
@@ -188,6 +197,15 @@ type SupplementalAuthDiagnostics = {
   auth_error_keys?: string[];
   auth_operation_name_sent?: string | null;
   auth_payload_key_paths_sent?: string[];
+  auth_variable_keys_sent?: string[];
+  auth_variable_value_types?: Record<string, string>;
+  auth_variable_value_lengths?: Record<string, number>;
+  auth_username_source?: string | null;
+  auth_password_source?: string | null;
+  auth_username_present?: boolean;
+  auth_password_present?: boolean;
+  auth_username_length?: number | null;
+  auth_password_length?: number | null;
   auth_token_paths_checked?: string[];
   auth_metadata_paths_checked?: string[];
   auth_token_candidate_paths_found?: string[];
@@ -923,6 +941,7 @@ async function authenticateSupplementalAuthProfile(
   const token = getByPaths(data, tokenPaths);
   const metadata = buildSupplementalAuthProfileMetadata(provider, profile, data);
   const diagnostics = buildSupplementalAuthDiagnostics(
+    provider,
     data,
     response.status,
     responseType,
@@ -951,6 +970,7 @@ async function authenticateSupplementalAuthProfile(
 }
 
 function buildSupplementalAuthDiagnostics(
+  provider: ProviderRecord,
   data: any,
   httpStatus: number,
   responseType: SupplementalResponseDiagnostics["response_type"],
@@ -959,6 +979,12 @@ function buildSupplementalAuthDiagnostics(
   renderedPayload: any
 ): SupplementalAuthDiagnostics {
   const responseData = getByPath(data, "data");
+  const credentialDiagnostics = buildSupplementalCredentialDiagnostics(
+    provider,
+    profile,
+    renderedPayload
+  );
+  const variableDiagnostics = buildAuthVariableDiagnostics(renderedPayload);
 
   return {
     auth_http_status: httpStatus,
@@ -980,6 +1006,10 @@ function buildSupplementalAuthDiagnostics(
         ? renderedPayload.operationName.slice(0, 120)
         : null,
     auth_payload_key_paths_sent: collectAuthPayloadKeyPaths(renderedPayload),
+    auth_variable_keys_sent: variableDiagnostics.keys,
+    auth_variable_value_types: variableDiagnostics.types,
+    auth_variable_value_lengths: variableDiagnostics.lengths,
+    ...credentialDiagnostics,
     auth_token_paths_checked: tokenPaths.map((path) => String(path)).slice(0, 20),
     auth_metadata_paths_checked: collectMetadataPathsChecked(profile),
     auth_token_candidate_paths_found: collectTokenCandidatePaths(data),
@@ -1053,6 +1083,53 @@ function applySupplementalAuthDiagnostics(
         .map((path: any) => String(path))
         .slice(0, 100)
     : [];
+  feedDiagnostics.auth_variable_keys_sent = Array.isArray(
+    diagnostics.auth_variable_keys_sent
+  )
+    ? diagnostics.auth_variable_keys_sent
+        .map((key: any) => String(key))
+        .slice(0, 50)
+    : [];
+  feedDiagnostics.auth_variable_value_types =
+    diagnostics.auth_variable_value_types &&
+    typeof diagnostics.auth_variable_value_types === "object"
+      ? Object.fromEntries(
+          Object.entries(diagnostics.auth_variable_value_types)
+            .slice(0, 50)
+            .map(([key, value]) => [String(key), String(value)])
+        )
+      : {};
+  feedDiagnostics.auth_variable_value_lengths =
+    diagnostics.auth_variable_value_lengths &&
+    typeof diagnostics.auth_variable_value_lengths === "object"
+      ? Object.fromEntries(
+          Object.entries(diagnostics.auth_variable_value_lengths)
+            .slice(0, 50)
+            .map(([key, value]) => [String(key), Number(value || 0)])
+        )
+      : {};
+  feedDiagnostics.auth_username_source =
+    typeof diagnostics.auth_username_source === "string"
+      ? diagnostics.auth_username_source
+      : null;
+  feedDiagnostics.auth_password_source =
+    typeof diagnostics.auth_password_source === "string"
+      ? diagnostics.auth_password_source
+      : null;
+  if (typeof diagnostics.auth_username_present === "boolean") {
+    feedDiagnostics.auth_username_present = diagnostics.auth_username_present;
+  }
+  if (typeof diagnostics.auth_password_present === "boolean") {
+    feedDiagnostics.auth_password_present = diagnostics.auth_password_present;
+  }
+  feedDiagnostics.auth_username_length =
+    typeof diagnostics.auth_username_length === "number"
+      ? diagnostics.auth_username_length
+      : null;
+  feedDiagnostics.auth_password_length =
+    typeof diagnostics.auth_password_length === "number"
+      ? diagnostics.auth_password_length
+      : null;
   feedDiagnostics.auth_token_paths_checked = Array.isArray(diagnostics.auth_token_paths_checked)
     ? diagnostics.auth_token_paths_checked.map((path: any) => String(path)).slice(0, 20)
     : [];
@@ -1557,6 +1634,91 @@ function collectAuthPayloadKeyPaths(payload: any) {
 
   walk(payload, "", 0);
   return paths;
+}
+
+function buildAuthVariableDiagnostics(payload: any) {
+  const variables = payload?.variables;
+  const keys: string[] = [];
+  const types: Record<string, string> = {};
+  const lengths: Record<string, number> = {};
+
+  if (!variables || typeof variables !== "object" || Array.isArray(variables)) {
+    return { keys, types, lengths };
+  }
+
+  for (const [key, value] of Object.entries(variables).slice(0, 50)) {
+    const safeKey = String(key);
+    keys.push(safeKey);
+    types[safeKey] = describePayloadValueType(value);
+
+    if (value === null || value === undefined) {
+      lengths[safeKey] = 0;
+    } else if (
+      typeof value === "string" ||
+      typeof value === "number" ||
+      typeof value === "boolean"
+    ) {
+      lengths[safeKey] = String(value).length;
+    }
+  }
+
+  return { keys, types, lengths };
+}
+
+function buildSupplementalCredentialDiagnostics(
+  provider: ProviderRecord,
+  profile: SupplementalAuthProfileConfig,
+  renderedPayload: any
+) {
+  const anyProvider = provider as any;
+  const authConfig = provider.auth_config || {};
+  const usernameSource = firstCredentialDiagnostic([
+    { source: "username_override", value: profile.username_override },
+    { source: "provider.username", value: provider.username },
+    { source: "auth_config.username", value: authConfig.username },
+    { source: "auth_config.user_name", value: authConfig.user_name },
+  ]);
+  const passwordSource = firstCredentialDiagnostic([
+    { source: "provider.password", value: provider.password },
+    { source: "provider_secret", value: anyProvider.provider_secret },
+    { source: "auth_config.provider_secret", value: authConfig.provider_secret },
+    { source: "auth_config.password", value: authConfig.password },
+    { source: "api_key", value: provider.api_key },
+  ]);
+  const variables = renderedPayload?.variables;
+  const usernameValue =
+    variables && typeof variables === "object" && !Array.isArray(variables)
+      ? sanitizeMacroScalar((variables as any).user_name ?? (variables as any).username)
+      : null;
+  const passwordValue =
+    variables && typeof variables === "object" && !Array.isArray(variables)
+      ? sanitizeMacroScalar((variables as any).password)
+      : null;
+
+  return {
+    auth_username_source: usernameSource.source,
+    auth_password_source: passwordSource.source,
+    auth_username_present: usernameValue !== null,
+    auth_password_present: passwordValue !== null,
+    auth_username_length: usernameValue !== null ? String(usernameValue).length : null,
+    auth_password_length: passwordValue !== null ? String(passwordValue).length : null,
+  };
+}
+
+function firstCredentialDiagnostic(
+  candidates: Array<{ source: string; value: any }>
+) {
+  for (const candidate of candidates) {
+    const value = sanitizeMacroScalar(candidate.value);
+    if (value !== null) {
+      return {
+        source: candidate.source,
+        length: String(value).length,
+      };
+    }
+  }
+
+  return { source: null, length: null };
 }
 
 function collectResponseErrorKeys(data: any) {

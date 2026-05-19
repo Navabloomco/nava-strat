@@ -412,6 +412,31 @@ function ProviderEnrichmentDiagnostics({
                 mutedEmpty="Using primary provider auth."
               />
 
+              <DiagnosticFieldBlock
+                title="Auth credential sources"
+                value={[
+                  feed.auth_username_source
+                    ? `Username source: ${feed.auth_username_source}`
+                    : "",
+                  feed.auth_password_source
+                    ? `Password source: ${feed.auth_password_source}`
+                    : "",
+                  typeof feed.auth_username_present === "boolean"
+                    ? `Username present: ${feed.auth_username_present ? "yes" : "no"}`
+                    : "",
+                  typeof feed.auth_password_present === "boolean"
+                    ? `Password present: ${feed.auth_password_present ? "yes" : "no"}`
+                    : "",
+                  typeof feed.auth_username_length === "number"
+                    ? `Username length: ${feed.auth_username_length}`
+                    : "",
+                  typeof feed.auth_password_length === "number"
+                    ? `Password length: ${feed.auth_password_length}`
+                    : "",
+                ]}
+                mutedEmpty="No credential source diagnostics captured."
+              />
+
               {canShowAvailableKeys && feed.auth_profile_metadata_available?.length > 0 && (
                 <DiagnosticFieldBlock
                   title="Auth metadata available"
@@ -441,6 +466,9 @@ function ProviderEnrichmentDiagnostics({
                 feed.auth_error_keys?.length > 0 ||
                 feed.auth_operation_name_sent ||
                 feed.auth_payload_key_paths_sent?.length > 0 ||
+                feed.auth_variable_keys_sent?.length > 0 ||
+                Object.keys(feed.auth_variable_value_types || {}).length > 0 ||
+                Object.keys(feed.auth_variable_value_lengths || {}).length > 0 ||
                 feed.auth_token_paths_checked?.length > 0 ||
                 feed.auth_metadata_paths_checked?.length > 0 ||
                 feed.auth_token_candidate_paths_found?.length > 0) && (
@@ -466,6 +494,23 @@ function ProviderEnrichmentDiagnostics({
                     title="Auth payload key paths"
                     value={feed.auth_payload_key_paths_sent}
                     mutedEmpty="No auth payload key paths captured."
+                  />
+                  <DiagnosticFieldBlock
+                    title="Auth variable keys"
+                    value={feed.auth_variable_keys_sent}
+                    mutedEmpty="No auth variables captured."
+                  />
+                  <DiagnosticFieldBlock
+                    title="Auth variable value types"
+                    value={feed.auth_variable_value_types}
+                    mutedEmpty="No auth variable types captured."
+                    includeZeroCounts
+                  />
+                  <DiagnosticFieldBlock
+                    title="Auth variable value lengths"
+                    value={feed.auth_variable_value_lengths}
+                    mutedEmpty="No auth variable lengths captured."
+                    includeZeroCounts
                   />
                   <DiagnosticFieldBlock
                     title="Auth top-level keys"
