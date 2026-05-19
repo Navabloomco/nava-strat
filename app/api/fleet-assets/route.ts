@@ -1,11 +1,18 @@
 import { NextResponse } from "next/server";
 import { supabase } from "../../../lib/supabase";
 import { supabaseAdmin } from "../../../lib/supabaseAdmin";
+import {
+  hasAnyRole,
+  normalizeRole,
+  rolesForCompany,
+} from "../../../lib/api/roleAccess";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-const REVIEW_ROLES = new Set(["owner", "admin", "platform_owner"]);
+const REVIEW_ROLES = ["owner", "admin", "platform_owner"] as const;
+const COMPANY_SELECT =
+  "id, name, slug, subscription_plan, business_type, primary_asset_types, main_billing_unit, operating_regions, primary_use_case, asset_unit_price, billing_currency, included_assets, trial_starts_at, trial_ends_at, billing_cycle_day";
 
 type ResolvedCompany = {
   id: string;
@@ -74,13 +81,36 @@ function sortAssetsForReview(assets: any[]) {
 }
 
 function buildSummary(assets: any[]) {
+  const enabledIntelligenceAssets = assets.filter(
+    (asset) =>
+      asset.status === "active" &&
+      asset.billing_status === "enabled" &&
+      asset.intelligence_enabled
+  );
+  const billableAssets = enabledIntelligenceAssets.filter(
+    (asset) => Boolean(asset.billing_enabled_at)
+  );
+
   return {
     imported_count: assets.length,
     unreviewed_count: assets.filter((asset) => asset.billing_status === "unreviewed").length,
-    enabled_count: assets.filter((asset) => asset.billing_status === "enabled" || asset.intelligence_enabled).length,
+    enabled_count: enabledIntelligenceAssets.length,
+    enabled_intelligence_count: enabledIntelligenceAssets.length,
+    billable_enabled_count: billableAssets.length,
     excluded_count: assets.filter((asset) => asset.billing_status === "excluded").length,
     disabled_count: assets.filter((asset) => asset.billing_status === "disabled").length,
   };
+}
+
+function firstReviewCompanyId(memberships: any[]) {
+  for (const membership of memberships) {
+    const companyId = membership.company_id;
+    if (companyId && hasAnyRole(rolesForCompany(memberships, companyId), REVIEW_ROLES)) {
+      return companyId;
+    }
+  }
+
+  return null;
 }
 
 async function resolveReviewAccess(req: Request, requestedCompanyId?: string | null) {
@@ -108,28 +138,17 @@ async function resolveReviewAccess(req: Request, requestedCompanyId?: string | n
   if (membershipError) throw membershipError;
 
   const activeMemberships = memberships || [];
-  const roles = activeMemberships.map((membership) =>
-    String(membership.role || "").toLowerCase()
-  );
+  const roles = activeMemberships.map((membership) => normalizeRole(membership.role));
   const isPlatformOwner = roles.includes("platform_owner");
-  const canReview = roles.some((role) => REVIEW_ROLES.has(role));
-
-  if (!canReview) {
-    return {
-      error: noStoreJson(
-        { success: false, error: "Asset review access required" },
-        { status: 403 }
-      ),
-    };
-  }
+  const normalizedRequestedCompanyId = requestedCompanyId?.trim() || null;
 
   if (isPlatformOwner) {
     const companyQuery = supabaseAdmin
       .from("companies")
-      .select("id, name, slug, subscription_plan, business_type, primary_asset_types, main_billing_unit, operating_regions, primary_use_case, asset_unit_price, billing_currency, included_assets, trial_starts_at, trial_ends_at, billing_cycle_day");
+      .select(COMPANY_SELECT);
 
-    const { data: company, error: companyError } = requestedCompanyId
-      ? await companyQuery.eq("id", requestedCompanyId).maybeSingle()
+    const { data: company, error: companyError } = normalizedRequestedCompanyId
+      ? await companyQuery.eq("id", normalizedRequestedCompanyId).maybeSingle()
       : await companyQuery.order("name", { ascending: true }).limit(1).maybeSingle();
 
     if (companyError) throw companyError;
@@ -139,19 +158,27 @@ async function resolveReviewAccess(req: Request, requestedCompanyId?: string | n
       };
     }
 
-    return {
-      company: company as ResolvedCompany,
-      userId: user.id,
-      isPlatformOwner,
-    };
+    const companyRoles = rolesForCompany(activeMemberships, company.id, true);
+    if (!hasAnyRole(companyRoles, REVIEW_ROLES)) {
+      return {
+        error: noStoreJson(
+          { success: false, error: "Asset review access required" },
+          { status: 403 }
+        ),
+      };
+    }
+
+    return { company: company as ResolvedCompany, userId: user.id, isPlatformOwner };
   }
 
-  const reviewMembership = activeMemberships.find((membership) =>
-    REVIEW_ROLES.has(String(membership.role || "").toLowerCase())
-  );
-  const companyId = reviewMembership?.company_id;
+  const companyId =
+    normalizedRequestedCompanyId ||
+    firstReviewCompanyId(activeMemberships);
 
-  if (!companyId) {
+  if (
+    !companyId ||
+    !hasAnyRole(rolesForCompany(activeMemberships, companyId), REVIEW_ROLES)
+  ) {
     return {
       error: noStoreJson(
         { success: false, error: "Asset review access required" },
@@ -162,7 +189,7 @@ async function resolveReviewAccess(req: Request, requestedCompanyId?: string | n
 
   const { data: company, error: companyError } = await supabaseAdmin
     .from("companies")
-    .select("id, name, slug, subscription_plan, business_type, primary_asset_types, main_billing_unit, operating_regions, primary_use_case, asset_unit_price, billing_currency, included_assets, trial_starts_at, trial_ends_at, billing_cycle_day")
+    .select(COMPANY_SELECT)
     .eq("id", companyId)
     .maybeSingle();
 

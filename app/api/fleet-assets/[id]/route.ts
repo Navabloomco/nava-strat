@@ -1,11 +1,16 @@
 import { NextResponse } from "next/server";
 import { supabase } from "../../../../lib/supabase";
 import { supabaseAdmin } from "../../../../lib/supabaseAdmin";
+import {
+  hasAnyRole,
+  normalizeRole,
+  rolesForCompany,
+} from "../../../../lib/api/roleAccess";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-const REVIEW_ROLES = new Set(["owner", "admin", "platform_owner"]);
+const REVIEW_ROLES = ["owner", "admin", "platform_owner"] as const;
 const ASSET_CATEGORIES = new Set([
   "unknown",
   "truck",
@@ -57,6 +62,17 @@ function sanitizeAsset(asset: any) {
   };
 }
 
+function firstReviewCompanyId(memberships: any[]) {
+  for (const membership of memberships) {
+    const companyId = membership.company_id;
+    if (companyId && hasAnyRole(rolesForCompany(memberships, companyId), REVIEW_ROLES)) {
+      return companyId;
+    }
+  }
+
+  return null;
+}
+
 async function resolveReviewAccess(req: Request, requestedCompanyId?: string | null) {
   const authHeader = req.headers.get("authorization");
   if (!authHeader?.startsWith("Bearer ")) {
@@ -82,25 +98,14 @@ async function resolveReviewAccess(req: Request, requestedCompanyId?: string | n
   if (membershipError) throw membershipError;
 
   const activeMemberships = memberships || [];
-  const roles = activeMemberships.map((membership) =>
-    String(membership.role || "").toLowerCase()
-  );
+  const roles = activeMemberships.map((membership) => normalizeRole(membership.role));
   const isPlatformOwner = roles.includes("platform_owner");
-  const canReview = roles.some((role) => REVIEW_ROLES.has(role));
-
-  if (!canReview) {
-    return {
-      error: noStoreJson(
-        { success: false, error: "Asset review access required" },
-        { status: 403 }
-      ),
-    };
-  }
+  const normalizedRequestedCompanyId = requestedCompanyId?.trim() || null;
 
   if (isPlatformOwner) {
     const companyQuery = supabaseAdmin.from("companies").select("id, name, slug");
-    const { data: company, error: companyError } = requestedCompanyId
-      ? await companyQuery.eq("id", requestedCompanyId).maybeSingle()
+    const { data: company, error: companyError } = normalizedRequestedCompanyId
+      ? await companyQuery.eq("id", normalizedRequestedCompanyId).maybeSingle()
       : await companyQuery.order("name", { ascending: true }).limit(1).maybeSingle();
 
     if (companyError) throw companyError;
@@ -110,15 +115,27 @@ async function resolveReviewAccess(req: Request, requestedCompanyId?: string | n
       };
     }
 
+    const companyRoles = rolesForCompany(activeMemberships, company.id, true);
+    if (!hasAnyRole(companyRoles, REVIEW_ROLES)) {
+      return {
+        error: noStoreJson(
+          { success: false, error: "Asset review access required" },
+          { status: 403 }
+        ),
+      };
+    }
+
     return { company, userId: user.id, isPlatformOwner };
   }
 
-  const reviewMembership = activeMemberships.find((membership) =>
-    REVIEW_ROLES.has(String(membership.role || "").toLowerCase())
-  );
-  const companyId = reviewMembership?.company_id;
+  const companyId =
+    normalizedRequestedCompanyId ||
+    firstReviewCompanyId(activeMemberships);
 
-  if (!companyId) {
+  if (
+    !companyId ||
+    !hasAnyRole(rolesForCompany(activeMemberships, companyId), REVIEW_ROLES)
+  ) {
     return {
       error: noStoreJson(
         { success: false, error: "Asset review access required" },
@@ -162,7 +179,9 @@ export async function PATCH(
 
     const { data: asset, error: assetError } = await supabaseAdmin
       .from("fleet_assets")
-      .select("id, company_id, billing_enabled_at")
+      .select(
+        "id, company_id, status, billing_status, intelligence_enabled, billing_enabled_at, billing_disabled_at"
+      )
       .eq("company_id", resolved.company.id)
       .eq("id", params.id)
       .maybeSingle();
@@ -191,6 +210,7 @@ export async function PATCH(
       updates.excluded_reason = null;
       updates.reviewed_at = now;
       updates.reviewed_by = resolved.userId;
+      updates.billing_disabled_at = null;
       if (!asset.billing_enabled_at) {
         updates.billing_enabled_at = now;
       }
@@ -213,16 +233,24 @@ export async function PATCH(
       updates.excluded_reason = excludedReason;
       updates.reviewed_at = now;
       updates.reviewed_by = resolved.userId;
+      if (shouldSetBillingDisabledAt(asset)) {
+        updates.billing_disabled_at = now;
+      }
     } else if (action === "disable") {
       updates.billing_status = "disabled";
       updates.intelligence_enabled = false;
       updates.reviewed_at = now;
       updates.reviewed_by = resolved.userId;
-      updates.billing_disabled_at = now;
+      if (shouldSetBillingDisabledAt(asset)) {
+        updates.billing_disabled_at = now;
+      }
     } else if (action === "review_later") {
       updates.billing_status = "unreviewed";
       updates.intelligence_enabled = false;
       updates.excluded_reason = null;
+      if (shouldSetBillingDisabledAt(asset)) {
+        updates.billing_disabled_at = now;
+      }
     } else {
       return noStoreJson({ success: false, error: "Unsupported action" }, { status: 400 });
     }
@@ -250,4 +278,15 @@ export async function PATCH(
       { status: 500 }
     );
   }
+}
+
+function shouldSetBillingDisabledAt(asset: any) {
+  return (
+    !asset.billing_disabled_at ||
+    asset.billing_status === "enabled" ||
+    Boolean(asset.intelligence_enabled) ||
+    (asset.status === "active" &&
+      asset.billing_status === "enabled" &&
+      Boolean(asset.billing_enabled_at))
+  );
 }

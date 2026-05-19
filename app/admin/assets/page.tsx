@@ -52,6 +52,8 @@ export default function AssetReviewPage() {
     imported_count: 0,
     unreviewed_count: 0,
     enabled_count: 0,
+    enabled_intelligence_count: 0,
+    billable_enabled_count: 0,
     excluded_count: 0,
     disabled_count: 0,
   });
@@ -216,21 +218,23 @@ export default function AssetReviewPage() {
   const billingPreview = useMemo(() => {
     const includedAssets = Number(billing?.included_assets || 0);
     const unitPrice = Number(billing?.asset_unit_price || 0);
-    const enabledCount = Number(summary.enabled_count || 0);
-    const billableAdditional = Math.max(enabledCount - includedAssets, 0);
+    const billableEnabledCount = Number(
+      summary.billable_enabled_count ?? summary.enabled_count ?? 0
+    );
+    const billableAdditional = Math.max(billableEnabledCount - includedAssets, 0);
     const estimatedMonthlyTotal = billableAdditional * unitPrice;
     const trialActive = isTrialActive(billing?.trial_starts_at, billing?.trial_ends_at);
 
     return {
       includedAssets,
       unitPrice,
-      enabledCount,
+      billableEnabledCount,
       billableAdditional,
       estimatedMonthlyTotal,
       trialActive,
       currency: billing?.billing_currency || "KES",
     };
-  }, [billing, summary.enabled_count]);
+  }, [billing, summary.billable_enabled_count, summary.enabled_count]);
 
   if (loading) {
     return (
@@ -249,7 +253,7 @@ export default function AssetReviewPage() {
           dark
           eyebrow={`Fleet assets · ${company?.name || "Company workspace"}`}
           title="Asset review"
-          body="Imported assets are not billed until enabled for Nava intelligence."
+          body="Imported assets are not billed until they are reviewed, active, and enabled for Nava intelligence."
           actions={
             <SecondaryButton
               type="button"
@@ -285,7 +289,10 @@ export default function AssetReviewPage() {
         <section className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <Metric label="Imported assets" value={summary.imported_count} />
           <Metric label="Unreviewed" value={summary.unreviewed_count} warning={summary.unreviewed_count > 0} />
-          <Metric label="Enabled intelligence vehicles" value={summary.enabled_count} />
+          <Metric
+            label="Enabled intelligence vehicles"
+            value={summary.enabled_intelligence_count || summary.enabled_count}
+          />
           <Metric
             label="Excluded / disabled"
             value={summary.excluded_count + summary.disabled_count}
@@ -303,7 +310,10 @@ export default function AssetReviewPage() {
                   : "Not configured"
               }
             />
-            <BillingMetric label="Current enabled count" value={String(billingPreview.enabledCount)} />
+            <BillingMetric
+              label="Billable enabled count"
+              value={String(billingPreview.billableEnabledCount)}
+            />
             <BillingMetric
               label="Estimated monthly total"
               value={`${billingPreview.currency} ${billingPreview.estimatedMonthlyTotal.toLocaleString()}`}
