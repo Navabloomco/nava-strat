@@ -11,6 +11,10 @@ import {
 
 export const dynamic = "force-dynamic";
 
+const OPERATIONAL_JOURNEY_FIELDS =
+  "id, internal_trip_id, client_name, truck, driver, from_location, to_location, expected_fuel_liters, status, created_at, updated_at";
+const FINANCE_JOURNEY_FIELDS = `${OPERATIONAL_JOURNEY_FIELDS}, loaded_quantity, offloaded_quantity, billing_quantity, billing_unit, rate_type, rate_amount, rate_currency, fx_rate, revenue_original, revenue_kes, revenue_status`;
+
 async function getUserFromRequest(req: Request) {
   const authHeader = req.headers.get("authorization");
   if (!authHeader?.startsWith("Bearer ")) {
@@ -118,8 +122,8 @@ export async function GET(req: Request) {
     }
 
     const journeySelect = canViewFinance(resolved.roles)
-      ? "*"
-      : "id, internal_trip_id, client_name, truck, driver, from_location, to_location, expected_fuel_liters, status, created_at, updated_at";
+      ? FINANCE_JOURNEY_FIELDS
+      : OPERATIONAL_JOURNEY_FIELDS;
 
     const { data: journeys, error: journeysError } = await supabaseAdmin
       .from("journeys")
@@ -234,7 +238,7 @@ export async function POST(req: Request) {
         expected_fuel_liters: body.expected_fuel_liters ?? null,
         status,
       })
-      .select("*")
+      .select(OPERATIONAL_JOURNEY_FIELDS)
       .single();
 
     if (insertError) throw insertError;

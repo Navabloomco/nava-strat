@@ -11,6 +11,14 @@ import {
 
 export const dynamic = "force-dynamic";
 
+const OPERATIONAL_JOURNEY_FIELDS =
+  "id, internal_trip_id, client_name, truck, driver, from_location, to_location, expected_fuel_liters, status, created_at, updated_at";
+const FINANCE_JOURNEY_FIELDS = `${OPERATIONAL_JOURNEY_FIELDS}, loaded_quantity, offloaded_quantity, billing_quantity, billing_unit, rate_type, rate_amount, rate_currency, fx_rate, revenue_original, revenue_kes, revenue_status`;
+const SAFE_FUEL_LOG_FIELDS =
+  "id, truck_text, liters, price_per_liter, total_cost, vendor, notes, journey_id, allocation_status, fuel_source, approved_extra_fuel, approval_reason, request_status, approval_required, created_at";
+const SAFE_FUEL_PROVIDER_FIELDS =
+  "id, name, current_price_per_liter, is_active, created_at";
+
 type ResolvedCompany = {
   id: string;
   name: string;
@@ -138,7 +146,7 @@ async function updateFuelProfile(
 
   const { data: journey, error: journeyError } = await supabaseAdmin
     .from("journeys")
-    .select("*")
+    .select("id, client_name, from_location, to_location")
     .eq("company_id", companyId)
     .eq("is_demo", false)
     .eq("id", journeyIdValue)
@@ -149,7 +157,7 @@ async function updateFuelProfile(
 
   const { data: fuelLogs, error: fuelError } = await supabaseAdmin
     .from("fuel_logs")
-    .select("*")
+    .select("liters")
     .eq("company_id", companyId)
     .eq("journey_id", journeyIdValue);
 
@@ -163,7 +171,7 @@ async function updateFuelProfile(
 
   const { data: existing, error: profileError } = await supabaseAdmin
     .from("truck_route_fuel_profiles")
-    .select("*")
+    .select("id, avg_fuel_liters, trip_count")
     .eq("company_id", companyId)
     .eq("truck", cleanTruck)
     .eq("from_location", journey.from_location)
@@ -221,13 +229,13 @@ export async function GET(req: Request) {
     }
 
     const journeySelect = canViewFinance(resolved.roles)
-      ? "*"
-      : "id, internal_trip_id, client_name, truck, driver, from_location, to_location, expected_fuel_liters, status, created_at, updated_at";
+      ? FINANCE_JOURNEY_FIELDS
+      : OPERATIONAL_JOURNEY_FIELDS;
 
     const [fuelResult, journeysResult, providersResult] = await Promise.all([
       supabaseAdmin
         .from("fuel_logs")
-        .select("*")
+        .select(SAFE_FUEL_LOG_FIELDS)
         .eq("company_id", resolved.company.id)
         .order("created_at", { ascending: false }),
       supabaseAdmin
@@ -238,7 +246,7 @@ export async function GET(req: Request) {
         .order("created_at", { ascending: false }),
       supabaseAdmin
         .from("fuel_providers")
-        .select("*")
+        .select(SAFE_FUEL_PROVIDER_FIELDS)
         .eq("company_id", resolved.company.id)
         .eq("is_active", true)
         .order("created_at", { ascending: false }),
@@ -360,7 +368,7 @@ export async function POST(req: Request) {
         request_status: "approved",
         approval_required: approvedExtraFuel,
       })
-      .select("*")
+      .select(SAFE_FUEL_LOG_FIELDS)
       .single();
 
     if (insertError) throw insertError;

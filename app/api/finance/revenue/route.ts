@@ -10,6 +10,9 @@ import {
 
 export const dynamic = "force-dynamic";
 
+const REVENUE_JOURNEY_FIELDS =
+  "id, internal_trip_id, client_name, truck, driver, from_location, to_location, status, loaded_quantity, offloaded_quantity, billing_quantity, billing_unit, rate_type, rate_amount, rate_currency, fx_rate, revenue_original, revenue_kes, revenue_status, revenue_notes, created_at, updated_at";
+
 type ResolvedCompany = {
   id: string;
   name: string;
@@ -169,7 +172,7 @@ export async function GET(req: Request) {
 
     const { data: journeys, error } = await supabaseAdmin
       .from("journeys")
-      .select("*")
+      .select(REVENUE_JOURNEY_FIELDS)
       .eq("company_id", resolved.company.id)
       .eq("is_demo", false)
       .order("created_at", { ascending: false });
@@ -284,7 +287,7 @@ export async function PATCH(req: Request) {
         .eq("company_id", resolved.company.id)
         .eq("is_demo", false)
         .eq("id", journey.id)
-        .select("*")
+        .select(REVENUE_JOURNEY_FIELDS)
         .single();
 
       if (updateError) throw updateError;

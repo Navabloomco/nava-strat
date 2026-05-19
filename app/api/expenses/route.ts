@@ -10,6 +10,11 @@ import {
 
 export const dynamic = "force-dynamic";
 
+const SAFE_EXPENSE_JOURNEY_FIELDS =
+  "id, internal_trip_id, client_name, truck, driver, from_location, to_location, status, created_at";
+const SAFE_EXPENSE_FIELDS =
+  "id, journey_id, truck, expense_type, amount, vendor, payment_method, reference_number, trip_reference, notes, created_at";
+
 type ResolvedCompany = {
   id: string;
   name: string;
@@ -143,15 +148,13 @@ export async function GET(req: Request) {
     const [journeysResult, expensesResult] = await Promise.all([
       supabaseAdmin
         .from("journeys")
-        .select("*")
+        .select(SAFE_EXPENSE_JOURNEY_FIELDS)
         .eq("company_id", resolved.company.id)
         .eq("is_demo", false)
         .order("created_at", { ascending: false }),
       supabaseAdmin
         .from("expenses")
-        .select(
-          "id, journey_id, truck, expense_type, amount, vendor, payment_method, reference_number, trip_reference, notes, created_at"
-        )
+        .select(SAFE_EXPENSE_FIELDS)
         .eq("company_id", resolved.company.id)
         .order("created_at", { ascending: false }),
     ]);
@@ -244,7 +247,7 @@ export async function POST(req: Request) {
             : body.trip_reference || null,
         notes: body.notes || null,
       })
-      .select("*")
+      .select(SAFE_EXPENSE_FIELDS)
       .single();
 
     if (error) throw error;

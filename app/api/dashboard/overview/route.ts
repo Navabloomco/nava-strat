@@ -7,6 +7,9 @@ import { supabase } from "../../../../lib/supabase";
 
 export const dynamic = "force-dynamic";
 
+const SAFE_MEMORY_FIELDS =
+  "id, memory_type, severity, title, summary, recommendation, last_seen_at";
+
 export async function GET(req: Request) {
   try {
     const authHeader = req.headers.get("authorization");
@@ -111,7 +114,7 @@ export async function GET(req: Request) {
     // Active memories
     const { data: memories, error: memoryError } = await supabaseAdmin
       .from("nava_eye_memory")
-      .select("*")
+      .select(SAFE_MEMORY_FIELDS)
       .eq("company_id", company.id)
       .eq("status", "active")
       .order("last_seen_at", { ascending: false })

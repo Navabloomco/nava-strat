@@ -44,6 +44,14 @@ const SHARED_DISRUPTION_REASONS = [
   "Security disruption",
   "Other",
 ];
+const OPS_JOURNEY_FIELDS =
+  "id, internal_trip_id, client_name, truck, driver, from_location, to_location, status, created_at, updated_at";
+const OPS_ENABLED_ASSET_FIELDS =
+  "id, truck_id, registration, status, asset_category, provider_name, latitude, longitude, last_seen_at";
+const OPS_PROVIDER_FIELDS =
+  "id, provider_name, provider_slug, is_active, last_test_status, last_test_message, last_test_at, last_sync_at, created_at";
+const OPS_ALERT_FIELDS =
+  "id, truck_id, event_type, severity, location_name, latitude, longitude, created_at, started_at, context_label, context_note, context_applied_at";
 
 function noStoreJson(body: any, init?: ResponseInit) {
   return NextResponse.json(body, {
@@ -71,7 +79,6 @@ function buildCapabilities(roles: string[], isPlatformOwner: boolean) {
 function sanitizeProvider(provider: any) {
   return {
     id: provider.id,
-    company_id: provider.company_id,
     provider_name: provider.provider_name,
     provider_slug: provider.provider_slug || null,
     provider_type: provider.provider_slug || null,
@@ -81,9 +88,6 @@ function sanitizeProvider(provider: any) {
     last_test_message: provider.last_test_message || null,
     last_test_at: provider.last_test_at || null,
     last_sync_at: provider.last_sync_at || provider.last_test_at || null,
-    has_api_key: Boolean(provider.api_key),
-    has_password: Boolean(provider.password),
-    has_bearer_token: Boolean(provider.bearer_token),
   };
 }
 
@@ -164,6 +168,22 @@ function findAssignedDriverForTruck(
     (asset && findAssignedDriverForAsset(asset, lookup)) ||
     sanitizeAssignedDriver(lookup.byTruckKey.get(truckKey))
   );
+}
+
+function sanitizeAlert(alert: any) {
+  return {
+    id: alert.id,
+    truck_id: alert.truck_id || null,
+    event_type: alert.event_type || null,
+    severity: alert.severity || null,
+    location_name: alert.location_name || null,
+    created_at: alert.created_at || null,
+    started_at: alert.started_at || null,
+    context_label: alert.context_label || null,
+    context_note: alert.context_note || null,
+    geofence_match: alert.geofence_match || null,
+    assigned_driver: alert.assigned_driver || null,
+  };
 }
 
 function buildSharedDisruptionCandidate(
@@ -354,26 +374,26 @@ export async function GET(req: Request) {
     ] = await Promise.all([
       supabaseAdmin
         .from("journeys")
-        .select("*")
+        .select(OPS_JOURNEY_FIELDS)
         .eq("company_id", resolved.company.id)
         .eq("is_demo", false)
         .order("created_at", { ascending: false }),
       supabaseAdmin
         .from("fleet_assets")
-        .select("truck_id, registration, status")
+        .select("id")
         .eq("company_id", resolved.company.id)
         .eq("status", "active")
         .order("last_seen_at", { ascending: false }),
       supabaseAdmin
         .from("fleet_assets")
-        .select("*")
+        .select(OPS_ENABLED_ASSET_FIELDS)
         .eq("company_id", resolved.company.id)
         .eq("status", "active")
         .eq("intelligence_enabled", true)
         .order("last_seen_at", { ascending: false }),
       supabaseAdmin
         .from("tracking_providers")
-        .select("*")
+        .select(OPS_PROVIDER_FIELDS)
         .eq("company_id", resolved.company.id)
         .order("created_at", { ascending: false }),
       supabaseAdmin
@@ -423,9 +443,7 @@ export async function GET(req: Request) {
       const [alertsResult, telemetryResult] = await Promise.all([
         supabaseAdmin
           .from("telemetry_events")
-          .select(
-            "id, company_id, truck_id, event_type, severity, location_name, latitude, longitude, created_at, started_at, context_type, context_label, context_note, context_applied_by, context_applied_at"
-          )
+          .select(OPS_ALERT_FIELDS)
           .eq("company_id", resolved.company.id)
           .in("truck_id", enabledTruckIds)
           .order("created_at", { ascending: false })
@@ -464,17 +482,11 @@ export async function GET(req: Request) {
     );
     const journeysWithDrivers = journeys.map((journey) => ({
       ...journey,
-      assigned_driver:
-        findAssignedDriverForTruck(
-          journey.truck,
-          assignedDriverLookup,
-          assetsByTruckKey
-        ) ||
-        findAssignedDriverForTruck(
-          journey.truck_id,
-          assignedDriverLookup,
-          assetsByTruckKey
-        ),
+      assigned_driver: findAssignedDriverForTruck(
+        journey.truck,
+        assignedDriverLookup,
+        assetsByTruckKey
+      ),
     }));
     const now = Date.now();
     const onlineAssets = fleetAssets.filter((asset) => {
@@ -487,12 +499,11 @@ export async function GET(req: Request) {
       success: true,
       company: resolved.company,
       is_platform_owner: resolved.isPlatformOwner,
-      roles: resolved.roles,
       capabilities: resolved.capabilities,
       journeys: journeysWithDrivers,
       fleet_assets: fleetAssetsWithDrivers,
       provider_statuses: providers.map(sanitizeProvider),
-      alerts: alertsWithGeofences,
+      alerts: alertsWithGeofences.map(sanitizeAlert),
       shared_disruption_candidate: sharedDisruptionCandidate,
       summary: {
         total_journeys: journeys.length,
