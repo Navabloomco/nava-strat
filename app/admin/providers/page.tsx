@@ -232,10 +232,10 @@ function ProviderCard({
 }) {
   const [form, setForm] = useState({ ...provider });
   const [isTesting, setIsTesting] = useState(false);
+  const [testResult, setTestResult] = useState<any>(null);
 
   async function handleTestConnection() {
     setIsTesting(true);
-    console.log(`🚀 Starting Test for: ${provider.provider_name}`);
     
     try {
       const {
@@ -256,14 +256,7 @@ function ProviderCard({
       });
 
       const result = await res.json();
-
-      if (capabilities.can_edit_advanced_provider_config) {
-        console.log("------------------------------------");
-        console.log("FULL TEST RESULT:", result);
-        console.log("NORMALIZED DATA:", result.sample_normalized);
-        console.log("PROVIDER DIAGNOSTICS:", result.debug);
-        console.log("------------------------------------");
-      }
+      setTestResult(result);
 
       if (result.success) {
         alert(
@@ -318,8 +311,178 @@ function ProviderCard({
           to company administrators.
         </div>
       )}
+
+      <ProviderEnrichmentDiagnostics
+        diagnostics={testResult?.supplemental_diagnostics}
+        canShowAvailableKeys={capabilities.can_edit_advanced_provider_config}
+      />
     </div>
   );
+}
+
+function ProviderEnrichmentDiagnostics({
+  diagnostics,
+  canShowAvailableKeys,
+}: {
+  diagnostics: any;
+  canShowAvailableKeys: boolean;
+}) {
+  if (!diagnostics) return null;
+
+  const feeds = diagnostics.feeds || [];
+
+  return (
+    <section style={diagnosticsStyle}>
+      <div style={diagnosticsHeaderStyle}>
+        <div>
+          <div style={diagnosticsEyebrowStyle}>Provider enrichment feeds</div>
+          <h4 style={diagnosticsTitleStyle}>Provider Enrichment Diagnostics</h4>
+        </div>
+        <div style={diagnosticsMetaStyle}>
+          {Number(diagnostics.supplemental_feeds_configured || 0)} configured
+        </div>
+      </div>
+
+      <div style={diagnosticsSummaryGridStyle}>
+        <DiagnosticMetric
+          label="Feeds attempted"
+          value={diagnostics.supplemental_feeds_attempted}
+        />
+        <DiagnosticMetric
+          label="Rows found"
+          value={diagnostics.supplemental_rows_found}
+        />
+        <DiagnosticMetric
+          label="Matches found"
+          value={diagnostics.supplemental_matches_found}
+        />
+      </div>
+
+      {feeds.length === 0 ? (
+        <div style={diagnosticsEmptyStyle}>
+          No supplemental enrichment feeds are configured for this provider yet.
+        </div>
+      ) : (
+        <div style={diagnosticsFeedListStyle}>
+          {feeds.map((feed: any, index: number) => (
+            <div key={`${feed.name}-${index}`} style={diagnosticsFeedStyle}>
+              <div style={diagnosticsFeedHeaderStyle}>
+                <div>
+                  <strong>{feed.name || "supplemental"}</strong>
+                  <div style={diagnosticsSmallTextStyle}>
+                    {feed.success ? "Feed reached" : feed.attempted ? "Feed failed" : "Not attempted"}
+                  </div>
+                </div>
+                <div style={feedStatusStyle(feed.success)}>
+                  {feed.success ? "ok" : feed.attempted ? "check" : "idle"}
+                </div>
+              </div>
+
+              <div style={diagnosticsMiniGridStyle}>
+                <DiagnosticMetric label="Rows" value={feed.rows_found} compact />
+                <DiagnosticMetric label="Matches" value={feed.matches_found} compact />
+                <DiagnosticMetric
+                  label="Unmatched"
+                  value={feed.unmatched_supplemental_rows}
+                  compact
+                />
+              </div>
+
+              {feed.error && (
+                <div style={diagnosticsErrorStyle}>{feed.error}</div>
+              )}
+
+              <DiagnosticFieldBlock
+                title="Mapped fields configured"
+                value={feed.mapped_fields_configured}
+              />
+              <DiagnosticFieldBlock
+                title="Mapped fields found"
+                value={feed.mapped_fields_found}
+              />
+              <DiagnosticFieldBlock
+                title="Mapped fields merged"
+                value={feed.mapped_fields_merged}
+              />
+              <DiagnosticFieldBlock
+                title="Mapped fields skipped"
+                value={feed.mapped_fields_skipped}
+              />
+
+              {canShowAvailableKeys && (
+                <DiagnosticFieldBlock
+                  title="Available unmapped keys"
+                  value={feed.unmapped_available_keys}
+                  mutedEmpty="No extra unmapped keys detected."
+                />
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function DiagnosticMetric({
+  label,
+  value,
+  compact = false,
+}: {
+  label: string;
+  value: any;
+  compact?: boolean;
+}) {
+  return (
+    <div style={compact ? diagnosticsMiniMetricStyle : diagnosticsMetricStyle}>
+      <div style={diagnosticsMetricValueStyle}>
+        {Number(value || 0).toLocaleString()}
+      </div>
+      <div style={diagnosticsMetricLabelStyle}>{label}</div>
+    </div>
+  );
+}
+
+function DiagnosticFieldBlock({
+  title,
+  value,
+  mutedEmpty = "None",
+}: {
+  title: string;
+  value: any;
+  mutedEmpty?: string;
+}) {
+  const entries = normalizeDiagnosticEntries(value);
+
+  return (
+    <div style={diagnosticsFieldBlockStyle}>
+      <div style={diagnosticsFieldTitleStyle}>{title}</div>
+      {entries.length === 0 ? (
+        <div style={diagnosticsSmallTextStyle}>{mutedEmpty}</div>
+      ) : (
+        <div style={diagnosticsPillWrapStyle}>
+          {entries.map((entry) => (
+            <span key={entry} style={diagnosticsPillStyle}>
+              {entry}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function normalizeDiagnosticEntries(value: any) {
+  if (!value) return [];
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item)).filter(Boolean);
+  }
+  if (typeof value === "object") {
+    return Object.entries(value)
+      .filter(([, count]) => Number(count || 0) > 0)
+      .map(([field, count]) => `${field}: ${Number(count).toLocaleString()}`);
+  }
+  return [String(value)];
 }
 
 function AdvancedProviderEditor({
@@ -459,6 +622,165 @@ function CredentialProviderFields({
 }
 
 // --- STYLES ---
+const diagnosticsStyle = {
+  marginTop: 20,
+  border: "1px solid #cbd5e1",
+  background: "linear-gradient(135deg, #f8fafc 0%, #ffffff 100%)",
+  borderRadius: 12,
+  padding: 18,
+};
+const diagnosticsHeaderStyle = {
+  display: "flex",
+  justifyContent: "space-between",
+  gap: 16,
+  alignItems: "flex-start",
+  marginBottom: 14,
+};
+const diagnosticsEyebrowStyle = {
+  fontSize: 11,
+  fontWeight: 900,
+  color: "#0891b2",
+  textTransform: "uppercase" as const,
+  letterSpacing: "0.12em",
+  marginBottom: 4,
+};
+const diagnosticsTitleStyle = {
+  margin: 0,
+  color: "#0f172a",
+  fontSize: 17,
+  fontWeight: 850,
+};
+const diagnosticsMetaStyle = {
+  border: "1px solid #bae6fd",
+  backgroundColor: "#ecfeff",
+  color: "#0e7490",
+  borderRadius: 999,
+  padding: "6px 10px",
+  fontSize: 12,
+  fontWeight: 850,
+  whiteSpace: "nowrap" as const,
+};
+const diagnosticsSummaryGridStyle = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
+  gap: 10,
+  marginBottom: 14,
+};
+const diagnosticsMetricStyle = {
+  border: "1px solid #e2e8f0",
+  backgroundColor: "#fff",
+  borderRadius: 10,
+  padding: 12,
+};
+const diagnosticsMiniMetricStyle = {
+  border: "1px solid #e2e8f0",
+  backgroundColor: "#f8fafc",
+  borderRadius: 8,
+  padding: 10,
+};
+const diagnosticsMetricValueStyle = {
+  color: "#0f172a",
+  fontSize: 18,
+  fontWeight: 900,
+  lineHeight: 1.1,
+};
+const diagnosticsMetricLabelStyle = {
+  marginTop: 4,
+  color: "#64748b",
+  fontSize: 11,
+  fontWeight: 800,
+  textTransform: "uppercase" as const,
+  letterSpacing: "0.06em",
+};
+const diagnosticsEmptyStyle = {
+  border: "1px dashed #cbd5e1",
+  backgroundColor: "#fff",
+  borderRadius: 10,
+  color: "#64748b",
+  padding: 14,
+  fontSize: 13,
+  lineHeight: 1.6,
+};
+const diagnosticsFeedListStyle = {
+  display: "grid",
+  gap: 12,
+};
+const diagnosticsFeedStyle = {
+  border: "1px solid #e2e8f0",
+  backgroundColor: "#fff",
+  borderRadius: 10,
+  padding: 14,
+};
+const diagnosticsFeedHeaderStyle = {
+  display: "flex",
+  alignItems: "flex-start",
+  justifyContent: "space-between",
+  gap: 12,
+  marginBottom: 12,
+};
+const diagnosticsSmallTextStyle = {
+  marginTop: 3,
+  color: "#64748b",
+  fontSize: 12,
+  lineHeight: 1.5,
+};
+const diagnosticsMiniGridStyle = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(100px, 1fr))",
+  gap: 8,
+  marginBottom: 12,
+};
+const diagnosticsErrorStyle = {
+  border: "1px solid #fecaca",
+  backgroundColor: "#fef2f2",
+  color: "#991b1b",
+  borderRadius: 8,
+  padding: 10,
+  fontSize: 12,
+  lineHeight: 1.5,
+  marginBottom: 12,
+};
+const diagnosticsFieldBlockStyle = {
+  borderTop: "1px solid #f1f5f9",
+  paddingTop: 10,
+  marginTop: 10,
+};
+const diagnosticsFieldTitleStyle = {
+  color: "#334155",
+  fontSize: 11,
+  fontWeight: 900,
+  textTransform: "uppercase" as const,
+  letterSpacing: "0.06em",
+  marginBottom: 8,
+};
+const diagnosticsPillWrapStyle = {
+  display: "flex",
+  flexWrap: "wrap" as const,
+  gap: 7,
+};
+const diagnosticsPillStyle = {
+  display: "inline-flex",
+  alignItems: "center",
+  border: "1px solid #cbd5e1",
+  backgroundColor: "#f8fafc",
+  color: "#334155",
+  borderRadius: 999,
+  padding: "5px 8px",
+  fontSize: 12,
+  fontWeight: 750,
+};
+const feedStatusStyle = (success: boolean) => ({
+  border: success ? "1px solid #99f6e4" : "1px solid #fde68a",
+  backgroundColor: success ? "#f0fdfa" : "#fffbeb",
+  color: success ? "#0f766e" : "#92400e",
+  borderRadius: 999,
+  padding: "5px 9px",
+  fontSize: 11,
+  fontWeight: 900,
+  textTransform: "uppercase" as const,
+  letterSpacing: "0.06em",
+});
+
 const cardStyle = { backgroundColor: "#fff", borderRadius: "12px", padding: "24px", border: "1px solid #e2e8f0", marginBottom: "20px", boxShadow: "0 1px 3px rgba(0,0,0,0.1)" };
 const pageHeaderStyle = { display: "flex", justifyContent: "space-between", gap: 24, alignItems: "flex-start", marginBottom: 28 };
 const eyebrowStyle = { fontSize: 12, fontWeight: 800, color: "#0891b2", textTransform: "uppercase" as const, letterSpacing: "0.14em", marginBottom: 8 };

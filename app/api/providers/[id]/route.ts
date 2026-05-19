@@ -34,6 +34,24 @@ type ResolveCompanyResult =
       capabilities?: never;
     };
 
+const SUPPORTED_SUPPLEMENTAL_MAPPING_TARGETS = new Set([
+  "fuel_level",
+  "odometer",
+  "mileage",
+  "engine_hours",
+  "battery_voltage",
+  "temperature",
+  "driver_name",
+]);
+
+const BLOCKED_SUPPLEMENTAL_HEADER_NAMES = new Set([
+  "authorization",
+  "cookie",
+  "x-api-key",
+  "api-key",
+  "token",
+]);
+
 function getProviderCapabilities(roles: string[], isPlatformOwner: boolean) {
   const normalizedRoles = new Set(roles.map((role) => role.toLowerCase()));
   const isCompanyAdmin =
@@ -107,6 +125,291 @@ function sanitizeProvider(provider: any, capabilities: ProviderCapabilities) {
   }
 
   return baseProvider;
+}
+
+function hasSupplementalFeedConfig(fleetConfig: any) {
+  if (!fleetConfig || typeof fleetConfig !== "object") return false;
+  return (
+    Object.prototype.hasOwnProperty.call(fleetConfig, "supplemental_feeds") ||
+    Object.prototype.hasOwnProperty.call(fleetConfig, "current_status_url") ||
+    Object.prototype.hasOwnProperty.call(fleetConfig, "fuel_status_url")
+  );
+}
+
+function validateFleetConfigForSave(
+  fleetConfig: any,
+  context: {
+    provider: any;
+    body: any;
+    isPlatformOwner: boolean;
+  }
+) {
+  if (!fleetConfig || typeof fleetConfig !== "object" || Array.isArray(fleetConfig)) {
+    return "fleet_config must be a valid object.";
+  }
+
+  if (!hasSupplementalFeedConfig(fleetConfig)) return null;
+
+  if (!context.isPlatformOwner) {
+    return "Only platform owners can configure supplemental enrichment feed URLs.";
+  }
+
+  const feeds = normalizeSupplementalFeedsForValidation(fleetConfig);
+  if (feeds.length > 3) {
+    return "At most 3 supplemental enrichment feeds are allowed.";
+  }
+
+  const knownHosts = getKnownProviderHosts(context.provider, context.body);
+
+  for (let index = 0; index < feeds.length; index += 1) {
+    const feed = feeds[index];
+    const label = feed.name ? `supplemental feed '${feed.name}'` : `supplemental feed ${index + 1}`;
+    const error = validateSupplementalFeed(feed, label, knownHosts);
+    if (error) return error;
+  }
+
+  return null;
+}
+
+function normalizeSupplementalFeedsForValidation(fleetConfig: any) {
+  const feeds: any[] = Array.isArray(fleetConfig.supplemental_feeds)
+    ? [...fleetConfig.supplemental_feeds]
+    : [];
+
+  if (fleetConfig.current_status_url) {
+    feeds.push({
+      name: "current_status",
+      url: fleetConfig.current_status_url,
+      method: fleetConfig.current_status_method,
+      headers: fleetConfig.current_status_headers,
+      payload: fleetConfig.current_status_payload,
+      vehicle_paths: fleetConfig.current_status_vehicle_paths,
+      match_keys: fleetConfig.current_status_match_keys,
+      mapping: fleetConfig.current_status_mapping,
+    });
+  }
+
+  if (fleetConfig.fuel_status_url) {
+    feeds.push({
+      name: "fuel_status",
+      url: fleetConfig.fuel_status_url,
+      method: fleetConfig.fuel_status_method,
+      headers: fleetConfig.fuel_status_headers,
+      payload: fleetConfig.fuel_status_payload,
+      vehicle_paths: fleetConfig.fuel_status_vehicle_paths,
+      match_keys: fleetConfig.fuel_status_match_keys,
+      mapping: fleetConfig.fuel_status_mapping,
+    });
+  }
+
+  return feeds;
+}
+
+function validateSupplementalFeed(feed: any, label: string, knownHosts: Set<string>) {
+  if (!feed || typeof feed !== "object" || Array.isArray(feed)) {
+    return `${label} must be an object.`;
+  }
+
+  const name = String(feed.name || "").trim();
+  if (name.length > 64) return `${label} name is too long.`;
+
+  const method = String(feed.method || "GET").toUpperCase();
+  if (!["GET", "POST"].includes(method)) {
+    return `${label} method must be GET or POST.`;
+  }
+
+  const urlError = validateSupplementalUrl(feed.url, label, knownHosts);
+  if (urlError) return urlError;
+
+  const headersError = validateSupplementalHeaders(feed.headers, label);
+  if (headersError) return headersError;
+
+  const pathError = validateStringArray(feed.vehicle_paths, `${label} vehicle_paths`, 10, 160);
+  if (pathError) return pathError;
+
+  const matchKeyError = validateStringArray(feed.match_keys, `${label} match_keys`, 12, 80);
+  if (matchKeyError) return matchKeyError;
+
+  const mappingError = validateSupplementalMapping(feed.mapping, label);
+  if (mappingError) return mappingError;
+
+  if (feed.payload !== undefined) {
+    try {
+      const payloadText = JSON.stringify(feed.payload);
+      if (payloadText.length > 10000) return `${label} payload is too large.`;
+    } catch {
+      return `${label} payload must be valid JSON.`;
+    }
+  }
+
+  return null;
+}
+
+function validateSupplementalUrl(value: any, label: string, knownHosts: Set<string>) {
+  const urlText = String(value || "").trim();
+  if (!urlText) return `${label} URL is required.`;
+  if (urlText.length > 2000) return `${label} URL is too long.`;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(urlText);
+  } catch {
+    return `${label} URL must be valid.`;
+  }
+
+  if (parsed.protocol !== "https:") {
+    return `${label} URL must use https.`;
+  }
+
+  const hostname = parsed.hostname.toLowerCase();
+  if (isBlockedNetworkHost(hostname)) {
+    return `${label} URL cannot target localhost, private, link-local, or metadata network addresses.`;
+  }
+
+  if (knownHosts.size > 0 && !knownHosts.has(hostname)) {
+    console.warn("Supplemental feed host differs from known provider host", {
+      provider_host_count: knownHosts.size,
+      supplemental_host: hostname,
+    });
+  }
+
+  return null;
+}
+
+function validateSupplementalHeaders(headers: any, label: string) {
+  if (headers === undefined || headers === null) return null;
+  if (typeof headers !== "object" || Array.isArray(headers)) {
+    return `${label} headers must be an object.`;
+  }
+
+  const entries = Object.entries(headers);
+  if (entries.length > 20) return `${label} has too many headers.`;
+
+  for (const [headerName, headerValue] of entries) {
+    const normalizedName = headerName.trim().toLowerCase();
+    if (!normalizedName || normalizedName.length > 80) {
+      return `${label} has an invalid header name.`;
+    }
+    if (BLOCKED_SUPPLEMENTAL_HEADER_NAMES.has(normalizedName)) {
+      return `${label} cannot set credential-like header '${headerName}'. Use the secure provider auth fields instead.`;
+    }
+    if (String(headerValue || "").length > 500) {
+      return `${label} header '${headerName}' is too long.`;
+    }
+  }
+
+  return null;
+}
+
+function validateStringArray(
+  value: any,
+  label: string,
+  maxItems: number,
+  maxLength: number
+) {
+  if (value === undefined || value === null) return null;
+  if (!Array.isArray(value)) return `${label} must be an array.`;
+  if (value.length > maxItems) return `${label} has too many entries.`;
+
+  for (const item of value) {
+    const text = String(item || "").trim();
+    if (!text || text.length > maxLength) {
+      return `${label} contains an invalid entry.`;
+    }
+  }
+
+  return null;
+}
+
+function validateSupplementalMapping(mapping: any, label: string) {
+  if (mapping === undefined || mapping === null) return null;
+  if (typeof mapping !== "object" || Array.isArray(mapping)) {
+    return `${label} mapping must be an object.`;
+  }
+
+  const entries = Object.entries(mapping);
+  if (entries.length > 20) return `${label} mapping has too many fields.`;
+
+  for (const [target, path] of entries) {
+    if (!SUPPORTED_SUPPLEMENTAL_MAPPING_TARGETS.has(target)) {
+      return `${label} mapping target '${target}' is not supported.`;
+    }
+    const pathText = String(path || "").trim();
+    if (!pathText || pathText.length > 160) {
+      return `${label} mapping for '${target}' must be a short provider key/path.`;
+    }
+  }
+
+  return null;
+}
+
+function getKnownProviderHosts(provider: any, body: any) {
+  const urls = [
+    body.base_url,
+    body.login_url,
+    body.fleet_url,
+    provider.base_url,
+    provider.login_url,
+    provider.fleet_url,
+  ];
+  const hosts = new Set<string>();
+
+  for (const value of urls) {
+    try {
+      if (value) hosts.add(new URL(String(value)).hostname.toLowerCase());
+    } catch {
+      // Ignore invalid existing provider URLs here; their own fields are validated elsewhere.
+    }
+  }
+
+  return hosts;
+}
+
+function isBlockedNetworkHost(hostname: string) {
+  const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
+
+  if (
+    host === "localhost" ||
+    host === "0.0.0.0" ||
+    host === "127.0.0.1" ||
+    host === "::1" ||
+    host === "169.254.169.254"
+  ) {
+    return true;
+  }
+
+  const ipv4 = parseIpv4(host);
+  if (ipv4) {
+    const [a, b] = ipv4;
+    return (
+      a === 0 ||
+      a === 10 ||
+      a === 127 ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168) ||
+      (a === 169 && b === 254)
+    );
+  }
+
+  if (host.includes(":")) {
+    return (
+      host.startsWith("fc") ||
+      host.startsWith("fd") ||
+      host.startsWith("fe80")
+    );
+  }
+
+  return host.endsWith(".local");
+}
+
+function parseIpv4(hostname: string) {
+  const parts = hostname.split(".");
+  if (parts.length !== 4) return null;
+  const numbers = parts.map((part) => Number(part));
+  if (numbers.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
+    return null;
+  }
+  return numbers;
 }
 
 async function resolveCompany(
@@ -263,6 +566,24 @@ export async function PATCH(
     for (const field of allowedFields) {
       if (Object.prototype.hasOwnProperty.call(body, field)) {
         updates[field] = body[field];
+      }
+    }
+
+    if (Object.prototype.hasOwnProperty.call(updates, "fleet_config")) {
+      const validationError = validateFleetConfigForSave(updates.fleet_config, {
+        provider: existingProvider,
+        body,
+        isPlatformOwner: resolved.isPlatformOwner,
+      });
+
+      if (validationError) {
+        const status = validationError.startsWith("Only platform owners")
+          ? 403
+          : 400;
+        return NextResponse.json(
+          { success: false, error: validationError },
+          { status }
+        );
       }
     }
 

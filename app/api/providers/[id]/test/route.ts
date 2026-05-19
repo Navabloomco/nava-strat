@@ -72,6 +72,41 @@ function getProviderCapabilities(roles: string[], isPlatformOwner: boolean) {
   };
 }
 
+function sanitizeNormalizedSample(sample: any) {
+  if (!sample || typeof sample !== "object") return null;
+
+  const { raw, ...safeSample } = sample;
+  return safeSample;
+}
+
+function sanitizeSupplementalDiagnostics(diagnostics: any, includeAvailableKeys: boolean) {
+  if (!diagnostics || typeof diagnostics !== "object") return null;
+
+  return {
+    supplemental_feeds_configured: Number(diagnostics.supplemental_feeds_configured || 0),
+    supplemental_feeds_attempted: Number(diagnostics.supplemental_feeds_attempted || 0),
+    supplemental_rows_found: Number(diagnostics.supplemental_rows_found || 0),
+    supplemental_matches_found: Number(diagnostics.supplemental_matches_found || 0),
+    supplemental_fields_merged: diagnostics.supplemental_fields_merged || {},
+    feeds: (diagnostics.feeds || []).map((feed: any) => ({
+      name: String(feed.name || "supplemental"),
+      attempted: Boolean(feed.attempted),
+      success: Boolean(feed.success),
+      rows_found: Number(feed.rows_found || 0),
+      matches_found: Number(feed.matches_found || 0),
+      mapped_fields_configured: feed.mapped_fields_configured || [],
+      mapped_fields_found: feed.mapped_fields_found || {},
+      mapped_fields_merged: feed.mapped_fields_merged || {},
+      mapped_fields_skipped: feed.mapped_fields_skipped || {},
+      unmatched_supplemental_rows: Number(feed.unmatched_supplemental_rows || 0),
+      unmapped_available_keys: includeAvailableKeys
+        ? (feed.unmapped_available_keys || []).slice(0, 50)
+        : [],
+      error: feed.error ? String(feed.error) : undefined,
+    })),
+  };
+}
+
 async function resolveCompany(
   req: Request,
   requestedCompanyId?: string | null
@@ -249,10 +284,15 @@ export async function POST(
       latest_telemetry_at: latestTelemetryAt,
     };
 
+    responseBody.supplemental_diagnostics = sanitizeSupplementalDiagnostics(
+      result.supplemental_diagnostics,
+      resolved.isPlatformOwner
+    );
+
     if (resolved.capabilities.can_edit_advanced_provider_config) {
-      responseBody.sample_normalized = result.sample_normalized || null;
-      responseBody.supplemental_diagnostics =
-        result.supplemental_diagnostics || null;
+      responseBody.sample_normalized = sanitizeNormalizedSample(
+        result.sample_normalized
+      );
     }
 
     return NextResponse.json(responseBody);
