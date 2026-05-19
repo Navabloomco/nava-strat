@@ -114,6 +114,25 @@ function sanitizeSupplementalDiagnostics(diagnostics: any, includeAvailableKeys:
       auth_profile_credential_macros_available: Array.isArray(feed.auth_profile_credential_macros_available)
         ? feed.auth_profile_credential_macros_available.map((key: any) => String(key)).slice(0, 10)
         : [],
+      auth_http_status: feed.auth_http_status ? Number(feed.auth_http_status) : undefined,
+      auth_response_type: feed.auth_response_type
+        ? String(feed.auth_response_type)
+        : undefined,
+      auth_top_level_keys: includeAvailableKeys && Array.isArray(feed.auth_top_level_keys)
+        ? feed.auth_top_level_keys.map((key: any) => String(key)).slice(0, 50)
+        : [],
+      auth_error_keys: includeAvailableKeys && Array.isArray(feed.auth_error_keys)
+        ? feed.auth_error_keys.map((key: any) => String(key)).slice(0, 50)
+        : [],
+      auth_token_paths_checked: includeAvailableKeys && Array.isArray(feed.auth_token_paths_checked)
+        ? feed.auth_token_paths_checked.map((path: any) => String(path)).slice(0, 20)
+        : [],
+      auth_metadata_paths_checked: includeAvailableKeys && Array.isArray(feed.auth_metadata_paths_checked)
+        ? feed.auth_metadata_paths_checked.map((path: any) => String(path)).slice(0, 20)
+        : [],
+      auth_token_candidate_paths_found: includeAvailableKeys && Array.isArray(feed.auth_token_candidate_paths_found)
+        ? feed.auth_token_candidate_paths_found.map((path: any) => String(path)).slice(0, 20)
+        : [],
       auth_profile_error: feed.auth_profile_error
         ? String(feed.auth_profile_error).slice(0, 240)
         : undefined,

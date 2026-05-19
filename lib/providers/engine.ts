@@ -114,6 +114,13 @@ type SupplementalDiagnostics = {
     auth_profile_token_captured?: boolean;
     auth_profile_metadata_available?: string[];
     auth_profile_credential_macros_available?: string[];
+    auth_http_status?: number;
+    auth_response_type?: string;
+    auth_top_level_keys?: string[];
+    auth_error_keys?: string[];
+    auth_token_paths_checked?: string[];
+    auth_metadata_paths_checked?: string[];
+    auth_token_candidate_paths_found?: string[];
     auth_profile_error?: string;
     error?: string;
   }>;
@@ -156,6 +163,16 @@ type SupplementalRequestDiagnostics = {
   payload_key_paths: string[];
   payload_value_types: Record<string, string>;
   allowed_values: Record<string, string | number>;
+};
+
+type SupplementalAuthDiagnostics = {
+  auth_http_status?: number;
+  auth_response_type?: SupplementalResponseDiagnostics["response_type"];
+  auth_top_level_keys?: string[];
+  auth_error_keys?: string[];
+  auth_token_paths_checked?: string[];
+  auth_metadata_paths_checked?: string[];
+  auth_token_candidate_paths_found?: string[];
 };
 
 const SUPPLEMENTAL_FIELDS = [
@@ -783,6 +800,7 @@ async function resolveSupplementalAuthContext(
     return null;
   }
   if (feedDiagnostics) {
+    applySupplementalAuthDiagnostics(feedDiagnostics, auth.debug);
     feedDiagnostics.auth_profile_token_captured = Boolean(auth.token);
     feedDiagnostics.auth_profile_metadata_available = Object.keys(auth.metadata || {});
   }
@@ -866,23 +884,26 @@ async function authenticateSupplementalAuthProfile(
     body: method === "GET" ? undefined : JSON.stringify(payloadResult.value),
     cache: "no-store",
   });
-  const data = await safeJson(response);
+  const { data, responseType } = await readSafeSupplementalResponse(response);
   const tokenPaths =
     Array.isArray(profile.token_paths) && profile.token_paths.length > 0
       ? profile.token_paths
       : defaultTokenPaths();
   const token = getByPaths(data, tokenPaths);
   const metadata = buildSupplementalAuthProfileMetadata(provider, profile, data);
+  const diagnostics = buildSupplementalAuthDiagnostics(
+    data,
+    response.status,
+    responseType,
+    tokenPaths,
+    profile
+  );
 
   if (!response.ok || !token) {
     return {
       success: false,
       message: "No token returned by supplemental auth profile",
-      debug: {
-        status: response.status,
-        auth_response_keys: collectSafeResponseKeys(data),
-        token_paths_checked: tokenPaths,
-      },
+      debug: diagnostics,
     };
   }
 
@@ -891,10 +912,57 @@ async function authenticateSupplementalAuthProfile(
     token,
     metadata,
     debug: {
+      ...diagnostics,
       auth_metadata_available: Object.keys(metadata),
-      auth_response_keys: collectSafeResponseKeys(data),
     },
   };
+}
+
+function buildSupplementalAuthDiagnostics(
+  data: any,
+  httpStatus: number,
+  responseType: SupplementalResponseDiagnostics["response_type"],
+  tokenPaths: string[],
+  profile: SupplementalAuthProfileConfig
+): SupplementalAuthDiagnostics {
+  return {
+    auth_http_status: httpStatus,
+    auth_response_type: responseType,
+    auth_top_level_keys: collectTopLevelKeys(data),
+    auth_error_keys: collectResponseErrorKeys(data),
+    auth_token_paths_checked: tokenPaths.map((path) => String(path)).slice(0, 20),
+    auth_metadata_paths_checked: collectMetadataPathsChecked(profile),
+    auth_token_candidate_paths_found: collectTokenCandidatePaths(data),
+  };
+}
+
+function applySupplementalAuthDiagnostics(
+  feedDiagnostics: SupplementalDiagnostics["feeds"][number] | undefined,
+  diagnostics: any
+) {
+  if (!feedDiagnostics || !diagnostics || typeof diagnostics !== "object") return;
+
+  if (diagnostics.auth_http_status) {
+    feedDiagnostics.auth_http_status = Number(diagnostics.auth_http_status);
+  }
+  if (diagnostics.auth_response_type) {
+    feedDiagnostics.auth_response_type = String(diagnostics.auth_response_type);
+  }
+  feedDiagnostics.auth_top_level_keys = Array.isArray(diagnostics.auth_top_level_keys)
+    ? diagnostics.auth_top_level_keys.map((key: any) => String(key)).slice(0, 50)
+    : [];
+  feedDiagnostics.auth_error_keys = Array.isArray(diagnostics.auth_error_keys)
+    ? diagnostics.auth_error_keys.map((key: any) => String(key)).slice(0, 50)
+    : [];
+  feedDiagnostics.auth_token_paths_checked = Array.isArray(diagnostics.auth_token_paths_checked)
+    ? diagnostics.auth_token_paths_checked.map((path: any) => String(path)).slice(0, 20)
+    : [];
+  feedDiagnostics.auth_metadata_paths_checked = Array.isArray(diagnostics.auth_metadata_paths_checked)
+    ? diagnostics.auth_metadata_paths_checked.map((path: any) => String(path)).slice(0, 20)
+    : [];
+  feedDiagnostics.auth_token_candidate_paths_found = Array.isArray(diagnostics.auth_token_candidate_paths_found)
+    ? diagnostics.auth_token_candidate_paths_found.map((path: any) => String(path)).slice(0, 20)
+    : [];
 }
 
 function getSupplementalFeedConfigs(provider: ProviderRecord): SupplementalFeedConfig[] {
@@ -1311,6 +1379,48 @@ function collectResponseErrorKeys(data: any) {
 
   walk(data, "", 0);
   return Array.from(keys);
+}
+
+function collectMetadataPathsChecked(profile: SupplementalAuthProfileConfig) {
+  const metadataPaths = profile.metadata_paths || {};
+  return Object.entries(metadataPaths)
+    .map(([key, path]) => `${key}: ${path}`)
+    .slice(0, 20);
+}
+
+function collectTokenCandidatePaths(data: any) {
+  const paths = new Set<string>();
+  const interesting = new Set([
+    "token",
+    "accesstoken",
+    "access_token",
+    "jwt",
+    "bearertoken",
+    "bearer_token",
+  ]);
+
+  function walk(value: any, path: string, depth: number) {
+    if (!value || typeof value !== "object" || depth > 6 || paths.size >= 20) {
+      return;
+    }
+
+    if (Array.isArray(value)) {
+      value.slice(0, 3).forEach((item, index) => {
+        walk(item, path ? `${path}.${index}` : String(index), depth + 1);
+      });
+      return;
+    }
+
+    for (const [key, nested] of Object.entries(value)) {
+      const normalized = normalizeProviderKey(key);
+      const nextPath = path ? `${path}.${key}` : key;
+      if (interesting.has(normalized)) paths.add(nextPath);
+      walk(nested, nextPath, depth + 1);
+    }
+  }
+
+  walk(data, "", 0);
+  return Array.from(paths);
 }
 
 function getConfiguredMappedFields(mapping: Record<string, string>) {

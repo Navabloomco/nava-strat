@@ -425,6 +425,44 @@ function ProviderEnrichmentDiagnostics({
                 />
               )}
 
+              {canShowAvailableKeys && feed.auth_profile_used && (
+                <>
+                  <DiagnosticFieldBlock
+                    title="Auth response shape"
+                    value={[
+                      feed.auth_http_status ? `HTTP ${feed.auth_http_status}` : "",
+                      feed.auth_response_type ? `Type: ${feed.auth_response_type}` : "",
+                    ]}
+                    mutedEmpty="No auth response shape captured."
+                  />
+                  <DiagnosticFieldBlock
+                    title="Auth top-level keys"
+                    value={feed.auth_top_level_keys}
+                    mutedEmpty="No auth response keys captured."
+                  />
+                  <DiagnosticFieldBlock
+                    title="Auth error/status keys"
+                    value={feed.auth_error_keys}
+                    mutedEmpty="No GraphQL or auth error keys detected."
+                  />
+                  <DiagnosticFieldBlock
+                    title="Token paths checked"
+                    value={feed.auth_token_paths_checked}
+                    mutedEmpty="No token paths checked."
+                  />
+                  <DiagnosticFieldBlock
+                    title="Token candidate paths found"
+                    value={feed.auth_token_candidate_paths_found}
+                    mutedEmpty="No token-like key paths found."
+                  />
+                  <DiagnosticFieldBlock
+                    title="Metadata paths checked"
+                    value={feed.auth_metadata_paths_checked}
+                    mutedEmpty="No metadata paths configured."
+                  />
+                </>
+              )}
+
               <DiagnosticFieldBlock
                 title="Rendered request"
                 value={[
