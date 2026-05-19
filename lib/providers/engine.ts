@@ -71,6 +71,12 @@ type SupplementalDiagnostics = {
     success: boolean;
     rows_found: number;
     matches_found: number;
+    mapped_fields_configured: string[];
+    mapped_fields_found: Record<string, number>;
+    mapped_fields_merged: Record<string, number>;
+    mapped_fields_skipped: Record<string, number>;
+    unmatched_supplemental_rows: number;
+    unmapped_available_keys: string[];
     error?: string;
   }>;
 };
@@ -89,6 +95,9 @@ const SUPPLEMENTAL_FIELDS = [
   "battery_voltage",
   "temperature",
 ];
+
+const PERSISTED_SUPPLEMENTAL_FIELDS = new Set(["fuel_level"]);
+const MAX_UNMAPPED_AVAILABLE_KEYS = 50;
 
 const DEFAULT_SUPPLEMENTAL_MATCH_KEYS = [
   "reg_no",
@@ -380,6 +389,15 @@ async function fetchSupplementalFeeds(
       if (feedDiagnostics) {
         feedDiagnostics.success = true;
         feedDiagnostics.rows_found = rows.length;
+        feedDiagnostics.unmatched_supplemental_rows = rows.length;
+        feedDiagnostics.mapped_fields_found = countMappedFieldsFound(
+          rows,
+          config.mapping || {}
+        );
+        feedDiagnostics.unmapped_available_keys = collectUnmappedAvailableKeys(
+          rows,
+          config
+        );
       }
     } catch (err: any) {
       if (feedDiagnostics) {
@@ -517,8 +535,136 @@ function createSupplementalDiagnostics(
       success: false,
       rows_found: 0,
       matches_found: 0,
+      mapped_fields_configured: getConfiguredMappedFields(feed.mapping || {}),
+      mapped_fields_found: {},
+      mapped_fields_merged: {},
+      mapped_fields_skipped: {},
+      unmatched_supplemental_rows: 0,
+      unmapped_available_keys: [],
     })),
   };
+}
+
+function getConfiguredMappedFields(mapping: Record<string, string>) {
+  return Array.from(
+    new Set(
+      Object.keys(mapping || {})
+        .map((field) => String(field || "").trim())
+        .filter(Boolean)
+    )
+  );
+}
+
+function countMappedFieldsFound(rows: any[], mapping: Record<string, string>) {
+  const counts: Record<string, number> = {};
+
+  for (const row of rows) {
+    const fields = extractSupplementalFields(row, mapping);
+    for (const field of Object.keys(fields)) {
+      counts[field] = (counts[field] || 0) + 1;
+    }
+  }
+
+  return counts;
+}
+
+function collectUnmappedAvailableKeys(
+  rows: any[],
+  config: SupplementalFeedConfig
+) {
+  const excludedKeys = buildMappedKeyExclusionSet(config);
+  const availableKeys = new Map<string, string>();
+
+  for (const row of rows.slice(0, 20)) {
+    collectSafeKeyNames(row, availableKeys, 0);
+    if (availableKeys.size >= MAX_UNMAPPED_AVAILABLE_KEYS * 2) break;
+  }
+
+  return Array.from(availableKeys.entries())
+    .filter(([normalizedKey]) => !excludedKeys.has(normalizedKey))
+    .map(([, key]) => key)
+    .slice(0, MAX_UNMAPPED_AVAILABLE_KEYS);
+}
+
+function buildMappedKeyExclusionSet(config: SupplementalFeedConfig) {
+  const keys = new Set<string>();
+  const mapping = config.mapping || {};
+
+  for (const field of SUPPLEMENTAL_FIELDS) {
+    addNormalizedKey(keys, field);
+    for (const fallbackKey of getFieldFallbackKeys(field)) {
+      addNormalizedKey(keys, fallbackKey);
+    }
+  }
+
+  for (const key of DEFAULT_SUPPLEMENTAL_MATCH_KEYS) {
+    addNormalizedKey(keys, key);
+  }
+
+  for (const key of config.match_keys || []) {
+    addNormalizedKey(keys, key);
+  }
+
+  for (const field of Object.keys(mapping)) {
+    addNormalizedKey(keys, field);
+    for (const segment of String(mapping[field] || "").split(".")) {
+      addNormalizedKey(keys, segment);
+    }
+  }
+
+  return keys;
+}
+
+function collectSafeKeyNames(
+  value: any,
+  output: Map<string, string>,
+  depth: number
+) {
+  if (!value || typeof value !== "object" || depth > 4) return;
+
+  if (Array.isArray(value)) {
+    for (const item of value.slice(0, 10)) {
+      collectSafeKeyNames(item, output, depth + 1);
+    }
+    return;
+  }
+
+  for (const key of Object.keys(value)) {
+    const normalized = normalizeProviderKey(key);
+    if (!normalized || isSensitiveProviderKey(normalized)) continue;
+    if (!output.has(normalized)) output.set(normalized, key);
+    collectSafeKeyNames(value[key], output, depth + 1);
+  }
+}
+
+function isSensitiveProviderKey(normalizedKey: string) {
+  return [
+    "password",
+    "pass",
+    "secret",
+    "apikey",
+    "api",
+    "token",
+    "bearertoken",
+    "authorization",
+    "auth",
+    "cookie",
+    "session",
+    "jwt",
+  ].some((fragment) => normalizedKey.includes(fragment));
+}
+
+function addNormalizedKey(keys: Set<string>, key: string) {
+  const normalized = normalizeProviderKey(key);
+  if (normalized) keys.add(normalized);
+}
+
+function incrementFieldCount(
+  target: Record<string, number> | undefined,
+  field: string
+) {
+  if (!target) return;
+  target[field] = (target[field] || 0) + 1;
 }
 
 function mergeSupplementalData(
@@ -544,7 +690,13 @@ function mergeSupplementalData(
     const feedDiagnostics = diagnostics.feeds.find(
       (item) => item.name === feed.config.name
     );
-    if (feedDiagnostics) feedDiagnostics.matches_found++;
+    if (feedDiagnostics) {
+      feedDiagnostics.matches_found++;
+      feedDiagnostics.unmatched_supplemental_rows = Math.max(
+        feedDiagnostics.rows_found - feedDiagnostics.matches_found,
+        0
+      );
+    }
 
     const enrichment = extractSupplementalFields(match, feed.config.mapping || {});
     const mergedFields: string[] = [];
@@ -553,10 +705,17 @@ function mergeSupplementalData(
       const value = enrichment[field];
       if (!isMeaningfulSupplementalValue(field, value)) continue;
 
+      if (!PERSISTED_SUPPLEMENTAL_FIELDS.has(field)) {
+        incrementFieldCount(feedDiagnostics?.mapped_fields_skipped, field);
+        continue;
+      }
+
       if (field === "fuel_level") {
         if (!isMeaningfulSupplementalValue(field, normalized.fuel_level)) {
           normalized.fuel_level = value;
           mergedFields.push(field);
+        } else {
+          incrementFieldCount(feedDiagnostics?.mapped_fields_skipped, field);
         }
         continue;
       }
@@ -576,6 +735,7 @@ function mergeSupplementalData(
       for (const field of mergedFields) {
         diagnostics.supplemental_fields_merged[field] =
           (diagnostics.supplemental_fields_merged[field] || 0) + 1;
+        incrementFieldCount(feedDiagnostics?.mapped_fields_merged, field);
       }
     }
   }

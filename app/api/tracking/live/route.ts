@@ -208,6 +208,42 @@ function getCachedLocationLabel(
   return labels.get(rounded.key) || null;
 }
 
+async function fetchRecentTelemetryLogs(
+  companyId: string,
+  truckIds: string[],
+  since: string
+) {
+  const withUnit = await supabaseAdmin
+    .from("telemetry_logs")
+    .select("truck_id, recorded_at, speed, fuel_level, fuel_unit")
+    .eq("company_id", companyId)
+    .in("truck_id", truckIds)
+    .gte("recorded_at", since)
+    .order("recorded_at", { ascending: false });
+
+  if (!withUnit.error) return withUnit.data || [];
+
+  if (!isMissingFuelUnitColumn(withUnit.error)) {
+    throw withUnit.error;
+  }
+
+  const fallback = await supabaseAdmin
+    .from("telemetry_logs")
+    .select("truck_id, recorded_at, speed, fuel_level")
+    .eq("company_id", companyId)
+    .in("truck_id", truckIds)
+    .gte("recorded_at", since)
+    .order("recorded_at", { ascending: false });
+
+  if (fallback.error) throw fallback.error;
+  return fallback.data || [];
+}
+
+function isMissingFuelUnitColumn(error: any) {
+  const message = String(error?.message || error?.details || "");
+  return /fuel_unit|column .* does not exist/i.test(message);
+}
+
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
@@ -263,16 +299,11 @@ export async function GET(req: Request) {
     let telemetryLogs: any[] = [];
 
     if (enabledTruckIds.length > 0) {
-      const { data, error } = await supabaseAdmin
-        .from("telemetry_logs")
-        .select("truck_id, recorded_at, speed, fuel_level")
-        .eq("company_id", resolved.company.id)
-        .in("truck_id", enabledTruckIds)
-        .gte("recorded_at", since)
-        .order("recorded_at", { ascending: false });
-
-      if (error) throw error;
-      telemetryLogs = data || [];
+      telemetryLogs = await fetchRecentTelemetryLogs(
+        resolved.company.id,
+        enabledTruckIds,
+        since
+      );
     }
 
     const providers = providersResult.data || [];
@@ -299,6 +330,7 @@ export async function GET(req: Request) {
         status: truck.status,
         speed: telemetry?.speed ?? null,
         fuel_level: telemetry?.fuel_level ?? null,
+        fuel_unit: telemetry?.fuel_unit || null,
         provider_name: matchingAsset?.provider_name || null,
         location_label:
           matchingAsset?.provider_location_label ||

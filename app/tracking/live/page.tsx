@@ -422,7 +422,7 @@ function TruckRow({ truck }: { truck: any }) {
       <div className="text-sm text-slate-200">
         <div className="font-medium">Live readings</div>
         <div className="mt-1 text-slate-400">
-          Speed: {formatValue(truck.speed, "km/h")} · Fuel: {formatValue(truck.fuel_level, "%")}
+          Speed: {formatValue(truck.speed, "km/h")} · {formatFuelReading(truck.fuel_level, truck.fuel_unit)}
         </div>
       </div>
 
@@ -535,6 +535,32 @@ function formatValue(value: any, suffix: string) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return "—";
   return `${numeric.toFixed(0)} ${suffix}`;
+}
+
+function formatFuelReading(value: any, unit?: string | null) {
+  if (value === null || value === undefined || value === "") {
+    return "Fuel: unavailable";
+  }
+
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return "Fuel: unavailable";
+  }
+
+  const formatted = numeric.toLocaleString(undefined, {
+    maximumFractionDigits: numeric % 1 === 0 ? 0 : 1,
+  });
+  const normalizedUnit = String(unit || "").trim().toLowerCase();
+
+  if (["%", "percent", "percentage"].includes(normalizedUnit)) {
+    return `Fuel: ${formatted}%`;
+  }
+
+  if (["l", "lt", "ltr", "liter", "liters", "litre", "litres"].includes(normalizedUnit)) {
+    return `Fuel: ${formatted} litres`;
+  }
+
+  return `Provider fuel reading: ${formatted}`;
 }
 
 function formatGeofenceType(value: string) {
