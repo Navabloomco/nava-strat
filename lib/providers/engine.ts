@@ -117,10 +117,15 @@ type SupplementalDiagnostics = {
     auth_http_status?: number;
     auth_response_type?: string;
     auth_top_level_keys?: string[];
+    auth_data_is_null?: boolean;
+    auth_data_is_empty_object?: boolean;
     auth_data_keys?: string[];
     auth_data_array_paths_found?: Record<string, number>;
     auth_data_object_paths_found?: string[];
+    auth_data_result_paths_found?: Record<string, string | number>;
     auth_error_keys?: string[];
+    auth_operation_name_sent?: string | null;
+    auth_payload_key_paths_sent?: string[];
     auth_token_paths_checked?: string[];
     auth_metadata_paths_checked?: string[];
     auth_token_candidate_paths_found?: string[];
@@ -172,10 +177,15 @@ type SupplementalAuthDiagnostics = {
   auth_http_status?: number;
   auth_response_type?: SupplementalResponseDiagnostics["response_type"];
   auth_top_level_keys?: string[];
+  auth_data_is_null?: boolean;
+  auth_data_is_empty_object?: boolean;
   auth_data_keys?: string[];
   auth_data_array_paths_found?: Record<string, number>;
   auth_data_object_paths_found?: string[];
+  auth_data_result_paths_found?: Record<string, string | number>;
   auth_error_keys?: string[];
+  auth_operation_name_sent?: string | null;
+  auth_payload_key_paths_sent?: string[];
   auth_token_paths_checked?: string[];
   auth_metadata_paths_checked?: string[];
   auth_token_candidate_paths_found?: string[];
@@ -902,7 +912,8 @@ async function authenticateSupplementalAuthProfile(
     response.status,
     responseType,
     tokenPaths,
-    profile
+    profile,
+    payloadResult.value
   );
 
   if (!response.ok || !token) {
@@ -929,16 +940,31 @@ function buildSupplementalAuthDiagnostics(
   httpStatus: number,
   responseType: SupplementalResponseDiagnostics["response_type"],
   tokenPaths: string[],
-  profile: SupplementalAuthProfileConfig
+  profile: SupplementalAuthProfileConfig,
+  renderedPayload: any
 ): SupplementalAuthDiagnostics {
+  const responseData = getByPath(data, "data");
+
   return {
     auth_http_status: httpStatus,
     auth_response_type: responseType,
     auth_top_level_keys: collectTopLevelKeys(data),
-    auth_data_keys: collectTopLevelKeys(getByPath(data, "data")),
-    auth_data_array_paths_found: collectArrayPathCounts(getByPath(data, "data")),
-    auth_data_object_paths_found: collectObjectPaths(getByPath(data, "data")),
+    auth_data_is_null: responseData === null,
+    auth_data_is_empty_object:
+      Boolean(responseData) &&
+      typeof responseData === "object" &&
+      !Array.isArray(responseData) &&
+      Object.keys(responseData).length === 0,
+    auth_data_keys: collectTopLevelKeys(responseData),
+    auth_data_array_paths_found: collectArrayPathCounts(responseData),
+    auth_data_object_paths_found: collectObjectPaths(responseData),
+    auth_data_result_paths_found: collectAuthDataResultPaths(responseData),
     auth_error_keys: collectResponseErrorKeys(data),
+    auth_operation_name_sent:
+      typeof renderedPayload?.operationName === "string"
+        ? renderedPayload.operationName.slice(0, 120)
+        : null,
+    auth_payload_key_paths_sent: collectAuthPayloadKeyPaths(renderedPayload),
     auth_token_paths_checked: tokenPaths.map((path) => String(path)).slice(0, 20),
     auth_metadata_paths_checked: collectMetadataPathsChecked(profile),
     auth_token_candidate_paths_found: collectTokenCandidatePaths(data),
@@ -960,6 +986,13 @@ function applySupplementalAuthDiagnostics(
   feedDiagnostics.auth_top_level_keys = Array.isArray(diagnostics.auth_top_level_keys)
     ? diagnostics.auth_top_level_keys.map((key: any) => String(key)).slice(0, 50)
     : [];
+  if (typeof diagnostics.auth_data_is_null === "boolean") {
+    feedDiagnostics.auth_data_is_null = diagnostics.auth_data_is_null;
+  }
+  if (typeof diagnostics.auth_data_is_empty_object === "boolean") {
+    feedDiagnostics.auth_data_is_empty_object =
+      diagnostics.auth_data_is_empty_object;
+  }
   feedDiagnostics.auth_data_keys = Array.isArray(diagnostics.auth_data_keys)
     ? diagnostics.auth_data_keys.map((key: any) => String(key)).slice(0, 50)
     : [];
@@ -979,8 +1012,31 @@ function applySupplementalAuthDiagnostics(
         .map((path: any) => String(path))
         .slice(0, 50)
     : [];
+  feedDiagnostics.auth_data_result_paths_found =
+    diagnostics.auth_data_result_paths_found &&
+    typeof diagnostics.auth_data_result_paths_found === "object"
+      ? Object.fromEntries(
+          Object.entries(diagnostics.auth_data_result_paths_found)
+            .slice(0, 50)
+            .map(([path, detail]) => [
+              String(path),
+              typeof detail === "number" ? Number(detail) : String(detail),
+            ])
+        )
+      : {};
   feedDiagnostics.auth_error_keys = Array.isArray(diagnostics.auth_error_keys)
     ? diagnostics.auth_error_keys.map((key: any) => String(key)).slice(0, 50)
+    : [];
+  feedDiagnostics.auth_operation_name_sent =
+    typeof diagnostics.auth_operation_name_sent === "string"
+      ? diagnostics.auth_operation_name_sent.slice(0, 120)
+      : null;
+  feedDiagnostics.auth_payload_key_paths_sent = Array.isArray(
+    diagnostics.auth_payload_key_paths_sent
+  )
+    ? diagnostics.auth_payload_key_paths_sent
+        .map((path: any) => String(path))
+        .slice(0, 100)
     : [];
   feedDiagnostics.auth_token_paths_checked = Array.isArray(diagnostics.auth_token_paths_checked)
     ? diagnostics.auth_token_paths_checked.map((path: any) => String(path)).slice(0, 20)
@@ -1399,6 +1455,86 @@ function collectObjectPaths(data: any) {
 
   walk(data, "", 0);
   return Array.from(paths);
+}
+
+function collectAuthDataResultPaths(data: any) {
+  const paths: Record<string, string | number> = {};
+
+  function walk(value: any, path: string, depth: number) {
+    if (!value || typeof value !== "object" || depth > 4) return;
+    if (Object.keys(paths).length >= 50) return;
+
+    if (Array.isArray(value)) {
+      if (path) paths[path] = value.length;
+
+      for (const item of value.slice(0, 3)) {
+        walk(item, path, depth + 1);
+      }
+      return;
+    }
+
+    for (const [key, nested] of Object.entries(value)) {
+      const normalized = normalizeProviderKey(key);
+      const nextPath = path ? `${path}.${key}` : key;
+
+      if (isSensitiveProviderKey(normalized)) {
+        if (normalized === "token" || normalized.includes("token")) {
+          paths[nextPath] = "token-like key present";
+        } else if (Array.isArray(nested)) {
+          paths[nextPath] = nested.length;
+        } else if (nested === null) {
+          paths[nextPath] = "null";
+        } else {
+          paths[nextPath] = typeof nested;
+        }
+        continue;
+      }
+
+      if (Array.isArray(nested)) {
+        paths[nextPath] = nested.length;
+      } else if (nested === null) {
+        paths[nextPath] = "null";
+      } else if (nested && typeof nested === "object") {
+        paths[nextPath] = "object";
+      } else {
+        paths[nextPath] = typeof nested;
+      }
+
+      walk(nested, nextPath, depth + 1);
+    }
+  }
+
+  walk(data, "", 0);
+  return paths;
+}
+
+function collectAuthPayloadKeyPaths(payload: any) {
+  const paths: string[] = [];
+
+  function walk(value: any, path: string, depth: number) {
+    if (paths.length >= 120 || depth > 8) return;
+
+    if (Array.isArray(value)) {
+      if (path) paths.push(`${path}[]`);
+      for (const item of value.slice(0, 3)) {
+        if (item && typeof item === "object") {
+          walk(item, path ? `${path}[]` : "[]", depth + 1);
+        }
+      }
+      return;
+    }
+
+    if (!value || typeof value !== "object") return;
+
+    for (const [key, nested] of Object.entries(value)) {
+      const nextPath = path ? `${path}.${key}` : key;
+      paths.push(nextPath);
+      walk(nested, nextPath, depth + 1);
+    }
+  }
+
+  walk(payload, "", 0);
+  return paths;
 }
 
 function collectResponseErrorKeys(data: any) {

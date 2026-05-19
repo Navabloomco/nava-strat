@@ -121,6 +121,14 @@ function sanitizeSupplementalDiagnostics(diagnostics: any, includeAvailableKeys:
       auth_top_level_keys: Array.isArray(feed.auth_top_level_keys)
         ? feed.auth_top_level_keys.map((key: any) => String(key)).slice(0, 50)
         : [],
+      auth_data_is_null:
+        typeof feed.auth_data_is_null === "boolean"
+          ? feed.auth_data_is_null
+          : undefined,
+      auth_data_is_empty_object:
+        typeof feed.auth_data_is_empty_object === "boolean"
+          ? feed.auth_data_is_empty_object
+          : undefined,
       auth_data_keys: Array.isArray(feed.auth_data_keys)
         ? feed.auth_data_keys.map((key: any) => String(key)).slice(0, 50)
         : [],
@@ -131,8 +139,19 @@ function sanitizeSupplementalDiagnostics(diagnostics: any, includeAvailableKeys:
       auth_data_object_paths_found: Array.isArray(feed.auth_data_object_paths_found)
         ? feed.auth_data_object_paths_found.map((path: any) => String(path)).slice(0, 50)
         : [],
+      auth_data_result_paths_found: feed.auth_data_result_paths_found &&
+        typeof feed.auth_data_result_paths_found === "object"
+        ? sanitizeResultPathMap(feed.auth_data_result_paths_found)
+        : {},
       auth_error_keys: Array.isArray(feed.auth_error_keys)
         ? feed.auth_error_keys.map((key: any) => String(key)).slice(0, 50)
+        : [],
+      auth_operation_name_sent:
+        typeof feed.auth_operation_name_sent === "string"
+          ? feed.auth_operation_name_sent.slice(0, 120)
+          : null,
+      auth_payload_key_paths_sent: Array.isArray(feed.auth_payload_key_paths_sent)
+        ? feed.auth_payload_key_paths_sent.map((path: any) => String(path)).slice(0, 100)
         : [],
       auth_token_paths_checked: Array.isArray(feed.auth_token_paths_checked)
         ? feed.auth_token_paths_checked.map((path: any) => String(path)).slice(0, 20)
@@ -237,6 +256,19 @@ function sanitizeCountMap(value: any) {
     Object.entries(value)
       .slice(0, 50)
       .map(([key, count]) => [String(key), Number(count || 0)])
+  );
+}
+
+function sanitizeResultPathMap(value: any) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+
+  return Object.fromEntries(
+    Object.entries(value)
+      .slice(0, 50)
+      .map(([key, detail]) => [
+        String(key),
+        typeof detail === "number" ? Number(detail) : String(detail).slice(0, 80),
+      ])
   );
 }
 

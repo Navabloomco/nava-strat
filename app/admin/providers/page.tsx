@@ -429,10 +429,15 @@ function ProviderEnrichmentDiagnostics({
                 feed.auth_http_status ||
                 feed.auth_response_type ||
                 feed.auth_top_level_keys?.length > 0 ||
+                typeof feed.auth_data_is_null === "boolean" ||
+                typeof feed.auth_data_is_empty_object === "boolean" ||
                 feed.auth_data_keys?.length > 0 ||
                 Object.keys(feed.auth_data_array_paths_found || {}).length > 0 ||
                 feed.auth_data_object_paths_found?.length > 0 ||
+                Object.keys(feed.auth_data_result_paths_found || {}).length > 0 ||
                 feed.auth_error_keys?.length > 0 ||
+                feed.auth_operation_name_sent ||
+                feed.auth_payload_key_paths_sent?.length > 0 ||
                 feed.auth_token_paths_checked?.length > 0 ||
                 feed.auth_metadata_paths_checked?.length > 0 ||
                 feed.auth_token_candidate_paths_found?.length > 0) && (
@@ -442,8 +447,22 @@ function ProviderEnrichmentDiagnostics({
                     value={[
                       feed.auth_http_status ? `HTTP ${feed.auth_http_status}` : "",
                       feed.auth_response_type ? `Type: ${feed.auth_response_type}` : "",
+                      typeof feed.auth_data_is_null === "boolean"
+                        ? `Data null: ${feed.auth_data_is_null ? "yes" : "no"}`
+                        : "",
+                      typeof feed.auth_data_is_empty_object === "boolean"
+                        ? `Data empty object: ${feed.auth_data_is_empty_object ? "yes" : "no"}`
+                        : "",
+                      feed.auth_operation_name_sent
+                        ? `Operation sent: ${feed.auth_operation_name_sent}`
+                        : "",
                     ]}
                     mutedEmpty="No auth response shape captured."
+                  />
+                  <DiagnosticFieldBlock
+                    title="Auth payload key paths"
+                    value={feed.auth_payload_key_paths_sent}
+                    mutedEmpty="No auth payload key paths captured."
                   />
                   <DiagnosticFieldBlock
                     title="Auth top-level keys"
@@ -465,6 +484,12 @@ function ProviderEnrichmentDiagnostics({
                     title="Auth data object paths"
                     value={feed.auth_data_object_paths_found}
                     mutedEmpty="No nested objects found under auth response data."
+                  />
+                  <DiagnosticFieldBlock
+                    title="Auth data result paths"
+                    value={feed.auth_data_result_paths_found}
+                    mutedEmpty="No result paths found under auth response data."
+                    includeZeroCounts
                   />
                   <DiagnosticFieldBlock
                     title="Auth error/status keys"
