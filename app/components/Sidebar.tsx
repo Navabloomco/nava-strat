@@ -128,6 +128,11 @@ export default function Sidebar() {
       show: roles.isAdmin,
     },
     {
+      name: "Provider Playbook",
+      href: "/admin/provider-playbook",
+      show: roles.isPlatformOwner,
+    },
+    {
       name: "Asset Review",
       href: "/admin/assets",
       show: roles.isAdmin,

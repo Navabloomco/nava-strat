@@ -28,6 +28,11 @@ const platformCards = [
     href: "/admin/providers",
   },
   {
+    title: "Provider Setup Playbook",
+    body: "Use a repeatable internal workflow for primary feeds, enrichment reports, diagnostics, and asset review.",
+    href: "/admin/provider-playbook",
+  },
+  {
     title: "Asset Review",
     body: "Review imported provider assets waiting to become Nava intelligence vehicles.",
     href: "/admin/assets",
