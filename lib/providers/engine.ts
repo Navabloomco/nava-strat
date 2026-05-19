@@ -94,6 +94,7 @@ type SupplementalDiagnostics = {
     candidate_row_paths_checked?: string[];
     first_array_paths_found?: Record<string, number>;
     response_error_keys?: string[];
+    rendered_request?: SupplementalRequestDiagnostics;
     error?: string;
   }>;
 };
@@ -116,6 +117,17 @@ type SupplementalResponseDiagnostics = {
   candidate_row_paths_checked: string[];
   first_array_paths_found: Record<string, number>;
   response_error_keys: string[];
+};
+
+type SupplementalRequestDiagnostics = {
+  method: string;
+  url_host: string | null;
+  url_path: string | null;
+  content_type: string | null;
+  payload_top_level_keys: string[];
+  payload_key_paths: string[];
+  payload_value_types: Record<string, string>;
+  allowed_values: Record<string, string | number>;
 };
 
 const SUPPLEMENTAL_FIELDS = [
@@ -558,6 +570,7 @@ async function fetchSupplementalFeeds(
       diagnostics.supplemental_rows_found += rows.length;
 
       if (feedDiagnostics) {
+        feedDiagnostics.rendered_request = feedResult.requestDiagnostics;
         applySupplementalResponseDiagnostics(
           feedDiagnostics,
           feedResult.responseDiagnostics
@@ -576,6 +589,9 @@ async function fetchSupplementalFeeds(
       }
     } catch (err: any) {
       if (feedDiagnostics) {
+        if (err.requestDiagnostics) {
+          feedDiagnostics.rendered_request = err.requestDiagnostics;
+        }
         if (err.responseDiagnostics) {
           applySupplementalResponseDiagnostics(
             feedDiagnostics,
@@ -617,12 +633,26 @@ async function fetchSupplementalFeed(
     }
   }
 
-  const response = await fetch(config.url, {
+  const requestHeaders = withJsonContentType(headers);
+  const requestDiagnostics = buildSupplementalRequestDiagnostics(
+    config.url,
     method,
-    headers: withJsonContentType(headers),
-    body: method === "GET" ? undefined : JSON.stringify(payload),
-    cache: "no-store",
-  });
+    requestHeaders,
+    payload
+  );
+
+  let response: Response;
+  try {
+    response = await fetch(config.url, {
+      method,
+      headers: requestHeaders,
+      body: method === "GET" ? undefined : JSON.stringify(payload),
+      cache: "no-store",
+    });
+  } catch (err: any) {
+    err.requestDiagnostics = requestDiagnostics;
+    throw err;
+  }
   const { data, responseType } = await readSafeSupplementalResponse(response);
 
   const paths =
@@ -641,12 +671,14 @@ async function fetchSupplementalFeed(
     const error = new Error(
       `Supplemental feed ${config.name} returned HTTP ${response.status}`
     ) as any;
+    error.requestDiagnostics = requestDiagnostics;
     error.responseDiagnostics = responseDiagnostics;
     throw error;
   }
 
   return {
     rows: getRowsByPaths(data, paths),
+    requestDiagnostics,
     responseDiagnostics,
   };
 }
@@ -759,6 +791,135 @@ function applySupplementalResponseDiagnostics(
     responseDiagnostics.first_array_paths_found;
   feedDiagnostics.response_error_keys =
     responseDiagnostics.response_error_keys;
+}
+
+function buildSupplementalRequestDiagnostics(
+  url: string,
+  method: string,
+  headers: Record<string, string>,
+  payload: any
+): SupplementalRequestDiagnostics {
+  const parsedUrl = parseSafeUrlParts(url);
+
+  return {
+    method,
+    url_host: parsedUrl.host,
+    url_path: parsedUrl.path,
+    content_type: getHeaderValue(headers, "content-type"),
+    payload_top_level_keys: collectTopLevelKeys(payload),
+    payload_key_paths: collectPayloadKeyPaths(payload),
+    payload_value_types: collectPayloadValueTypes(payload),
+    allowed_values: collectAllowedPayloadValues(payload),
+  };
+}
+
+function parseSafeUrlParts(url: string) {
+  try {
+    const parsed = new URL(url);
+    return {
+      host: parsed.host,
+      path: parsed.pathname || "/",
+    };
+  } catch {
+    return { host: null, path: null };
+  }
+}
+
+function getHeaderValue(headers: Record<string, string>, targetName: string) {
+  const entry = Object.entries(headers).find(
+    ([name]) => name.toLowerCase() === targetName.toLowerCase()
+  );
+
+  return entry ? String(entry[1]).slice(0, 120) : null;
+}
+
+function collectPayloadKeyPaths(value: any) {
+  const paths: string[] = [];
+
+  function walk(current: any, path: string, depth: number) {
+    if (paths.length >= 100 || depth > 8) return;
+
+    if (Array.isArray(current)) {
+      if (path) paths.push(`${path}[]`);
+      for (const item of current.slice(0, 3)) {
+        if (item && typeof item === "object") {
+          walk(item, path ? `${path}[]` : "[]", depth + 1);
+        }
+      }
+      return;
+    }
+
+    if (!current || typeof current !== "object") return;
+
+    for (const [key, nested] of Object.entries(current)) {
+      if (isSensitiveProviderKey(normalizeProviderKey(key))) continue;
+      const nextPath = path ? `${path}.${key}` : key;
+      paths.push(nextPath);
+      walk(nested, nextPath, depth + 1);
+    }
+  }
+
+  walk(value, "", 0);
+  return paths;
+}
+
+function collectPayloadValueTypes(value: any) {
+  const types: Record<string, string> = {};
+
+  function walk(current: any, path: string, depth: number) {
+    if (Object.keys(types).length >= 120 || depth > 8) return;
+
+    if (Array.isArray(current)) {
+      if (path) types[path] = describePayloadValueType(current);
+      for (const item of current.slice(0, 3)) {
+        if (item && typeof item === "object") {
+          walk(item, path ? `${path}[]` : "[]", depth + 1);
+        }
+      }
+      return;
+    }
+
+    if (current && typeof current === "object") {
+      for (const [key, nested] of Object.entries(current)) {
+        if (isSensitiveProviderKey(normalizeProviderKey(key))) continue;
+        const nextPath = path ? `${path}.${key}` : key;
+        walk(nested, nextPath, depth + 1);
+      }
+      return;
+    }
+
+    if (path) types[path] = describePayloadValueType(current);
+  }
+
+  walk(value, "", 0);
+  return types;
+}
+
+function describePayloadValueType(value: any) {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return value.length === 0 ? "array(empty)" : "array";
+  return typeof value;
+}
+
+function collectAllowedPayloadValues(payload: any) {
+  const allowedPaths = [
+    "request.reportType",
+    "pageIndex",
+    "pageSize",
+    "channel",
+    "request.startDate",
+    "request.endDate",
+  ];
+  const values: Record<string, string | number> = {};
+
+  for (const path of allowedPaths) {
+    const value = getByPath(payload, path);
+    if (typeof value === "string" || typeof value === "number") {
+      values[path] = value;
+    }
+  }
+
+  return values;
 }
 
 async function readSafeSupplementalResponse(response: Response): Promise<{

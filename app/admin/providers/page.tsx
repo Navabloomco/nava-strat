@@ -393,6 +393,52 @@ function ProviderEnrichmentDiagnostics({
               )}
 
               <DiagnosticFieldBlock
+                title="Rendered request"
+                value={[
+                  feed.rendered_request?.method
+                    ? `Method: ${feed.rendered_request.method}`
+                    : "",
+                  feed.rendered_request?.url_host
+                    ? `Host: ${feed.rendered_request.url_host}`
+                    : "",
+                  feed.rendered_request?.url_path
+                    ? `Path: ${feed.rendered_request.url_path}`
+                    : "",
+                  feed.rendered_request?.content_type
+                    ? `Content-Type: ${feed.rendered_request.content_type}`
+                    : "",
+                ]}
+                mutedEmpty="No rendered request captured."
+              />
+
+              {canShowAvailableKeys && feed.rendered_request && (
+                <>
+                  <DiagnosticFieldBlock
+                    title="Payload top-level keys"
+                    value={feed.rendered_request.payload_top_level_keys}
+                    mutedEmpty="No payload keys detected."
+                  />
+                  <DiagnosticFieldBlock
+                    title="Payload key paths"
+                    value={feed.rendered_request.payload_key_paths}
+                    mutedEmpty="No nested payload paths detected."
+                  />
+                  <DiagnosticFieldBlock
+                    title="Payload value types"
+                    value={feed.rendered_request.payload_value_types}
+                    mutedEmpty="No payload value types detected."
+                    includeZeroCounts
+                  />
+                  <DiagnosticFieldBlock
+                    title="Allowed request values"
+                    value={feed.rendered_request.allowed_values}
+                    mutedEmpty="No safe enum/date/page values detected."
+                    includeZeroCounts
+                  />
+                </>
+              )}
+
+              <DiagnosticFieldBlock
                 title="Response shape"
                 value={[
                   feed.http_status ? `HTTP ${feed.http_status}` : "",
@@ -516,8 +562,17 @@ function normalizeDiagnosticEntries(value: any, includeZeroCounts = false) {
   }
   if (typeof value === "object") {
     return Object.entries(value)
-      .filter(([, count]) => includeZeroCounts || Number(count || 0) > 0)
-      .map(([field, count]) => `${field}: ${Number(count).toLocaleString()}`);
+      .filter(([, entry]) => {
+        if (typeof entry === "string") return entry.trim().length > 0;
+        return includeZeroCounts || Number(entry || 0) > 0;
+      })
+      .map(([field, entry]) => {
+        const display =
+          typeof entry === "number"
+            ? entry.toLocaleString()
+            : String(entry);
+        return `${field}: ${display}`;
+      });
   }
   return [String(value)];
 }

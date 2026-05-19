@@ -99,6 +99,10 @@ function sanitizeSupplementalDiagnostics(diagnostics: any, includeAvailableKeys:
       mapped_fields_merged: feed.mapped_fields_merged || {},
       mapped_fields_skipped: feed.mapped_fields_skipped || {},
       unmatched_supplemental_rows: Number(feed.unmatched_supplemental_rows || 0),
+      rendered_request: sanitizeRenderedRequest(
+        feed.rendered_request,
+        includeAvailableKeys
+      ),
       http_status: feed.http_status ? Number(feed.http_status) : undefined,
       response_type: feed.response_type ? String(feed.response_type) : undefined,
       candidate_row_paths_checked: includeAvailableKeys
@@ -129,6 +133,58 @@ function sanitizeSupplementalDiagnostics(diagnostics: any, includeAvailableKeys:
       error: feed.error ? String(feed.error) : undefined,
     })),
   };
+}
+
+function sanitizeRenderedRequest(request: any, includePayloadShape: boolean) {
+  if (!request || typeof request !== "object") return null;
+
+  return {
+    method: request.method ? String(request.method) : undefined,
+    url_host: request.url_host ? String(request.url_host) : undefined,
+    url_path: request.url_path ? String(request.url_path) : undefined,
+    content_type: request.content_type ? String(request.content_type) : undefined,
+    payload_top_level_keys: includePayloadShape
+      ? (request.payload_top_level_keys || []).map((key: any) => String(key)).slice(0, 50)
+      : [],
+    payload_key_paths: includePayloadShape
+      ? (request.payload_key_paths || []).map((path: any) => String(path)).slice(0, 100)
+      : [],
+    payload_value_types: includePayloadShape
+      ? sanitizeStringMap(request.payload_value_types, 120)
+      : {},
+    allowed_values: includePayloadShape
+      ? sanitizeAllowedRequestValues(request.allowed_values)
+      : {},
+  };
+}
+
+function sanitizeStringMap(value: any, limit: number) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+
+  return Object.fromEntries(
+    Object.entries(value)
+      .slice(0, limit)
+      .map(([key, entry]) => [String(key), String(entry)])
+  );
+}
+
+function sanitizeAllowedRequestValues(value: any) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+
+  const allowed = new Set([
+    "request.reportType",
+    "pageIndex",
+    "pageSize",
+    "channel",
+    "request.startDate",
+    "request.endDate",
+  ]);
+
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => allowed.has(String(key)))
+      .map(([key, entry]) => [String(key), typeof entry === "number" ? entry : String(entry).slice(0, 120)])
+  );
 }
 
 function sanitizeCountMap(value: any) {
