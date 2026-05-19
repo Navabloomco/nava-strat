@@ -68,6 +68,34 @@ const SUPPORTED_TEMPLATE_MACROS = new Set([
   "analytics_user_id",
 ]);
 
+const SUPPORTED_AUTH_PROFILE_TEMPLATE_MACROS = new Set([
+  "username",
+  "password",
+  "now_iso",
+  "now_minus_1h_iso",
+  "now_minus_24h_iso",
+  "now_minus_7d_iso",
+  "now_plus_1h_iso",
+  "auth_user_id",
+  "provider_user_id",
+  "analytics_user_id",
+]);
+
+const AUTH_METADATA_KEYS = new Set([
+  "auth_user_id",
+  "provider_user_id",
+  "analytics_user_id",
+]);
+
+const SAFE_AUTH_PROFILE_NAME = /^[A-Za-z0-9_-]{1,64}$/;
+
+const BLOCKED_HEADER_TEMPLATE_MACROS = new Set([
+  "api_key",
+  "password",
+  "bearer_token",
+  "token",
+]);
+
 function getProviderCapabilities(roles: string[], isPlatformOwner: boolean) {
   const normalizedRoles = new Set(roles.map((role) => role.toLowerCase()));
   const isCompanyAdmin =
@@ -147,6 +175,7 @@ function hasSupplementalFeedConfig(fleetConfig: any) {
   if (!fleetConfig || typeof fleetConfig !== "object") return false;
   return (
     Object.prototype.hasOwnProperty.call(fleetConfig, "supplemental_feeds") ||
+    Object.prototype.hasOwnProperty.call(fleetConfig, "supplemental_auth_profiles") ||
     Object.prototype.hasOwnProperty.call(fleetConfig, "current_status_url") ||
     Object.prototype.hasOwnProperty.call(fleetConfig, "fuel_status_url")
   );
@@ -176,11 +205,20 @@ function validateFleetConfigForSave(
   }
 
   const knownHosts = getKnownProviderHosts(context.provider, context.body);
+  const profilesError = validateSupplementalAuthProfiles(
+    fleetConfig.supplemental_auth_profiles,
+    knownHosts
+  );
+  if (profilesError) return profilesError;
+
+  const profileNames = new Set(
+    Object.keys(fleetConfig.supplemental_auth_profiles || {})
+  );
 
   for (let index = 0; index < feeds.length; index += 1) {
     const feed = feeds[index];
     const label = feed.name ? `supplemental feed '${feed.name}'` : `supplemental feed ${index + 1}`;
-    const error = validateSupplementalFeed(feed, label, knownHosts);
+    const error = validateSupplementalFeed(feed, label, knownHosts, profileNames);
     if (error) return error;
   }
 
@@ -196,6 +234,7 @@ function normalizeSupplementalFeedsForValidation(fleetConfig: any) {
     feeds.push({
       name: "current_status",
       url: fleetConfig.current_status_url,
+      auth_profile: fleetConfig.current_status_auth_profile,
       method: fleetConfig.current_status_method,
       headers: fleetConfig.current_status_headers,
       payload: fleetConfig.current_status_payload,
@@ -209,6 +248,7 @@ function normalizeSupplementalFeedsForValidation(fleetConfig: any) {
     feeds.push({
       name: "fuel_status",
       url: fleetConfig.fuel_status_url,
+      auth_profile: fleetConfig.fuel_status_auth_profile || fleetConfig.current_status_auth_profile,
       method: fleetConfig.fuel_status_method,
       headers: fleetConfig.fuel_status_headers,
       payload: fleetConfig.fuel_status_payload,
@@ -221,7 +261,92 @@ function normalizeSupplementalFeedsForValidation(fleetConfig: any) {
   return feeds;
 }
 
-function validateSupplementalFeed(feed: any, label: string, knownHosts: Set<string>) {
+function validateSupplementalAuthProfiles(
+  profiles: any,
+  knownHosts: Set<string>
+) {
+  if (profiles === undefined || profiles === null) return null;
+  if (typeof profiles !== "object" || Array.isArray(profiles)) {
+    return "supplemental_auth_profiles must be an object.";
+  }
+
+  const entries = Object.entries(profiles);
+  if (entries.length > 3) {
+    return "At most 3 supplemental auth profiles are allowed.";
+  }
+
+  for (const [profileName, profile] of entries) {
+    const label = `supplemental auth profile '${profileName}'`;
+    if (!SAFE_AUTH_PROFILE_NAME.test(profileName)) {
+      return `${label} must use a safe identifier name.`;
+    }
+    if (!profile || typeof profile !== "object" || Array.isArray(profile)) {
+      return `${label} must be an object.`;
+    }
+
+    const type = String((profile as any).type || "post_login").toLowerCase();
+    if (type !== "post_login") {
+      return `${label} type must be post_login.`;
+    }
+
+    const method = String((profile as any).method || "POST").toUpperCase();
+    if (!["GET", "POST"].includes(method)) {
+      return `${label} method must be GET or POST.`;
+    }
+
+    const urlError = validateSupplementalUrl(
+      (profile as any).login_url,
+      label,
+      knownHosts
+    );
+    if (urlError) return urlError;
+
+    const headersError = validateSupplementalHeaders(
+      (profile as any).headers,
+      label
+    );
+    if (headersError) return headersError;
+
+    const tokenPathError = validateStringArray(
+      (profile as any).token_paths,
+      `${label} token_paths`,
+      10,
+      160
+    );
+    if (tokenPathError) return tokenPathError;
+
+    const metadataPathError = validateMetadataPaths(
+      (profile as any).metadata_paths,
+      label
+    );
+    if (metadataPathError) return metadataPathError;
+
+    if ((profile as any).payload !== undefined) {
+      try {
+        const payloadText = JSON.stringify((profile as any).payload);
+        if (payloadText.length > 12000) return `${label} payload is too large.`;
+      } catch {
+        return `${label} payload must be valid JSON.`;
+      }
+
+      const macroError = validateTemplateMacros(
+        (profile as any).payload,
+        `${label} payload`,
+        SUPPORTED_AUTH_PROFILE_TEMPLATE_MACROS
+      );
+      if (macroError) return macroError;
+    }
+  }
+
+  return null;
+}
+
+function validateSupplementalFeed(
+  feed: any,
+  label: string,
+  knownHosts: Set<string>,
+  profileNames: Set<string>
+) {
   if (!feed || typeof feed !== "object" || Array.isArray(feed)) {
     return `${label} must be an object.`;
   }
@@ -236,6 +361,16 @@ function validateSupplementalFeed(feed: any, label: string, knownHosts: Set<stri
 
   const urlError = validateSupplementalUrl(feed.url, label, knownHosts);
   if (urlError) return urlError;
+
+  if (feed.auth_profile !== undefined && feed.auth_profile !== null && feed.auth_profile !== "") {
+    const profileName = String(feed.auth_profile || "").trim();
+    if (!SAFE_AUTH_PROFILE_NAME.test(profileName)) {
+      return `${label} auth_profile must be a safe identifier.`;
+    }
+    if (!profileNames.has(profileName)) {
+      return `${label} references unknown auth_profile '${profileName}'.`;
+    }
+  }
 
   const headersError = validateSupplementalHeaders(feed.headers, label);
   if (headersError) return headersError;
@@ -264,14 +399,40 @@ function validateSupplementalFeed(feed: any, label: string, knownHosts: Set<stri
   return null;
 }
 
-function validateTemplateMacros(value: any, label: string) {
+function validateTemplateMacros(
+  value: any,
+  label: string,
+  supportedMacros: Set<string> = SUPPORTED_TEMPLATE_MACROS
+) {
   const macros = collectTemplateMacros(value);
   const unknownMacros = macros.filter(
-    (macro) => !SUPPORTED_TEMPLATE_MACROS.has(macro)
+    (macro) => !supportedMacros.has(macro)
   );
 
   if (unknownMacros.length > 0) {
     return `${label} contains unsupported template macro '${unknownMacros[0]}'.`;
+  }
+
+  return null;
+}
+
+function validateMetadataPaths(value: any, label: string) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "object" || Array.isArray(value)) {
+    return `${label} metadata_paths must be an object.`;
+  }
+
+  const entries = Object.entries(value);
+  if (entries.length > 3) return `${label} metadata_paths has too many entries.`;
+
+  for (const [key, path] of entries) {
+    if (!AUTH_METADATA_KEYS.has(key)) {
+      return `${label} metadata path '${key}' is not supported.`;
+    }
+    const pathText = String(path || "").trim();
+    if (!pathText || pathText.length > 160) {
+      return `${label} metadata path '${key}' must be a short response path.`;
+    }
   }
 
   return null;
@@ -352,6 +513,13 @@ function validateSupplementalHeaders(headers: any, label: string) {
     }
     if (String(headerValue || "").length > 500) {
       return `${label} header '${headerName}' is too long.`;
+    }
+    const macros = collectTemplateMacros(headerValue);
+    const blockedMacro = macros.find((macro) =>
+      BLOCKED_HEADER_TEMPLATE_MACROS.has(macro)
+    );
+    if (blockedMacro) {
+      return `${label} header '${headerName}' cannot contain credential template macro '${blockedMacro}'. Use the secure provider auth fields instead.`;
     }
   }
 

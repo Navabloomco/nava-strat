@@ -42,6 +42,17 @@ type AuthMetadata = {
   analytics_user_id?: string | number;
 };
 
+type SupplementalAuthProfileConfig = {
+  name: string;
+  type?: string;
+  login_url?: string;
+  method?: string;
+  headers?: Record<string, any>;
+  payload?: Record<string, any>;
+  token_paths?: string[];
+  metadata_paths?: Partial<Record<keyof AuthMetadata, string>>;
+};
+
 type FleetResult = {
   success: boolean;
   vehicles: any[];
@@ -52,6 +63,7 @@ type FleetResult = {
 type SupplementalFeedConfig = {
   name: string;
   url: string;
+  auth_profile?: string;
   method?: string;
   headers?: Record<string, any>;
   payload?: Record<string, any>;
@@ -95,6 +107,11 @@ type SupplementalDiagnostics = {
     first_array_paths_found?: Record<string, number>;
     response_error_keys?: string[];
     rendered_request?: SupplementalRequestDiagnostics;
+    auth_profile_used?: string;
+    auth_profile_attempted?: boolean;
+    auth_profile_token_captured?: boolean;
+    auth_profile_metadata_available?: string[];
+    auth_profile_error?: string;
     error?: string;
   }>;
 };
@@ -108,6 +125,14 @@ type TemplateRenderResult<T = any> = {
 type SupplementalFetchResult = {
   feeds: SupplementalFeedRows[];
   diagnostics: SupplementalDiagnostics;
+};
+
+type SupplementalAuthContext = {
+  token: string | null;
+  metadata: AuthMetadata;
+  fallbackMetadata: AuthMetadata;
+  authType: string;
+  profileName?: string | null;
 };
 
 type SupplementalResponseDiagnostics = {
@@ -515,6 +540,7 @@ async function fetchSupplementalFeeds(
 ): Promise<SupplementalFetchResult> {
   const configs = getSupplementalFeedConfigs(provider);
   const diagnostics = createSupplementalDiagnostics(configs);
+  const profileCache = new Map<string, Promise<AuthResult>>();
 
   if (configs.length === 0) {
     return { feeds: [], diagnostics };
@@ -527,11 +553,23 @@ async function fetchSupplementalFeeds(
       (feed) => feed.name === config.name
     );
 
+    const authContext = await resolveSupplementalAuthContext(
+      provider,
+      config,
+      token,
+      authMetadata,
+      profileCache,
+      feedDiagnostics
+    );
+
+    if (!authContext) continue;
+
     const payloadResult = buildPayloadWithDiagnostics(
       config.payload || {},
       provider,
-      token,
-      authMetadata
+      authContext.token,
+      authContext.metadata,
+      authContext.fallbackMetadata
     );
 
     if (
@@ -560,10 +598,9 @@ async function fetchSupplementalFeeds(
     try {
       const feedResult = await fetchSupplementalFeed(
         provider,
-        token,
+        authContext,
         config,
-        payloadResult.value,
-        authMetadata
+        payloadResult.value
       );
       const rows = feedResult.rows;
       feeds.push({ config, rows });
@@ -609,18 +646,19 @@ async function fetchSupplementalFeeds(
 
 async function fetchSupplementalFeed(
   provider: ProviderRecord,
-  token: string | null,
+  authContext: SupplementalAuthContext,
   config: SupplementalFeedConfig,
-  payload: any,
-  authMetadata: AuthMetadata = {}
+  payload: any
 ) {
-  const authType = (provider.auth_type || "POST_LOGIN").toUpperCase();
+  const authType = authContext.authType;
+  const token = authContext.token;
   const method = String(config.method || "GET").toUpperCase();
   const headers = buildHeaders(
     config.headers || {},
     provider,
     token,
-    authMetadata
+    authContext.metadata,
+    authContext.fallbackMetadata
   );
 
   if (token) {
@@ -683,6 +721,175 @@ async function fetchSupplementalFeed(
   };
 }
 
+async function resolveSupplementalAuthContext(
+  provider: ProviderRecord,
+  config: SupplementalFeedConfig,
+  primaryToken: string | null,
+  primaryMetadata: AuthMetadata,
+  profileCache: Map<string, Promise<AuthResult>>,
+  feedDiagnostics?: SupplementalDiagnostics["feeds"][number]
+): Promise<SupplementalAuthContext | null> {
+  const primaryAuthType = (provider.auth_type || "POST_LOGIN").toUpperCase();
+
+  if (!config.auth_profile) {
+    return {
+      token: primaryToken,
+      metadata: primaryMetadata,
+      fallbackMetadata: {},
+      authType: primaryAuthType,
+      profileName: null,
+    };
+  }
+
+  const profileName = config.auth_profile;
+  if (feedDiagnostics) {
+    feedDiagnostics.auth_profile_used = profileName;
+    feedDiagnostics.auth_profile_attempted = true;
+    feedDiagnostics.auth_profile_token_captured = false;
+    feedDiagnostics.auth_profile_metadata_available = [];
+  }
+
+  const profile = getSupplementalAuthProfile(provider, profileName);
+  if (!profile) {
+    const message = `Supplemental auth profile '${profileName}' not found`;
+    markSupplementalAuthFailure(feedDiagnostics, message);
+    return null;
+  }
+
+  let authPromise = profileCache.get(profileName);
+  if (!authPromise) {
+    authPromise = authenticateSupplementalAuthProfile(
+      provider,
+      profile,
+      primaryToken,
+      primaryMetadata
+    );
+    profileCache.set(profileName, authPromise);
+  }
+
+  let auth: AuthResult;
+  try {
+    auth = await authPromise;
+  } catch (err: any) {
+    const message = err?.message || `Supplemental auth profile '${profileName}' failed`;
+    markSupplementalAuthFailure(feedDiagnostics, message);
+    return null;
+  }
+  if (feedDiagnostics) {
+    feedDiagnostics.auth_profile_token_captured = Boolean(auth.token);
+    feedDiagnostics.auth_profile_metadata_available = Object.keys(auth.metadata || {});
+  }
+
+  if (!auth.success || !auth.token) {
+    const message = auth.message || `Supplemental auth profile '${profileName}' failed`;
+    markSupplementalAuthFailure(feedDiagnostics, message);
+    return null;
+  }
+
+  return {
+    token: auth.token || null,
+    metadata: auth.metadata || {},
+    fallbackMetadata: primaryMetadata,
+    authType: "BEARER",
+    profileName,
+  };
+}
+
+function markSupplementalAuthFailure(
+  feedDiagnostics: SupplementalDiagnostics["feeds"][number] | undefined,
+  message: string
+) {
+  const safeMessage = sanitizeDiagnosticMessage(message);
+  if (!feedDiagnostics) return;
+
+  feedDiagnostics.skipped = true;
+  feedDiagnostics.skipped_reason = safeMessage;
+  feedDiagnostics.success = false;
+  feedDiagnostics.error = safeMessage;
+  feedDiagnostics.auth_profile_error = safeMessage;
+}
+
+async function authenticateSupplementalAuthProfile(
+  provider: ProviderRecord,
+  profile: SupplementalAuthProfileConfig,
+  primaryToken: string | null,
+  primaryMetadata: AuthMetadata
+): Promise<AuthResult> {
+  const type = String(profile.type || "post_login").toUpperCase();
+
+  if (type !== "POST_LOGIN") {
+    return { success: false, message: `Unsupported supplemental auth profile type: ${type}` };
+  }
+
+  if (!profile.login_url) {
+    return { success: false, message: "Supplemental auth profile login URL missing" };
+  }
+
+  const method = String(profile.method || "POST").toUpperCase();
+  const payloadResult = buildPayloadWithDiagnostics(
+    profile.payload || {},
+    provider,
+    primaryToken,
+    primaryMetadata
+  );
+
+  if (
+    payloadResult.missingMacros.length > 0 ||
+    payloadResult.unknownMacros.length > 0
+  ) {
+    return {
+      success: false,
+      message:
+        payloadResult.unknownMacros.length > 0
+          ? `Unknown template macro(s): ${payloadResult.unknownMacros.join(", ")}`
+          : `Missing required template macro(s): ${payloadResult.missingMacros.join(", ")}`,
+    };
+  }
+
+  const headers = buildHeaders(
+    profile.headers || {},
+    provider,
+    primaryToken,
+    primaryMetadata
+  );
+
+  const response = await fetch(profile.login_url, {
+    method,
+    headers: withJsonContentType(headers),
+    body: method === "GET" ? undefined : JSON.stringify(payloadResult.value),
+    cache: "no-store",
+  });
+  const data = await safeJson(response);
+  const tokenPaths =
+    Array.isArray(profile.token_paths) && profile.token_paths.length > 0
+      ? profile.token_paths
+      : defaultTokenPaths();
+  const token = getByPaths(data, tokenPaths);
+  const metadata = buildSupplementalAuthProfileMetadata(provider, profile, data);
+
+  if (!response.ok || !token) {
+    return {
+      success: false,
+      message: "No token returned by supplemental auth profile",
+      debug: {
+        status: response.status,
+        auth_response_keys: collectSafeResponseKeys(data),
+        token_paths_checked: tokenPaths,
+      },
+    };
+  }
+
+  return {
+    success: true,
+    token,
+    metadata,
+    debug: {
+      auth_metadata_available: Object.keys(metadata),
+      auth_response_keys: collectSafeResponseKeys(data),
+    },
+  };
+}
+
 function getSupplementalFeedConfigs(provider: ProviderRecord): SupplementalFeedConfig[] {
   const config = provider.fleet_config || {};
   const feeds: SupplementalFeedConfig[] = [];
@@ -699,6 +906,7 @@ function getSupplementalFeedConfigs(provider: ProviderRecord): SupplementalFeedC
     feeds.push({
       name: "current_status",
       url: currentStatusUrl,
+      auth_profile: config.current_status_auth_profile,
       method: config.current_status_method || config.method || "GET",
       headers: config.current_status_headers || config.headers || {},
       payload: config.current_status_payload || {},
@@ -714,6 +922,7 @@ function getSupplementalFeedConfigs(provider: ProviderRecord): SupplementalFeedC
     feeds.push({
       name: "fuel_status",
       url: fuelStatusUrl,
+      auth_profile: config.fuel_status_auth_profile || config.current_status_auth_profile,
       method: config.fuel_status_method || config.method || "GET",
       headers: config.fuel_status_headers || config.headers || {},
       payload: config.fuel_status_payload || {},
@@ -733,6 +942,7 @@ function normalizeSupplementalFeedConfig(feed: any): SupplementalFeedConfig | nu
   return {
     name: String(feed.name || "supplemental").trim() || "supplemental",
     url: String(feed.url),
+    auth_profile: feed.auth_profile ? String(feed.auth_profile).trim() : undefined,
     method: feed.method || "GET",
     headers: feed.headers || {},
     payload: feed.payload || {},
@@ -751,6 +961,35 @@ function dedupeSupplementalFeeds(feeds: SupplementalFeedConfig[]) {
     seen.add(key);
     return true;
   });
+}
+
+function getSupplementalAuthProfile(
+  provider: ProviderRecord,
+  profileName: string
+): SupplementalAuthProfileConfig | null {
+  const profiles = provider.fleet_config?.supplemental_auth_profiles;
+  if (!profiles || typeof profiles !== "object" || Array.isArray(profiles)) {
+    return null;
+  }
+
+  const profile = profiles[profileName];
+  if (!profile || typeof profile !== "object" || Array.isArray(profile)) {
+    return null;
+  }
+
+  return {
+    name: profileName,
+    type: profile.type || "post_login",
+    login_url: profile.login_url,
+    method: profile.method || "POST",
+    headers: profile.headers || {},
+    payload: profile.payload || {},
+    token_paths: Array.isArray(profile.token_paths) ? profile.token_paths : undefined,
+    metadata_paths:
+      profile.metadata_paths && typeof profile.metadata_paths === "object"
+        ? profile.metadata_paths
+        : undefined,
+  };
 }
 
 function createSupplementalDiagnostics(
@@ -774,6 +1013,10 @@ function createSupplementalDiagnostics(
       mapped_fields_skipped: {},
       unmatched_supplemental_rows: 0,
       unmapped_available_keys: [],
+      auth_profile_used: feed.auth_profile || undefined,
+      auth_profile_attempted: false,
+      auth_profile_token_captured: feed.auth_profile ? false : undefined,
+      auth_profile_metadata_available: [],
     })),
   };
 }
@@ -1529,9 +1772,16 @@ function buildPayload(
   template: any,
   provider: ProviderRecord,
   token: string | null = null,
-  authMetadata: AuthMetadata = {}
+  authMetadata: AuthMetadata = {},
+  fallbackAuthMetadata: AuthMetadata = {}
 ) {
-  return buildPayloadWithDiagnostics(template, provider, token, authMetadata)
+  return buildPayloadWithDiagnostics(
+    template,
+    provider,
+    token,
+    authMetadata,
+    fallbackAuthMetadata
+  )
     .value;
 }
 
@@ -1539,12 +1789,14 @@ function buildPayloadWithDiagnostics(
   template: any,
   provider: ProviderRecord,
   token: string | null = null,
-  authMetadata: AuthMetadata = {}
+  authMetadata: AuthMetadata = {},
+  fallbackAuthMetadata: AuthMetadata = {}
 ): TemplateRenderResult {
   return renderTemplateValue(template || {}, {
     provider,
     token,
     authMetadata,
+    fallbackAuthMetadata,
     now: new Date(),
   });
 }
@@ -1553,13 +1805,15 @@ function buildHeaders(
   template: any,
   provider: ProviderRecord,
   token: string | null,
-  authMetadata: AuthMetadata = {}
+  authMetadata: AuthMetadata = {},
+  fallbackAuthMetadata: AuthMetadata = {}
 ) {
   const output: Record<string, string> = {};
   const rendered = renderTemplateValue(template || {}, {
     provider,
     token,
     authMetadata,
+    fallbackAuthMetadata,
     now: new Date(),
   });
 
@@ -1585,6 +1839,7 @@ function renderTemplateValue(
     provider: ProviderRecord;
     token: string | null;
     authMetadata: AuthMetadata;
+    fallbackAuthMetadata: AuthMetadata;
     now: Date;
   }
 ): TemplateRenderResult {
@@ -1622,6 +1877,7 @@ function renderTemplateString(
     provider: ProviderRecord;
     token: string | null;
     authMetadata: AuthMetadata;
+    fallbackAuthMetadata: AuthMetadata;
     now: Date;
   },
   missingMacros: Set<string>,
@@ -1655,6 +1911,7 @@ function resolveTemplateMacro(
     provider: ProviderRecord;
     token: string | null;
     authMetadata: AuthMetadata;
+    fallbackAuthMetadata: AuthMetadata;
     now: Date;
   },
   missingMacros: Set<string>,
@@ -1682,10 +1939,11 @@ function getTemplateMacroValue(
     provider: ProviderRecord;
     token: string | null;
     authMetadata: AuthMetadata;
+    fallbackAuthMetadata: AuthMetadata;
     now: Date;
   }
 ) {
-  const { provider, token, authMetadata, now } = context;
+  const { provider, token, authMetadata, fallbackAuthMetadata, now } = context;
 
   if (macro === "username") return provider.username || "";
   if (macro === "api_key") return provider.api_key || "";
@@ -1701,7 +1959,7 @@ function getTemplateMacroValue(
     macro === "provider_user_id" ||
     macro === "analytics_user_id"
   ) {
-    return getAuthMacroValue(macro, provider, authMetadata);
+    return getAuthMacroValue(macro, provider, authMetadata, fallbackAuthMetadata);
   }
 
   return "";
@@ -1734,7 +1992,8 @@ function getDateMacroValue(macro: string, now: Date) {
 function getAuthMacroValue(
   macro: keyof AuthMetadata,
   provider: ProviderRecord,
-  authMetadata: AuthMetadata
+  authMetadata: AuthMetadata,
+  fallbackAuthMetadata: AuthMetadata = {}
 ) {
   const metadataPriority: Array<keyof AuthMetadata> =
     macro === "auth_user_id"
@@ -1748,7 +2007,22 @@ function getAuthMacroValue(
     if (value !== null) return value;
   }
 
-  return getConfiguredAuthMacroValue(provider, macro);
+  const fleetConfigValue = getConfiguredAuthMacroValueFromSource(
+    provider.fleet_config || {},
+    macro
+  );
+  if (fleetConfigValue !== null) return fleetConfigValue;
+
+  for (const key of metadataPriority) {
+    const value = sanitizeMacroScalar(fallbackAuthMetadata[key]);
+    if (value !== null) return value;
+  }
+
+  const authConfigValue = getConfiguredAuthMacroValueFromSource(
+    provider.auth_config || {},
+    macro
+  );
+  return authConfigValue !== null ? authConfigValue : "";
 }
 
 function getConfiguredAuthMacroValue(
@@ -1756,6 +2030,19 @@ function getConfiguredAuthMacroValue(
   macro: keyof AuthMetadata
 ) {
   const sources = [provider.fleet_config || {}, provider.auth_config || {}];
+
+  for (const source of sources) {
+    const value = getConfiguredAuthMacroValueFromSource(source, macro);
+    if (value !== null) return value;
+  }
+
+  return "";
+}
+
+function getConfiguredAuthMacroValueFromSource(
+  source: any,
+  macro: keyof AuthMetadata
+) {
   const paths =
     macro === "analytics_user_id"
       ? [
@@ -1793,12 +2080,7 @@ function getConfiguredAuthMacroValue(
             "user.id",
           ];
 
-  for (const source of sources) {
-    const value = firstSafeValueByPaths(source, paths);
-    if (value !== null) return value;
-  }
-
-  return "";
+  return firstSafeValueByPaths(source, paths);
 }
 
 function buildAuthMetadata(
@@ -1823,6 +2105,36 @@ function buildAuthMetadata(
   }
 
   return metadata;
+}
+
+function buildSupplementalAuthProfileMetadata(
+  provider: ProviderRecord,
+  profile: SupplementalAuthProfileConfig,
+  authResponse?: any
+): AuthMetadata {
+  const metadata = buildAuthMetadata(provider, authResponse);
+  const metadataPaths = profile.metadata_paths || {};
+  const allowedKeys: Array<keyof AuthMetadata> = [
+    "auth_user_id",
+    "provider_user_id",
+    "analytics_user_id",
+  ];
+
+  for (const key of allowedKeys) {
+    const path = metadataPaths[key];
+    if (!path) continue;
+    const value = sanitizeMacroScalar(getByPath(authResponse, path));
+    if (value !== null) metadata[key] = value;
+  }
+
+  return metadata;
+}
+
+function sanitizeDiagnosticMessage(message: any) {
+  return String(message || "Supplemental feed auth failed")
+    .replace(/bearer\s+[a-z0-9._~+/=-]+/gi, "bearer [redacted]")
+    .replace(/token['"]?\s*[:=]\s*['"]?[^,'"\s}]+/gi, "token=[redacted]")
+    .slice(0, 240);
 }
 
 function firstSafeValueByPaths(source: any, paths: string[]) {

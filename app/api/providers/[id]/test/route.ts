@@ -103,6 +103,17 @@ function sanitizeSupplementalDiagnostics(diagnostics: any, includeAvailableKeys:
         feed.rendered_request,
         includeAvailableKeys
       ),
+      auth_profile_used: feed.auth_profile_used
+        ? String(feed.auth_profile_used)
+        : undefined,
+      auth_profile_attempted: Boolean(feed.auth_profile_attempted),
+      auth_profile_token_captured: Boolean(feed.auth_profile_token_captured),
+      auth_profile_metadata_available: Array.isArray(feed.auth_profile_metadata_available)
+        ? feed.auth_profile_metadata_available.map((key: any) => String(key)).slice(0, 10)
+        : [],
+      auth_profile_error: feed.auth_profile_error
+        ? String(feed.auth_profile_error).slice(0, 240)
+        : undefined,
       http_status: feed.http_status ? Number(feed.http_status) : undefined,
       response_type: feed.response_type ? String(feed.response_type) : undefined,
       candidate_row_paths_checked: includeAvailableKeys

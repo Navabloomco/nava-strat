@@ -393,6 +393,31 @@ function ProviderEnrichmentDiagnostics({
               )}
 
               <DiagnosticFieldBlock
+                title="Auth profile"
+                value={[
+                  feed.auth_profile_used
+                    ? `Profile: ${feed.auth_profile_used}`
+                    : "Profile: primary provider auth",
+                  feed.auth_profile_attempted ? "Profile auth attempted" : "",
+                  feed.auth_profile_used
+                    ? `Token captured: ${feed.auth_profile_token_captured ? "yes" : "no"}`
+                    : "",
+                  feed.auth_profile_error
+                    ? `Auth issue: ${feed.auth_profile_error}`
+                    : "",
+                ]}
+                mutedEmpty="Using primary provider auth."
+              />
+
+              {canShowAvailableKeys && feed.auth_profile_metadata_available?.length > 0 && (
+                <DiagnosticFieldBlock
+                  title="Auth metadata available"
+                  value={feed.auth_profile_metadata_available}
+                  mutedEmpty="No auth metadata keys captured."
+                />
+              )}
+
+              <DiagnosticFieldBlock
                 title="Rendered request"
                 value={[
                   feed.rendered_request?.method
