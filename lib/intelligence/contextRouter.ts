@@ -11,6 +11,11 @@ import {
 } from "./fleetLocationService";
 import { getCompanyProfitability } from "./profitabilityService";
 import { detectProfitSimulation, simulateProfit } from "./profitSimulator";
+import {
+  getVehicleMatchKeys,
+  matchVehicleInFleet,
+  normalizeVehicleKey,
+} from "./entityResolver";
 
 export type ContextIntent =
   | "fleet_health"
@@ -22,6 +27,7 @@ export type ContextIntent =
   | "country_trucks"
   | "profit_simulation"
   | "profitability"
+  | "investigation_context"
   | "spares_context"
   | "general";
 
@@ -66,6 +72,7 @@ export async function routeContext(
     ? await fetchDriverAssignmentLookup(companyId)
     : null;
   const sparesCostVisible = canViewSparesCost(options.roles || []);
+  const financialsVisible = canViewFinancialContext(options.roles || []);
   const context: any = {
     company,
     intent,
@@ -82,6 +89,7 @@ export async function routeContext(
     no_enabled_intelligence_assets:
       fleetAssetCounts.imported_assets > 0 && fleetAssetCounts.enabled_assets === 0,
     spares_cost_visible: sparesCostVisible,
+    financials_visible: financialsVisible,
     generated_at: new Date().toISOString(),
   };
 
@@ -107,6 +115,32 @@ export async function routeContext(
     } else {
       context.recent_fuel_scores = await fetchRecentFuelRiskScores(companyId);
       context.recent_fuel_events = await fetchRecentFuelEvents(companyId);
+    }
+  }
+  if (intent === "investigation_context" && !context.asset_access_restricted) {
+    context.investigation_focus = detectInvestigationFocus(lower);
+    if (truckId) {
+      context.investigation_case_file = await fetchVehicleInvestigationCaseFile(
+        companyId,
+        vehicleMatch,
+        context.investigation_focus,
+        {
+          geofences,
+          assignmentLookup,
+          costVisible: sparesCostVisible,
+          financialsVisible,
+        }
+      );
+    } else {
+      context.fleet_health = await fetchFleetHealth(companyId);
+      context.recent_events = await fetchRecentEvents(
+        companyId,
+        geofences,
+        assignmentLookup
+      );
+      if (context.investigation_focus.profitability_focus && financialsVisible) {
+        context.profitability = await getCompanyProfitability(companyId);
+      }
     }
   }
   if (intent === "truck_status" && truckId && !context.asset_access_restricted) {
@@ -155,7 +189,13 @@ export async function routeContext(
     context.profit_simulation = simulateProfit(question);
   }
   if (intent === "profitability") {
-    context.profitability = await getCompanyProfitability(companyId);
+    if (financialsVisible) {
+      context.profitability = await getCompanyProfitability(companyId);
+    } else {
+      context.financial_access_restricted = true;
+      context.financial_access_message =
+        "Financial values are available to owner, admin, finance, management, and platform owner roles.";
+    }
   }
   if (intent === "spares_context" && !context.asset_access_restricted) {
     context.spares = await fetchSparesContext(
@@ -177,14 +217,43 @@ export async function routeContext(
 }
 
 function usesLocationContext(intent: ContextIntent) {
-  return ["fuel_risk", "truck_status", "journey_context", "offline_trucks", "general"].includes(intent);
+  return [
+    "investigation_context",
+    "fuel_risk",
+    "truck_status",
+    "journey_context",
+    "offline_trucks",
+    "general",
+  ].includes(intent);
 }
 
 function usesDriverAssignmentContext(intent: ContextIntent) {
-  return ["fuel_risk", "truck_status", "journey_context", "driver_activity", "offline_trucks", "general"].includes(intent);
+  return [
+    "investigation_context",
+    "fuel_risk",
+    "truck_status",
+    "journey_context",
+    "driver_activity",
+    "offline_trucks",
+    "general",
+  ].includes(intent);
 }
 
 function canViewSparesCost(roles: string[]) {
+  const normalizedRoles = new Set(
+    roles.map((role) => String(role || "").toLowerCase())
+  );
+
+  return (
+    normalizedRoles.has("platform_owner") ||
+    normalizedRoles.has("owner") ||
+    normalizedRoles.has("admin") ||
+    normalizedRoles.has("finance") ||
+    normalizedRoles.has("management")
+  );
+}
+
+function canViewFinancialContext(roles: string[]) {
   const normalizedRoles = new Set(
     roles.map((role) => String(role || "").toLowerCase())
   );
@@ -207,6 +276,9 @@ function detectIntent(
   }
   if (detectProfitSimulation(lower)) {
     return "profit_simulation";
+  }
+  if (detectInvestigationIntent(lower)) {
+    return "investigation_context";
   }
   if (detectSparesIntent(lower)) {
     return "spares_context";
@@ -274,177 +346,36 @@ function detectSparesIntent(lower: string) {
   return /\b(spare|spares|part|parts|maintenance|repair|repaired|fixed|fitted|installed|removed|replaced|tyre|tire|retread|battery|brake|filter|mechanic|workshop|vendor|supplier)\b/.test(lower);
 }
 
-function extractVehicleInputs(question: string) {
-  const inputs = new Map<string, string>();
-  const platePattern = /[A-Z]{2,4}[\s\-/.]*\d{2,4}[A-Z]?/gi;
-  const matches = question.match(platePattern) || [];
-
-  for (const match of matches) {
-    const key = normalizeTruckKey(match);
-    if (key.length >= 4) inputs.set(key, match.trim().toUpperCase());
-  }
-
-  const tokens = question
-    .split(/[^A-Za-z0-9]+/)
-    .map((token) => token.trim())
-    .filter(Boolean);
-
-  for (const token of tokens) {
-    const key = normalizeTruckKey(token);
-    if (
-      key.length >= 4 &&
-      key.length <= 12 &&
-      /[A-Z]/.test(key) &&
-      /\d/.test(key)
-    ) {
-      inputs.set(key, token.toUpperCase());
-    }
-  }
-
-  return Array.from(inputs.entries()).map(([key, input]) => ({ key, input }));
+function detectInvestigationIntent(lower: string) {
+  return (
+    /\b(suspect|suspicious|why|always|problem|issue|check|investigate|compare|abnormal|siphon|siphoning|theft)\b/.test(lower) ||
+    lower.includes("what happened") ||
+    lower.includes("costing too much") ||
+    lower.includes("unprofitable") ||
+    lower.includes("repair failed") ||
+    lower.includes("repair work") ||
+    lower.includes("something wrong")
+  );
 }
 
-async function matchVehicleInFleet(question: string, companyId: string) {
-  const inputs = extractVehicleInputs(question);
-
-  const baseMatch: any = {
-    input: inputs[0]?.input || null,
-    matched: false,
-    confidence: "none",
-    match_type: "none",
-    matched_truck_id: null,
-    matched_registration: null,
-    enabled_for_intelligence: false,
-    candidates: [],
-  };
-
-  if (inputs.length === 0) return baseMatch;
-
-  const { data, error } = await supabaseAdmin
-    .from("fleet_assets")
-    .select("id, truck_id, registration, intelligence_enabled")
-    .eq("company_id", companyId)
-    .eq("status", "active")
-    .limit(1000);
-
-  if (error) throw error;
-
-  const candidates = new Map<string, any>();
-  for (const input of inputs) {
-    for (const asset of data || []) {
-      const best = bestVehicleMatchForAsset(input.key, asset);
-      if (!best) continue;
-
-      const candidateKey = asset.id || `${asset.truck_id}:${asset.registration}`;
-      const existing = candidates.get(candidateKey);
-      if (!existing || best.rank > existing.rank) {
-        candidates.set(candidateKey, {
-          id: asset.id,
-          truck_id: asset.truck_id || null,
-          registration: asset.registration || null,
-          confidence: best.confidence,
-          match_type: best.match_type,
-          enabled_for_intelligence: Boolean(asset.intelligence_enabled),
-          input: input.input,
-          rank: best.rank,
-        });
-      }
-    }
-  }
-
-  const sortedCandidates = Array.from(candidates.values())
-    .sort((a, b) => b.rank - a.rank)
-    .slice(0, 5);
-
-  if (sortedCandidates.length === 0) return baseMatch;
-
-  const topRank = sortedCandidates[0].rank;
-  const topCandidates = sortedCandidates.filter((candidate) => candidate.rank === topRank);
-  const safeCandidates = sortedCandidates.map(sanitizeVehicleCandidate);
-
-  if (topCandidates.length > 1) {
-    return {
-      ...baseMatch,
-      input: topCandidates[0].input || baseMatch.input,
-      confidence: "low",
-      match_type: "multiple_candidates",
-      candidates: safeCandidates,
-    };
-  }
-
-  const winner = topCandidates[0];
+function detectInvestigationFocus(lower: string) {
   return {
-    input: winner.input || baseMatch.input,
-    matched: true,
-    confidence: winner.confidence,
-    match_type: winner.match_type,
-    matched_truck_id: winner.truck_id,
-    matched_registration: winner.registration,
-    enabled_for_intelligence: winner.enabled_for_intelligence,
-    candidates: safeCandidates,
+    fuel_focus:
+      /\b(fuel|siphon|siphoning|theft|diesel|petrol|tank|receipt|dip)\b/.test(lower),
+    stops_focus:
+      /\b(stop|stops|stopping|idle|idling|parked|waiting|delay|always)\b/.test(lower),
+    profitability_focus:
+      lower.includes("costing too much") ||
+      lower.includes("unprofitable") ||
+      /\b(profit|loss|losses|margin|cost|costs|expensive|revenue)\b/.test(lower),
+    repair_focus:
+      lower.includes("repair failed") ||
+      /\b(repair|repaired|fixed|maintenance|spare|part|tyre|tire|battery|brake|filter)\b/.test(lower),
+    driver_focus:
+      /\b(driver|driving|behaviour|behavior|assigned|responsible)\b/.test(lower),
+    route_focus:
+      /\b(route|trip|journey|client|mombasa|nairobi|kampala|port|yard)\b/.test(lower),
   };
-}
-
-function bestVehicleMatchForAsset(inputKey: string, asset: any) {
-  let best: any = null;
-
-  for (const key of getAssetMatchKeys(asset)) {
-    const match = scoreVehicleKey(inputKey, key);
-    if (match && (!best || match.rank > best.rank)) {
-      best = match;
-    }
-  }
-
-  return best;
-}
-
-function scoreVehicleKey(inputKey: string, assetKey: string) {
-  if (!inputKey || !assetKey || inputKey.length < 4 || assetKey.length < 4) {
-    return null;
-  }
-
-  if (inputKey === assetKey) {
-    return { confidence: "high", match_type: "exact_normalized", rank: 100 };
-  }
-
-  const missingOneTrailing =
-    assetKey.length === inputKey.length + 1 && assetKey.startsWith(inputKey);
-  if (missingOneTrailing) {
-    return {
-      confidence: "high",
-      match_type: "missing_trailing_character",
-      rank: 90,
-    };
-  }
-
-  const distance = editDistance(inputKey, assetKey);
-  if (distance === 1 && Math.max(inputKey.length, assetKey.length) >= 5) {
-    return { confidence: "medium", match_type: "edit_distance_1", rank: 75 };
-  }
-
-  const strongPartial =
-    inputKey.length >= 5 &&
-    (assetKey.includes(inputKey) || inputKey.includes(assetKey));
-  if (strongPartial) {
-    return { confidence: "medium", match_type: "strong_partial", rank: 65 };
-  }
-
-  return null;
-}
-
-function sanitizeVehicleCandidate(candidate: any) {
-  return {
-    truck_id: candidate.truck_id || null,
-    registration: candidate.registration || null,
-    confidence: candidate.confidence || "low",
-    match_type: candidate.match_type || "candidate",
-    enabled_for_intelligence: Boolean(candidate.enabled_for_intelligence),
-  };
-}
-
-function getAssetMatchKeys(asset: any) {
-  return [normalizeTruckKey(asset?.truck_id), normalizeTruckKey(asset?.registration)]
-    .filter((key) => key.length >= 4);
 }
 
 async function fetchFleetAssetCounts(companyId: string) {
@@ -462,29 +393,7 @@ async function fetchFleetAssetCounts(companyId: string) {
 }
 
 function normalizeTruckKey(value: string | null | undefined) {
-  return String(value || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
-}
-
-function editDistance(a: string, b: string) {
-  const matrix = Array.from({ length: a.length + 1 }, () =>
-    new Array<number>(b.length + 1).fill(0)
-  );
-
-  for (let i = 0; i <= a.length; i++) matrix[i][0] = i;
-  for (let j = 0; j <= b.length; j++) matrix[0][j] = j;
-
-  for (let i = 1; i <= a.length; i++) {
-    for (let j = 1; j <= b.length; j++) {
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      matrix[i][j] = Math.min(
-        matrix[i - 1][j] + 1,
-        matrix[i][j - 1] + 1,
-        matrix[i - 1][j - 1] + cost
-      );
-    }
-  }
-
-  return matrix[a.length][b.length];
+  return normalizeVehicleKey(value);
 }
 
 function sanitizeAssignedDriver(assignment: any) {
@@ -790,7 +699,7 @@ async function fetchTruckStatus(
     .limit(1000);
 
   const asset = (data || []).find((item) =>
-    getAssetMatchKeys(item).some((key) => key === targetKey)
+    getVehicleMatchKeys(item).some((key) => key === targetKey)
   );
   if (!asset) return null;
 
@@ -1011,6 +920,280 @@ function isUsableFuelValue(value: any) {
   return Number.isFinite(Number(value)) && Number(value) > 0;
 }
 
+async function fetchVehicleInvestigationCaseFile(
+  companyId: string,
+  vehicleMatch: any,
+  focus: any,
+  options: {
+    geofences?: any[];
+    assignmentLookup?: any;
+    costVisible?: boolean;
+    financialsVisible?: boolean;
+  } = {}
+) {
+  const truckId =
+    vehicleMatch.matched_truck_id || vehicleMatch.matched_registration || null;
+  if (!truckId || !vehicleMatch.enabled_for_intelligence) return null;
+
+  const geofences = options.geofences || [];
+  const assignmentLookup = options.assignmentLookup || null;
+  const costVisible = Boolean(options.costVisible);
+  const financialsVisible = Boolean(options.financialsVisible);
+  const enabledAssetLookup = await fetchEnabledAssetLookup(companyId);
+
+  const [
+    assetStatus,
+    recentEvents,
+    telemetrySummary,
+    fuelSummary,
+    journeys,
+    sparesHistory,
+    financialSummary,
+  ] = await Promise.all([
+    fetchTruckStatus(companyId, truckId, geofences, assignmentLookup),
+    fetchTruckEvents(companyId, truckId, geofences, assignmentLookup),
+    fetchInvestigationTelemetrySummary(companyId, truckId),
+    fetchInvestigationFuelSummary(companyId, truckId, geofences, assignmentLookup),
+    fetchRecentTruckJourneys(companyId, truckId, null),
+    fetchTruckSpareHistory(companyId, truckId, costVisible, enabledAssetLookup),
+    financialsVisible
+      ? fetchTruckFinancialSummary(companyId, truckId)
+      : Promise.resolve({ visible: false }),
+  ]);
+
+  const stopLikeEvents = recentEvents.filter((event: any) =>
+    ["excessive_idle", "idle", "stopped", "long_stop"].includes(event.event_type)
+  );
+  const fuelEvents = recentEvents.filter((event: any) =>
+    ["fuel_drop_stationary", "low_fuel"].includes(event.event_type)
+  );
+  const latestJourney = journeys[0] || null;
+
+  return {
+    entity_match: vehicleMatch,
+    focus,
+    asset_status: assetStatus,
+    latest_location: assetStatus
+      ? {
+          provider_location_label: assetStatus.provider_location_label || null,
+          geofence_match: assetStatus.geofence_match || null,
+          last_seen_at: assetStatus.last_seen_at || null,
+        }
+      : null,
+    assigned_driver: assetStatus?.assigned_driver || null,
+    recent_telemetry_summary: telemetrySummary,
+    fuel_summary: fuelSummary,
+    events_alerts_summary: {
+      recent_event_count: recentEvents.length,
+      stop_like_events: stopLikeEvents.slice(0, 8),
+      fuel_events: fuelEvents.slice(0, 8),
+      context_labels: Array.from(
+        new Set(
+          recentEvents
+            .map((event: any) => event.context_label)
+            .filter(Boolean)
+        )
+      ).slice(0, 5),
+    },
+    journey_summary: {
+      recent_journeys: journeys,
+      active_or_latest_journey: latestJourney,
+      has_recent_journey: journeys.length > 0,
+    },
+    spares_repair_summary: {
+      recent_events: sparesHistory.slice(0, 8),
+      event_count: sparesHistory.length,
+      has_repair_history: sparesHistory.length > 0,
+    },
+    financial_summary: financialSummary,
+    data_quality_summary: buildInvestigationDataQualitySummary({
+      assetStatus,
+      telemetrySummary,
+      fuelSummary,
+      journeys,
+      sparesHistory,
+    }),
+  };
+}
+
+async function fetchInvestigationTelemetrySummary(companyId: string, truckId: string) {
+  const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const { data, error } = await supabaseAdmin
+    .from("telemetry_logs")
+    .select("recorded_at, speed, latitude, longitude")
+    .eq("company_id", companyId)
+    .eq("truck_id", truckId)
+    .gte("recorded_at", since)
+    .order("recorded_at", { ascending: false })
+    .limit(500);
+
+  if (error) throw error;
+
+  const points = data || [];
+  const latest = points[0] || null;
+  const stationaryPoints = points.filter((point: any) => Number(point.speed || 0) <= 1);
+  const movingPoints = points.filter((point: any) => Number(point.speed || 0) > 1);
+  const staleMinutes = latest?.recorded_at
+    ? Math.floor((Date.now() - new Date(latest.recorded_at).getTime()) / 60000)
+    : null;
+
+  return {
+    window_days: 7,
+    telemetry_points: points.length,
+    latest_recorded_at: latest?.recorded_at || null,
+    stale_minutes: staleMinutes,
+    is_stale: staleMinutes === null || staleMinutes > 60,
+    stationary_points: stationaryPoints.length,
+    moving_points: movingPoints.length,
+  };
+}
+
+async function fetchInvestigationFuelSummary(
+  companyId: string,
+  truckId: string,
+  geofences: any[] = [],
+  assignmentLookup: any = null
+) {
+  const [telemetrySummary, fuelLogs, latestFuelScore, recentEvents] =
+    await Promise.all([
+      fetchFuelTelemetrySummary(companyId, truckId),
+      fetchRecentFuelLogs(companyId, truckId, null),
+      fetchLatestFuelRiskScore(companyId, truckId),
+      fetchTruckEvents(companyId, truckId, geofences, assignmentLookup),
+    ]);
+
+  return {
+    telemetry: telemetrySummary,
+    manual_entries: fuelLogs,
+    latest_score: latestFuelScore,
+    fuel_events: recentEvents.filter((event: any) =>
+      ["fuel_drop_stationary", "low_fuel"].includes(event.event_type)
+    ),
+  };
+}
+
+async function fetchTruckFinancialSummary(companyId: string, truckId: string) {
+  const keys = new Set([normalizeTruckKey(truckId)].filter(Boolean));
+  const [journeysResult, fuelResult, expensesResult] = await Promise.all([
+    supabaseAdmin
+      .from("journeys")
+      .select("id, internal_trip_id, truck, status, revenue_kes, client_name, from_location, to_location, created_at")
+      .eq("company_id", companyId)
+      .eq("is_demo", false)
+      .order("created_at", { ascending: false })
+      .limit(100),
+    supabaseAdmin
+      .from("fuel_logs")
+      .select("journey_id, truck_text, total_cost, liters, created_at")
+      .eq("company_id", companyId)
+      .order("created_at", { ascending: false })
+      .limit(200),
+    supabaseAdmin
+      .from("expenses")
+      .select("journey_id, truck, amount, expense_type, created_at")
+      .eq("company_id", companyId)
+      .order("created_at", { ascending: false })
+      .limit(200),
+  ]);
+
+  if (journeysResult.error) throw journeysResult.error;
+  if (fuelResult.error) throw fuelResult.error;
+  if (expensesResult.error) throw expensesResult.error;
+
+  const journeys = (journeysResult.data || [])
+    .filter((journey: any) => keys.has(normalizeTruckKey(journey.truck)))
+    .slice(0, 20);
+  const journeyIds = new Set(journeys.map((journey: any) => journey.id));
+  const fuelLogs = (fuelResult.data || []).filter(
+    (fuel: any) =>
+      (fuel.journey_id && journeyIds.has(fuel.journey_id)) ||
+      keys.has(normalizeTruckKey(fuel.truck_text))
+  );
+  const expenses = (expensesResult.data || []).filter(
+    (expense: any) =>
+      (expense.journey_id && journeyIds.has(expense.journey_id)) ||
+      keys.has(normalizeTruckKey(expense.truck))
+  );
+
+  const revenue = journeys.reduce(
+    (sum: number, journey: any) => sum + Number(journey.revenue_kes || 0),
+    0
+  );
+  const fuelCost = fuelLogs.reduce(
+    (sum: number, fuel: any) => sum + Number(fuel.total_cost || 0),
+    0
+  );
+  const expenseCost = expenses.reduce(
+    (sum: number, expense: any) => sum + Number(expense.amount || 0),
+    0
+  );
+
+  return {
+    visible: true,
+    journey_count: journeys.length,
+    fuel_log_count: fuelLogs.length,
+    expense_count: expenses.length,
+    revenue_kes: revenue,
+    fuel_cost_kes: fuelCost,
+    expense_cost_kes: expenseCost,
+    estimated_profit_kes: revenue - fuelCost - expenseCost,
+    latest_journeys: journeys.slice(0, 5).map((journey: any) => ({
+      reference: journey.internal_trip_id || null,
+      status: journey.status || null,
+      client_name: journey.client_name || null,
+      from_location: journey.from_location || null,
+      to_location: journey.to_location || null,
+      revenue_kes: Number(journey.revenue_kes || 0),
+      created_at: journey.created_at || null,
+    })),
+  };
+}
+
+function buildInvestigationDataQualitySummary(input: any) {
+  const flags: string[] = [];
+  const telemetry = input.telemetrySummary || {};
+  const fuelTelemetry = input.fuelSummary?.telemetry || {};
+
+  if (!input.assetStatus?.last_seen_at || telemetry.is_stale) {
+    flags.push("stale_telemetry");
+  }
+  if (!input.journeys?.length) {
+    flags.push("missing_journeys");
+  }
+  if (
+    fuelTelemetry.fuel_readings > 0 &&
+    fuelTelemetry.fuel_telemetry_usable === false
+  ) {
+    flags.push("all_zero_or_unusable_fuel_sensor_fields");
+  }
+  if (!input.fuelSummary?.manual_entries?.length) {
+    flags.push("no_manual_fuel_entries");
+  }
+  if (!input.sparesHistory?.length) {
+    flags.push("thin_repair_spares_history");
+  }
+
+  return {
+    flags,
+    history_window_days: 7,
+    notes: flags.map(formatDataQualityFlag),
+  };
+}
+
+function formatDataQualityFlag(flag: string) {
+  const labels: Record<string, string> = {
+    stale_telemetry: "Telemetry is stale or missing recently.",
+    missing_journeys: "No recent journey record was found for this vehicle.",
+    all_zero_or_unusable_fuel_sensor_fields:
+      "Fuel fields exist but are all zero/unknown, so they are not useful yet.",
+    no_manual_fuel_entries: "No recent manual fuel entries were found.",
+    thin_repair_spares_history:
+      "Repair/spares history is thin, so lifespan conclusions would be weak.",
+  };
+
+  return labels[flag] || flag;
+}
+
 async function fetchRecentFuelLogs(companyId: string, truckId: string, truck: any) {
   try {
     const keys = new Set(
@@ -1218,7 +1401,7 @@ async function fetchEnabledAssetLookup(companyId: string) {
   const byTruckKey = new Map<string, any>();
 
   for (const asset of assets) {
-    for (const key of getAssetMatchKeys(asset)) {
+    for (const key of getVehicleMatchKeys(asset)) {
       byTruckKey.set(key, asset);
     }
   }
@@ -1430,7 +1613,7 @@ function spareEventMatchesEnabledAsset(event: any, asset: any, lookup: any) {
   const eventKey = normalizeTruckKey(event.truck_id);
   if (!eventKey) return false;
 
-  return getAssetMatchKeys(asset).some((key) => key === eventKey) ||
+  return getVehicleMatchKeys(asset).some((key) => key === eventKey) ||
     lookup.byTruckKey.get(eventKey)?.id === asset.id;
 }
 

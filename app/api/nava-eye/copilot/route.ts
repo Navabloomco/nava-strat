@@ -114,7 +114,6 @@ export async function POST(req: Request) {
     const context = await routeContext(question, company.slug, {
       roles: companyRoles,
     });
-    console.log("Context from router:", JSON.stringify(context, null, 2));
 
     // 3. Fetch active memories for this company (up to 5 most recent)
     const activeMemories = await getActiveMemories(company.id, { limit: 5 });
@@ -133,7 +132,6 @@ export async function POST(req: Request) {
     if (aiError) {
       console.error("AI settings query error:", aiError);
     }
-    console.log("AI Settings:", aiSettings);
     const apiKey = aiSettings?.api_key;
 
     // 5. Prepare consolidated context for AI (or fallback)
@@ -157,6 +155,7 @@ export async function POST(req: Request) {
       Object.keys(context).length > 0 &&
       !context.profit_simulation &&
       !context.spares &&
+      !context.investigation_case_file &&
       !context.fuel_investigation &&
       !context.asset_access_restricted &&
       !context.no_enabled_intelligence_assets
@@ -180,8 +179,6 @@ export async function POST(req: Request) {
           temperature: 0.2,
           max_tokens: 220,
         };
-        console.log("Calling DeepSeek with payload:", JSON.stringify(deepSeekPayload, null, 2));
-
         const res = await fetch("https://api.deepseek.com/v1/chat/completions", {
           method: "POST",
           headers: {
@@ -192,11 +189,9 @@ export async function POST(req: Request) {
           signal: controller.signal,
         });
         clearTimeout(timeout);
-        console.log("DeepSeek status:", res.status);
 
         if (res.ok) {
           const aiData = await res.json();
-          console.log("DeepSeek response:", JSON.stringify(aiData, null, 2));
           answer = aiData.choices?.[0]?.message?.content || "Nava Eye could not generate an answer.";
           aiUsed = true;
         } else {
@@ -338,6 +333,12 @@ function buildFallbackAnswer(context: any): string {
   }
   if (context.no_enabled_intelligence_assets && !context.spares) {
     return "Fleet data has been imported, but no assets are enabled for Nava intelligence yet. Review assets before I use them in answers.";
+  }
+  if (context.investigation_case_file) {
+    return buildInvestigationFallbackAnswer(context);
+  }
+  if (context.financial_access_restricted) {
+    return "I can help with the operational side, but I cannot show financial values for this role. Ask an owner, admin, finance, management, or platform owner user to review profitability.";
   }
   if (context.profit_simulation) {
     const simulation = context.profit_simulation;
@@ -622,6 +623,42 @@ function buildAssetRestrictedAnswer(vehicleMatch: any) {
     "this asset";
 
   return `I found ${label}, but I can only answer using assets enabled for Nava intelligence. This asset may be waiting for review.`;
+}
+
+function buildInvestigationFallbackAnswer(context: any) {
+  const caseFile = context.investigation_case_file || {};
+  const focus = caseFile.focus || context.investigation_focus || {};
+  const entity = caseFile.entity_match || context.vehicle_match || {};
+  const label =
+    entity.matched_registration ||
+    entity.matched_truck_id ||
+    context.detected_truck_id ||
+    "this vehicle";
+  const parts: string[] = [];
+
+  parts.push(formatVehicleMatchIntro(entity, label));
+  parts.push(buildInvestigationOpening(focus));
+  parts.push("");
+
+  parts.push("What I found");
+  parts.push(...formatInvestigationFindings(caseFile, focus, label));
+  parts.push("");
+
+  parts.push("What this may mean");
+  parts.push(...formatInvestigationMeanings(caseFile, focus));
+  parts.push("");
+
+  parts.push("What I cannot prove yet");
+  parts.push(...formatInvestigationLimits(caseFile, focus));
+  parts.push("");
+
+  parts.push("Next checks");
+  parts.push(...formatInvestigationNextChecks(caseFile, focus, label));
+  parts.push("");
+
+  parts.push(formatInvestigationFollowUps(focus, label));
+
+  return parts.join("\n");
 }
 
 function buildFuelSuspicionFallbackAnswer(context: any) {
@@ -1002,6 +1039,211 @@ function formatVehicleCandidateLine(candidate: any) {
   const confidence = candidate.confidence || "low";
 
   return `- ${label || "Vehicle"} - ${status}, ${confidence} match`;
+}
+
+function buildInvestigationOpening(focus: any) {
+  if (focus?.fuel_focus) {
+    return "I can't confirm fuel siphoning from one question, so I checked the wider operational trail around this vehicle.";
+  }
+  if (focus?.stops_focus) {
+    return "I checked the recent stop/idle trail instead of treating this as just a location question.";
+  }
+  if (focus?.profitability_focus) {
+    return "I checked the operating context and the finance trail I am allowed to see.";
+  }
+  if (focus?.repair_focus) {
+    return "I checked recent repair and spare history alongside operations data.";
+  }
+  return "I checked this like a small operations investigation, not a single data lookup.";
+}
+
+function formatInvestigationFindings(caseFile: any, focus: any, label: string) {
+  const lines: string[] = [];
+  const asset = caseFile.asset_status;
+  const telemetry = caseFile.recent_telemetry_summary || {};
+  const fuel = caseFile.fuel_summary || {};
+  const events = caseFile.events_alerts_summary || {};
+  const journeys = caseFile.journey_summary || {};
+  const spares = caseFile.spares_repair_summary || {};
+  const financials = caseFile.financial_summary || {};
+
+  if (asset) {
+    const location = formatOperationalLocation(asset);
+    const lastSeen = asset.last_seen_at
+      ? `last seen ${formatReadableDate(asset.last_seen_at)}`
+      : "last seen time is not available";
+    lines.push(
+      `- ${label} is enabled for Nava intelligence${location ? ` and is ${location}` : ""}; ${lastSeen}.`
+    );
+    if (asset.assigned_driver?.driver_name) {
+      lines.push(`- Assigned driver: ${asset.assigned_driver.driver_name}.`);
+    }
+  }
+
+  if (telemetry.telemetry_points > 0) {
+    lines.push(
+      `- In the last ${telemetry.window_days || 7} days I found ${telemetry.telemetry_points} telemetry point(s), with ${telemetry.stationary_points || 0} stationary/near-idle point(s).`
+    );
+  } else {
+    lines.push("- I do not see recent telemetry points for this vehicle.");
+  }
+
+  const fuelTelemetry = fuel.telemetry || {};
+  if (focus?.fuel_focus || fuelTelemetry.fuel_readings > 0 || fuel.manual_entries?.length) {
+    lines.push(`- ${formatFuelTelemetryExplanation(fuelTelemetry).text}`);
+    if (fuel.manual_entries?.length) {
+      lines.push(
+        `- Manual fuel entries found: ${fuel.manual_entries.length}. Latest: ${formatFuelLogLine(fuel.manual_entries[0]).replace(/^- /, "")}`
+      );
+    } else {
+      lines.push("- I do not see recent manual fuel entries for this vehicle.");
+    }
+  }
+
+  if (events.stop_like_events?.length) {
+    lines.push(
+      `- Stop/idle events found: ${events.stop_like_events.length}. Latest: ${formatEventBrief(events.stop_like_events[0])}.`
+    );
+  }
+  if (events.fuel_events?.length) {
+    lines.push(
+      `- Fuel-related alert events found: ${events.fuel_events.length}. Latest: ${formatEventBrief(events.fuel_events[0])}.`
+    );
+  }
+  if (events.context_labels?.length) {
+    lines.push(`- Existing alert context labels: ${events.context_labels.join(", ")}.`);
+  }
+
+  if (journeys.recent_journeys?.length) {
+    lines.push(`- Recent journey context: ${formatJourneyBrief(journeys.recent_journeys[0]).replace(/^- /, "")}`);
+  } else {
+    lines.push("- I do not see a recent journey record for this vehicle.");
+  }
+
+  if (focus?.repair_focus || spares.recent_events?.length) {
+    if (spares.recent_events?.length) {
+      lines.push(`- Recent repair/spares events found: ${spares.recent_events.length}. Latest: ${formatSpareEventLine(spares.recent_events[0]).replace(/^- /, "")}`);
+    } else {
+      lines.push("- I do not see recent repair/spares history for this vehicle.");
+    }
+  }
+
+  if (financials.visible) {
+    lines.push(
+      `- Finance trail: ${financials.journey_count || 0} journey(s), ${formatMoney(financials.revenue_kes)} revenue, ${formatMoney(financials.fuel_cost_kes)} fuel, ${formatMoney(financials.expense_cost_kes)} expenses, estimated profit ${formatMoney(financials.estimated_profit_kes)}.`
+    );
+  } else if (focus?.profitability_focus) {
+    lines.push("- I am not exposing financial values for this role.");
+  }
+
+  return lines.length ? lines : ["- I found limited recent evidence for this vehicle."];
+}
+
+function formatInvestigationMeanings(caseFile: any, focus: any) {
+  const lines: string[] = [];
+  const fuel = caseFile.fuel_summary || {};
+  const events = caseFile.events_alerts_summary || {};
+  const spares = caseFile.spares_repair_summary || {};
+  const financials = caseFile.financial_summary || {};
+  const dataQuality = caseFile.data_quality_summary || {};
+  const fuelTelemetry = fuel.telemetry || {};
+
+  if (focus?.fuel_focus) {
+    if (fuelTelemetry.fuel_telemetry_usable) {
+      lines.push("- Fuel-level data is usable, so repeated drops or mismatches would be worth investigating against stops and receipts.");
+    } else {
+      lines.push("- Fuel telemetry is weak here, so any fuel concern needs receipts, tank dips, stops, and journey distance to support it.");
+      if (dataQuality.flags?.includes("all_zero_or_unusable_fuel_sensor_fields")) {
+        lines.push("- The all-zero/unknown fuel fields may be a provider mapping, calibration, or sensor issue.");
+      }
+    }
+  }
+
+  if (events.stop_like_events?.length) {
+    lines.push("- Repeated stops/idle events may point to normal queues, dispatch holds, roadside delays, or behavior that needs supervisor review.");
+  }
+
+  if (focus?.profitability_focus && financials.visible) {
+    if (Number(financials.estimated_profit_kes || 0) < 0) {
+      lines.push("- The visible finance trail suggests this vehicle is loss-making in the sampled records.");
+    } else if (financials.journey_count > 0) {
+      lines.push("- The sampled finance trail does not by itself prove this vehicle is too expensive, but it gives a baseline for comparison.");
+    }
+  }
+
+  if (focus?.repair_focus) {
+    if (spares.recent_events?.length) {
+      lines.push("- Recent repair/spares events can explain downtime or repeat issues, but lifespan needs install/removal or replacement history.");
+    } else {
+      lines.push("- I do not have enough repair history to say a repair failed.");
+    }
+  }
+
+  if (!lines.length) {
+    lines.push("- I see operational clues, but not enough evidence for a single confident cause yet.");
+  }
+
+  return lines;
+}
+
+function formatInvestigationLimits(caseFile: any, focus: any) {
+  const lines: string[] = [];
+  const dataQuality = caseFile.data_quality_summary || {};
+
+  for (const note of dataQuality.notes || []) {
+    lines.push(`- ${note}`);
+  }
+
+  if (focus?.fuel_focus) {
+    lines.push("- I will not call this siphoning without usable fuel readings, tank dips, receipts, or clear fuel-drop events.");
+  }
+  if (focus?.repair_focus) {
+    lines.push("- I will not claim repair lifespan or mechanic/vendor quality without enough install/removal/replacement history.");
+  }
+  if (focus?.profitability_focus && !caseFile.financial_summary?.visible) {
+    lines.push("- Financial values are hidden for this role.");
+  }
+
+  return lines.length ? lines : ["- I cannot prove the root cause from the available data alone."];
+}
+
+function formatInvestigationNextChecks(caseFile: any, focus: any, label: string) {
+  const checks: string[] = [];
+
+  if (focus?.fuel_focus) {
+    checks.push("- Compare fuel receipts, tank dips, route distance, and expected consumption for this vehicle.");
+    checks.push("- Check stops around the latest idle/fuel-event times.");
+  }
+  if (focus?.stops_focus) {
+    checks.push("- Review the latest stop/idle locations and whether they match yards, queues, borders, ports, or client sites.");
+  }
+  if (focus?.profitability_focus) {
+    checks.push("- Compare this vehicle against similar routes and clients before deciding it is expensive.");
+  }
+  if (focus?.repair_focus) {
+    checks.push("- Check whether the same part was repaired, removed, or replaced again after the last repair.");
+  }
+  if (!checks.length) {
+    checks.push(`- Review recent events, journeys, fuel entries, and repairs for ${label}.`);
+  }
+
+  return checks;
+}
+
+function formatInvestigationFollowUps(focus: any, label: string) {
+  if (focus?.fuel_focus) {
+    return `I can next check stops around the suspicious times, show enabled trucks with usable fuel data, or compare ${label} against similar trips.`;
+  }
+  if (focus?.stops_focus) {
+    return `I can next group the stop locations for ${label}, or compare this vehicle's idle pattern against the rest of the fleet.`;
+  }
+  if (focus?.profitability_focus) {
+    return `I can next compare ${label} against similar routes, clients, or fuel/expense patterns.`;
+  }
+  if (focus?.repair_focus) {
+    return `I can next list the repair/spares timeline for ${label}, or look for repeat parts and mechanics.`;
+  }
+  return `I can next narrow this by stops, fuel, journeys, repairs, or profitability for ${label}.`;
 }
 
 function formatFuelTelemetryExplanation(telemetry: any) {
