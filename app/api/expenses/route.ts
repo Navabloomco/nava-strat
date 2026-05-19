@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 import { supabase } from "../../../lib/supabase";
 import { supabaseAdmin } from "../../../lib/supabaseAdmin";
+import {
+  canEditExpenses,
+  canViewExpenses,
+  normalizeRole,
+  rolesForCompany,
+} from "../../../lib/api/roleAccess";
 
 export const dynamic = "force-dynamic";
 
@@ -11,8 +17,18 @@ type ResolvedCompany = {
 };
 
 type ResolveCompanyResult =
-  | { company: ResolvedCompany; isPlatformOwner: boolean; error?: never }
-  | { error: NextResponse; company?: never; isPlatformOwner?: never };
+  | {
+      company: ResolvedCompany;
+      isPlatformOwner: boolean;
+      roles: string[];
+      error?: never;
+    }
+  | {
+      error: NextResponse;
+      company?: never;
+      isPlatformOwner?: never;
+      roles?: never;
+    };
 
 async function resolveCompany(
   req: Request,
@@ -43,16 +59,17 @@ async function resolveCompany(
 
   const activeMemberships = memberships || [];
   const isPlatformOwner = activeMemberships.some(
-    (membership) => membership.role === "platform_owner"
+    (membership) => normalizeRole(membership.role) === "platform_owner"
   );
+  const normalizedRequestedCompanyId = requestedCompanyId?.trim() || null;
 
   if (isPlatformOwner) {
     const companyQuery = supabaseAdmin
       .from("companies")
       .select("id, name, slug");
 
-    const { data: company, error: companyError } = requestedCompanyId
-      ? await companyQuery.eq("id", requestedCompanyId).maybeSingle()
+    const { data: company, error: companyError } = normalizedRequestedCompanyId
+      ? await companyQuery.eq("id", normalizedRequestedCompanyId).maybeSingle()
       : await companyQuery.order("name", { ascending: true }).limit(1).maybeSingle();
 
     if (companyError) throw companyError;
@@ -65,14 +82,21 @@ async function resolveCompany(
       };
     }
 
-    return { company: company as ResolvedCompany, isPlatformOwner };
+    return {
+      company: company as ResolvedCompany,
+      isPlatformOwner,
+      roles: rolesForCompany(activeMemberships, company.id, true),
+    };
   }
 
-  const companyId = activeMemberships
-    .map((membership) => membership.company_id)
-    .filter(Boolean)[0];
+  const companyId =
+    normalizedRequestedCompanyId ||
+    activeMemberships.map((membership) => membership.company_id).filter(Boolean)[0];
 
-  if (!companyId) {
+  if (
+    !companyId ||
+    !activeMemberships.some((membership) => membership.company_id === companyId)
+  ) {
     return {
       error: NextResponse.json(
         { success: false, error: "Unable to resolve company access" },
@@ -97,7 +121,11 @@ async function resolveCompany(
     };
   }
 
-  return { company: company as ResolvedCompany, isPlatformOwner };
+  return {
+    company: company as ResolvedCompany,
+    isPlatformOwner,
+    roles: rolesForCompany(activeMemberships, company.id),
+  };
 }
 
 export async function GET(req: Request) {
@@ -105,6 +133,12 @@ export async function GET(req: Request) {
     const { searchParams } = new URL(req.url);
     const resolved = await resolveCompany(req, searchParams.get("companyId"));
     if (resolved.error) return resolved.error;
+    if (!canViewExpenses(resolved.roles)) {
+      return NextResponse.json(
+        { success: false, error: "Expense access required" },
+        { status: 403 }
+      );
+    }
 
     const [journeysResult, expensesResult] = await Promise.all([
       supabaseAdmin
@@ -146,6 +180,12 @@ export async function POST(req: Request) {
     const body = await req.json();
     const resolved = await resolveCompany(req, body.companyId || null);
     if (resolved.error) return resolved.error;
+    if (!canEditExpenses(resolved.roles)) {
+      return NextResponse.json(
+        { success: false, error: "Expense edit access required" },
+        { status: 403 }
+      );
+    }
 
     const journeyId = body.journey_id || null;
     if (journeyId) {

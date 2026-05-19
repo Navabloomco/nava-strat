@@ -1,6 +1,13 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "../../../lib/supabaseAdmin";
 import { supabase } from "../../../lib/supabase";
+import {
+  canEditJourneys,
+  canViewFinance,
+  canViewJourneys,
+  normalizeRole,
+  rolesForCompany,
+} from "../../../lib/api/roleAccess";
 
 export const dynamic = "force-dynamic";
 
@@ -34,16 +41,17 @@ async function resolveCompany(userId: string, requestedCompanyId?: string | null
 
   const activeMemberships = memberships || [];
   const isPlatformOwner = activeMemberships.some(
-    (membership) => membership.role === "platform_owner"
+    (membership) => normalizeRole(membership.role) === "platform_owner"
   );
+  const normalizedRequestedCompanyId = requestedCompanyId?.trim() || null;
 
   if (isPlatformOwner) {
     let companyQuery = supabaseAdmin
       .from("companies")
       .select("id, name, slug");
 
-    if (requestedCompanyId) {
-      companyQuery = companyQuery.eq("id", requestedCompanyId);
+    if (normalizedRequestedCompanyId) {
+      companyQuery = companyQuery.eq("id", normalizedRequestedCompanyId);
     } else {
       companyQuery = companyQuery.order("name", { ascending: true }).limit(1);
     }
@@ -52,15 +60,22 @@ async function resolveCompany(userId: string, requestedCompanyId?: string | null
       await companyQuery.maybeSingle();
 
     if (companyError) throw companyError;
-    return { company, isPlatformOwner };
+    return {
+      company,
+      isPlatformOwner,
+      roles: company ? rolesForCompany(activeMemberships, company.id, true) : [],
+    };
   }
 
-  const companyId = activeMemberships
-    .map((membership) => membership.company_id)
-    .filter(Boolean)[0];
+  const companyId =
+    normalizedRequestedCompanyId ||
+    activeMemberships.map((membership) => membership.company_id).filter(Boolean)[0];
 
-  if (!companyId) {
-    return { company: null, isPlatformOwner };
+  if (
+    !companyId ||
+    !activeMemberships.some((membership) => membership.company_id === companyId)
+  ) {
+    return { company: null, isPlatformOwner, roles: [] };
   }
 
   const { data: company, error: companyError } = await supabaseAdmin
@@ -70,7 +85,11 @@ async function resolveCompany(userId: string, requestedCompanyId?: string | null
     .maybeSingle();
 
   if (companyError) throw companyError;
-  return { company, isPlatformOwner };
+  return {
+    company,
+    isPlatformOwner,
+    roles: company ? rolesForCompany(activeMemberships, company.id) : [],
+  };
 }
 
 export async function GET(req: Request) {
@@ -82,7 +101,8 @@ export async function GET(req: Request) {
 
     const { searchParams } = new URL(req.url);
     const requestedCompanyId = searchParams.get("companyId");
-    const { company } = await resolveCompany(user.id, requestedCompanyId);
+    const resolved = await resolveCompany(user.id, requestedCompanyId);
+    const { company } = resolved;
 
     if (!company) {
       return NextResponse.json(
@@ -90,10 +110,20 @@ export async function GET(req: Request) {
         { status: 403 }
       );
     }
+    if (!canViewJourneys(resolved.roles)) {
+      return NextResponse.json(
+        { success: false, error: "Journey access required" },
+        { status: 403 }
+      );
+    }
+
+    const journeySelect = canViewFinance(resolved.roles)
+      ? "*"
+      : "id, internal_trip_id, client_name, truck, driver, from_location, to_location, expected_fuel_liters, status, created_at, updated_at";
 
     const { data: journeys, error: journeysError } = await supabaseAdmin
       .from("journeys")
-      .select("*")
+      .select(journeySelect)
       .eq("company_id", company.id)
       .eq("is_demo", false)
       .order("created_at", { ascending: false });
@@ -122,11 +152,18 @@ export async function POST(req: Request) {
     }
 
     const body = await req.json();
-    const { company } = await resolveCompany(user.id, body.companyId || null);
+    const resolved = await resolveCompany(user.id, body.companyId || null);
+    const { company } = resolved;
 
     if (!company) {
       return NextResponse.json(
         { success: false, error: "Company not found or access denied" },
+        { status: 403 }
+      );
+    }
+    if (!canEditJourneys(resolved.roles)) {
+      return NextResponse.json(
+        { success: false, error: "Journey edit access required" },
         { status: 403 }
       );
     }

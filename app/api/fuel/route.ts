@@ -1,6 +1,13 @@
 import { NextResponse } from "next/server";
 import { supabase } from "../../../lib/supabase";
 import { supabaseAdmin } from "../../../lib/supabaseAdmin";
+import {
+  canEditFuel,
+  canViewFinance,
+  canViewFuel,
+  normalizeRole,
+  rolesForCompany,
+} from "../../../lib/api/roleAccess";
 
 export const dynamic = "force-dynamic";
 
@@ -11,8 +18,18 @@ type ResolvedCompany = {
 };
 
 type ResolveCompanyResult =
-  | { company: ResolvedCompany; isPlatformOwner: boolean; error?: never }
-  | { error: NextResponse; company?: never; isPlatformOwner?: never };
+  | {
+      company: ResolvedCompany;
+      isPlatformOwner: boolean;
+      roles: string[];
+      error?: never;
+    }
+  | {
+      error: NextResponse;
+      company?: never;
+      isPlatformOwner?: never;
+      roles?: never;
+    };
 
 async function resolveCompany(
   req: Request,
@@ -43,16 +60,17 @@ async function resolveCompany(
 
   const activeMemberships = memberships || [];
   const isPlatformOwner = activeMemberships.some(
-    (membership) => membership.role === "platform_owner"
+    (membership) => normalizeRole(membership.role) === "platform_owner"
   );
+  const normalizedRequestedCompanyId = requestedCompanyId?.trim() || null;
 
   if (isPlatformOwner) {
     const companyQuery = supabaseAdmin
       .from("companies")
       .select("id, name, slug");
 
-    const { data: company, error: companyError } = requestedCompanyId
-      ? await companyQuery.eq("id", requestedCompanyId).maybeSingle()
+    const { data: company, error: companyError } = normalizedRequestedCompanyId
+      ? await companyQuery.eq("id", normalizedRequestedCompanyId).maybeSingle()
       : await companyQuery.order("name", { ascending: true }).limit(1).maybeSingle();
 
     if (companyError) throw companyError;
@@ -65,14 +83,21 @@ async function resolveCompany(
       };
     }
 
-    return { company: company as ResolvedCompany, isPlatformOwner };
+    return {
+      company: company as ResolvedCompany,
+      isPlatformOwner,
+      roles: rolesForCompany(activeMemberships, company.id, true),
+    };
   }
 
-  const companyId = activeMemberships
-    .map((membership) => membership.company_id)
-    .filter(Boolean)[0];
+  const companyId =
+    normalizedRequestedCompanyId ||
+    activeMemberships.map((membership) => membership.company_id).filter(Boolean)[0];
 
-  if (!companyId) {
+  if (
+    !companyId ||
+    !activeMemberships.some((membership) => membership.company_id === companyId)
+  ) {
     return {
       error: NextResponse.json(
         { success: false, error: "Unable to resolve company access" },
@@ -97,7 +122,11 @@ async function resolveCompany(
     };
   }
 
-  return { company: company as ResolvedCompany, isPlatformOwner };
+  return {
+    company: company as ResolvedCompany,
+    isPlatformOwner,
+    roles: rolesForCompany(activeMemberships, company.id),
+  };
 }
 
 async function updateFuelProfile(
@@ -184,6 +213,16 @@ export async function GET(req: Request) {
     const { searchParams } = new URL(req.url);
     const resolved = await resolveCompany(req, searchParams.get("companyId"));
     if (resolved.error) return resolved.error;
+    if (!canViewFuel(resolved.roles)) {
+      return NextResponse.json(
+        { success: false, error: "Fuel access required" },
+        { status: 403 }
+      );
+    }
+
+    const journeySelect = canViewFinance(resolved.roles)
+      ? "*"
+      : "id, internal_trip_id, client_name, truck, driver, from_location, to_location, expected_fuel_liters, status, created_at, updated_at";
 
     const [fuelResult, journeysResult, providersResult] = await Promise.all([
       supabaseAdmin
@@ -193,7 +232,7 @@ export async function GET(req: Request) {
         .order("created_at", { ascending: false }),
       supabaseAdmin
         .from("journeys")
-        .select("*")
+        .select(journeySelect)
         .eq("company_id", resolved.company.id)
         .eq("is_demo", false)
         .order("created_at", { ascending: false }),
@@ -231,6 +270,12 @@ export async function POST(req: Request) {
     const body = await req.json();
     const resolved = await resolveCompany(req, body.companyId || null);
     if (resolved.error) return resolved.error;
+    if (!canEditFuel(resolved.roles)) {
+      return NextResponse.json(
+        { success: false, error: "Fuel edit access required" },
+        { status: 403 }
+      );
+    }
 
     const cleanTruck =
       typeof body.truck_text === "string"
