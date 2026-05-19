@@ -851,12 +851,14 @@ async function fetchFuelSuspicionInvestigation(
     recentFuelLogs,
     recentJourneys,
     latestFuelScore,
+    fleetFuelAvailability,
   ] = await Promise.all([
     fetchTruckEvents(companyId, truckId, geofences, assignmentLookup),
     fetchFuelTelemetrySummary(companyId, truckId),
     fetchRecentFuelLogs(companyId, truckId, truck),
     fetchRecentTruckJourneys(companyId, truckId, truck),
     fetchLatestFuelRiskScore(companyId, truckId),
+    fetchFleetFuelDataAvailability(companyId, truckId),
   ]);
 
   const fuelRelatedEvents = recentEvents.filter((event: any) =>
@@ -870,6 +872,7 @@ async function fetchFuelSuspicionInvestigation(
     truck,
     latest_fuel_score: latestFuelScore,
     telemetry_summary: telemetrySummary,
+    fleet_fuel_data_availability: fleetFuelAvailability,
     recent_fuel_logs: recentFuelLogs,
     recent_journeys: recentJourneys,
     fuel_related_events: fuelRelatedEvents.slice(0, 8),
@@ -894,31 +897,118 @@ async function fetchFuelTelemetrySummary(companyId: string, truckId: string) {
       Number.isFinite(Number(point.fuel_level))
     );
     const fuelValues = fuelReadings.map((point: any) => Number(point.fuel_level));
-    const latestFuel = fuelReadings[0] || null;
+    const usableFuelReadings = fuelReadings.filter((point: any) =>
+      isUsableFuelValue(point.fuel_level)
+    );
+    const usableFuelValues = usableFuelReadings.map((point: any) =>
+      Number(point.fuel_level)
+    );
+    const latestFuel = usableFuelReadings[0] || fuelReadings[0] || null;
+    const fuelTelemetryUsable = usableFuelReadings.length > 0;
+    const fuelTelemetryReason = fuelTelemetryUsable
+      ? "usable_recent_readings"
+      : fuelReadings.length > 0
+        ? "fuel_fields_all_zero_or_unknown"
+        : telemetry.length > 0
+          ? "no_numeric_fuel_values"
+          : "no_recent_telemetry";
 
     return {
       telemetry_points: telemetry.length,
       fuel_readings: fuelReadings.length,
+      usable_fuel_readings: usableFuelReadings.length,
       latest_fuel_level: latestFuel ? Number(latestFuel.fuel_level) : null,
       latest_fuel_unit: latestFuel?.fuel_unit || null,
       latest_fuel_at: latestFuel?.recorded_at || null,
       min_fuel_level: fuelValues.length ? Math.min(...fuelValues) : null,
       max_fuel_level: fuelValues.length ? Math.max(...fuelValues) : null,
+      min_usable_fuel_level: usableFuelValues.length
+        ? Math.min(...usableFuelValues)
+        : null,
+      max_usable_fuel_level: usableFuelValues.length
+        ? Math.max(...usableFuelValues)
+        : null,
       fuel_telemetry_available: fuelReadings.length > 0,
+      fuel_telemetry_usable: fuelTelemetryUsable,
+      fuel_telemetry_reason: fuelTelemetryReason,
     };
   } catch (err: any) {
     return {
       telemetry_points: 0,
       fuel_readings: 0,
+      usable_fuel_readings: 0,
       latest_fuel_level: null,
       latest_fuel_unit: null,
       latest_fuel_at: null,
       min_fuel_level: null,
       max_fuel_level: null,
+      min_usable_fuel_level: null,
+      max_usable_fuel_level: null,
       fuel_telemetry_available: false,
+      fuel_telemetry_usable: false,
+      fuel_telemetry_reason: "fuel_telemetry_unavailable",
       error: err.message || "Fuel telemetry summary unavailable",
     };
   }
+}
+
+async function fetchFleetFuelDataAvailability(companyId: string, excludedTruckId: string) {
+  const enabledTruckIds = await fetchEnabledTruckIds(companyId);
+  const excludedKey = normalizeTruckKey(excludedTruckId);
+  const otherTruckIds = enabledTruckIds.filter(
+    (truckId) => normalizeTruckKey(truckId) !== excludedKey
+  );
+
+  if (otherTruckIds.length === 0) {
+    return {
+      other_enabled_assets_checked: 0,
+      other_vehicles_with_usable_fuel_telemetry: 0,
+      other_vehicles_with_recent_fuel_scores: 0,
+      other_usable_fuel_data_available: false,
+    };
+  }
+
+  const [telemetryResult, scoreResult] = await Promise.all([
+    supabaseAdmin
+      .from("telemetry_logs")
+      .select("truck_id, fuel_level, recorded_at")
+      .eq("company_id", companyId)
+      .in("truck_id", otherTruckIds)
+      .order("recorded_at", { ascending: false })
+      .limit(1000),
+    supabaseAdmin
+      .from("fuel_risk_scores")
+      .select("truck_id, risk_score, created_at")
+      .eq("company_id", companyId)
+      .in("truck_id", otherTruckIds)
+      .order("created_at", { ascending: false })
+      .limit(200),
+  ]);
+
+  const trucksWithUsableTelemetry = new Set<string>();
+  for (const point of telemetryResult.data || []) {
+    if (isUsableFuelValue(point.fuel_level) && point.truck_id) {
+      trucksWithUsableTelemetry.add(point.truck_id);
+    }
+  }
+
+  const trucksWithRecentScores = new Set(
+    (scoreResult.data || [])
+      .filter((score: any) => score.truck_id)
+      .map((score: any) => score.truck_id)
+  );
+
+  return {
+    other_enabled_assets_checked: otherTruckIds.length,
+    other_vehicles_with_usable_fuel_telemetry: trucksWithUsableTelemetry.size,
+    other_vehicles_with_recent_fuel_scores: trucksWithRecentScores.size,
+    other_usable_fuel_data_available:
+      trucksWithUsableTelemetry.size > 0 || trucksWithRecentScores.size > 0,
+  };
+}
+
+function isUsableFuelValue(value: any) {
+  return Number.isFinite(Number(value)) && Number(value) > 0;
 }
 
 async function fetchRecentFuelLogs(companyId: string, truckId: string, truck: any) {

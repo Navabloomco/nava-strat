@@ -604,11 +604,11 @@ function buildVehicleCandidateAnswer(vehicleMatch: any) {
   const candidates = vehicleMatch?.candidates || [];
   const input = vehicleMatch?.input || "that vehicle";
   const parts = [
-    `Did you mean one of these for ${input}?`,
+    `I found a few possible matches for ${input}. Which one do you mean?`,
     "",
     ...candidates.map(formatVehicleCandidateLine),
     "",
-    "Reply with the exact registration or truck ID and I will investigate that vehicle.",
+    "Reply with the exact registration or truck ID and I will continue from there.",
   ];
 
   return parts.join("\n");
@@ -629,6 +629,7 @@ function buildFuelSuspicionFallbackAnswer(context: any) {
   const investigation = context.fuel_investigation || {};
   const truck = investigation.truck || context.truck || null;
   const telemetry = investigation.telemetry_summary || null;
+  const fleetFuelAvailability = investigation.fleet_fuel_data_availability || null;
   const fuelLogs = investigation.recent_fuel_logs || [];
   const fuelEvents = investigation.fuel_related_events || [];
   const idleEvents = investigation.idle_stop_events || [];
@@ -653,90 +654,77 @@ function buildFuelSuspicionFallbackAnswer(context: any) {
     context.detected_truck_id ||
     "the vehicle";
 
-  if (vehicleMatch?.input && normalizeDisplayKey(vehicleMatch.input) !== normalizeDisplayKey(matchedLabel)) {
-    parts.push(`I matched ${vehicleMatch.input} to ${matchedLabel}.`);
-  } else {
-    parts.push(`I found ${matchedLabel}.`);
-  }
-
-  parts.push("I cannot confirm siphoning from the available data.");
+  parts.push(formatVehicleMatchIntro(vehicleMatch, matchedLabel));
+  parts.push("I can't confirm siphoning yet, but here's the useful trail.");
   parts.push("");
-  parts.push("Here is what I found.");
 
   if (truck) {
     const location = formatOperationalLocation(truck);
-    const status = truck.status ? `Status: ${truck.status}.` : null;
+    const status = truck.status ? `${matchedLabel} is currently ${truck.status}` : `I found ${matchedLabel} in the enabled fleet`;
     const lastSeen = truck.last_seen_at
-      ? `Last seen: ${formatReadableDate(truck.last_seen_at)}.`
-      : "Last seen: not available.";
-    parts.push("");
-    parts.push("Vehicle context");
-    parts.push([status, location ? `Location: ${location}.` : null, lastSeen].filter(Boolean).join(" "));
+      ? `last seen ${formatReadableDate(truck.last_seen_at)}`
+      : "last seen time is not available";
+    const locationText = location ? ` ${location}` : "";
+    parts.push(`${status}${locationText}; ${lastSeen}.`);
     if (truck.assigned_driver?.driver_name) {
       parts.push(`Assigned driver: ${truck.assigned_driver.driver_name}.`);
     }
   }
 
-  parts.push("");
-  parts.push("Fuel telemetry");
-  if (telemetry?.fuel_telemetry_available) {
-    parts.push(
-      `${telemetry.fuel_readings} fuel reading(s) found from ${telemetry.telemetry_points} recent telemetry point(s). Latest: ${formatFuelLevel(
-        telemetry.latest_fuel_level,
-        telemetry.latest_fuel_unit
-      )} at ${formatReadableDate(telemetry.latest_fuel_at)}. Range: ${formatFuelLevel(
-        telemetry.min_fuel_level,
-        telemetry.latest_fuel_unit
-      )} to ${formatFuelLevel(telemetry.max_fuel_level, telemetry.latest_fuel_unit)}.`
-    );
-  } else if (telemetry) {
-    parts.push(
-      `No usable fuel-level telemetry was found in the recent telemetry sample. ${telemetry.telemetry_points || 0} telemetry point(s) were available.`
-    );
-  } else {
-    parts.push("Fuel telemetry was not available for this investigation.");
+  const telemetryExplanation = formatFuelTelemetryExplanation(telemetry);
+  parts.push(telemetryExplanation.text);
+  if (!telemetryExplanation.usable) {
+    parts.push("That means I should rely more on stops, locations, driver assignment, journeys, and manual fuel entries for now.");
+    parts.push(formatFleetFuelAvailability(fleetFuelAvailability));
   }
 
   if (risk) {
-    parts.push("");
-    parts.push("Fuel risk check");
-    parts.push(formatFuelRiskSummary(risk));
+    const riskNarrative = formatFuelRiskNarrative(risk);
+    if (riskNarrative) parts.push(riskNarrative);
   }
 
   parts.push("");
-  parts.push("Recent fuel entries");
   if (fuelLogs.length) {
-    parts.push(...fuelLogs.slice(0, 5).map(formatFuelLogLine));
+    parts.push(`I found ${fuelLogs.length} recent manual fuel entr${fuelLogs.length === 1 ? "y" : "ies"} for this vehicle:`);
+    parts.push(...fuelLogs.slice(0, 4).map(formatFuelLogLine));
   } else {
-    parts.push("No recent manual fuel entries were found for this vehicle.");
+    parts.push("I do not see recent manual fuel entries for this vehicle.");
   }
 
-  parts.push("");
-  parts.push("Recent stops and alerts");
   if (fuelEvents.length || idleEvents.length) {
     if (fuelEvents.length) {
-      parts.push(`Fuel-related event(s): ${fuelEvents.slice(0, 3).map(formatEventBrief).join("; ")}.`);
+      parts.push(
+        `There is fuel-event evidence to investigate: ${fuelEvents
+          .slice(0, 3)
+          .map(formatEventBrief)
+          .join("; ")}. That is not proof of siphoning, but it is worth checking.`
+      );
     }
     if (idleEvents.length) {
-      parts.push(`Idle/stop-like event(s): ${idleEvents.slice(0, 3).map(formatEventBrief).join("; ")}.`);
+      parts.push(
+        `I also found recent idle/stop activity: ${idleEvents
+          .slice(0, 3)
+          .map(formatEventBrief)
+          .join("; ")}.`
+      );
     }
   } else {
-    parts.push("No recent fuel-drop or excessive-idle events were found for this vehicle.");
+    parts.push("I did not find recent fuel-drop or excessive-idle events for this vehicle.");
   }
 
-  parts.push("");
-  parts.push("Journey context");
   if (journeys.length) {
+    parts.push("Recent journey context I can use:");
     parts.push(...journeys.slice(0, 3).map(formatJourneyBrief));
   } else {
-    parts.push("No recent journey record was found for this vehicle.");
+    parts.push("I do not see a recent journey record for this vehicle.");
   }
 
   parts.push("");
-  parts.push("What to verify next");
-  parts.push("- Compare recent fuel purchases with tank dips, route distance, and expected consumption.");
-  parts.push("- Check repeated small discrepancies; they may not trigger a major drop alert unless fuel-level telemetry is granular.");
-  parts.push("- Review yard, fuel station, and stop records around the latest idle or fuel-entry times.");
+  parts.push(
+    "Small repeated losses may not show as a single major drop unless the truck has reliable fuel-level telemetry or you compare tank dips/receipts against expected consumption."
+  );
+  parts.push("");
+  parts.push("I can next check stops around the idle times, show which enabled trucks have usable fuel data, or compare this vehicle against similar trips once journeys and fuel entries are recorded.");
 
   return parts.join("\n");
 }
@@ -993,6 +981,16 @@ function normalizeDisplayKey(value: any) {
   return String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
 }
 
+function formatVehicleMatchIntro(vehicleMatch: any, matchedLabel: string) {
+  if (
+    vehicleMatch?.input &&
+    normalizeDisplayKey(vehicleMatch.input) !== normalizeDisplayKey(matchedLabel)
+  ) {
+    return `I matched ${vehicleMatch.input} to ${matchedLabel} - tell me if that is the wrong truck.`;
+  }
+  return `I found ${matchedLabel}.`;
+}
+
 function formatVehicleCandidateLine(candidate: any) {
   const label = [candidate.registration, candidate.truck_id]
     .filter(Boolean)
@@ -1006,23 +1004,94 @@ function formatVehicleCandidateLine(candidate: any) {
   return `- ${label || "Vehicle"} - ${status}, ${confidence} match`;
 }
 
+function formatFuelTelemetryExplanation(telemetry: any) {
+  if (!telemetry) {
+    return {
+      usable: false,
+      text: "I do not have fuel-level telemetry available for this investigation.",
+    };
+  }
+
+  if (telemetry.fuel_telemetry_usable) {
+    const latest = formatFuelLevel(
+      telemetry.latest_fuel_level,
+      telemetry.latest_fuel_unit
+    );
+    const min = formatFuelLevel(
+      telemetry.min_usable_fuel_level,
+      telemetry.latest_fuel_unit
+    );
+    const max = formatFuelLevel(
+      telemetry.max_usable_fuel_level,
+      telemetry.latest_fuel_unit
+    );
+    const latestTime = telemetry.latest_fuel_at
+      ? ` at ${formatReadableDate(telemetry.latest_fuel_at)}`
+      : "";
+
+    return {
+      usable: true,
+      text: `The fuel-level telemetry looks usable for this truck: latest ${latest}${latestTime}, with a recent range of ${min} to ${max}.`,
+    };
+  }
+
+  if (telemetry.fuel_readings > 0) {
+    return {
+      usable: false,
+      text:
+        "The provider is sending fuel fields, but they are not useful for this truck yet. The recent values are all 0/unknown, so I will not treat them as real tank readings.",
+    };
+  }
+
+  if (telemetry.telemetry_points > 0) {
+    return {
+      usable: false,
+      text:
+        "The truck has recent telemetry, but I do not see usable fuel-level readings in that feed.",
+    };
+  }
+
+  return {
+    usable: false,
+    text: "I do not see recent telemetry fuel-level data for this truck.",
+  };
+}
+
+function formatFleetFuelAvailability(availability: any) {
+  if (availability?.other_usable_fuel_data_available) {
+    return "Some other vehicles do appear to have usable fuel/fuel-risk data. I can list them if you want.";
+  }
+  return "I do not currently see usable fuel-level telemetry across the enabled fleet.";
+}
+
 function formatFuelLevel(value: any, unit: any) {
   if (value === null || value === undefined || !Number.isFinite(Number(value))) {
     return "not available";
   }
-  const suffix = unit ? ` ${unit}` : "";
+  const normalizedUnit = String(unit || "").trim().toLowerCase();
+  const suffix = normalizedUnit && normalizedUnit !== "unknown" ? ` ${unit}` : "";
   return `${Number(value).toLocaleString()}${suffix}`;
 }
 
-function formatFuelRiskSummary(risk: any) {
+function formatFuelRiskNarrative(risk: any) {
+  if (risk.not_enabled) return "";
+  if (risk.risk_level === "insufficient_data") {
+    return "The existing fuel-risk check also says there is not enough usable fuel telemetry for a reliable score.";
+  }
+
   const score =
     risk.risk_score === null || risk.risk_score === undefined
       ? "not available"
       : risk.risk_score;
   const level = risk.risk_level ? ` (${risk.risk_level})` : "";
-  const recommendation = risk.recommendation || risk.message || "";
+  const smallDrops = Number(risk.small_drop_count || 0);
+  const largeDrops = Number(risk.large_drop_count || 0);
 
-  return `Score: ${score}${level}. ${recommendation}`.trim();
+  if (smallDrops > 0 || largeDrops > 0) {
+    return `The existing fuel-risk check is ${score}${level}, with ${smallDrops} small drop(s) and ${largeDrops} large drop(s) in its analysis window. Treat that as an investigation cue, not a conclusion.`;
+  }
+
+  return `The existing fuel-risk check is ${score}${level}. I do not see fuel-drop evidence strong enough to call this confirmed.`;
 }
 
 function formatFuelLogLine(log: any) {
