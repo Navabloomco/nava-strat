@@ -5,38 +5,61 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { supabase } from "../../lib/supabase";
 
+const EMPTY_ROLES = {
+  hasCompanyAccess: false,
+  isOps: false,
+  isFinance: false,
+  isManagement: false,
+  isAdmin: false,
+  isPlatformOwner: false,
+};
+
 export default function Sidebar() {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  const [roles, setRoles] = useState({
-    hasCompanyAccess: false,
-    isOps: false,
-    isFinance: false,
-    isManagement: false,
-    isAdmin: false,
-    isPlatformOwner: false,
-  });
+  const [roles, setRoles] = useState(EMPTY_ROLES);
 
   function normalizeRole(role: any) {
     return String(role || "").trim().toLowerCase();
   }
 
+  function buildRolesFromCompaniesPayload(json: any) {
+    const activeRoles = new Set([
+      ...((json.roles || []).map(normalizeRole) as string[]),
+      ...((json.memberships || []).map((membership: any) =>
+        normalizeRole(membership.role)
+      ) as string[]),
+    ]);
+    const isPlatformOwner =
+      json.is_platform_owner === true || activeRoles.has("platform_owner");
+    const isAdminRole =
+      isPlatformOwner || activeRoles.has("owner") || activeRoles.has("admin");
+    const hasCompanyAccess =
+      isPlatformOwner ||
+      (json.companies || []).length > 0 ||
+      (json.memberships || []).length > 0;
+
+    return {
+      hasCompanyAccess,
+      isOps: isAdminRole || activeRoles.has("ops"),
+      isFinance: isAdminRole || activeRoles.has("finance"),
+      isManagement: isAdminRole || activeRoles.has("management"),
+      isAdmin: isAdminRole,
+      isPlatformOwner,
+    };
+  }
+
   useEffect(() => {
-    async function checkRoles() {
+    async function checkRoles(accessToken?: string) {
       const {
         data: { session },
-      } = await supabase.auth.getSession();
+      } = accessToken
+        ? { data: { session: { access_token: accessToken } } }
+        : await supabase.auth.getSession();
 
       if (!session?.access_token) {
-        setRoles({
-          hasCompanyAccess: false,
-          isOps: false,
-          isFinance: false,
-          isManagement: false,
-          isAdmin: false,
-          isPlatformOwner: false,
-        });
+        setRoles(EMPTY_ROLES);
         return;
       }
 
@@ -49,44 +72,28 @@ export default function Sidebar() {
       const json = await res.json();
 
       if (!res.ok || !json.success) {
-        setRoles({
-          hasCompanyAccess: false,
-          isOps: false,
-          isFinance: false,
-          isManagement: false,
-          isAdmin: false,
-          isPlatformOwner: false,
-        });
+        setRoles(EMPTY_ROLES);
         return;
       }
 
-      const activeRoles = new Set((json.roles || []).map(normalizeRole));
-      const isPlatformOwner =
-        json.is_platform_owner === true ||
-        activeRoles.has("platform_owner");
-      const isAdminRole =
-        isPlatformOwner || activeRoles.has("owner") || activeRoles.has("admin");
-
-      setRoles({
-        hasCompanyAccess: (json.companies || []).length > 0,
-        isOps: isAdminRole || activeRoles.has("ops"),
-        isFinance: isAdminRole || activeRoles.has("finance"),
-        isManagement: isAdminRole || activeRoles.has("management"),
-        isAdmin: isAdminRole,
-        isPlatformOwner,
-      });
+      setRoles(buildRolesFromCompaniesPayload(json));
     }
 
     checkRoles().catch(() => {
-      setRoles({
-        hasCompanyAccess: false,
-        isOps: false,
-        isFinance: false,
-        isManagement: false,
-        isAdmin: false,
-        isPlatformOwner: false,
+      setRoles(EMPTY_ROLES);
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      checkRoles(session?.access_token).catch(() => {
+        setRoles(EMPTY_ROLES);
       });
     });
+
+    return () => {
+      subscription.unsubscribe();
+    };
   }, []);
 
   const navItems = [
@@ -99,6 +106,41 @@ export default function Sidebar() {
       name: "Nava Eye",
       href: "/nava-eye",
       show: roles.hasCompanyAccess,
+    },
+    {
+      name: "Admin",
+      href: "/admin",
+      show: roles.isAdmin,
+    },
+    {
+      name: "Platform Health",
+      href: "/admin/health",
+      show: roles.isPlatformOwner,
+    },
+    {
+      name: "Provider Requests",
+      href: "/admin/provider-requests",
+      show: roles.isPlatformOwner,
+    },
+    {
+      name: "Provider Onboarding",
+      href: "/admin/providers",
+      show: roles.isAdmin,
+    },
+    {
+      name: "Asset Review",
+      href: "/admin/assets",
+      show: roles.isAdmin,
+    },
+    {
+      name: "Company Settings",
+      href: "/admin/company",
+      show: roles.isAdmin,
+    },
+    {
+      name: "Client Visibility",
+      href: "/admin/client-visibility",
+      show: roles.isAdmin,
     },
     {
       name: "Operations",
@@ -157,41 +199,6 @@ export default function Sidebar() {
       href: "/management/dashboard",
       show: roles.isManagement || roles.isAdmin,
     },
-    {
-      name: "Admin",
-      href: "/admin",
-      show: roles.isAdmin,
-    },
-    {
-      name: "Provider Onboarding",
-      href: "/admin/providers", // Corrected path to the Admin Vault
-      show: roles.isAdmin,
-    },
-    {
-      name: "Company Settings",
-      href: "/admin/company",
-      show: roles.isAdmin,
-    },
-    {
-      name: "Client Visibility",
-      href: "/admin/client-visibility",
-      show: roles.isAdmin,
-    },
-    {
-      name: "Asset Review",
-      href: "/admin/assets",
-      show: roles.isAdmin,
-    },
-    {
-      name: "Provider Requests",
-      href: "/admin/provider-requests",
-      show: roles.isPlatformOwner,
-    },
-    {
-      name: "Platform Health",
-      href: "/admin/health",
-      show: roles.isPlatformOwner,
-    },
   ];
   const visibleNavItems = navItems.filter((item) => item.show);
 
@@ -248,8 +255,8 @@ export default function Sidebar() {
         )}
       </div>
 
-      <aside className="fixed left-0 top-0 hidden h-screen w-[240px] border-r border-slate-800 bg-slate-950 px-4 py-5 text-slate-100 lg:block">
-        <div className="mb-7 rounded-lg border border-cyan-200/10 bg-white/[0.04] px-4 py-4">
+      <aside className="fixed left-0 top-0 hidden h-screen w-[240px] flex-col overflow-hidden border-r border-slate-800 bg-slate-950 px-4 py-5 text-slate-100 lg:flex">
+        <div className="mb-5 shrink-0 rounded-lg border border-cyan-200/10 bg-white/[0.04] px-4 py-4">
           <div className="text-lg font-semibold tracking-normal text-white">
             Nava Strat
           </div>
@@ -258,7 +265,7 @@ export default function Sidebar() {
           </div>
         </div>
 
-        <nav className="flex flex-col gap-1.5">
+        <nav className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto pr-1">
           {visibleNavItems.map((item) => {
             const active = pathname === item.href;
 
