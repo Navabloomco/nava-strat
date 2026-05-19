@@ -56,6 +56,8 @@ const SUPPORTED_TEMPLATE_MACROS = new Set([
   "username",
   "api_key",
   "password",
+  "provider_secret",
+  "api_secret",
   "bearer_token",
   "token",
   "now_iso",
@@ -71,6 +73,8 @@ const SUPPORTED_TEMPLATE_MACROS = new Set([
 const SUPPORTED_AUTH_PROFILE_TEMPLATE_MACROS = new Set([
   "username",
   "password",
+  "provider_secret",
+  "api_secret",
   "now_iso",
   "now_minus_1h_iso",
   "now_minus_24h_iso",
@@ -92,6 +96,8 @@ const SAFE_AUTH_PROFILE_NAME = /^[A-Za-z0-9_-]{1,64}$/;
 const BLOCKED_HEADER_TEMPLATE_MACROS = new Set([
   "api_key",
   "password",
+  "provider_secret",
+  "api_secret",
   "bearer_token",
   "token",
 ]);

@@ -111,6 +111,9 @@ function sanitizeSupplementalDiagnostics(diagnostics: any, includeAvailableKeys:
       auth_profile_metadata_available: Array.isArray(feed.auth_profile_metadata_available)
         ? feed.auth_profile_metadata_available.map((key: any) => String(key)).slice(0, 10)
         : [],
+      auth_profile_credential_macros_available: Array.isArray(feed.auth_profile_credential_macros_available)
+        ? feed.auth_profile_credential_macros_available.map((key: any) => String(key)).slice(0, 10)
+        : [],
       auth_profile_error: feed.auth_profile_error
         ? String(feed.auth_profile_error).slice(0, 240)
         : undefined,

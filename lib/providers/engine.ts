@@ -11,6 +11,8 @@ export type ProviderRecord = {
   default_fleet_url?: string | null;
   username: string | null;
   api_key: string | null;
+  provider_secret?: string | null;
+  api_secret?: string | null;
   password: string | null;
   bearer_token: string | null;
   auth_config?: any;
@@ -111,6 +113,7 @@ type SupplementalDiagnostics = {
     auth_profile_attempted?: boolean;
     auth_profile_token_captured?: boolean;
     auth_profile_metadata_available?: string[];
+    auth_profile_credential_macros_available?: string[];
     auth_profile_error?: string;
     error?: string;
   }>;
@@ -183,6 +186,8 @@ const SUPPORTED_TEMPLATE_MACROS = new Set([
   "username",
   "api_key",
   "password",
+  "provider_secret",
+  "api_secret",
   "bearer_token",
   "token",
   "now_iso",
@@ -747,6 +752,8 @@ async function resolveSupplementalAuthContext(
     feedDiagnostics.auth_profile_attempted = true;
     feedDiagnostics.auth_profile_token_captured = false;
     feedDiagnostics.auth_profile_metadata_available = [];
+    feedDiagnostics.auth_profile_credential_macros_available =
+      getAvailableCredentialMacroNames(provider);
   }
 
   const profile = getSupplementalAuthProfile(provider, profileName);
@@ -1017,6 +1024,9 @@ function createSupplementalDiagnostics(
       auth_profile_attempted: false,
       auth_profile_token_captured: feed.auth_profile ? false : undefined,
       auth_profile_metadata_available: [],
+      auth_profile_credential_macros_available: feed.auth_profile
+        ? []
+        : undefined,
     })),
   };
 }
@@ -1945,9 +1955,16 @@ function getTemplateMacroValue(
 ) {
   const { provider, token, authMetadata, fallbackAuthMetadata, now } = context;
 
-  if (macro === "username") return provider.username || "";
+  if (
+    macro === "username" ||
+    macro === "password" ||
+    macro === "provider_secret" ||
+    macro === "api_secret"
+  ) {
+    return getCredentialMacroValue(provider, macro);
+  }
+
   if (macro === "api_key") return provider.api_key || "";
-  if (macro === "password") return provider.password || "";
   if (macro === "bearer_token") return provider.bearer_token || "";
   if (macro === "token") return token || "";
 
@@ -1960,6 +1977,61 @@ function getTemplateMacroValue(
     macro === "analytics_user_id"
   ) {
     return getAuthMacroValue(macro, provider, authMetadata, fallbackAuthMetadata);
+  }
+
+  return "";
+}
+
+function getCredentialMacroValue(provider: ProviderRecord, macro: string) {
+  const anyProvider = provider as any;
+  const authConfig = provider.auth_config || {};
+
+  if (macro === "username") {
+    return firstNonEmptyValue([
+      provider.username,
+      authConfig.username,
+      authConfig.user_name,
+    ]);
+  }
+
+  if (macro === "password") {
+    return firstNonEmptyValue([
+      provider.password,
+      anyProvider.provider_secret,
+      authConfig.provider_secret,
+      authConfig.password,
+      provider.api_key,
+    ]);
+  }
+
+  if (macro === "provider_secret") {
+    return firstNonEmptyValue([
+      anyProvider.provider_secret,
+      authConfig.provider_secret,
+      provider.api_key,
+    ]);
+  }
+
+  if (macro === "api_secret") {
+    return firstNonEmptyValue([
+      anyProvider.api_secret,
+      authConfig.api_secret,
+    ]);
+  }
+
+  return "";
+}
+
+function getAvailableCredentialMacroNames(provider: ProviderRecord) {
+  return ["username", "password", "provider_secret", "api_secret"].filter(
+    (macro) => getCredentialMacroValue(provider, macro) !== ""
+  );
+}
+
+function firstNonEmptyValue(values: any[]) {
+  for (const value of values) {
+    const scalar = sanitizeMacroScalar(value);
+    if (scalar !== null) return scalar;
   }
 
   return "";

@@ -417,6 +417,14 @@ function ProviderEnrichmentDiagnostics({
                 />
               )}
 
+              {canShowAvailableKeys && feed.auth_profile_credential_macros_available?.length > 0 && (
+                <DiagnosticFieldBlock
+                  title="Credential macros available"
+                  value={feed.auth_profile_credential_macros_available}
+                  mutedEmpty="No credential macros available."
+                />
+              )}
+
               <DiagnosticFieldBlock
                 title="Rendered request"
                 value={[
