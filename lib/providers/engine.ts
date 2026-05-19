@@ -88,6 +88,12 @@ type SupplementalDiagnostics = {
     skipped_reason?: string;
     missing_macros?: string[];
     unknown_macros?: string[];
+    http_status?: number;
+    response_type?: string;
+    top_level_keys?: string[];
+    candidate_row_paths_checked?: string[];
+    first_array_paths_found?: Record<string, number>;
+    response_error_keys?: string[];
     error?: string;
   }>;
 };
@@ -101,6 +107,15 @@ type TemplateRenderResult<T = any> = {
 type SupplementalFetchResult = {
   feeds: SupplementalFeedRows[];
   diagnostics: SupplementalDiagnostics;
+};
+
+type SupplementalResponseDiagnostics = {
+  http_status: number;
+  response_type: "array" | "object" | "null" | "text" | "html" | "error";
+  top_level_keys: string[];
+  candidate_row_paths_checked: string[];
+  first_array_paths_found: Record<string, number>;
+  response_error_keys: string[];
 };
 
 const SUPPLEMENTAL_FIELDS = [
@@ -531,17 +546,22 @@ async function fetchSupplementalFeeds(
     diagnostics.supplemental_feeds_attempted++;
 
     try {
-      const rows = await fetchSupplementalFeed(
+      const feedResult = await fetchSupplementalFeed(
         provider,
         token,
         config,
         payloadResult.value,
         authMetadata
       );
+      const rows = feedResult.rows;
       feeds.push({ config, rows });
       diagnostics.supplemental_rows_found += rows.length;
 
       if (feedDiagnostics) {
+        applySupplementalResponseDiagnostics(
+          feedDiagnostics,
+          feedResult.responseDiagnostics
+        );
         feedDiagnostics.success = true;
         feedDiagnostics.rows_found = rows.length;
         feedDiagnostics.unmatched_supplemental_rows = rows.length;
@@ -556,6 +576,12 @@ async function fetchSupplementalFeeds(
       }
     } catch (err: any) {
       if (feedDiagnostics) {
+        if (err.responseDiagnostics) {
+          applySupplementalResponseDiagnostics(
+            feedDiagnostics,
+            err.responseDiagnostics
+          );
+        }
         feedDiagnostics.success = false;
         feedDiagnostics.error = err.message || "Supplemental feed failed";
       }
@@ -597,18 +623,32 @@ async function fetchSupplementalFeed(
     body: method === "GET" ? undefined : JSON.stringify(payload),
     cache: "no-store",
   });
-  const data = await safeJson(response);
-
-  if (!response.ok) {
-    throw new Error(`Supplemental feed ${config.name} returned HTTP ${response.status}`);
-  }
+  const { data, responseType } = await readSafeSupplementalResponse(response);
 
   const paths =
     Array.isArray(config.vehicle_paths) && config.vehicle_paths.length > 0
       ? config.vehicle_paths
       : defaultSupplementalVehiclePaths();
 
-  return getRowsByPaths(data, paths);
+  const responseDiagnostics = buildSupplementalResponseDiagnostics(
+    data,
+    response.status,
+    responseType,
+    paths
+  );
+
+  if (!response.ok) {
+    const error = new Error(
+      `Supplemental feed ${config.name} returned HTTP ${response.status}`
+    ) as any;
+    error.responseDiagnostics = responseDiagnostics;
+    throw error;
+  }
+
+  return {
+    rows: getRowsByPaths(data, paths),
+    responseDiagnostics,
+  };
 }
 
 function getSupplementalFeedConfigs(provider: ProviderRecord): SupplementalFeedConfig[] {
@@ -704,6 +744,159 @@ function createSupplementalDiagnostics(
       unmapped_available_keys: [],
     })),
   };
+}
+
+function applySupplementalResponseDiagnostics(
+  feedDiagnostics: SupplementalDiagnostics["feeds"][number],
+  responseDiagnostics: SupplementalResponseDiagnostics
+) {
+  feedDiagnostics.http_status = responseDiagnostics.http_status;
+  feedDiagnostics.response_type = responseDiagnostics.response_type;
+  feedDiagnostics.top_level_keys = responseDiagnostics.top_level_keys;
+  feedDiagnostics.candidate_row_paths_checked =
+    responseDiagnostics.candidate_row_paths_checked;
+  feedDiagnostics.first_array_paths_found =
+    responseDiagnostics.first_array_paths_found;
+  feedDiagnostics.response_error_keys =
+    responseDiagnostics.response_error_keys;
+}
+
+async function readSafeSupplementalResponse(response: Response): Promise<{
+  data: any;
+  responseType: SupplementalResponseDiagnostics["response_type"];
+}> {
+  let text = "";
+
+  try {
+    text = await response.text();
+  } catch {
+    return { data: null, responseType: "error" };
+  }
+
+  const trimmed = text.trim();
+  if (!trimmed) return { data: null, responseType: "null" };
+
+  const contentType = response.headers.get("content-type") || "";
+  const looksJson =
+    contentType.toLowerCase().includes("json") ||
+    trimmed.startsWith("{") ||
+    trimmed.startsWith("[") ||
+    trimmed === "null";
+
+  if (looksJson) {
+    try {
+      const data = JSON.parse(trimmed);
+      if (Array.isArray(data)) return { data, responseType: "array" };
+      if (data === null) return { data, responseType: "null" };
+      if (typeof data === "object") return { data, responseType: "object" };
+      return { data: null, responseType: "text" };
+    } catch {
+      return { data: null, responseType: "error" };
+    }
+  }
+
+  if (
+    contentType.toLowerCase().includes("html") ||
+    /<html[\s>]/i.test(trimmed) ||
+    /<!doctype html/i.test(trimmed)
+  ) {
+    return { data: null, responseType: "html" };
+  }
+
+  return { data: null, responseType: "text" };
+}
+
+function buildSupplementalResponseDiagnostics(
+  data: any,
+  httpStatus: number,
+  responseType: SupplementalResponseDiagnostics["response_type"],
+  candidatePaths: string[]
+): SupplementalResponseDiagnostics {
+  return {
+    http_status: httpStatus,
+    response_type: responseType,
+    top_level_keys: collectTopLevelKeys(data),
+    candidate_row_paths_checked: candidatePaths,
+    first_array_paths_found: collectArrayPathCounts(data),
+    response_error_keys: collectResponseErrorKeys(data),
+  };
+}
+
+function collectTopLevelKeys(data: any) {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return [];
+
+  return Object.keys(data)
+    .filter((key) => !isSensitiveProviderKey(normalizeProviderKey(key)))
+    .slice(0, MAX_UNMAPPED_AVAILABLE_KEYS);
+}
+
+function collectArrayPathCounts(data: any) {
+  const counts: Record<string, number> = {};
+
+  function walk(value: any, path: string, depth: number) {
+    if (Object.keys(counts).length >= MAX_UNMAPPED_AVAILABLE_KEYS || depth > 5) {
+      return;
+    }
+
+    if (Array.isArray(value)) {
+      counts[path || "$"] = value.length;
+
+      for (const item of value.slice(0, 3)) {
+        if (item && typeof item === "object") {
+          walk(item, path || "$", depth + 1);
+        }
+      }
+      return;
+    }
+
+    if (!value || typeof value !== "object") return;
+
+    for (const [key, nested] of Object.entries(value)) {
+      if (isSensitiveProviderKey(normalizeProviderKey(key))) continue;
+      const nextPath = path ? `${path}.${key}` : key;
+      walk(nested, nextPath, depth + 1);
+    }
+  }
+
+  walk(data, "", 0);
+  return counts;
+}
+
+function collectResponseErrorKeys(data: any) {
+  const keys = new Set<string>();
+  const interesting = new Set([
+    "error",
+    "errors",
+    "message",
+    "status",
+    "statuscode",
+    "code",
+    "errorcode",
+    "errormessage",
+  ]);
+
+  function walk(value: any, path: string, depth: number) {
+    if (!value || typeof value !== "object" || depth > 4 || keys.size >= 30) {
+      return;
+    }
+
+    if (Array.isArray(value)) {
+      for (const item of value.slice(0, 3)) walk(item, path, depth + 1);
+      return;
+    }
+
+    for (const [key, nested] of Object.entries(value)) {
+      const normalized = normalizeProviderKey(key);
+      if (isSensitiveProviderKey(normalized)) continue;
+
+      const nextPath = path ? `${path}.${key}` : key;
+      if (interesting.has(normalized)) keys.add(nextPath);
+      walk(nested, nextPath, depth + 1);
+    }
+  }
+
+  walk(data, "", 0);
+  return Array.from(keys);
 }
 
 function getConfiguredMappedFields(mapping: Record<string, string>) {

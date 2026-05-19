@@ -99,6 +99,20 @@ function sanitizeSupplementalDiagnostics(diagnostics: any, includeAvailableKeys:
       mapped_fields_merged: feed.mapped_fields_merged || {},
       mapped_fields_skipped: feed.mapped_fields_skipped || {},
       unmatched_supplemental_rows: Number(feed.unmatched_supplemental_rows || 0),
+      http_status: feed.http_status ? Number(feed.http_status) : undefined,
+      response_type: feed.response_type ? String(feed.response_type) : undefined,
+      candidate_row_paths_checked: includeAvailableKeys
+        ? (feed.candidate_row_paths_checked || []).map((path: any) => String(path)).slice(0, 50)
+        : [],
+      top_level_keys: includeAvailableKeys
+        ? (feed.top_level_keys || []).map((key: any) => String(key)).slice(0, 50)
+        : [],
+      first_array_paths_found: includeAvailableKeys
+        ? sanitizeCountMap(feed.first_array_paths_found)
+        : {},
+      response_error_keys: includeAvailableKeys
+        ? (feed.response_error_keys || []).map((key: any) => String(key)).slice(0, 50)
+        : [],
       skipped: Boolean(feed.skipped),
       skipped_reason: feed.skipped_reason
         ? String(feed.skipped_reason)
@@ -115,6 +129,16 @@ function sanitizeSupplementalDiagnostics(diagnostics: any, includeAvailableKeys:
       error: feed.error ? String(feed.error) : undefined,
     })),
   };
+}
+
+function sanitizeCountMap(value: any) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+
+  return Object.fromEntries(
+    Object.entries(value)
+      .slice(0, 50)
+      .map(([key, count]) => [String(key), Number(count || 0)])
+  );
 }
 
 async function resolveCompany(

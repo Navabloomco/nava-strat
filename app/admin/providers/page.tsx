@@ -393,6 +393,41 @@ function ProviderEnrichmentDiagnostics({
               )}
 
               <DiagnosticFieldBlock
+                title="Response shape"
+                value={[
+                  feed.http_status ? `HTTP ${feed.http_status}` : "",
+                  feed.response_type ? `Type: ${feed.response_type}` : "",
+                ]}
+                mutedEmpty="No response shape captured."
+              />
+
+              {canShowAvailableKeys && (
+                <>
+                  <DiagnosticFieldBlock
+                    title="Top-level response keys"
+                    value={feed.top_level_keys}
+                    mutedEmpty="No object keys detected."
+                  />
+                  <DiagnosticFieldBlock
+                    title="Candidate row paths checked"
+                    value={feed.candidate_row_paths_checked}
+                    mutedEmpty="No row paths checked."
+                  />
+                  <DiagnosticFieldBlock
+                    title="Array paths found"
+                    value={feed.first_array_paths_found}
+                    mutedEmpty="No arrays detected in the response."
+                    includeZeroCounts
+                  />
+                  <DiagnosticFieldBlock
+                    title="Possible error/status keys"
+                    value={feed.response_error_keys}
+                    mutedEmpty="No error/status keys detected."
+                  />
+                </>
+              )}
+
+              <DiagnosticFieldBlock
                 title="Mapped fields configured"
                 value={feed.mapped_fields_configured}
               />
@@ -447,12 +482,14 @@ function DiagnosticFieldBlock({
   title,
   value,
   mutedEmpty = "None",
+  includeZeroCounts = false,
 }: {
   title: string;
   value: any;
   mutedEmpty?: string;
+  includeZeroCounts?: boolean;
 }) {
-  const entries = normalizeDiagnosticEntries(value);
+  const entries = normalizeDiagnosticEntries(value, includeZeroCounts);
 
   return (
     <div style={diagnosticsFieldBlockStyle}>
@@ -472,14 +509,14 @@ function DiagnosticFieldBlock({
   );
 }
 
-function normalizeDiagnosticEntries(value: any) {
+function normalizeDiagnosticEntries(value: any, includeZeroCounts = false) {
   if (!value) return [];
   if (Array.isArray(value)) {
     return value.map((item) => String(item)).filter(Boolean);
   }
   if (typeof value === "object") {
     return Object.entries(value)
-      .filter(([, count]) => Number(count || 0) > 0)
+      .filter(([, count]) => includeZeroCounts || Number(count || 0) > 0)
       .map(([field, count]) => `${field}: ${Number(count).toLocaleString()}`);
   }
   return [String(value)];
