@@ -24,6 +24,7 @@ export type SyncResult = {
   message: string;
   vehicleCount: number;
   sample_normalized?: any;
+  supplemental_diagnostics?: SupplementalDiagnostics;
   debug?: any;
 };
 
@@ -40,6 +41,65 @@ type FleetResult = {
   message?: string;
   debug?: any;
 };
+
+type SupplementalFeedConfig = {
+  name: string;
+  url: string;
+  method?: string;
+  headers?: Record<string, any>;
+  payload?: Record<string, any>;
+  vehicle_paths?: string[];
+  match_keys?: string[];
+  mapping?: Record<string, string>;
+  api_key_header?: string;
+};
+
+type SupplementalFeedRows = {
+  config: SupplementalFeedConfig;
+  rows: any[];
+};
+
+type SupplementalDiagnostics = {
+  supplemental_feeds_configured: number;
+  supplemental_feeds_attempted: number;
+  supplemental_rows_found: number;
+  supplemental_matches_found: number;
+  supplemental_fields_merged: Record<string, number>;
+  feeds: Array<{
+    name: string;
+    attempted: boolean;
+    success: boolean;
+    rows_found: number;
+    matches_found: number;
+    error?: string;
+  }>;
+};
+
+type SupplementalFetchResult = {
+  feeds: SupplementalFeedRows[];
+  diagnostics: SupplementalDiagnostics;
+};
+
+const SUPPLEMENTAL_FIELDS = [
+  "fuel_level",
+  "odometer",
+  "mileage",
+  "engine_hours",
+  "driver_name",
+  "battery_voltage",
+  "temperature",
+];
+
+const DEFAULT_SUPPLEMENTAL_MATCH_KEYS = [
+  "reg_no",
+  "registration",
+  "truck_id",
+  "vehicle",
+  "plate",
+  "unit_id",
+  "imei",
+  "device_id",
+];
 
 export async function runProviderSync(
   provider: ProviderRecord
@@ -74,6 +134,7 @@ export async function runProviderSync(
       };
     }
 
+    const supplemental = await fetchSupplementalFeeds(provider, auth.token || null);
     let sample_normalized = null;
     let syncedCount = 0;
     const errors: string[] = [];
@@ -84,6 +145,14 @@ export async function runProviderSync(
           rawVehicle,
           provider.field_mapping || {},
           provider.provider_name
+        );
+
+        mergeSupplementalData(
+          normalized,
+          rawVehicle,
+          provider.field_mapping || {},
+          supplemental.feeds,
+          supplemental.diagnostics
         );
 
         if (!sample_normalized) sample_normalized = normalized;
@@ -167,7 +236,12 @@ export async function runProviderSync(
           : `Synced ${syncedCount}/${fleet.vehicles.length} vehicles with ${errors.length} errors.`,
       vehicleCount: syncedCount,
       sample_normalized,
-      debug: { errors, fleet_debug: fleet.debug || null },
+      supplemental_diagnostics: supplemental.diagnostics,
+      debug: {
+        errors,
+        fleet_debug: fleet.debug || null,
+        supplemental_diagnostics: supplemental.diagnostics,
+      },
     };
   } catch (err: any) {
     return {
@@ -278,11 +352,509 @@ async function fetchFleet(provider: ProviderRecord, token: string | null): Promi
   };
 }
 
-function buildPayload(template: any, provider: ProviderRecord) {
+async function fetchSupplementalFeeds(
+  provider: ProviderRecord,
+  token: string | null
+): Promise<SupplementalFetchResult> {
+  const configs = getSupplementalFeedConfigs(provider);
+  const diagnostics = createSupplementalDiagnostics(configs);
+
+  if (configs.length === 0) {
+    return { feeds: [], diagnostics };
+  }
+
+  const feeds: SupplementalFeedRows[] = [];
+
+  for (const config of configs) {
+    const feedDiagnostics = diagnostics.feeds.find(
+      (feed) => feed.name === config.name
+    );
+    if (feedDiagnostics) feedDiagnostics.attempted = true;
+    diagnostics.supplemental_feeds_attempted++;
+
+    try {
+      const rows = await fetchSupplementalFeed(provider, token, config);
+      feeds.push({ config, rows });
+      diagnostics.supplemental_rows_found += rows.length;
+
+      if (feedDiagnostics) {
+        feedDiagnostics.success = true;
+        feedDiagnostics.rows_found = rows.length;
+      }
+    } catch (err: any) {
+      if (feedDiagnostics) {
+        feedDiagnostics.success = false;
+        feedDiagnostics.error = err.message || "Supplemental feed failed";
+      }
+    }
+  }
+
+  return { feeds, diagnostics };
+}
+
+async function fetchSupplementalFeed(
+  provider: ProviderRecord,
+  token: string | null,
+  config: SupplementalFeedConfig
+) {
+  const authType = (provider.auth_type || "POST_LOGIN").toUpperCase();
+  const method = String(config.method || "GET").toUpperCase();
+  const headers = buildHeaders(config.headers || {}, provider, token);
+
+  if (token) {
+    if (authType === "API_KEY") {
+      headers[config.api_key_header || provider.fleet_config?.api_key_header || "x-api-key"] = token;
+    } else if (authType === "BASIC_AUTH") {
+      headers.Authorization = `Basic ${token}`;
+    } else {
+      headers.Authorization = `Bearer ${token}`;
+    }
+  }
+
+  const payload = buildPayload(config.payload || {}, provider, token);
+  const response = await fetch(config.url, {
+    method,
+    headers: { "Content-Type": "application/json", ...headers },
+    body: method === "GET" ? undefined : JSON.stringify(payload),
+    cache: "no-store",
+  });
+  const data = await safeJson(response);
+
+  if (!response.ok) {
+    throw new Error(`Supplemental feed ${config.name} returned HTTP ${response.status}`);
+  }
+
+  const paths =
+    Array.isArray(config.vehicle_paths) && config.vehicle_paths.length > 0
+      ? config.vehicle_paths
+      : defaultSupplementalVehiclePaths();
+
+  return getRowsByPaths(data, paths);
+}
+
+function getSupplementalFeedConfigs(provider: ProviderRecord): SupplementalFeedConfig[] {
+  const config = provider.fleet_config || {};
+  const feeds: SupplementalFeedConfig[] = [];
+
+  if (Array.isArray(config.supplemental_feeds)) {
+    for (const feed of config.supplemental_feeds) {
+      const normalized = normalizeSupplementalFeedConfig(feed);
+      if (normalized) feeds.push(normalized);
+    }
+  }
+
+  const currentStatusUrl = config.current_status_url;
+  if (currentStatusUrl) {
+    feeds.push({
+      name: "current_status",
+      url: currentStatusUrl,
+      method: config.current_status_method || config.method || "GET",
+      headers: config.current_status_headers || config.headers || {},
+      payload: config.current_status_payload || {},
+      vehicle_paths: config.current_status_vehicle_paths,
+      match_keys: config.current_status_match_keys,
+      mapping: config.current_status_mapping || {},
+      api_key_header: config.current_status_api_key_header,
+    });
+  }
+
+  const fuelStatusUrl = config.fuel_status_url;
+  if (fuelStatusUrl) {
+    feeds.push({
+      name: "fuel_status",
+      url: fuelStatusUrl,
+      method: config.fuel_status_method || config.method || "GET",
+      headers: config.fuel_status_headers || config.headers || {},
+      payload: config.fuel_status_payload || {},
+      vehicle_paths: config.fuel_status_vehicle_paths,
+      match_keys: config.fuel_status_match_keys,
+      mapping: config.fuel_status_mapping || config.current_status_mapping || {},
+      api_key_header: config.fuel_status_api_key_header,
+    });
+  }
+
+  return dedupeSupplementalFeeds(feeds);
+}
+
+function normalizeSupplementalFeedConfig(feed: any): SupplementalFeedConfig | null {
+  if (!feed || typeof feed !== "object" || !feed.url) return null;
+
+  return {
+    name: String(feed.name || "supplemental").trim() || "supplemental",
+    url: String(feed.url),
+    method: feed.method || "GET",
+    headers: feed.headers || {},
+    payload: feed.payload || {},
+    vehicle_paths: Array.isArray(feed.vehicle_paths) ? feed.vehicle_paths : undefined,
+    match_keys: Array.isArray(feed.match_keys) ? feed.match_keys : undefined,
+    mapping: feed.mapping || {},
+    api_key_header: feed.api_key_header,
+  };
+}
+
+function dedupeSupplementalFeeds(feeds: SupplementalFeedConfig[]) {
+  const seen = new Set<string>();
+  return feeds.filter((feed) => {
+    const key = `${feed.name}:${feed.url}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function createSupplementalDiagnostics(
+  feeds: SupplementalFeedConfig[]
+): SupplementalDiagnostics {
+  return {
+    supplemental_feeds_configured: feeds.length,
+    supplemental_feeds_attempted: 0,
+    supplemental_rows_found: 0,
+    supplemental_matches_found: 0,
+    supplemental_fields_merged: {},
+    feeds: feeds.map((feed) => ({
+      name: feed.name,
+      attempted: false,
+      success: false,
+      rows_found: 0,
+      matches_found: 0,
+    })),
+  };
+}
+
+function mergeSupplementalData(
+  normalized: any,
+  rawVehicle: any,
+  primaryMapping: any,
+  feeds: SupplementalFeedRows[],
+  diagnostics: SupplementalDiagnostics
+) {
+  if (!feeds.length) return;
+
+  const primaryKeys = getPrimaryVehicleMatchKeys(
+    rawVehicle,
+    normalized.truck_id,
+    primaryMapping
+  );
+
+  for (const feed of feeds) {
+    const match = findSupplementalMatch(primaryKeys, feed);
+    if (!match) continue;
+
+    diagnostics.supplemental_matches_found++;
+    const feedDiagnostics = diagnostics.feeds.find(
+      (item) => item.name === feed.config.name
+    );
+    if (feedDiagnostics) feedDiagnostics.matches_found++;
+
+    const enrichment = extractSupplementalFields(match, feed.config.mapping || {});
+    const mergedFields: string[] = [];
+
+    for (const field of SUPPLEMENTAL_FIELDS) {
+      const value = enrichment[field];
+      if (!isMeaningfulSupplementalValue(field, value)) continue;
+
+      if (field === "fuel_level") {
+        if (!isMeaningfulSupplementalValue(field, normalized.fuel_level)) {
+          normalized.fuel_level = value;
+          mergedFields.push(field);
+        }
+        continue;
+      }
+
+      if (!isMeaningfulSupplementalValue(field, normalized[field])) {
+        normalized[field] = value;
+        mergedFields.push(field);
+      }
+    }
+
+    if (mergedFields.length > 0) {
+      normalized.supplemental_enrichment = {
+        ...(normalized.supplemental_enrichment || {}),
+        [feed.config.name]: pickFields(enrichment, mergedFields),
+      };
+
+      for (const field of mergedFields) {
+        diagnostics.supplemental_fields_merged[field] =
+          (diagnostics.supplemental_fields_merged[field] || 0) + 1;
+      }
+    }
+  }
+}
+
+function findSupplementalMatch(
+  primaryKeys: Set<string>,
+  feed: SupplementalFeedRows
+) {
+  for (const row of feed.rows) {
+    const rowKeys = getSupplementalRowMatchKeys(row, feed.config);
+    for (const key of Array.from(rowKeys)) {
+      if (primaryKeys.has(key)) return row;
+    }
+  }
+
+  return null;
+}
+
+function getPrimaryVehicleMatchKeys(
+  rawVehicle: any,
+  normalizedTruckId: string | null | undefined,
+  primaryMapping: any
+) {
+  const keys = new Set<string>();
+  addMatchKey(keys, normalizedTruckId);
+
+  if (primaryMapping?.truck) {
+    addMatchKey(keys, getValueByCaseInsensitivePath(rawVehicle, primaryMapping.truck));
+  }
+
+  for (const key of DEFAULT_SUPPLEMENTAL_MATCH_KEYS) {
+    addMatchKey(keys, getValueByCaseInsensitivePath(rawVehicle, key));
+  }
+
+  return keys;
+}
+
+function getSupplementalRowMatchKeys(row: any, config: SupplementalFeedConfig) {
+  const keys = new Set<string>();
+  const matchKeys =
+    Array.isArray(config.match_keys) && config.match_keys.length > 0
+      ? [...config.match_keys, ...DEFAULT_SUPPLEMENTAL_MATCH_KEYS]
+      : DEFAULT_SUPPLEMENTAL_MATCH_KEYS;
+
+  for (const key of matchKeys) {
+    addMatchKey(keys, getValueByCaseInsensitivePath(row, key));
+  }
+
+  return keys;
+}
+
+function extractSupplementalFields(row: any, mapping: Record<string, string>) {
+  const output: Record<string, any> = {};
+
+  for (const field of SUPPLEMENTAL_FIELDS) {
+    const value = getSupplementalFieldValue(row, field, mapping);
+    if (value === null || value === undefined || value === "") continue;
+
+    if (field === "driver_name") {
+      const driverName = String(value).trim();
+      if (driverName) output[field] = driverName.slice(0, 120);
+      continue;
+    }
+
+    const parsed = parseProviderNumber(value);
+    if (parsed === null) continue;
+
+    if (isSaneSupplementalNumber(field, parsed)) {
+      output[field] = parsed;
+    }
+  }
+
+  return output;
+}
+
+function getSupplementalFieldValue(
+  row: any,
+  field: string,
+  mapping: Record<string, string>
+) {
+  const configuredPath = mapping[field] || getFieldAliasMapping(field, mapping);
+  if (configuredPath) {
+    const configuredValue = getValueByCaseInsensitivePath(row, configuredPath);
+    if (
+      configuredValue !== undefined &&
+      configuredValue !== null &&
+      configuredValue !== ""
+    ) {
+      return configuredValue;
+    }
+  }
+
+  for (const fallbackKey of getFieldFallbackKeys(field)) {
+    const value = getValueByCaseInsensitivePath(row, fallbackKey);
+    if (value !== undefined && value !== null && value !== "") return value;
+  }
+
+  return null;
+}
+
+function getFieldAliasMapping(field: string, mapping: Record<string, string>) {
+  if (field === "odometer") return mapping.mileage;
+  if (field === "mileage") return mapping.odometer;
+  return null;
+}
+
+function getFieldFallbackKeys(field: string) {
+  if (field === "fuel_level") {
+    return [
+      "current_fuel",
+      "currentFuel",
+      "current fuel",
+      "Current Fuel",
+      "CURRENT FUEL",
+      "fuel",
+      "fuel_level",
+      "fuelLevel",
+      "fuel_liters",
+      "fuelLiters",
+      "litres",
+      "liters",
+      "tank_level",
+      "tankLevel",
+      "fuel_value",
+      "fuelValue",
+    ];
+  }
+
+  if (field === "odometer" || field === "mileage") {
+    return ["odometer", "mileage", "km", "kilometers", "distance"];
+  }
+
+  if (field === "engine_hours") {
+    return ["engine_hours", "engineHours", "engine hours", "hours"];
+  }
+
+  if (field === "driver_name") {
+    return ["driver_name", "driverName", "driver", "Driver"];
+  }
+
+  if (field === "battery_voltage") {
+    return ["battery_voltage", "batteryVoltage", "battery voltage", "voltage"];
+  }
+
+  if (field === "temperature") {
+    return ["temperature", "temp", "Temperature"];
+  }
+
+  return [field];
+}
+
+function isMeaningfulSupplementalValue(field: string, value: any) {
+  if (value === null || value === undefined || value === "") return false;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return false;
+    if (field === "temperature") return true;
+    return value > 0;
+  }
+  return String(value).trim().length > 0;
+}
+
+function isSaneSupplementalNumber(field: string, value: number) {
+  if (!Number.isFinite(value)) return false;
+
+  if (field === "fuel_level") return value >= 0 && value <= 5000;
+  if (field === "odometer" || field === "mileage") {
+    return value >= 0 && value <= 10000000;
+  }
+  if (field === "engine_hours") return value >= 0 && value <= 1000000;
+  if (field === "battery_voltage") return value >= 0 && value <= 1000;
+  if (field === "temperature") return value >= -100 && value <= 1000;
+
+  return true;
+}
+
+function parseProviderNumber(value: any): number | null {
+  if (value === undefined || value === null || value === "") return null;
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value !== "string") return null;
+
+  const match = value.trim().replace(/,/g, "").match(/-?\d+(?:\.\d+)?/);
+  if (!match) return null;
+
+  const parsed = Number(match[0]);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function addMatchKey(keys: Set<string>, value: any) {
+  const normalized = normalizeMatchValue(value);
+  if (normalized) keys.add(normalized);
+}
+
+function normalizeMatchValue(value: any) {
+  if (value === undefined || value === null || value === "") return "";
+  return String(value).toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+function normalizeRows(value: any): any[] {
+  if (Array.isArray(value)) return value.filter((item) => item && typeof item === "object");
+  if (!value || typeof value !== "object") return [];
+
+  for (const key of ["data", "result", "vehicles", "items", "rows"]) {
+    const nested = value[key];
+    if (Array.isArray(nested)) {
+      return nested.filter((item) => item && typeof item === "object");
+    }
+  }
+
+  return [];
+}
+
+function getRowsByPaths(data: any, paths: string[]) {
+  for (const path of paths) {
+    const rows = normalizeRows(getByPath(data, path));
+    if (rows.length > 0) return rows;
+  }
+
+  return [];
+}
+
+function getValueByCaseInsensitivePath(raw: any, path?: string): any {
+  if (!raw || !path) return null;
+
+  return path.split(".").reduce((current: any, segment: string) => {
+    if (current === undefined || current === null) return null;
+
+    if (
+      typeof current === "object" &&
+      !Array.isArray(current) &&
+      segment in current
+    ) {
+      return current[segment];
+    }
+
+    if (typeof current !== "object" || Array.isArray(current)) return null;
+
+    const target = normalizeProviderKey(segment);
+    const match = Object.keys(current).find(
+      (key) => normalizeProviderKey(key) === target
+    );
+
+    return match ? current[match] : null;
+  }, raw);
+}
+
+function normalizeProviderKey(key: string): string {
+  return String(key).toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function pickFields(source: Record<string, any>, fields: string[]) {
+  return fields.reduce((output: Record<string, any>, field) => {
+    output[field] = source[field];
+    return output;
+  }, {});
+}
+
+function defaultSupplementalVehiclePaths() {
+  return [
+    "$",
+    "data",
+    "result",
+    "vehicles",
+    "items",
+    "rows",
+    "data.vehicles",
+    "data.items",
+    "data.rows",
+    "result.vehicles",
+    "result.items",
+    "result.rows",
+  ];
+}
+
+function buildPayload(template: any, provider: ProviderRecord, token: string | null = null) {
   const output: any = {};
   if (!template || typeof template !== "object") return output;
   Object.keys(template).forEach(key => {
-    output[key] = resolveTemplateValue(template[key], provider, null);
+    output[key] = resolveTemplateValue(template[key], provider, token);
   });
   return output;
 }

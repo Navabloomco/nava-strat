@@ -251,6 +251,8 @@ export async function POST(
 
     if (resolved.capabilities.can_edit_advanced_provider_config) {
       responseBody.sample_normalized = result.sample_normalized || null;
+      responseBody.supplemental_diagnostics =
+        result.supplemental_diagnostics || null;
     }
 
     return NextResponse.json(responseBody);
