@@ -121,6 +121,16 @@ function sanitizeSupplementalDiagnostics(diagnostics: any, includeAvailableKeys:
       auth_top_level_keys: Array.isArray(feed.auth_top_level_keys)
         ? feed.auth_top_level_keys.map((key: any) => String(key)).slice(0, 50)
         : [],
+      auth_data_keys: Array.isArray(feed.auth_data_keys)
+        ? feed.auth_data_keys.map((key: any) => String(key)).slice(0, 50)
+        : [],
+      auth_data_array_paths_found: feed.auth_data_array_paths_found &&
+        typeof feed.auth_data_array_paths_found === "object"
+        ? sanitizeCountMap(feed.auth_data_array_paths_found)
+        : {},
+      auth_data_object_paths_found: Array.isArray(feed.auth_data_object_paths_found)
+        ? feed.auth_data_object_paths_found.map((path: any) => String(path)).slice(0, 50)
+        : [],
       auth_error_keys: Array.isArray(feed.auth_error_keys)
         ? feed.auth_error_keys.map((key: any) => String(key)).slice(0, 50)
         : [],

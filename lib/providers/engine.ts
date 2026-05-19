@@ -117,6 +117,9 @@ type SupplementalDiagnostics = {
     auth_http_status?: number;
     auth_response_type?: string;
     auth_top_level_keys?: string[];
+    auth_data_keys?: string[];
+    auth_data_array_paths_found?: Record<string, number>;
+    auth_data_object_paths_found?: string[];
     auth_error_keys?: string[];
     auth_token_paths_checked?: string[];
     auth_metadata_paths_checked?: string[];
@@ -169,6 +172,9 @@ type SupplementalAuthDiagnostics = {
   auth_http_status?: number;
   auth_response_type?: SupplementalResponseDiagnostics["response_type"];
   auth_top_level_keys?: string[];
+  auth_data_keys?: string[];
+  auth_data_array_paths_found?: Record<string, number>;
+  auth_data_object_paths_found?: string[];
   auth_error_keys?: string[];
   auth_token_paths_checked?: string[];
   auth_metadata_paths_checked?: string[];
@@ -929,6 +935,9 @@ function buildSupplementalAuthDiagnostics(
     auth_http_status: httpStatus,
     auth_response_type: responseType,
     auth_top_level_keys: collectTopLevelKeys(data),
+    auth_data_keys: collectTopLevelKeys(getByPath(data, "data")),
+    auth_data_array_paths_found: collectArrayPathCounts(getByPath(data, "data")),
+    auth_data_object_paths_found: collectObjectPaths(getByPath(data, "data")),
     auth_error_keys: collectResponseErrorKeys(data),
     auth_token_paths_checked: tokenPaths.map((path) => String(path)).slice(0, 20),
     auth_metadata_paths_checked: collectMetadataPathsChecked(profile),
@@ -950,6 +959,25 @@ function applySupplementalAuthDiagnostics(
   }
   feedDiagnostics.auth_top_level_keys = Array.isArray(diagnostics.auth_top_level_keys)
     ? diagnostics.auth_top_level_keys.map((key: any) => String(key)).slice(0, 50)
+    : [];
+  feedDiagnostics.auth_data_keys = Array.isArray(diagnostics.auth_data_keys)
+    ? diagnostics.auth_data_keys.map((key: any) => String(key)).slice(0, 50)
+    : [];
+  feedDiagnostics.auth_data_array_paths_found =
+    diagnostics.auth_data_array_paths_found &&
+    typeof diagnostics.auth_data_array_paths_found === "object"
+      ? Object.fromEntries(
+          Object.entries(diagnostics.auth_data_array_paths_found)
+            .slice(0, 50)
+            .map(([path, count]) => [String(path), Number(count || 0)])
+        )
+      : {};
+  feedDiagnostics.auth_data_object_paths_found = Array.isArray(
+    diagnostics.auth_data_object_paths_found
+  )
+    ? diagnostics.auth_data_object_paths_found
+        .map((path: any) => String(path))
+        .slice(0, 50)
     : [];
   feedDiagnostics.auth_error_keys = Array.isArray(diagnostics.auth_error_keys)
     ? diagnostics.auth_error_keys.map((key: any) => String(key)).slice(0, 50)
@@ -1342,6 +1370,35 @@ function collectArrayPathCounts(data: any) {
 
   walk(data, "", 0);
   return counts;
+}
+
+function collectObjectPaths(data: any) {
+  const paths = new Set<string>();
+
+  function walk(value: any, path: string, depth: number) {
+    if (!value || typeof value !== "object" || depth > 3 || paths.size >= 50) {
+      return;
+    }
+
+    if (Array.isArray(value)) {
+      for (const item of value.slice(0, 3)) {
+        walk(item, path, depth + 1);
+      }
+      return;
+    }
+
+    for (const [key, nested] of Object.entries(value)) {
+      const normalized = normalizeProviderKey(key);
+      if (!normalized || isSensitiveProviderKey(normalized)) continue;
+
+      const nextPath = path ? `${path}.${key}` : key;
+      if (nested && typeof nested === "object") paths.add(nextPath);
+      walk(nested, nextPath, depth + 1);
+    }
+  }
+
+  walk(data, "", 0);
+  return Array.from(paths);
 }
 
 function collectResponseErrorKeys(data: any) {

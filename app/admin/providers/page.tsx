@@ -429,6 +429,9 @@ function ProviderEnrichmentDiagnostics({
                 feed.auth_http_status ||
                 feed.auth_response_type ||
                 feed.auth_top_level_keys?.length > 0 ||
+                feed.auth_data_keys?.length > 0 ||
+                Object.keys(feed.auth_data_array_paths_found || {}).length > 0 ||
+                feed.auth_data_object_paths_found?.length > 0 ||
                 feed.auth_error_keys?.length > 0 ||
                 feed.auth_token_paths_checked?.length > 0 ||
                 feed.auth_metadata_paths_checked?.length > 0 ||
@@ -446,6 +449,22 @@ function ProviderEnrichmentDiagnostics({
                     title="Auth top-level keys"
                     value={feed.auth_top_level_keys}
                     mutedEmpty="No auth response keys captured."
+                  />
+                  <DiagnosticFieldBlock
+                    title="Auth data keys"
+                    value={feed.auth_data_keys}
+                    mutedEmpty="No keys found under auth response data."
+                  />
+                  <DiagnosticFieldBlock
+                    title="Auth data array paths"
+                    value={feed.auth_data_array_paths_found}
+                    mutedEmpty="No arrays found under auth response data."
+                    includeZeroCounts
+                  />
+                  <DiagnosticFieldBlock
+                    title="Auth data object paths"
+                    value={feed.auth_data_object_paths_found}
+                    mutedEmpty="No nested objects found under auth response data."
                   />
                   <DiagnosticFieldBlock
                     title="Auth error/status keys"
