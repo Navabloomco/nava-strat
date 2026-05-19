@@ -1270,10 +1270,12 @@ function formatFuelTelemetryExplanation(telemetry: any) {
     const latestTime = telemetry.latest_fuel_at
       ? ` at ${formatReadableDate(telemetry.latest_fuel_at)}`
       : "";
+    const rangeText =
+      min === max ? "" : ` Recent range: ${min} to ${max}.`;
 
     return {
       usable: true,
-      text: `The fuel-level telemetry looks usable for this truck: latest ${latest}${latestTime}, with a recent range of ${min} to ${max}.`,
+      text: `Current fuel is available. Latest provider fuel reading: ${latest}${latestTime}.${rangeText}`,
     };
   }
 
