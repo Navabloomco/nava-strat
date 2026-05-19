@@ -2493,40 +2493,62 @@ function getCredentialMacroValue(
   const authConfig = provider.auth_config || {};
 
   if (macro === "username") {
-    return firstNonEmptyValue([
+    return firstNonEmptyCredentialValue([
       overrides.username,
       provider.username,
       authConfig.username,
       authConfig.user_name,
-    ]);
+    ], true);
   }
 
   if (macro === "password") {
-    return firstNonEmptyValue([
+    return firstNonEmptyCredentialValue([
       provider.password,
       anyProvider.provider_secret,
       authConfig.provider_secret,
       authConfig.password,
       provider.api_key,
-    ]);
+    ], false);
   }
 
   if (macro === "provider_secret") {
-    return firstNonEmptyValue([
+    return firstNonEmptyCredentialValue([
       anyProvider.provider_secret,
       authConfig.provider_secret,
       provider.api_key,
-    ]);
+    ], false);
   }
 
   if (macro === "api_secret") {
-    return firstNonEmptyValue([
+    return firstNonEmptyCredentialValue([
       anyProvider.api_secret,
       authConfig.api_secret,
-    ]);
+    ], false);
   }
 
   return "";
+}
+
+function firstNonEmptyCredentialValue(values: any[], trim: boolean) {
+  for (const value of values) {
+    const scalar = sanitizeCredentialMacroScalar(value, trim);
+    if (scalar !== null) return scalar;
+  }
+
+  return "";
+}
+
+function sanitizeCredentialMacroScalar(
+  value: any,
+  trim: boolean
+): string | number | null {
+  if (value === undefined || value === null || value === "") return null;
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value !== "string") return null;
+
+  const text = trim ? value.trim() : value;
+  if (!text || text.length > 240) return null;
+  return text;
 }
 
 function getAvailableCredentialMacroNames(provider: ProviderRecord) {
