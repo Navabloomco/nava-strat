@@ -50,9 +50,14 @@ export async function routeContext(
   const companyId = company.id;
   const lower = question.toLowerCase();
   const detectedCountryName = detectSupportedCountryName(question);
-  const intent = detectIntent(lower, detectedCountryName);
-  const truckAccess = await detectTruckAccess(question, companyId);
-  const truckId = truckAccess.truck_id;
+  let intent = detectIntent(lower, detectedCountryName);
+  const vehicleMatch = await matchVehicleInFleet(question, companyId);
+  if (intent === "general" && vehicleMatch.input) {
+    intent = "truck_status";
+  }
+  const truckId = vehicleMatch.enabled_for_intelligence
+    ? vehicleMatch.matched_truck_id || vehicleMatch.matched_registration || null
+    : null;
   const fleetAssetCounts = await fetchFleetAssetCounts(companyId);
   const geofences = usesLocationContext(intent)
     ? await fetchActiveGeofences(supabaseAdmin, companyId)
@@ -66,8 +71,11 @@ export async function routeContext(
     intent,
     detected_truck_id: truckId,
     detected_country_name: detectedCountryName,
-    asset_access_restricted: truckAccess.restricted,
-    asset_access_message: truckAccess.restricted
+    vehicle_match: vehicleMatch,
+    asset_access_restricted:
+      vehicleMatch.matched && !vehicleMatch.enabled_for_intelligence,
+    asset_access_message:
+      vehicleMatch.matched && !vehicleMatch.enabled_for_intelligence
       ? "I can only answer using assets enabled for Nava intelligence. This asset may be waiting for review."
       : null,
     fleet_asset_review_status: fleetAssetCounts,
@@ -87,15 +95,21 @@ export async function routeContext(
       assignmentLookup
     );
   }
-  if (intent === "fuel_risk" && !truckAccess.restricted) {
+  if (intent === "fuel_risk" && !context.asset_access_restricted) {
     if (truckId) {
       context.fuel_risk = await analyzeTruckFuelRisk(truckId, 30, companyId);
+      context.fuel_investigation = await fetchFuelSuspicionInvestigation(
+        companyId,
+        truckId,
+        geofences,
+        assignmentLookup
+      );
     } else {
       context.recent_fuel_scores = await fetchRecentFuelRiskScores(companyId);
       context.recent_fuel_events = await fetchRecentFuelEvents(companyId);
     }
   }
-  if (intent === "truck_status" && truckId && !truckAccess.restricted) {
+  if (intent === "truck_status" && truckId && !context.asset_access_restricted) {
     context.truck = await fetchTruckStatus(
       companyId,
       truckId,
@@ -119,7 +133,7 @@ export async function routeContext(
     );
   }
   if (intent === "journey_context") {
-    context.possible_journey_context = truckAccess.restricted
+    context.possible_journey_context = context.asset_access_restricted
       ? { asset_access_restricted: true }
       : await fetchJourneyLikeContext(
           companyId,
@@ -143,7 +157,7 @@ export async function routeContext(
   if (intent === "profitability") {
     context.profitability = await getCompanyProfitability(companyId);
   }
-  if (intent === "spares_context" && !truckAccess.restricted) {
+  if (intent === "spares_context" && !context.asset_access_restricted) {
     context.spares = await fetchSparesContext(
       companyId,
       question,
@@ -163,11 +177,11 @@ export async function routeContext(
 }
 
 function usesLocationContext(intent: ContextIntent) {
-  return ["truck_status", "journey_context", "offline_trucks", "general"].includes(intent);
+  return ["fuel_risk", "truck_status", "journey_context", "offline_trucks", "general"].includes(intent);
 }
 
 function usesDriverAssignmentContext(intent: ContextIntent) {
-  return ["truck_status", "journey_context", "driver_activity", "offline_trucks", "general"].includes(intent);
+  return ["fuel_risk", "truck_status", "journey_context", "driver_activity", "offline_trucks", "general"].includes(intent);
 }
 
 function canViewSparesCost(roles: string[]) {
@@ -260,39 +274,172 @@ function detectSparesIntent(lower: string) {
   return /\b(spare|spares|part|parts|maintenance|repair|repaired|fixed|fitted|installed|removed|replaced|tyre|tire|retread|battery|brake|filter|mechanic|workshop|vendor|supplier)\b/.test(lower);
 }
 
-function extractTruckCandidate(question: string) {
-  const truckMatch = question.match(/[A-Z]{3}\s?\d{3}[A-Z]/i);
-  if (!truckMatch) return null;
-  return truckMatch[0].toUpperCase();
+function extractVehicleInputs(question: string) {
+  const inputs = new Map<string, string>();
+  const platePattern = /[A-Z]{2,4}[\s\-/.]*\d{2,4}[A-Z]?/gi;
+  const matches = question.match(platePattern) || [];
+
+  for (const match of matches) {
+    const key = normalizeTruckKey(match);
+    if (key.length >= 4) inputs.set(key, match.trim().toUpperCase());
+  }
+
+  const tokens = question
+    .split(/[^A-Za-z0-9]+/)
+    .map((token) => token.trim())
+    .filter(Boolean);
+
+  for (const token of tokens) {
+    const key = normalizeTruckKey(token);
+    if (
+      key.length >= 4 &&
+      key.length <= 12 &&
+      /[A-Z]/.test(key) &&
+      /\d/.test(key)
+    ) {
+      inputs.set(key, token.toUpperCase());
+    }
+  }
+
+  return Array.from(inputs.entries()).map(([key, input]) => ({ key, input }));
 }
 
-async function detectTruckAccess(question: string, companyId: string) {
-  const candidate = extractTruckCandidate(question);
-  const compactCandidate = candidate ? normalizeTruckKey(candidate) : null;
-  const compactQuestion = normalizeTruckKey(question);
+async function matchVehicleInFleet(question: string, companyId: string) {
+  const inputs = extractVehicleInputs(question);
 
-  const { data } = await supabaseAdmin
+  const baseMatch: any = {
+    input: inputs[0]?.input || null,
+    matched: false,
+    confidence: "none",
+    match_type: "none",
+    matched_truck_id: null,
+    matched_registration: null,
+    enabled_for_intelligence: false,
+    candidates: [],
+  };
+
+  if (inputs.length === 0) return baseMatch;
+
+  const { data, error } = await supabaseAdmin
     .from("fleet_assets")
     .select("id, truck_id, registration, intelligence_enabled")
     .eq("company_id", companyId)
     .eq("status", "active")
-    .limit(500);
+    .limit(1000);
 
-  const assets = data || [];
-  const asset = assets.find((item) =>
-    getAssetMatchKeys(item).some((key) => {
-      if (compactCandidate && key.includes(compactCandidate)) return true;
-      return compactQuestion.includes(key);
-    })
-  );
+  if (error) throw error;
 
-  if (!asset) return { truck_id: null, restricted: false };
+  const candidates = new Map<string, any>();
+  for (const input of inputs) {
+    for (const asset of data || []) {
+      const best = bestVehicleMatchForAsset(input.key, asset);
+      if (!best) continue;
 
-  if (!asset.intelligence_enabled) {
-    return { truck_id: null, restricted: true };
+      const candidateKey = asset.id || `${asset.truck_id}:${asset.registration}`;
+      const existing = candidates.get(candidateKey);
+      if (!existing || best.rank > existing.rank) {
+        candidates.set(candidateKey, {
+          id: asset.id,
+          truck_id: asset.truck_id || null,
+          registration: asset.registration || null,
+          confidence: best.confidence,
+          match_type: best.match_type,
+          enabled_for_intelligence: Boolean(asset.intelligence_enabled),
+          input: input.input,
+          rank: best.rank,
+        });
+      }
+    }
   }
 
-  return { truck_id: asset.truck_id || asset.registration || candidate, restricted: false };
+  const sortedCandidates = Array.from(candidates.values())
+    .sort((a, b) => b.rank - a.rank)
+    .slice(0, 5);
+
+  if (sortedCandidates.length === 0) return baseMatch;
+
+  const topRank = sortedCandidates[0].rank;
+  const topCandidates = sortedCandidates.filter((candidate) => candidate.rank === topRank);
+  const safeCandidates = sortedCandidates.map(sanitizeVehicleCandidate);
+
+  if (topCandidates.length > 1) {
+    return {
+      ...baseMatch,
+      input: topCandidates[0].input || baseMatch.input,
+      confidence: "low",
+      match_type: "multiple_candidates",
+      candidates: safeCandidates,
+    };
+  }
+
+  const winner = topCandidates[0];
+  return {
+    input: winner.input || baseMatch.input,
+    matched: true,
+    confidence: winner.confidence,
+    match_type: winner.match_type,
+    matched_truck_id: winner.truck_id,
+    matched_registration: winner.registration,
+    enabled_for_intelligence: winner.enabled_for_intelligence,
+    candidates: safeCandidates,
+  };
+}
+
+function bestVehicleMatchForAsset(inputKey: string, asset: any) {
+  let best: any = null;
+
+  for (const key of getAssetMatchKeys(asset)) {
+    const match = scoreVehicleKey(inputKey, key);
+    if (match && (!best || match.rank > best.rank)) {
+      best = match;
+    }
+  }
+
+  return best;
+}
+
+function scoreVehicleKey(inputKey: string, assetKey: string) {
+  if (!inputKey || !assetKey || inputKey.length < 4 || assetKey.length < 4) {
+    return null;
+  }
+
+  if (inputKey === assetKey) {
+    return { confidence: "high", match_type: "exact_normalized", rank: 100 };
+  }
+
+  const missingOneTrailing =
+    assetKey.length === inputKey.length + 1 && assetKey.startsWith(inputKey);
+  if (missingOneTrailing) {
+    return {
+      confidence: "high",
+      match_type: "missing_trailing_character",
+      rank: 90,
+    };
+  }
+
+  const distance = editDistance(inputKey, assetKey);
+  if (distance === 1 && Math.max(inputKey.length, assetKey.length) >= 5) {
+    return { confidence: "medium", match_type: "edit_distance_1", rank: 75 };
+  }
+
+  const strongPartial =
+    inputKey.length >= 5 &&
+    (assetKey.includes(inputKey) || inputKey.includes(assetKey));
+  if (strongPartial) {
+    return { confidence: "medium", match_type: "strong_partial", rank: 65 };
+  }
+
+  return null;
+}
+
+function sanitizeVehicleCandidate(candidate: any) {
+  return {
+    truck_id: candidate.truck_id || null,
+    registration: candidate.registration || null,
+    confidence: candidate.confidence || "low",
+    match_type: candidate.match_type || "candidate",
+    enabled_for_intelligence: Boolean(candidate.enabled_for_intelligence),
+  };
 }
 
 function getAssetMatchKeys(asset: any) {
@@ -315,7 +462,29 @@ async function fetchFleetAssetCounts(companyId: string) {
 }
 
 function normalizeTruckKey(value: string | null | undefined) {
-  return String(value || "").trim().toUpperCase().replace(/\s+/g, "");
+  return String(value || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+function editDistance(a: string, b: string) {
+  const matrix = Array.from({ length: a.length + 1 }, () =>
+    new Array<number>(b.length + 1).fill(0)
+  );
+
+  for (let i = 0; i <= a.length; i++) matrix[i][0] = i;
+  for (let j = 0; j <= b.length; j++) matrix[0][j] = j;
+
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      matrix[i][j] = Math.min(
+        matrix[i - 1][j] + 1,
+        matrix[i][j - 1] + 1,
+        matrix[i - 1][j - 1] + cost
+      );
+    }
+  }
+
+  return matrix[a.length][b.length];
 }
 
 function sanitizeAssignedDriver(assignment: any) {
@@ -582,7 +751,7 @@ async function fetchRecentFuelRiskScores(companyId: string) {
 
   const { data } = await supabaseAdmin
     .from("fuel_risk_scores")
-    .select("*")
+    .select("truck_id, risk_score, risk_level, recommendation, created_at")
     .eq("company_id", companyId)
     .in("truck_id", enabledTruckIds)
     .order("created_at", { ascending: false })
@@ -596,7 +765,7 @@ async function fetchRecentFuelEvents(companyId: string) {
 
   const { data } = await supabaseAdmin
     .from("telemetry_events")
-    .select("*")
+    .select("truck_id, event_type, severity, location_name, latitude, longitude, created_at, started_at")
     .eq("company_id", companyId)
     .in("truck_id", enabledTruckIds)
     .in("event_type", ["fuel_drop_stationary", "low_fuel"])
@@ -611,19 +780,24 @@ async function fetchTruckStatus(
   geofences: any[] = [],
   assignmentLookup: any = null
 ) {
+  const targetKey = normalizeTruckKey(truckId);
   const { data } = await supabaseAdmin
     .from("fleet_assets")
-    .select("*")
+    .select("id, truck_id, registration, status, latitude, longitude, last_seen_at, provider_location_label, asset_category")
     .eq("company_id", companyId)
-    .eq("truck_id", truckId)
+    .eq("status", "active")
     .eq("intelligence_enabled", true)
-    .maybeSingle();
-  if (!data) return data;
+    .limit(1000);
+
+  const asset = (data || []).find((item) =>
+    getAssetMatchKeys(item).some((key) => key === targetKey)
+  );
+  if (!asset) return null;
 
   return {
-    ...data,
-    geofence_match: matchPointToGeofence(data, geofences),
-    assigned_driver: findAssignedDriverForAsset(data, assignmentLookup),
+    ...asset,
+    geofence_match: matchPointToGeofence(asset, geofences),
+    assigned_driver: findAssignedDriverForAsset(asset, assignmentLookup),
   };
 }
 
@@ -635,7 +809,7 @@ async function fetchTruckEvents(
 ) {
   const { data } = await supabaseAdmin
     .from("telemetry_events")
-    .select("*")
+    .select("truck_id, event_type, severity, location_name, latitude, longitude, created_at, started_at, context_label, context_type")
     .eq("company_id", companyId)
     .eq("truck_id", truckId)
     .order("created_at", { ascending: false })
@@ -656,6 +830,184 @@ async function fetchTruckTelemetry(companyId: string, truckId: string) {
     .order("recorded_at", { ascending: false })
     .limit(20);
   return data || [];
+}
+
+async function fetchFuelSuspicionInvestigation(
+  companyId: string,
+  truckId: string,
+  geofences: any[] = [],
+  assignmentLookup: any = null
+) {
+  const truck = await fetchTruckStatus(
+    companyId,
+    truckId,
+    geofences,
+    assignmentLookup
+  );
+
+  const [
+    recentEvents,
+    telemetrySummary,
+    recentFuelLogs,
+    recentJourneys,
+    latestFuelScore,
+  ] = await Promise.all([
+    fetchTruckEvents(companyId, truckId, geofences, assignmentLookup),
+    fetchFuelTelemetrySummary(companyId, truckId),
+    fetchRecentFuelLogs(companyId, truckId, truck),
+    fetchRecentTruckJourneys(companyId, truckId, truck),
+    fetchLatestFuelRiskScore(companyId, truckId),
+  ]);
+
+  const fuelRelatedEvents = recentEvents.filter((event: any) =>
+    ["fuel_drop_stationary", "low_fuel"].includes(event.event_type)
+  );
+  const idleStopEvents = recentEvents.filter((event: any) =>
+    ["excessive_idle", "idle", "stopped", "long_stop"].includes(event.event_type)
+  );
+
+  return {
+    truck,
+    latest_fuel_score: latestFuelScore,
+    telemetry_summary: telemetrySummary,
+    recent_fuel_logs: recentFuelLogs,
+    recent_journeys: recentJourneys,
+    fuel_related_events: fuelRelatedEvents.slice(0, 8),
+    idle_stop_events: idleStopEvents.slice(0, 8),
+  };
+}
+
+async function fetchFuelTelemetrySummary(companyId: string, truckId: string) {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from("telemetry_logs")
+      .select("recorded_at, fuel_level, fuel_unit, speed, latitude, longitude")
+      .eq("company_id", companyId)
+      .eq("truck_id", truckId)
+      .order("recorded_at", { ascending: false })
+      .limit(200);
+
+    if (error) throw error;
+
+    const telemetry = data || [];
+    const fuelReadings = telemetry.filter((point: any) =>
+      Number.isFinite(Number(point.fuel_level))
+    );
+    const fuelValues = fuelReadings.map((point: any) => Number(point.fuel_level));
+    const latestFuel = fuelReadings[0] || null;
+
+    return {
+      telemetry_points: telemetry.length,
+      fuel_readings: fuelReadings.length,
+      latest_fuel_level: latestFuel ? Number(latestFuel.fuel_level) : null,
+      latest_fuel_unit: latestFuel?.fuel_unit || null,
+      latest_fuel_at: latestFuel?.recorded_at || null,
+      min_fuel_level: fuelValues.length ? Math.min(...fuelValues) : null,
+      max_fuel_level: fuelValues.length ? Math.max(...fuelValues) : null,
+      fuel_telemetry_available: fuelReadings.length > 0,
+    };
+  } catch (err: any) {
+    return {
+      telemetry_points: 0,
+      fuel_readings: 0,
+      latest_fuel_level: null,
+      latest_fuel_unit: null,
+      latest_fuel_at: null,
+      min_fuel_level: null,
+      max_fuel_level: null,
+      fuel_telemetry_available: false,
+      error: err.message || "Fuel telemetry summary unavailable",
+    };
+  }
+}
+
+async function fetchRecentFuelLogs(companyId: string, truckId: string, truck: any) {
+  try {
+    const keys = new Set(
+      [truckId, truck?.truck_id, truck?.registration]
+        .map(normalizeTruckKey)
+        .filter(Boolean)
+    );
+    const { data, error } = await supabaseAdmin
+      .from("fuel_logs")
+      .select("truck_text, liters, vendor, journey_id, allocation_status, fuel_source, created_at")
+      .eq("company_id", companyId)
+      .order("created_at", { ascending: false })
+      .limit(100);
+
+    if (error) throw error;
+
+    return (data || [])
+      .filter((log: any) => keys.has(normalizeTruckKey(log.truck_text)))
+      .slice(0, 8)
+      .map((log: any) => ({
+        truck_text: log.truck_text || null,
+        liters:
+          log.liters === null || log.liters === undefined
+            ? null
+            : Number(log.liters),
+        vendor: log.vendor || null,
+        journey_id: log.journey_id || null,
+        allocation_status: log.allocation_status || null,
+        fuel_source: log.fuel_source || null,
+        created_at: log.created_at || null,
+      }));
+  } catch {
+    return [];
+  }
+}
+
+async function fetchRecentTruckJourneys(companyId: string, truckId: string, truck: any) {
+  try {
+    const keys = new Set(
+      [truckId, truck?.truck_id, truck?.registration]
+        .map(normalizeTruckKey)
+        .filter(Boolean)
+    );
+    const { data, error } = await supabaseAdmin
+      .from("journeys")
+      .select("internal_trip_id, status, client_name, from_location, to_location, truck, driver, created_at")
+      .eq("company_id", companyId)
+      .eq("is_demo", false)
+      .order("created_at", { ascending: false })
+      .limit(50);
+
+    if (error) throw error;
+
+    return (data || [])
+      .filter((journey: any) => keys.has(normalizeTruckKey(journey.truck)))
+      .slice(0, 5)
+      .map((journey: any) => ({
+        reference: journey.internal_trip_id || null,
+        status: journey.status || null,
+        client_name: journey.client_name || null,
+        from_location: journey.from_location || null,
+        to_location: journey.to_location || null,
+        truck: journey.truck || null,
+        driver: journey.driver || null,
+        created_at: journey.created_at || null,
+      }));
+  } catch {
+    return [];
+  }
+}
+
+async function fetchLatestFuelRiskScore(companyId: string, truckId: string) {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from("fuel_risk_scores")
+      .select("truck_id, risk_score, risk_level, recommendation, created_at")
+      .eq("company_id", companyId)
+      .eq("truck_id", truckId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) throw error;
+    return data || null;
+  } catch {
+    return null;
+  }
 }
 
 function fetchRecentDriverAssignments(assignmentLookup: any = null) {

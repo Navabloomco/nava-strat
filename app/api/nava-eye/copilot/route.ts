@@ -157,6 +157,7 @@ export async function POST(req: Request) {
       Object.keys(context).length > 0 &&
       !context.profit_simulation &&
       !context.spares &&
+      !context.fuel_investigation &&
       !context.asset_access_restricted &&
       !context.no_enabled_intelligence_assets
     ) {
@@ -326,8 +327,14 @@ export async function POST(req: Request) {
 
 function buildFallbackAnswer(context: any): string {
   const parts: string[] = [];
+  if (
+    context.vehicle_match?.match_type === "multiple_candidates" &&
+    context.vehicle_match?.candidates?.length
+  ) {
+    return buildVehicleCandidateAnswer(context.vehicle_match);
+  }
   if (context.asset_access_restricted) {
-    return "I can only answer using assets enabled for Nava intelligence. This asset may be waiting for review.";
+    return buildAssetRestrictedAnswer(context.vehicle_match);
   }
   if (context.no_enabled_intelligence_assets && !context.spares) {
     return "Fleet data has been imported, but no assets are enabled for Nava intelligence yet. Review assets before I use them in answers.";
@@ -412,6 +419,12 @@ function buildFallbackAnswer(context: any): string {
   }
   if (context.spares) {
     return buildSparesFallbackAnswer(context);
+  }
+  if (
+    context.intent === "fuel_risk" &&
+    (context.vehicle_match?.input || context.fuel_investigation)
+  ) {
+    return buildFuelSuspicionFallbackAnswer(context);
   }
   if (context.profitability) {
     const p = context.profitability;
@@ -534,6 +547,16 @@ function buildFallbackAnswer(context: any): string {
       `Fuel risk score: ${context.fuel_risk.risk_score}. ${context.fuel_risk.recommendation || ""}`
     );
   }
+  if (context.recent_fuel_scores?.length) {
+    parts.push(
+      `Recent fuel risk scores are available for ${context.recent_fuel_scores.length} enabled vehicle(s). Ask about a specific registration if you want me to investigate one vehicle.`
+    );
+  }
+  if (context.recent_fuel_events?.length) {
+    parts.push(
+      `${context.recent_fuel_events.length} recent fuel-related event(s) were found across enabled vehicles.`
+    );
+  }
   if (context.truck) {
     const location = formatOperationalLocation(context.truck);
     parts.push(
@@ -575,6 +598,147 @@ function buildFallbackAnswer(context: any): string {
     return "Nava Eye found limited context. Ask about fleet health, offline trucks, fuel risk, truck status, driver activity, or journeys.";
   }
   return parts.join(" ");
+}
+
+function buildVehicleCandidateAnswer(vehicleMatch: any) {
+  const candidates = vehicleMatch?.candidates || [];
+  const input = vehicleMatch?.input || "that vehicle";
+  const parts = [
+    `Did you mean one of these for ${input}?`,
+    "",
+    ...candidates.map(formatVehicleCandidateLine),
+    "",
+    "Reply with the exact registration or truck ID and I will investigate that vehicle.",
+  ];
+
+  return parts.join("\n");
+}
+
+function buildAssetRestrictedAnswer(vehicleMatch: any) {
+  const label =
+    vehicleMatch?.matched_registration ||
+    vehicleMatch?.matched_truck_id ||
+    vehicleMatch?.input ||
+    "this asset";
+
+  return `I found ${label}, but I can only answer using assets enabled for Nava intelligence. This asset may be waiting for review.`;
+}
+
+function buildFuelSuspicionFallbackAnswer(context: any) {
+  const vehicleMatch = context.vehicle_match || {};
+  const investigation = context.fuel_investigation || {};
+  const truck = investigation.truck || context.truck || null;
+  const telemetry = investigation.telemetry_summary || null;
+  const fuelLogs = investigation.recent_fuel_logs || [];
+  const fuelEvents = investigation.fuel_related_events || [];
+  const idleEvents = investigation.idle_stop_events || [];
+  const journeys = investigation.recent_journeys || [];
+  const risk = context.fuel_risk || investigation.latest_fuel_score || null;
+  const parts: string[] = [];
+
+  if (vehicleMatch?.input && !vehicleMatch?.matched) {
+    parts.push(
+      `I could not find a matching enabled vehicle for ${vehicleMatch.input}. It may be unreviewed or not imported yet.`
+    );
+    parts.push("");
+    parts.push("What to verify next");
+    parts.push("- Check Asset Review for imported vehicles waiting to be enabled.");
+    parts.push("- Try the full registration exactly as it appears on the vehicle.");
+    return parts.join("\n");
+  }
+
+  const matchedLabel =
+    vehicleMatch?.matched_registration ||
+    vehicleMatch?.matched_truck_id ||
+    context.detected_truck_id ||
+    "the vehicle";
+
+  if (vehicleMatch?.input && normalizeDisplayKey(vehicleMatch.input) !== normalizeDisplayKey(matchedLabel)) {
+    parts.push(`I matched ${vehicleMatch.input} to ${matchedLabel}.`);
+  } else {
+    parts.push(`I found ${matchedLabel}.`);
+  }
+
+  parts.push("I cannot confirm siphoning from the available data.");
+  parts.push("");
+  parts.push("Here is what I found.");
+
+  if (truck) {
+    const location = formatOperationalLocation(truck);
+    const status = truck.status ? `Status: ${truck.status}.` : null;
+    const lastSeen = truck.last_seen_at
+      ? `Last seen: ${formatReadableDate(truck.last_seen_at)}.`
+      : "Last seen: not available.";
+    parts.push("");
+    parts.push("Vehicle context");
+    parts.push([status, location ? `Location: ${location}.` : null, lastSeen].filter(Boolean).join(" "));
+    if (truck.assigned_driver?.driver_name) {
+      parts.push(`Assigned driver: ${truck.assigned_driver.driver_name}.`);
+    }
+  }
+
+  parts.push("");
+  parts.push("Fuel telemetry");
+  if (telemetry?.fuel_telemetry_available) {
+    parts.push(
+      `${telemetry.fuel_readings} fuel reading(s) found from ${telemetry.telemetry_points} recent telemetry point(s). Latest: ${formatFuelLevel(
+        telemetry.latest_fuel_level,
+        telemetry.latest_fuel_unit
+      )} at ${formatReadableDate(telemetry.latest_fuel_at)}. Range: ${formatFuelLevel(
+        telemetry.min_fuel_level,
+        telemetry.latest_fuel_unit
+      )} to ${formatFuelLevel(telemetry.max_fuel_level, telemetry.latest_fuel_unit)}.`
+    );
+  } else if (telemetry) {
+    parts.push(
+      `No usable fuel-level telemetry was found in the recent telemetry sample. ${telemetry.telemetry_points || 0} telemetry point(s) were available.`
+    );
+  } else {
+    parts.push("Fuel telemetry was not available for this investigation.");
+  }
+
+  if (risk) {
+    parts.push("");
+    parts.push("Fuel risk check");
+    parts.push(formatFuelRiskSummary(risk));
+  }
+
+  parts.push("");
+  parts.push("Recent fuel entries");
+  if (fuelLogs.length) {
+    parts.push(...fuelLogs.slice(0, 5).map(formatFuelLogLine));
+  } else {
+    parts.push("No recent manual fuel entries were found for this vehicle.");
+  }
+
+  parts.push("");
+  parts.push("Recent stops and alerts");
+  if (fuelEvents.length || idleEvents.length) {
+    if (fuelEvents.length) {
+      parts.push(`Fuel-related event(s): ${fuelEvents.slice(0, 3).map(formatEventBrief).join("; ")}.`);
+    }
+    if (idleEvents.length) {
+      parts.push(`Idle/stop-like event(s): ${idleEvents.slice(0, 3).map(formatEventBrief).join("; ")}.`);
+    }
+  } else {
+    parts.push("No recent fuel-drop or excessive-idle events were found for this vehicle.");
+  }
+
+  parts.push("");
+  parts.push("Journey context");
+  if (journeys.length) {
+    parts.push(...journeys.slice(0, 3).map(formatJourneyBrief));
+  } else {
+    parts.push("No recent journey record was found for this vehicle.");
+  }
+
+  parts.push("");
+  parts.push("What to verify next");
+  parts.push("- Compare recent fuel purchases with tank dips, route distance, and expected consumption.");
+  parts.push("- Check repeated small discrepancies; they may not trigger a major drop alert unless fuel-level telemetry is granular.");
+  parts.push("- Review yard, fuel station, and stop records around the latest idle or fuel-entry times.");
+
+  return parts.join("\n");
 }
 
 function buildSparesFallbackAnswer(context: any): string {
@@ -823,6 +987,74 @@ function formatNumber(value: any) {
 
 function formatMissingInput(value: string) {
   return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function normalizeDisplayKey(value: any) {
+  return String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+function formatVehicleCandidateLine(candidate: any) {
+  const label = [candidate.registration, candidate.truck_id]
+    .filter(Boolean)
+    .filter((value, index, list) => list.indexOf(value) === index)
+    .join(" / ");
+  const status = candidate.enabled_for_intelligence
+    ? "enabled"
+    : "waiting for review";
+  const confidence = candidate.confidence || "low";
+
+  return `- ${label || "Vehicle"} - ${status}, ${confidence} match`;
+}
+
+function formatFuelLevel(value: any, unit: any) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) {
+    return "not available";
+  }
+  const suffix = unit ? ` ${unit}` : "";
+  return `${Number(value).toLocaleString()}${suffix}`;
+}
+
+function formatFuelRiskSummary(risk: any) {
+  const score =
+    risk.risk_score === null || risk.risk_score === undefined
+      ? "not available"
+      : risk.risk_score;
+  const level = risk.risk_level ? ` (${risk.risk_level})` : "";
+  const recommendation = risk.recommendation || risk.message || "";
+
+  return `Score: ${score}${level}. ${recommendation}`.trim();
+}
+
+function formatFuelLogLine(log: any) {
+  const liters =
+    log.liters === null || log.liters === undefined
+      ? "liters not recorded"
+      : `${formatNumber(log.liters)} liters`;
+  const vendor = log.vendor ? ` - vendor ${log.vendor}` : "";
+  const allocation = log.allocation_status ? ` - ${log.allocation_status}` : "";
+  const source = log.fuel_source ? ` - ${log.fuel_source}` : "";
+
+  return `- ${formatReadableDate(log.created_at)} - ${liters}${vendor}${allocation}${source}`;
+}
+
+function formatEventBrief(event: any) {
+  const location = formatOperationalLocation(event);
+  const driver = event.assigned_driver?.driver_name
+    ? ` while ${event.assigned_driver.driver_name} was assigned`
+    : "";
+  return `${formatSpareEventType(event.event_type)} at ${formatReadableDate(
+    event.created_at || event.started_at
+  )}${location ? ` ${location}` : ""}${driver}`;
+}
+
+function formatJourneyBrief(journey: any) {
+  const reference = journey.reference || "Journey";
+  const route = [journey.from_location, journey.to_location].filter(Boolean).join(" to ");
+  const status = journey.status ? ` - ${journey.status}` : "";
+  const client = journey.client_name ? ` - ${journey.client_name}` : "";
+  const created = journey.created_at ? ` - ${formatReadableDate(journey.created_at)}` : "";
+
+  return `- ${reference}${client}${route ? ` - ${route}` : ""}${status}${created}`;
 }
 
 function formatOperationalLocation(value: any) {
