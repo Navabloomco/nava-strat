@@ -425,7 +425,14 @@ function ProviderEnrichmentDiagnostics({
                 />
               )}
 
-              {canShowAvailableKeys && feed.auth_profile_used && (
+              {(feed.auth_profile_attempted ||
+                feed.auth_http_status ||
+                feed.auth_response_type ||
+                feed.auth_top_level_keys?.length > 0 ||
+                feed.auth_error_keys?.length > 0 ||
+                feed.auth_token_paths_checked?.length > 0 ||
+                feed.auth_metadata_paths_checked?.length > 0 ||
+                feed.auth_token_candidate_paths_found?.length > 0) && (
                 <>
                   <DiagnosticFieldBlock
                     title="Auth response shape"
