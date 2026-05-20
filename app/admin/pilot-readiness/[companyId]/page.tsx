@@ -162,6 +162,7 @@ export default function PilotReadinessDetailPage() {
   const overall = readiness.overall_readiness || {};
   const counts = readiness.check_counts || {};
   const links = readiness.links || {};
+  const actions = readiness.actions || [];
 
   return (
     <main className="min-h-screen bg-slate-950 px-4 py-6 text-white sm:px-8 sm:py-10">
@@ -254,6 +255,77 @@ export default function PilotReadinessDetailPage() {
             href={links.invoice_preview}
           />
         </section>
+
+        <Panel dark className="mt-8 overflow-hidden border-cyan-200/20 bg-cyan-300/10">
+          <div className="border-b border-white/10 px-5 py-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold text-white">
+                  Go-live action panel
+                </h2>
+                <p className="mt-1 text-sm leading-6 text-slate-300">
+                  Highest priority blockers and warnings, with the safest next
+                  place to act.
+                </p>
+              </div>
+              <StatusPill tone={actions.length > 0 ? "warning" : "success"}>
+                {actions.length > 0 ? `${actions.length} actions` : "No actions"}
+              </StatusPill>
+            </div>
+          </div>
+
+          {actions.length === 0 ? (
+            <div className="px-5 py-5 text-sm leading-6 text-emerald-100">
+              No blockers or warnings are currently open for this tenant.
+            </div>
+          ) : (
+            <div className="divide-y divide-white/10">
+              {actions.map((action: any, index: number) => (
+                <div
+                  key={`${action.category}:${action.label}:${index}`}
+                  className="grid gap-4 px-5 py-5 lg:grid-cols-[180px_1fr_180px] lg:items-start"
+                >
+                  <div className="flex flex-wrap items-center gap-2">
+                    <StatusPill tone={checkTone(action.severity)}>
+                      {checkLabel(action.severity)}
+                    </StatusPill>
+                    <span className="text-xs font-bold uppercase tracking-[0.12em] text-cyan-100">
+                      {action.category}
+                    </span>
+                  </div>
+
+                  <div className="min-w-0">
+                    <h3 className="text-base font-semibold text-white">
+                      {action.label}
+                    </h3>
+                    <p className="mt-2 text-sm leading-6 text-slate-300">
+                      {action.reason}
+                    </p>
+                    {action.route_note && (
+                      <p className="mt-2 text-xs leading-5 text-slate-400">
+                        {action.route_note}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="lg:text-right">
+                    {action.route ? (
+                      <Link href={action.route}>
+                        <PrimaryButton type="button" className="w-full">
+                          Open Action
+                        </PrimaryButton>
+                      </Link>
+                    ) : (
+                      <span className="text-xs leading-5 text-slate-400">
+                        Manual admin action
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </Panel>
 
         <section className="mt-8 grid gap-6">
           {CATEGORY_ORDER.map((category) => {

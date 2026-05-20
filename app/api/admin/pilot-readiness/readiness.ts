@@ -19,6 +19,7 @@ type ReadinessCheck = {
   explanation: string;
   suggested_next_action: string;
   route?: string | null;
+  route_note?: string | null;
 };
 
 type OptionalRowsResult = {
@@ -251,6 +252,7 @@ function buildCompanyReadiness(company: any, shared: any) {
   });
   const counts = summarizeChecks(checks);
   const overall = overallReadiness(counts);
+  const actions = buildActionPanel(checks);
 
   return {
     company: safeCompany(company),
@@ -258,6 +260,7 @@ function buildCompanyReadiness(company: any, shared: any) {
     overall_readiness: overall,
     check_counts: counts,
     checks,
+    actions,
     members: {
       active_member_count: members.length,
       by_role: roleCounts,
@@ -602,7 +605,8 @@ function check(
   status: CheckStatus,
   explanation: string,
   suggestedNextAction: string,
-  route?: string | null
+  route?: string | null,
+  routeNote?: string | null
 ): ReadinessCheck {
   return {
     category,
@@ -611,7 +615,51 @@ function check(
     explanation,
     suggested_next_action: suggestedNextAction,
     route: route || null,
+    route_note: routeNote || null,
   };
+}
+
+function buildActionPanel(checks: ReadinessCheck[]) {
+  return checks
+    .filter((item) => item.status !== "pass")
+    .map((item) => ({
+      label: actionLabel(item),
+      reason: item.explanation,
+      category: item.category,
+      severity: item.status === "fail" ? "fail" : "warning",
+      route: item.route || null,
+      route_note: item.route_note || fallbackRouteNote(item),
+    }))
+    .sort((a, b) => severityRank(a.severity) - severityRank(b.severity));
+}
+
+function actionLabel(check: ReadinessCheck) {
+  if (check.category === "Role/security readiness") return check.suggested_next_action;
+  return check.suggested_next_action || check.label;
+}
+
+function fallbackRouteNote(check: ReadinessCheck) {
+  if (check.category === "Asset review" && check.route?.startsWith("/admin/assets")) {
+    return "If Asset Review does not honor companyId filtering in this environment, open Asset Review and select the tenant manually.";
+  }
+
+  if (check.category === "Provider setup" && check.route?.startsWith("/admin/providers")) {
+    return "If Provider Vault does not honor companyId filtering in this environment, open Provider Vault and select the tenant manually.";
+  }
+
+  if (check.category === "Company setup" && check.route?.startsWith("/admin/company")) {
+    return "If Company Settings does not honor companyId filtering in this environment, open Company Settings and select the tenant manually.";
+  }
+
+  if (check.category === "Role/security readiness") {
+    return "No direct mutation exists here yet. Use the normal company membership/admin process.";
+  }
+
+  return null;
+}
+
+function severityRank(severity: string) {
+  return severity === "fail" ? 0 : 1;
 }
 
 function optionalCountCheck(
