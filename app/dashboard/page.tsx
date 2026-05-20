@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { supabase } from "../../lib/supabase";
 import { useRouter } from "next/navigation";
+import { isPlatformOperatorCompany } from "../../lib/companyType";
 
 interface OverviewData {
   success: boolean;
@@ -21,26 +22,13 @@ interface CompanyOption {
   id: string;
   name: string;
   slug: string;
+  company_type?: string | null;
 }
 
 interface MembershipOption {
   company_id: string;
   role: string;
   is_active?: boolean;
-}
-
-function normalizeCompanyKey(value: any) {
-  return String(value || "")
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "");
-}
-
-function isPlatformOperatorCompany(company: Partial<CompanyOption> | null | undefined) {
-  const slugKey = normalizeCompanyKey(company?.slug);
-  const nameKey = normalizeCompanyKey(company?.name);
-
-  return slugKey === "navabloomco" || nameKey === "navabloomco";
 }
 
 function getExplicitDashboardCompanyId(companies: CompanyOption[]) {

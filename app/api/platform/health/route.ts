@@ -253,6 +253,12 @@ const OPTIONAL_COLUMN_CHECKS = [
       "Pilot checklist names current_price_per_liter; current app code uses default_price_per_liter.",
   },
   {
+    table: "companies",
+    column: "company_type",
+    detail:
+      "Recommended for durable platform/operator workspace detection. The app falls back to the Navabloomco slug/name heuristic until this additive column is applied.",
+  },
+  {
     table: "truck_route_fuel_profiles",
     column: "route_key",
     detail:

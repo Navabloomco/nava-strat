@@ -53,7 +53,7 @@ The main product principle is convenience. Every user-facing page should make th
 
 | Route | Purpose |
 | --- | --- |
-| `/dashboard` | Customer-facing app dashboard and navigation hub for fleet tenants. Platform owners default to the Nava Bloom Co./Navabloomco platform operator workspace on first load, using the documented temporary slug/name heuristic until a durable operator-company flag exists. For the platform/operator workspace, platform owners see a platform workspace home with safe aggregate KPIs, grouped platform/tenant/product actions, customer workspace cards, and a presentation-only sensitive metric toggle instead of empty fleet metrics. Customer tenants remain selectable from the company switcher. Includes Nava Eye Watch items built from safe dashboard summaries, and an embedded Nava Eye widget for customer fleet tenants that may pass safe page context for visible dashboard follow-ups. |
+| `/dashboard` | Customer-facing app dashboard and navigation hub for fleet tenants. Platform owners default to the Nava Bloom Co./Navabloomco platform operator workspace on first load. Durable detection uses `companies.company_type = platform_operator`, with the older Navabloomco slug/name heuristic only as a transition fallback when `company_type` is missing. For the platform/operator workspace, platform owners see a platform workspace home with safe aggregate KPIs, grouped platform/tenant/product actions, customer workspace cards, and a presentation-only sensitive metric toggle instead of empty fleet metrics. Customer tenants remain selectable from the company switcher. Includes Nava Eye Watch items built from safe dashboard summaries, and an embedded Nava Eye widget for customer fleet tenants that may pass safe page context for visible dashboard follow-ups. |
 | `/nava-eye` | Nava Eye assistant UI. |
 | `/tracking/live` | Live tracking view for enabled intelligence assets. |
 | `/tracking/link` | Tracking link helper page. |
@@ -233,7 +233,7 @@ The main product principle is convenience. Every user-facing page should make th
 
 | Table | Used For |
 | --- | --- |
-| `companies` | Tenant record, subscription/billing config, operating context, and workspace identity. |
+| `companies` | Tenant record, subscription/billing config, operating context, workspace identity, and `company_type` classification (`platform_operator`, `customer`, or `demo`). |
 | `company_users` | Active user memberships and roles. This is the source of tenant access. |
 | `company_ai_settings` | Nava Eye provider/model settings. |
 | `nava_eye_memory` | Nava Eye memory and recurring operational facts. |
@@ -334,7 +334,8 @@ Nava Eye and Nava Eye Watch use explicit safe capability flags derived from the 
 - Same-company role checks matter: a role in one company must not authorize mutation in another company.
 - `platform_owner` can pass `companyId` on supported internal/admin APIs.
 - The Navabloomco company is the platform/operator workspace, not a customer fleet tenant. Platform owners using `/dashboard` in that workspace should see platform operations guidance and safe aggregate tenant stats, not an empty fleet dashboard.
-- Until a durable `companies` field exists for platform/operator identity, dashboard mode uses a small temporary heuristic: normalized company `slug` or `name` equals `navabloomco`, and the current user is `platform_owner`.
+- Durable platform/operator workspace identity should use `companies.company_type = platform_operator`. Normal customer tenants should use `company_type = customer`; test/demo companies may use `company_type = demo`.
+- During transition, if `companies.company_type` is missing or absent on a row, dashboard/company selection falls back to the older normalized `slug` or `name` equals `navabloomco` heuristic for platform owners only. Do not remove this fallback until production data has been migrated.
 - Admin pages that currently support platform-owner `?companyId=` tenant context include Asset Review, Provider Vault, and Company Settings.
 - Non-platform users may only access companies where they have an active membership.
 - Tenant data should be scoped by `company_id` before returning or mutating.
@@ -706,6 +707,8 @@ The checklist returns pass/warning/fail checks grouped by company setup, provide
 ### Platform Workspace Dashboard Mode
 
 When a platform owner selects the Navabloomco platform/operator workspace and opens `/dashboard`, the dashboard returns `dashboard_mode = platform_operator` and shows a platform workspace home instead of fleet metrics.
+
+Platform workspace detection now prefers `companies.company_type = platform_operator`. The Navabloomco slug/name heuristic exists only as a migration fallback while older environments are missing `company_type`.
 
 The platform workspace dashboard shows:
 

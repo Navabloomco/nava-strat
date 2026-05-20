@@ -10,6 +10,11 @@ import {
   rolesForCompany,
 } from "../../../../lib/api/roleAccess";
 import {
+  getPlatformOperatorDetection,
+  isMissingCompanyTypeColumn,
+  isPlatformOperatorCompany,
+} from "../../../../lib/companyType";
+import {
   buildPricingPreview,
   fetchCompanies,
   summarizeAssets,
@@ -20,7 +25,8 @@ export const dynamic = "force-dynamic";
 
 const SAFE_MEMORY_FIELDS =
   "id, memory_type, severity, title, summary, recommendation, last_seen_at";
-const PLATFORM_OPERATOR_COMPANY_KEYS = new Set(["navabloomco"]);
+const COMPANY_FIELDS = "id, name, slug, company_type";
+const COMPANY_FIELDS_FALLBACK = "id, name, slug";
 
 function sanitizeDashboardMemories(
   memories: any[],
@@ -84,23 +90,6 @@ async function getAssetReviewSummary(companyId: string) {
       ["disabled", "excluded"].includes(String(asset.billing_status || ""))
     ).length,
   };
-}
-
-function normalizeCompanyKey(value: any) {
-  return String(value || "")
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "");
-}
-
-function isPlatformOperatorCompany(company: any) {
-  const slugKey = normalizeCompanyKey(company?.slug);
-  const nameKey = normalizeCompanyKey(company?.name);
-
-  return (
-    PLATFORM_OPERATOR_COMPANY_KEYS.has(slugKey) ||
-    PLATFORM_OPERATOR_COMPANY_KEYS.has(nameKey)
-  );
 }
 
 async function getPlatformOperatorSummary(operatorCompanyId: string) {
@@ -274,11 +263,44 @@ async function getPlatformOperatorSummary(operatorCompanyId: string) {
       : null,
     readiness_unavailable_reason:
       "error" in readinessResult ? readinessResult.error : null,
-    operator_company_detection: {
-      method: "temporary_slug_or_name_heuristic",
-      matched_key: "navabloomco",
-    },
+    operator_company_detection: getPlatformOperatorDetection(
+      companies.find((company: any) => company.id === operatorCompanyId)
+    ),
   };
+}
+
+async function fetchCompanyById(companyId: string) {
+  const result = await supabaseAdmin
+    .from("companies")
+    .select(COMPANY_FIELDS)
+    .eq("id", companyId)
+    .maybeSingle();
+
+  if (!result.error || !isMissingCompanyTypeColumn(result.error)) {
+    return result;
+  }
+
+  return supabaseAdmin
+    .from("companies")
+    .select(COMPANY_FIELDS_FALLBACK)
+    .eq("id", companyId)
+    .maybeSingle();
+}
+
+async function fetchCompaniesForDefault() {
+  const result = await supabaseAdmin
+    .from("companies")
+    .select(COMPANY_FIELDS)
+    .order("name", { ascending: true });
+
+  if (!result.error || !isMissingCompanyTypeColumn(result.error)) {
+    return result;
+  }
+
+  return supabaseAdmin
+    .from("companies")
+    .select(COMPANY_FIELDS_FALLBACK)
+    .order("name", { ascending: true });
 }
 
 export async function GET(req: Request) {
@@ -315,16 +337,12 @@ export async function GET(req: Request) {
       (membership) => membership.role === "platform_owner"
     );
 
-    let company;
+    let company: any;
 
     if (isPlatformOwner) {
       if (requestedCompanyId) {
         const { data: requestedCompany, error: companyError } =
-          await supabaseAdmin
-            .from("companies")
-            .select("id, name, slug")
-            .eq("id", requestedCompanyId)
-            .maybeSingle();
+          await fetchCompanyById(requestedCompanyId);
 
         if (companyError) throw companyError;
         if (!requestedCompany) {
@@ -336,10 +354,8 @@ export async function GET(req: Request) {
 
         company = requestedCompany;
       } else {
-        const { data: companies, error: companyError } = await supabaseAdmin
-          .from("companies")
-          .select("id, name, slug")
-          .order("name", { ascending: true });
+        const { data: companies, error: companyError } =
+          await fetchCompaniesForDefault();
 
         if (companyError) throw companyError;
         const defaultCompany =
@@ -368,11 +384,8 @@ export async function GET(req: Request) {
         );
       }
 
-      const { data: assignedCompany, error: companyError } = await supabaseAdmin
-        .from("companies")
-        .select("id, name, slug")
-        .eq("id", companyId)
-        .maybeSingle();
+      const { data: assignedCompany, error: companyError } =
+        await fetchCompanyById(companyId);
 
       if (companyError) throw companyError;
       if (!assignedCompany) {
@@ -400,6 +413,7 @@ export async function GET(req: Request) {
           id: company.id,
           name: company.name,
           slug: company.slug,
+          company_type: company.company_type || null,
         },
         capabilities,
         platform_operator_summary: platformSummary,
@@ -436,6 +450,7 @@ export async function GET(req: Request) {
         id: company.id,
         name: company.name,
         slug: company.slug,
+        company_type: company.company_type || null,
       },
       fleet_health: fleetHealth,
       capabilities,

@@ -1,9 +1,16 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "../../../lib/supabaseAdmin";
 import { supabase } from "../../../lib/supabase";
+import {
+  isMissingCompanyTypeColumn,
+  isPlatformOperatorCompany,
+} from "../../../lib/companyType";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
+
+const COMPANY_FIELDS = "id, name, slug, company_type";
+const COMPANY_FIELDS_FALLBACK = "id, name, slug";
 
 function noStoreJson(body: any, init?: ResponseInit) {
   return NextResponse.json(body, {
@@ -19,20 +26,6 @@ function normalizeRole(role: any) {
   return String(role || "").trim().toLowerCase();
 }
 
-function normalizeCompanyKey(value: any) {
-  return String(value || "")
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "");
-}
-
-function isPlatformOperatorCompany(company: any) {
-  const slugKey = normalizeCompanyKey(company?.slug);
-  const nameKey = normalizeCompanyKey(company?.name);
-
-  return slugKey === "navabloomco" || nameKey === "navabloomco";
-}
-
 function sortCompaniesForDefault(companies: any[]) {
   return [...(companies || [])].sort((a, b) => {
     const aIsOperator = isPlatformOperatorCompany(a);
@@ -41,6 +34,34 @@ function sortCompaniesForDefault(companies: any[]) {
     if (aIsOperator !== bIsOperator) return aIsOperator ? -1 : 1;
     return String(a?.name || "").localeCompare(String(b?.name || ""));
   });
+}
+
+async function fetchCompanies(companyIds?: string[]) {
+  let query = supabaseAdmin
+    .from("companies")
+    .select(COMPANY_FIELDS)
+    .order("name", { ascending: true });
+
+  if (companyIds?.length) {
+    query = query.in("id", companyIds);
+  }
+
+  const result = await query;
+
+  if (!result.error || !isMissingCompanyTypeColumn(result.error)) {
+    return result;
+  }
+
+  let fallbackQuery = supabaseAdmin
+    .from("companies")
+    .select(COMPANY_FIELDS_FALLBACK)
+    .order("name", { ascending: true });
+
+  if (companyIds?.length) {
+    fallbackQuery = fallbackQuery.in("id", companyIds);
+  }
+
+  return fallbackQuery;
 }
 
 export async function GET(req: Request) {
@@ -86,10 +107,7 @@ export async function GET(req: Request) {
     const isPlatformOwner = roles.includes("platform_owner");
 
     if (isPlatformOwner) {
-      const { data: companies, error: companiesError } = await supabaseAdmin
-        .from("companies")
-        .select("id, name, slug")
-        .order("name", { ascending: true });
+      const { data: companies, error: companiesError } = await fetchCompanies();
 
       if (companiesError) throw companiesError;
 
@@ -116,11 +134,7 @@ export async function GET(req: Request) {
       });
     }
 
-    const { data: companies, error: companiesError } = await supabaseAdmin
-      .from("companies")
-      .select("id, name, slug")
-      .in("id", companyIds)
-      .order("name", { ascending: true });
+    const { data: companies, error: companiesError } = await fetchCompanies(companyIds);
 
     if (companiesError) throw companiesError;
 

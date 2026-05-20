@@ -1,8 +1,11 @@
 import { NextResponse } from "next/server";
 import { supabase } from "../../../../lib/supabase";
 import { supabaseAdmin } from "../../../../lib/supabaseAdmin";
+import { isMissingCompanyTypeColumn } from "../../../../lib/companyType";
 
 const COMPANY_FIELDS =
+  "id, name, slug, company_type, subscription_plan, business_type, primary_asset_types, main_billing_unit, operating_regions, primary_use_case, asset_unit_price, billing_currency, included_assets";
+const COMPANY_FIELDS_FALLBACK =
   "id, name, slug, subscription_plan, business_type, primary_asset_types, main_billing_unit, operating_regions, primary_use_case, asset_unit_price, billing_currency, included_assets";
 export const BILLING_INVOICE_FIELDS =
   "id, company_id, invoice_number, period_start, period_end, currency, strict_billable_assets, included_assets, extra_billable_assets, asset_unit_price, subtotal, total, status, notes, created_at, updated_at, sent_at, paid_at, voided_at";
@@ -334,16 +337,35 @@ export function safeOperatingContext(company: any) {
 }
 
 export async function fetchCompanies() {
-  return supabaseAdmin
+  const result = await supabaseAdmin
     .from("companies")
     .select(COMPANY_FIELDS)
+    .order("name", { ascending: true });
+
+  if (!result.error || !isMissingCompanyTypeColumn(result.error)) {
+    return result;
+  }
+
+  return supabaseAdmin
+    .from("companies")
+    .select(COMPANY_FIELDS_FALLBACK)
     .order("name", { ascending: true });
 }
 
 export async function fetchCompany(companyId: string) {
-  return supabaseAdmin
+  const result = await supabaseAdmin
     .from("companies")
     .select(COMPANY_FIELDS)
+    .eq("id", companyId)
+    .maybeSingle();
+
+  if (!result.error || !isMissingCompanyTypeColumn(result.error)) {
+    return result;
+  }
+
+  return supabaseAdmin
+    .from("companies")
+    .select(COMPANY_FIELDS_FALLBACK)
     .eq("id", companyId)
     .maybeSingle();
 }
