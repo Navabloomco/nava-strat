@@ -1213,6 +1213,7 @@ function buildTruckStatusFallbackAnswer(context: any) {
   parts.push(
     `**${formatLiveTruckTopLine(matchedLabel, locationText, lastSeenAt, speed, stale, timeZone)}**`
   );
+  parts.push(formatTimelineTimeNote(timeZone));
 
   if (context.coordinate_request && hasGpsPoint) {
     parts.push(
@@ -1268,7 +1269,7 @@ function formatLiveTruckTopLine(
   stale: boolean,
   timeZone: string
 ) {
-  const time = formatTimelineTime(lastSeenAt, timeZone);
+  const time = formatTimelineClock(lastSeenAt, timeZone);
   if (stale) {
     return `${label} was last seen ${location} at ${time}; this is a last-known position, not confirmed live status.`;
   }
@@ -1286,12 +1287,12 @@ function formatLiveOperationalState(speed: number | null, stale: boolean) {
     return "Provider data is stale; refresh sync or live tracking before treating it as current.";
   }
   if (speed === null) {
-    return "Nava has a location read, but speed is missing, so the live motion state is unverified.";
+    return "Location is available, but speed is missing, so the live motion state is unverified.";
   }
   if (speed > 5) {
-    return "Nava reads this as active movement.";
+    return "This is active movement.";
   }
-  return "Nava reads this as a stopped/stationary state.";
+  return "The truck is stopped/stationary.";
 }
 
 function formatLiveIdleMarkerRead({
@@ -1313,7 +1314,7 @@ function formatLiveIdleMarkerRead({
   }
   if (!isRecentOperationalEvent(latestIdle, 24)) {
     return idleFocus
-      ? "Nava has older idle markers for this truck, but no recent marker strong enough to support a live idle read."
+      ? "Older idle markers exist for this truck, but no recent marker is strong enough to support a live idle read."
       : "";
   }
 
@@ -1330,7 +1331,7 @@ function formatLiveIdleMarkerRead({
     return `${base} Ignition is off, so this looks like a parked/stopped state rather than active idling.`;
   }
   if (speed !== null && speed <= 5) {
-    return `${base} Without ignition data, Nava treats this as an unverified idle risk, not confirmed fuel-burn idling.`;
+    return `${base} Without ignition data, this remains an unverified idle risk, not confirmed engine-on idling.`;
   }
 
   return `${base} Latest speed does not support a stopped live-idle read right now.`;
@@ -1383,7 +1384,6 @@ function buildTruckTimelineComparisonAnswer(context: any) {
     context.detected_truck_id ||
     "the truck";
   const timeZone = timeline.timezone?.time_zone || DEFAULT_OPERATIONAL_TIME_ZONE;
-  const timeLabel = timeline.timezone?.label || "EAT (Kenya time)";
   const summary = timeline.telemetry_summary || {};
   const dayStory = timeline.day_story || {};
   const latest = timeline.latest_snapshot || null;
@@ -1401,7 +1401,6 @@ function buildTruckTimelineComparisonAnswer(context: any) {
     return buildDetailedTruckTimelineAnswer({
       label,
       timeZone,
-      timeLabel,
       dayStory,
       summary,
       latest,
@@ -1419,6 +1418,7 @@ function buildTruckTimelineComparisonAnswer(context: any) {
   const rollover = isNewDayRolloverWindow(timeframe, dayStory, summary);
 
   parts.push(buildLogisticsTimelineOpening(label, dayStory, summary, continuity, latest, timeZone, timeframe));
+  parts.push(formatTimelineTimeNote(timeZone));
   const coverageNote = formatNarrativeCoverageNote(dayStory, summary, timeZone, timeframe);
   if (coverageNote) {
     parts.push("");
@@ -1462,7 +1462,7 @@ function buildLogisticsTimelineOpening(
     "at its latest known GPS point";
   const speed = finiteNumberOrNull(latestSeen?.speed ?? latest?.speed);
   const movementState = formatNarrativeMovementState(speed);
-  const time = formatTimelineTime(latestSeen?.recorded_at || latest?.recorded_at, timeZone);
+  const time = formatTimelineClock(latestSeen?.recorded_at || latest?.recorded_at, timeZone);
   const speedText = speed === null ? "" : ` with speed ${formatNumber(speed)}`;
   const positionText =
     timeframe?.requested === "yesterday"
@@ -1478,12 +1478,12 @@ function buildLogisticsTimelineOpening(
     timeframe?.requested === "yesterday"
       ? routeEvidence
         ? "This is a previous-day route narrative, not a current-status snapshot."
-        : "This is a narrow previous-day operating read, so Nava should not force it into a full route story."
+        : "This is a narrow previous-day operating read, so it should not be forced into a full route story."
       : rollover
-    ? "This is a new-day window after the EAT rollover, so Nava has not yet accumulated a full-day route for today."
+    ? "This is a new-day window after the EAT rollover, so a full-day route has not accumulated yet."
     : routeEvidence
     ? "The truck was not stuck in an all-day delay."
-    : "This is a narrow operating read, so Nava should not force it into a full-day route story.";
+    : "This is a narrow operating read, so it should not be forced into a full-day route story.";
   const metricSentence = rollover ? "" : buildHumanTimelineMetrics(dayStory.stop_summary || {});
 
   return `${positionText}, last seen at ${time}${speedText}. ${verdict}${
@@ -1497,10 +1497,10 @@ function isEmptyRequestedTimeline(timeframe: any, summary: any) {
 
 function buildEmptyTimelineWindowAnswer(label: string, timeframe: any) {
   if (timeframe?.requested === "yesterday") {
-    return `${label} has no telemetry history for yesterday in this company workspace, so Nava cannot reconstruct that route. I can check the current truck status or another operating day if you want.`;
+    return `${label} has no telemetry history for yesterday in this company workspace, so that route cannot be reconstructed. I can check the current truck status or another operating day if you want.`;
   }
 
-  return `${label} has no telemetry history in this operating window, so Nava cannot reconstruct the route from movement logs.`;
+  return `${label} has no telemetry history in this operating window, so the route cannot be reconstructed from movement logs.`;
 }
 
 function formatNarrativeCoverageNote(dayStory: any, summary: any, timeZone: string, timeframe: any = {}) {
@@ -1508,13 +1508,13 @@ function formatNarrativeCoverageNote(dayStory: any, summary: any, timeZone: stri
     return "";
   }
   if (dayStory.coverage_is_partial && dayStory.coverage_start_at && dayStory.coverage_end_at) {
-    return `This ${formatTimeframeLabel(timeframe)} operating window currently runs from ${formatTimelineTime(
+    return `This ${formatTimeframeLabel(timeframe)} operating window currently runs from ${formatTimelineClock(
       dayStory.coverage_start_at,
       timeZone
-    )} to ${formatTimelineTime(dayStory.coverage_end_at, timeZone)}. The route read below is based on that window.`;
+    )} to ${formatTimelineClock(dayStory.coverage_end_at, timeZone)}. The route read below is based on that window.`;
   }
   if (summary.data_density === "low") {
-    return `This is a thin ${formatTimeframeLabel(timeframe)} operating read, so Nava is comparing the visible movement window with any idle markers rather than forcing a full-day route story.`;
+    return `This is a thin ${formatTimeframeLabel(timeframe)} operating read, so the visible movement window is being compared with any idle markers instead of forcing a full-day route story.`;
   }
   return "";
 }
@@ -1606,12 +1606,12 @@ function buildCorridorRouteNarrative(label: string, dayStory: any, summary: any,
   const firstLocation = formatNarrativeLocation(first?.location);
 
   if (isNewDayRolloverWindow(timeframe, dayStory, summary)) {
-    return "This is an overnight rollover window. Today's route has not matured yet, so Nava should not treat the first post-midnight reads as a complete corridor story.";
+    return "This is an overnight rollover window. Today's route has not matured yet, so the first post-midnight reads should not be treated as a complete corridor story.";
   }
 
   if (first?.recorded_at) {
     sentences.push(
-      `${label} first appeared${firstLocation ? ` ${firstLocation}` : " in Nava's same-day track"} at ${formatTimelineTime(
+      `${label} first appeared${firstLocation ? ` ${firstLocation}` : " in the same-day track"} at ${formatTimelineClock(
         first.recorded_at,
         timeZone
       )}.`
@@ -1623,7 +1623,7 @@ function buildCorridorRouteNarrative(label: string, dayStory: any, summary: any,
   } else if (route.length === 1) {
     sentences.push(`The available points are concentrated around ${route[0]}.`);
   } else if (Number(summary.movement_blocks || 0) > 0) {
-    sentences.push("Nava can see movement and stop periods, but the key places are not resolved into clean town labels yet.");
+    sentences.push("Movement and stop periods are visible, but the key places are not resolved into clean town labels yet.");
   } else {
     sentences.push("The available telemetry does not yet show a clear route progression for today.");
   }
@@ -1703,7 +1703,7 @@ function formatAndList(items: string[]) {
 
 function buildNarrativeIdleAlerts(idleEvents: any[], continuity: any, summary: any) {
   if (!idleEvents.length) {
-    return "No same-day idle or excessive-idle alerts are present in Nava's event trail for this truck.";
+    return "No same-day idle or excessive-idle alerts are present in the event trail for this truck.";
   }
 
   const broken = idleEvents.filter(
@@ -1722,14 +1722,14 @@ function buildNarrativeIdleAlerts(idleEvents: any[], continuity: any, summary: a
   }
 
   if (continuity.continuous_all_day_idle_supported || current > 0) {
-    return "The latest idle marker may relate to the current stop because Nava does not see later movement after that marker.";
+    return "The latest idle marker may relate to the current stop because no later movement appears after that marker.";
   }
 
   if (summary.data_density === "low") {
     return "The idle alert trail is too thin to connect the markers into one continuous delay.";
   }
 
-  return "Idle alerts exist, but Nava does not have enough continuity evidence to merge them into one continuous delay.";
+  return "Idle alerts exist, but there is not enough continuity evidence to merge them into one continuous delay.";
 }
 
 function formatHardwareNote(latest: any) {
@@ -1755,9 +1755,9 @@ function formatHardwareNote(latest: any) {
     return "Ignition data shows the engine appears off.";
   }
   if (speed !== null && speed <= 5) {
-    return "Ignition data is not available in this feed, so Nava can confirm the truck is stopped but cannot confirm active fuel-burn idling.";
+    return "Ignition data is not available in this feed, so the truck is stopped but active fuel-burn idling is not confirmed.";
   }
-  return "Ignition data is not available in this feed, so Nava can describe movement from speed and location but cannot confirm engine state.";
+  return "Ignition data is not available in this feed, so movement can be described from speed and location but engine state is not confirmed.";
 }
 
 function normalizeIgnitionState(value: any) {
@@ -1773,7 +1773,6 @@ function normalizeIgnitionState(value: any) {
 function buildDetailedTruckTimelineAnswer({
   label,
   timeZone,
-  timeLabel,
   dayStory,
   summary,
   latest,
@@ -1783,15 +1782,15 @@ function buildDetailedTruckTimelineAnswer({
   timeframe = {},
 }: any) {
   const parts: string[] = [];
-  parts.push(`Detailed timeline evidence for ${label}, displayed in ${timeLabel}.`);
+  parts.push(`Detailed timeline evidence for ${label}. ${formatTimelineTimeNote(timeZone)}`);
   parts.push(buildTruckJourneyNarrative(label, dayStory, summary, continuity, timeZone));
 
   if (dayStory.coverage_is_partial && dayStory.coverage_start_at && dayStory.coverage_end_at) {
     parts.push(
-      `This ${formatTimeframeLabel(timeframe)} operating window runs from ${formatTimelineTime(
+      `This ${formatTimeframeLabel(timeframe)} operating window runs from ${formatTimelineClock(
         dayStory.coverage_start_at,
         timeZone
-      )} to ${formatTimelineTime(dayStory.coverage_end_at, timeZone)}. This expands that available window.`
+      )} to ${formatTimelineClock(dayStory.coverage_end_at, timeZone)}. This expands that available window.`
     );
   }
 
@@ -1815,6 +1814,9 @@ function buildDetailedTruckTimelineAnswer({
   parts.push("");
   parts.push("Idle marker evidence");
   if (idleEvents.length) {
+    if (countUnresolvedGpsMarkers(idleEvents) > 0) {
+      parts.push("- Some marker locations are unresolved GPS points.");
+    }
     parts.push(...idleEvents.map((event: any) => formatIdleComparison(event, timeZone)));
   } else {
     parts.push("- No idle or excessive-idle events were found for this truck in this operating window.");
@@ -1868,7 +1870,7 @@ function buildExecutiveCurrentLine(label: string, dayStory: any, latest: any, ti
       : speed > 5
         ? "moving"
         : "stationary/stopped";
-  const time = formatTimelineTime(latestSeen?.recorded_at || latest?.recorded_at, timeZone);
+  const time = formatTimelineClock(latestSeen?.recorded_at || latest?.recorded_at, timeZone);
   return `${label} latest read: ${location || "location unresolved"} at ${time}; ${state}${speed === null ? "" : `, speed ${formatNumber(speed)}`}.`;
 }
 
@@ -1892,7 +1894,7 @@ function formatCurrentStatusBlock(latest: any, timeZone: string) {
         : "stationary/stopped";
   const lines = [
     `- Location: ${location || "unresolved GPS point"}.`,
-    `- Latest timestamp: ${formatTimelineTime(latest.recorded_at, timeZone)}.`,
+    `- Latest timestamp: ${formatTimelineClock(latest.recorded_at, timeZone)}.`,
     `- Movement: ${state}${speed === null ? "" : `, speed ${formatNumber(speed)}`}.`,
     "- Engine/ignition: not available in this telemetry.",
   ];
@@ -1922,7 +1924,7 @@ function formatExecutiveMetrics(stopSummary: any, summary: any, timeZone: string
     lines.push(
       `- Longest stop: about ${formatDurationWords(longest.duration_minutes)}${
         longestLocation ? ` ${longestLocation}` : ""
-      } (${formatTimelineTime(longest.start_at, timeZone)} to ${formatTimelineTime(
+      } (${formatTimelineClock(longest.start_at, timeZone)} to ${formatTimelineClock(
         longest.end_at,
         timeZone
       )}).`
@@ -1942,7 +1944,7 @@ function formatExecutiveMetrics(stopSummary: any, summary: any, timeZone: string
 
 function formatExecutiveIdleVerdict(idleEvents: any[], continuity: any, summary: any) {
   if (!idleEvents.length) {
-    return "No same-day idle or excessive-idle markers are present in Nava's event trail for this truck.";
+    return "No same-day idle or excessive-idle markers are present in the event trail for this truck.";
   }
 
   const currentMarkers = idleEvents.filter(
@@ -1962,10 +1964,10 @@ function formatExecutiveIdleVerdict(idleEvents: any[], continuity: any, summary:
   }
 
   if (summary.data_density === "low") {
-    return "Nava has too little same-day history to prove whether the idle markers are continuous or separate.";
+    return "There is too little same-day history to prove whether the idle markers are continuous or separate.";
   }
 
-  return "Idle markers exist, but Nava does not have enough continuity evidence to merge them into one continuous delay.";
+  return "Idle markers exist, but there is not enough continuity evidence to merge them into one continuous delay.";
 }
 
 function formatContinuityRead(continuity: any, summary: any) {
@@ -2009,12 +2011,12 @@ function buildTruckJourneyNarrative(
   const opening =
     continuity.historical_idle_markers_broken_by_movement || movingBlocks > 0
       ? `${label}'s day looks like a route movement with stops, not one continuous idle event.`
-      : `${label}'s available day history is mostly stationary or limited, so Nava is treating this as a partial operational read.`;
+      : `${label}'s available day history is mostly stationary or limited, so this is a partial operational read.`;
   const sentences = [opening];
 
   if (first?.recorded_at) {
     sentences.push(
-      `It first appeared${firstLocation ? ` ${firstLocation}` : ""} at ${formatTimelineTime(
+      `It first appeared${firstLocation ? ` ${firstLocation}` : ""} at ${formatTimelineClock(
         first.recorded_at,
         timeZone
       )}.`
@@ -2022,9 +2024,7 @@ function buildTruckJourneyNarrative(
   }
 
   if (route.length >= 2) {
-    sentences.push(
-      `The observed route progression is ${formatRouteProgression(route)}.`
-    );
+    sentences.push(`Route milestones: ${formatRouteProgression(route)}.`);
   } else if (route.length === 1) {
     sentences.push(`The available points are concentrated around ${route[0]}.`);
   }
@@ -2040,9 +2040,9 @@ function buildTruckJourneyNarrative(
       )}${longestStopLocation ? ` ${longestStopLocation}` : ""}.`
     );
   } else if (meaningfulStops > 0) {
-    sentences.push(`Nava found ${meaningfulStops} meaningful stop(s) in the available window.`);
+    sentences.push(`${meaningfulStops} meaningful stop(s) appear in the available window.`);
   } else if (stationaryBlocks > 0) {
-    sentences.push("Nava sees stationary points, but none are long enough to classify as meaningful stops.");
+    sentences.push("Stationary points appear, but none are long enough to classify as meaningful stops.");
   }
 
   if (latest?.recorded_at) {
@@ -2053,7 +2053,7 @@ function buildTruckJourneyNarrative(
           ? "moving"
           : "currently stopped";
     sentences.push(
-      `Latest telemetry places it${latestLocation ? ` ${latestLocation}` : ""} at ${formatTimelineTime(
+      `Latest telemetry places it${latestLocation ? ` ${latestLocation}` : ""} at ${formatTimelineClock(
         latest.recorded_at,
         timeZone
       )} with ${latestSpeed === null ? "speed unknown" : `speed ${formatNumber(latestSpeed)}`}, so it is ${status}.`
@@ -3004,7 +3004,7 @@ function formatStopPattern(stopSummary: any, timeZone: string) {
     lines.push(
       `- Longest stop: about ${formatDurationWords(longest.duration_minutes)}${
         longestLocation ? ` ${longestLocation}` : ""
-      } (${formatTimelineTime(longest.start_at, timeZone)} to ${formatTimelineTime(
+      } (${formatTimelineClock(longest.start_at, timeZone)} to ${formatTimelineClock(
         longest.end_at,
         timeZone
       )})`
@@ -3050,12 +3050,18 @@ function formatTimelineBlock(block: any, timeZone: string) {
       : block.state === "moving"
         ? `avg ${formatNumber(block.average_speed)} / max ${formatNumber(block.max_speed)}`
         : `max speed ${formatNumber(block.max_speed)}`;
-  const startLocation = formatOperationalLocation({
-    location_resolution: block.start_location,
-  });
-  const endLocation = formatOperationalLocation({
-    location_resolution: block.end_location,
-  });
+  const startLocation = formatOperationalLocation(
+    {
+      location_resolution: block.start_location,
+    },
+    { gpsFallback: null }
+  );
+  const endLocation = formatOperationalLocation(
+    {
+      location_resolution: block.end_location,
+    },
+    { gpsFallback: null }
+  );
   const location =
     block.state === "moving" && startLocation && endLocation && startLocation !== endLocation
       ? `from ${stripLeadingPlacePrefix(startLocation)} to ${stripLeadingPlacePrefix(endLocation)}`
@@ -3069,7 +3075,7 @@ function formatTimelineBlock(block: any, timeZone: string) {
       ? ""
       : `; ${formatNumber(block.duration_minutes)} min`;
 
-  return `- ${formatTimelineTime(block.start_at, timeZone)} to ${formatTimelineTime(
+  return `- ${formatTimelineClock(block.start_at, timeZone)} to ${formatTimelineClock(
     block.end_at,
     timeZone
   )}: ${state}${location ? ` ${location}` : ""}${duration}; ${speedRange}; ${
@@ -3084,8 +3090,8 @@ function formatRouteProgression(route: string[]) {
     .filter((item, index, list) => index === 0 || item !== list[index - 1]);
 
   if (cleaned.length <= 1) return cleaned[0] || "the available corridor";
-  if (cleaned.length <= 6) return cleaned.join(" -> ");
-  return `${cleaned.slice(0, 4).join(" -> ")} -> ... -> ${cleaned.slice(-2).join(" -> ")}`;
+  if (cleaned.length <= 8) return formatAndList(cleaned);
+  return `${formatAndList(cleaned.slice(0, 5))}, then toward ${formatAndList(cleaned.slice(-2))}`;
 }
 
 function formatDurationWords(value: any) {
@@ -3100,11 +3106,11 @@ function formatDurationWords(value: any) {
 
 function formatIdleComparison(event: any, timeZone: string) {
   const eventTime = event.started_at || event.created_at;
-  const base = `${formatSpareEventType(event.event_type)} at ${formatTimelineTime(
-    eventTime,
-    timeZone
-  )}`;
-  const location = formatOperationalLocation(event);
+  const base = `${formatTimelineClock(eventTime, timeZone)} - ${formatSpareEventType(event.event_type)}`;
+  const location = formatOperationalLocation(event, { gpsFallback: null });
+  const locationText = location
+    ? `, ${stripLeadingPlacePrefix(location)}`
+    : ", location unresolved";
   const duration =
     event.duration_minutes === null || event.duration_minutes === undefined
       ? ""
@@ -3112,9 +3118,9 @@ function formatIdleComparison(event: any, timeZone: string) {
 
   if (event.classification === "historical_broken_by_movement") {
     const movementAt = event.movement_after_event_at
-      ? ` Movement later appears at ${formatTimelineTime(event.movement_after_event_at, timeZone)}.`
+      ? ` Movement later appears at ${formatTimelineClock(event.movement_after_event_at, timeZone)}.`
       : "";
-    return `- ${base}${location ? ` ${location}` : ""}${duration}: historical marker, broken by later movement.${movementAt}`;
+    return `- ${base}${duration}${locationText}: historical marker, broken by later movement.${movementAt}`;
   }
 
   if (event.classification === "possibly_current_same_location") {
@@ -3122,23 +3128,26 @@ function formatIdleComparison(event: any, timeZone: string) {
       event.location_distance_km === null
         ? ""
         : ` Latest location is about ${formatNumber(event.location_distance_km)} km from the event marker.`;
-    return `- ${base}${location ? ` ${location}` : ""}${duration}: possibly connected to the current stop.${distance}`;
+    return `- ${base}${duration}${locationText}: possibly connected to the current stop.${distance}`;
   }
 
-  return `- ${base}${location ? ` ${location}` : ""}${duration}: continuity not proven from the available movement blocks.`;
+  return `- ${base}${duration}${locationText}: continuity not proven from the available movement blocks.`;
 }
 
-function formatTimelineTime(value: any, timeZone: string) {
+function formatTimelineClock(value: any, timeZone: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "unknown time";
-  const formatted = new Intl.DateTimeFormat("en-KE", {
+  return new Intl.DateTimeFormat("en-KE", {
     timeZone,
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
   }).format(date);
+}
+
+function formatTimelineTimeNote(timeZone: string) {
   const label = timeZone === DEFAULT_OPERATIONAL_TIME_ZONE ? "EAT" : timeZone;
-  return `${formatted} ${label}`;
+  return `Times shown in ${label}.`;
 }
 
 function stripLeadingPlacePrefix(value: any) {
