@@ -68,6 +68,7 @@ export async function GET(req: Request) {
         success: result.success,
         message: result.message,
         vehicle_count: result.vehicleCount,
+        skipped_missing_identifier: result.skipped_missing_identifier || 0,
         latency_ms: Date.now() - providerStartedAt,
       });
     }

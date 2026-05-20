@@ -24,7 +24,7 @@ export type CanonicalVehicle = {
 type MappingConfig = {
   truck?: string;
   latitude?: string;
- longitude?: string;
+  longitude?: string;
   speed?: string;
   fuel_level?: string;
   location_label?: string;
@@ -39,7 +39,7 @@ export function normalizeVehicle(
   const warnings: string[] = [];
   const missing_fields: string[] = [];
 
-  const truck_id = getString(raw, mapping.truck);
+  const truck_id = getVehicleIdentifier(raw, mapping);
   const latitude = getNumber(raw, mapping.latitude);
   const longitude = getNumber(raw, mapping.longitude);
   const speed = getNullableNumber(raw, mapping.speed);
@@ -80,7 +80,7 @@ export function normalizeVehicle(
   }
 
   return {
-    truck_id: truck_id || "UNKNOWN",
+    truck_id: truck_id || "",
 
     latitude,
     longitude,
@@ -128,6 +128,125 @@ function getString(raw: any, path?: string): string | null {
 
   const text = String(value).trim();
   return text || null;
+}
+
+const FALLBACK_VEHICLE_IDENTIFIER_KEYS = [
+  "reg_no",
+  "regNo",
+  "registration",
+  "Registration",
+  "truck_id",
+  "truckId",
+  "truck",
+  "vehicle",
+  "Vehicle",
+  "plate",
+  "unit_id",
+  "unitId",
+  "unit",
+  "asset_id",
+  "assetId",
+  "device_id",
+  "deviceId",
+  "imei",
+];
+
+const NORMALIZED_FALLBACK_VEHICLE_IDENTIFIER_KEYS = new Set(
+  FALLBACK_VEHICLE_IDENTIFIER_KEYS.map(normalizeIdentifierKey)
+);
+
+function getVehicleIdentifier(raw: any, mapping: MappingConfig): string | null {
+  const mappedValue = coerceVehicleIdentifier(getValue(raw, mapping.truck));
+  if (mappedValue) return mappedValue;
+
+  if (mapping.truck) {
+    const caseInsensitiveValue = coerceVehicleIdentifier(
+      getValueByCaseInsensitivePath(raw, mapping.truck)
+    );
+    if (caseInsensitiveValue) return caseInsensitiveValue;
+  }
+
+  return findFallbackVehicleIdentifier(raw);
+}
+
+function findFallbackVehicleIdentifier(raw: any): string | null {
+  const seen = new Set<any>();
+  const maxDepth = 4;
+
+  function visit(value: any, depth: number): string | null {
+    if (value === null || value === undefined || depth > maxDepth) {
+      return null;
+    }
+
+    if (typeof value !== "object") {
+      return null;
+    }
+
+    if (seen.has(value)) return null;
+    seen.add(value);
+
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const nested = visit(item, depth + 1);
+        if (nested) return nested;
+      }
+      return null;
+    }
+
+    const keys = Object.keys(value);
+    for (const key of keys) {
+      if (!NORMALIZED_FALLBACK_VEHICLE_IDENTIFIER_KEYS.has(normalizeIdentifierKey(key))) {
+        continue;
+      }
+
+      const identifier = coerceVehicleIdentifier(value[key]);
+      if (identifier) return identifier;
+    }
+
+    for (const key of keys) {
+      const nested = visit(value[key], depth + 1);
+      if (nested) return nested;
+    }
+
+    return null;
+  }
+
+  return visit(raw, 0);
+}
+
+function coerceVehicleIdentifier(value: any): string | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string" && typeof value !== "number") return null;
+
+  const text = String(value).trim();
+  if (!text) return null;
+
+  const normalized = normalizeIdentifierValue(text);
+  if (!normalized || /^0+$/.test(normalized)) return null;
+  if (
+    normalized.includes("unknown") ||
+    normalized.includes("unidentified") ||
+    [
+      "na",
+      "none",
+      "null",
+      "undefined",
+      "notavailable",
+      "notassigned",
+    ].includes(normalized)
+  ) {
+    return null;
+  }
+
+  return text;
+}
+
+function normalizeIdentifierKey(key: string): string {
+  return String(key).toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function normalizeIdentifierValue(value: string): string {
+  return String(value).toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
 function getLocationLabel(raw: any, mapping: MappingConfig): string | null {

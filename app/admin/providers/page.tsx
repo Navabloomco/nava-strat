@@ -298,10 +298,13 @@ function ProviderCard({
       setTestResult(result);
 
       if (result.success) {
+        const skippedLine = result.skipped_missing_identifier
+          ? `\nSkipped missing identifier: ${result.skipped_missing_identifier}`
+          : "";
         alert(
           `✅ ${result.message}\nAssets: ${result.assets_count}\nLatest telemetry: ${
             result.latest_telemetry_at || "none"
-          }`
+          }${skippedLine}`
         );
       } else {
         alert(`❌ ${result.stage || "ERROR"}: ${result.message || result.error}`);

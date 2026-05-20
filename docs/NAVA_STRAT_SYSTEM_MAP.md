@@ -365,9 +365,10 @@ Provider sync is implemented in `lib/providers/engine.ts` with normalization in 
    - `fuel_level`
    - `location_label`
    - `recorded_at`
-5. Upsert `fleet_assets` by `(provider_id, truck_id)`.
-6. Insert `telemetry_logs`.
-7. Do not overwrite reviewed asset classification, billing, or intelligence enablement fields on sync.
+5. Skip rows that do not have a safe vehicle identifier after mapped and fallback keys are checked. Provider sync must not create `UNKNOWN`, blank, or null reviewable assets.
+6. Upsert `fleet_assets` by `(provider_id, truck_id)`.
+7. Insert `telemetry_logs`.
+8. Do not overwrite reviewed asset classification, billing, or intelligence enablement fields on sync.
 
 ### Provider Import Defaults
 

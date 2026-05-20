@@ -25,6 +25,7 @@ export type SyncResult = {
   success: boolean;
   message: string;
   vehicleCount: number;
+  skipped_missing_identifier?: number;
   sample_normalized?: any;
   supplemental_diagnostics?: SupplementalDiagnostics;
   debug?: any;
@@ -357,6 +358,7 @@ export async function runProviderSync(
     );
     let sample_normalized = null;
     let syncedCount = 0;
+    let skippedMissingIdentifier = 0;
     const errors: string[] = [];
 
     for (const rawVehicle of fleet.vehicles) {
@@ -366,6 +368,11 @@ export async function runProviderSync(
           provider.field_mapping || {},
           provider.provider_name
         );
+
+        if (normalized.validation.missing_fields.includes("truck_id")) {
+          skippedMissingIdentifier++;
+          continue;
+        }
 
         mergeSupplementalData(
           normalized,
@@ -451,14 +458,19 @@ export async function runProviderSync(
     return {
       success: errors.length === 0,
       message:
-        errors.length === 0
-          ? `Synced ${syncedCount} vehicles.`
-          : `Synced ${syncedCount}/${fleet.vehicles.length} vehicles with ${errors.length} errors.`,
+        buildSyncMessage(
+          syncedCount,
+          fleet.vehicles.length,
+          errors.length,
+          skippedMissingIdentifier
+        ),
       vehicleCount: syncedCount,
+      skipped_missing_identifier: skippedMissingIdentifier,
       sample_normalized,
       supplemental_diagnostics: supplemental.diagnostics,
       debug: {
         errors,
+        skipped_missing_identifier: skippedMissingIdentifier,
         fleet_debug: fleet.debug || null,
         supplemental_diagnostics: supplemental.diagnostics,
       },
@@ -471,6 +483,24 @@ export async function runProviderSync(
       debug: err,
     };
   }
+}
+
+function buildSyncMessage(
+  syncedCount: number,
+  totalRows: number,
+  errorCount: number,
+  skippedMissingIdentifier: number
+) {
+  const base =
+    errorCount === 0
+      ? `Synced ${syncedCount} vehicles.`
+      : `Synced ${syncedCount}/${totalRows} vehicles with ${errorCount} errors.`;
+
+  if (skippedMissingIdentifier === 0) return base;
+
+  return `${base} Skipped ${skippedMissingIdentifier} provider row${
+    skippedMissingIdentifier === 1 ? "" : "s"
+  } missing a safe vehicle identifier.`;
 }
 
 /* -------------------------------
