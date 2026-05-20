@@ -532,7 +532,9 @@ function ProductLandingPage() {
           <div>
             <div className="font-semibold text-slate-200">Nava Strat</div>
             <div>A Nava Bloom Co. product.</div>
-            <div>Secure company workspaces with controlled access.</div>
+            <div className="mt-2 max-w-md rounded-md border border-white/10 bg-white/[0.03] px-3 py-2 text-xs leading-5 text-slate-500">
+              Secure company workspaces with controlled access.
+            </div>
           </div>
           <div className="flex flex-wrap gap-5">
             <a
