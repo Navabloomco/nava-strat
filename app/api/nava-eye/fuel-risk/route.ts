@@ -6,6 +6,11 @@ import {
   getUniversalDriverFuelRisk,
   analyzeTruckFuelRisk,
 } from "../../../../lib/intelligence/fuelRiskEngine.universal";
+import {
+  canViewFuel,
+  normalizeRole,
+  rolesForCompany,
+} from "../../../../lib/api/roleAccess";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -77,25 +82,36 @@ async function resolveCompany(req: Request) {
   const url = new URL(req.url);
   const requestedCompanyId = url.searchParams.get("companyId");
   const isPlatformOwner = memberships.some(
-    (membership) => membership.role === "platform_owner"
+    (membership) => normalizeRole(membership.role) === "platform_owner"
   );
+  const normalizedRequestedCompanyId = requestedCompanyId?.trim() || null;
 
-  let companyId = memberships[0].company_id;
+  let companyId =
+    normalizedRequestedCompanyId ||
+    memberships.map((membership) => membership.company_id).filter(Boolean)[0];
 
-  if (isPlatformOwner) {
-    if (requestedCompanyId) {
-      companyId = requestedCompanyId;
-    } else {
-      const { data: firstCompany, error: firstCompanyError } = await supabaseAdmin
-        .from("companies")
-        .select("id")
-        .order("name", { ascending: true })
-        .limit(1)
-        .maybeSingle();
+  if (isPlatformOwner && !normalizedRequestedCompanyId) {
+    const { data: firstCompany, error: firstCompanyError } = await supabaseAdmin
+      .from("companies")
+      .select("id")
+      .order("name", { ascending: true })
+      .limit(1)
+      .maybeSingle();
 
-      if (firstCompanyError) throw firstCompanyError;
-      if (firstCompany?.id) companyId = firstCompany.id;
-    }
+    if (firstCompanyError) throw firstCompanyError;
+    if (firstCompany?.id) companyId = firstCompany.id;
+  }
+
+  if (
+    !isPlatformOwner &&
+    (!companyId || !memberships.some((membership) => membership.company_id === companyId))
+  ) {
+    return {
+      response: jsonResponse(
+        { success: false, message: "No active company access" },
+        { status: 403 }
+      ),
+    };
   }
 
   const { data: company, error: companyError } = await supabaseAdmin
@@ -118,6 +134,7 @@ async function resolveCompany(req: Request) {
     user,
     company,
     isPlatformOwner,
+    roles: rolesForCompany(memberships, company.id, isPlatformOwner),
   };
 }
 
@@ -125,6 +142,12 @@ export async function GET(req: Request) {
   try {
     const resolved = await resolveCompany(req);
     if ("response" in resolved) return resolved.response;
+    if (!canViewFuel(resolved.roles)) {
+      return jsonResponse(
+        { success: false, message: "Fuel risk access required" },
+        { status: 403 }
+      );
+    }
 
     const url = new URL(req.url);
     const driverName = url.searchParams.get("driver");

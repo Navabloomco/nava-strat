@@ -5,6 +5,11 @@ import {
 } from "../../../../lib/intelligence/geofenceMatcher";
 import { supabase } from "../../../../lib/supabase";
 import { supabaseAdmin } from "../../../../lib/supabaseAdmin";
+import {
+  canViewOps,
+  normalizeRole,
+  rolesForCompany,
+} from "../../../../lib/api/roleAccess";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -64,7 +69,7 @@ function noStoreJson(body: any, init?: ResponseInit) {
 }
 
 function buildCapabilities(roles: string[], isPlatformOwner: boolean) {
-  const normalizedRoles = new Set(roles.map((role) => role.toLowerCase()));
+  const normalizedRoles = new Set(roles.map(normalizeRole));
 
   return {
     can_apply_alert_context:
@@ -292,23 +297,18 @@ async function resolveCompany(
   if (membershipError) throw membershipError;
 
   const activeMemberships = memberships || [];
-  const roles = Array.from(
-    new Set(
-      activeMemberships
-        .map((membership) => String(membership.role || "").toLowerCase())
-        .filter(Boolean)
-    )
+  const isPlatformOwner = activeMemberships.some(
+    (membership) => normalizeRole(membership.role) === "platform_owner"
   );
-  const isPlatformOwner = roles.includes("platform_owner");
-  const capabilities = buildCapabilities(roles, isPlatformOwner);
+  const normalizedRequestedCompanyId = requestedCompanyId?.trim() || null;
 
   if (isPlatformOwner) {
     const companyQuery = supabaseAdmin
       .from("companies")
       .select("id, name, slug");
 
-    const { data: company, error: companyError } = requestedCompanyId
-      ? await companyQuery.eq("id", requestedCompanyId).maybeSingle()
+    const { data: company, error: companyError } = normalizedRequestedCompanyId
+      ? await companyQuery.eq("id", normalizedRequestedCompanyId).maybeSingle()
       : await companyQuery.order("name", { ascending: true }).limit(1).maybeSingle();
 
     if (companyError) throw companyError;
@@ -321,14 +321,23 @@ async function resolveCompany(
       };
     }
 
-    return { company: company as ResolvedCompany, isPlatformOwner, roles, capabilities };
+    const roles = rolesForCompany(activeMemberships, company.id, true);
+    return {
+      company: company as ResolvedCompany,
+      isPlatformOwner,
+      roles,
+      capabilities: buildCapabilities(roles, isPlatformOwner),
+    };
   }
 
-  const companyId = activeMemberships
-    .map((membership) => membership.company_id)
-    .filter(Boolean)[0];
+  const companyId =
+    normalizedRequestedCompanyId ||
+    activeMemberships.map((membership) => membership.company_id).filter(Boolean)[0];
 
-  if (!companyId) {
+  if (
+    !companyId ||
+    !activeMemberships.some((membership) => membership.company_id === companyId)
+  ) {
     return {
       error: noStoreJson(
         { success: false, error: "Unable to resolve company access" },
@@ -353,7 +362,13 @@ async function resolveCompany(
     };
   }
 
-  return { company: company as ResolvedCompany, isPlatformOwner, roles, capabilities };
+  const roles = rolesForCompany(activeMemberships, company.id);
+  return {
+    company: company as ResolvedCompany,
+    isPlatformOwner,
+    roles,
+    capabilities: buildCapabilities(roles, isPlatformOwner),
+  };
 }
 
 export async function GET(req: Request) {
@@ -361,6 +376,12 @@ export async function GET(req: Request) {
     const { searchParams } = new URL(req.url);
     const resolved = await resolveCompany(req, searchParams.get("companyId"));
     if (resolved.error) return resolved.error;
+    if (!canViewOps(resolved.roles)) {
+      return noStoreJson(
+        { success: false, error: "Operations dashboard access required" },
+        { status: 403 }
+      );
+    }
 
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 

@@ -151,7 +151,7 @@ The main product principle is convenience. Every user-facing page should make th
 | `GET/POST /api/providers/setup-requests` | Provider setup request list/create. |
 | `PATCH /api/providers/setup-requests/[id]` | Provider setup request status management. |
 | `POST /api/sync/providers` | Cron/provider automation sync. Requires `Authorization: Bearer <CRON_SECRET>`. |
-| `GET /api/tracking/live` | Live enabled-asset tracking response with geofence labels. |
+| `GET /api/tracking/live` | Role-gated live enabled-asset tracking response with geofence labels. Requires operations visibility. |
 | `POST /api/tracking/analyze` | Tracking analysis helper. |
 | `POST /api/tracking/enrich-locations` | Location enrichment/cache helper. |
 | `POST /api/tracking/pull` | Provider pull helper. |
@@ -174,7 +174,7 @@ The main product principle is convenience. Every user-facing page should make th
 | `GET/POST /api/journeys` | Company-scoped journey list/create with role-gated finance fields. |
 | `GET/POST /api/journey-templates` | Saved Routes list/create. |
 | `PATCH /api/journey-templates/[id]` | Saved Route update/disable. |
-| `GET /api/ops/dashboard` | Ops dashboard data, alerts, shared disruption candidate, geofence context, and assigned drivers. |
+| `GET /api/ops/dashboard` | Role-gated ops dashboard data, alerts, shared disruption candidate, geofence context, and assigned drivers. Requires operations visibility. |
 | `GET /api/ops/enabled-assets` | Active, intelligence-enabled asset picker with current assigned driver. |
 | `POST /api/ops/alerts/apply-context` | Applies context labels to excessive idle telemetry events. No suppression or deletion. |
 | `GET/POST /api/geofences` | Company-scoped geofence list/create. |
@@ -198,7 +198,7 @@ The main product principle is convenience. Every user-facing page should make th
 | `GET/POST /api/fuel/providers` | Company-scoped fuel provider settings. |
 | `PATCH /api/fuel/providers/[id]` | Fuel provider update/disable. No hard delete. |
 | `GET/POST /api/expenses` | Expense ledger and creation. Finance role gates apply. |
-| `GET /api/management/dashboard` | Management dashboard data. |
+| `GET /api/management/dashboard` | Role-gated management dashboard data. Requires finance/management/elevated visibility. |
 
 ### Spares and Maintenance
 
@@ -215,7 +215,7 @@ The main product principle is convenience. Every user-facing page should make th
 | `POST /api/nava-eye/copilot` | Main Nava Eye assistant route. Uses context router, entity resolver, role-aware context, safe dashboard page context, deterministic fallbacks, and AI provider when configured. |
 | `POST /api/nava-eye/ask` | Older Nava Eye ask route. |
 | `GET /api/nava-eye/fleet-summary` | Fleet summary helper. |
-| `POST /api/nava-eye/fuel-risk` | Fuel risk helper. |
+| `GET /api/nava-eye/fuel-risk` | Role-gated fuel risk helper. Requires fuel visibility. |
 | `POST /api/nava-eye/run-events` | Event engine runner. |
 | `GET /api/nava-eye/truck-report` | Truck report helper. |
 
