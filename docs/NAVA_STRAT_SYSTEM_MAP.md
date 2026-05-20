@@ -91,6 +91,8 @@ The main product principle is convenience. Every user-facing page should make th
 | `/admin/providers/new` | Add provider page. |
 | `/admin/provider-requests` | Platform-owner provider setup requests. |
 | `/admin/provider-playbook` | Platform-owner internal provider onboarding playbook. |
+| `/admin/tenants` | Platform-owner tenant billing/readiness preview across companies. |
+| `/admin/tenants/[companyId]` | Platform-owner tenant detail view with provider, member, telemetry, and strict billable asset summaries. |
 | `/admin/client-visibility` | Client visibility link management. |
 | `/admin/company` | Company operating context settings. |
 | `/admin/health` | Platform-owner pilot readiness health check. |
@@ -113,6 +115,8 @@ The main product principle is convenience. Every user-facing page should make th
 | `GET /api/companies` | Returns active company memberships, normalized roles, platform-owner status, and visible companies. |
 | `POST /api/onboarding/company` | Creates/updates company onboarding data, operating context, and provider setup requests. |
 | `GET/PATCH /api/company-settings` | Reads and updates safe company operating context. No billing/provider secrets. |
+| `GET /api/admin/tenants` | Platform-owner-only tenant billing/readiness list using strict billable asset counts. |
+| `GET /api/admin/tenants/[companyId]` | Platform-owner-only tenant detail with safe company, member, provider, asset, pricing, and telemetry summaries. |
 | `GET /api/platform/health` | Platform-owner-only environment, schema, constraint, and RPC health check. |
 
 ### Provider and Tracking
@@ -294,6 +298,7 @@ Current shared helper behavior:
 | Expense edit | elevated, `finance` |
 | Asset review/enablement | `platform_owner`, `owner`, `admin` |
 | Platform Health | `platform_owner` only |
+| Tenant billing/readiness preview | `platform_owner` only |
 
 ## 6. Multi-Tenancy Rules
 
@@ -423,6 +428,20 @@ An asset is billable-ready only when all are true:
 
 Do not count assets as billable merely because one of `billing_status = enabled` or `intelligence_enabled = true` is true.
 
+### Platform Tenant Billing Preview
+
+`/admin/tenants` and `/admin/tenants/[companyId]` are internal platform-owner-only previews. They estimate pilot billing from strict billable assets but do not create invoices, billing events, Stripe records, or customer-facing billing artifacts.
+
+Revenue preview uses:
+
+- strict billable asset count
+- `companies.asset_unit_price`
+- `companies.billing_currency`
+
+If `asset_unit_price` is missing or zero, the preview must show `Pricing not set` rather than inventing a price.
+
+The preview may show safe provider status and telemetry freshness, but must not show provider credentials, tokens, auth configs, raw provider payloads, private driver data, or public client data.
+
 ### Enable Asset
 
 Enabling an asset should:
@@ -481,6 +500,7 @@ Review later should:
 - Do not call external news/weather APIs for disruption context.
 - Do not hard delete operational records in MVP workflows where archive/disable/end is available.
 - Do not add schema migrations silently from app code.
+- Do not treat platform tenant billing preview as invoicing. It is internal readiness/math only until a real billing engine exists.
 
 ## 11. Recent Important Commits/Features
 
@@ -542,3 +562,9 @@ Strict billable count requires:
 - non-null billing enabled timestamp
 
 This prepares the product for per-enabled-vehicle billing without building the full invoicing engine yet.
+
+### Platform Tenant Billing Preview
+
+Platform owners now have `/admin/tenants` and `/admin/tenants/[companyId]` to review tenant readiness, provider presence, active member counts, imported assets, strict billable assets, pricing setup, telemetry freshness, and estimated monthly revenue.
+
+The preview is platform-only and deliberately excludes provider secrets, raw payloads, private driver data, and invoice/Stripe behavior.

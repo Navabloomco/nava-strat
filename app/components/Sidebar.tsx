@@ -118,6 +118,11 @@ export default function Sidebar() {
       show: roles.isPlatformOwner,
     },
     {
+      name: "Tenant Billing",
+      href: "/admin/tenants",
+      show: roles.isPlatformOwner,
+    },
+    {
       name: "Provider Requests",
       href: "/admin/provider-requests",
       show: roles.isPlatformOwner,

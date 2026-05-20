@@ -18,6 +18,11 @@ const platformCards = [
     href: "/admin/health",
   },
   {
+    title: "Tenant Billing Preview",
+    body: "Review tenant readiness, strict billable assets, and estimated pilot billing.",
+    href: "/admin/tenants",
+  },
+  {
     title: "Provider Requests",
     body: "Review client requests for provider setup.",
     href: "/admin/provider-requests",
