@@ -18,6 +18,8 @@ type TimelineInput = {
   truckId: string;
   startTimeUtc?: string;
   endTimeUtc?: string;
+  dayOffset?: number;
+  timeframe?: "today" | "yesterday" | "custom";
   timeZone?: string;
   geofences?: any[];
   maxRows?: number;
@@ -51,14 +53,21 @@ const MAJOR_STOP_MINUTES = 45;
 
 export async function buildTruckTimelineIntelligence(input: TimelineInput) {
   const timeZone = input.timeZone || DEFAULT_OPERATIONAL_TIME_ZONE;
+  const explicitWindow = Boolean(input.startTimeUtc && input.endTimeUtc);
+  const dayOffset = Number.isFinite(Number(input.dayOffset)) ? Number(input.dayOffset) : 0;
+  const timeframe =
+    input.timeframe || (explicitWindow ? "custom" : dayOffset === -1 ? "yesterday" : "today");
   const localDayRange =
-    input.startTimeUtc && input.endTimeUtc
+    explicitWindow
       ? {
           localDate: null,
-          startUtc: input.startTimeUtc,
-          endUtc: input.endTimeUtc,
+          startUtc: input.startTimeUtc as string,
+          endUtc: input.endTimeUtc as string,
         }
-      : getOperationalLocalDayUtcRange(timeZone);
+      : getOperationalLocalDayUtcRange(timeZone, dayOffset);
+  const localNowParts = getZonedDateParts(new Date(), timeZone);
+  const elapsedLocalDayMinutes =
+    timeframe === "today" ? localNowParts.hour * 60 + localNowParts.minute : null;
   const maxRows = clampInteger(input.maxRows, 50, 5000, DEFAULT_MAX_ROWS);
   const maxBlocks = clampInteger(input.maxBlocks, 4, 20, DEFAULT_MAX_BLOCKS);
   const geofences =
@@ -90,6 +99,13 @@ export async function buildTruckTimelineIntelligence(input: TimelineInput) {
       timezone: {
         time_zone: timeZone,
         label: operationalTimeZoneLabel(timeZone),
+      },
+      timeframe: {
+        requested: timeframe,
+        local_day: localDayRange.localDate,
+        day_offset: explicitWindow ? null : dayOffset,
+        elapsed_local_day_minutes: elapsedLocalDayMinutes,
+        new_day_rollover_window: timeframe === "today" && Number(elapsedLocalDayMinutes || 0) <= 240,
       },
       local_day: localDayRange.localDate,
       query_window_utc: {
@@ -239,6 +255,21 @@ export async function buildTruckTimelineIntelligence(input: TimelineInput) {
   const stationaryBlocks = rawBlocks.filter((block) => block.state === "stationary");
   const totalMovingMinutes = sumDurations(movementBlocks);
   const totalStoppedMinutes = sumDurations(stationaryBlocks);
+  const coverageMinutes =
+    firstTelemetry && latestTelemetry
+      ? minutesBetween(firstTelemetry.recorded_at, latestTelemetry.recorded_at)
+      : null;
+  const firstPointMinutesAfterDayStart = firstTelemetry
+    ? minutesBetween(localDayRange.startUtc, firstTelemetry.recorded_at)
+    : null;
+  const newDayRolloverWindow = Boolean(
+    timeframe === "today" &&
+      ((elapsedLocalDayMinutes !== null && elapsedLocalDayMinutes <= 240) ||
+        (firstPointMinutesAfterDayStart !== null &&
+          firstPointMinutesAfterDayStart <= 30 &&
+          Number(coverageMinutes || 0) <= 90 &&
+          totalMovingMinutes === 0))
+  );
   const averageMeaningfulStopMinutes =
     meaningfulStopBlocks.length > 0
       ? Math.round(sumDurations(meaningfulStopBlocks) / meaningfulStopBlocks.length)
@@ -281,6 +312,13 @@ export async function buildTruckTimelineIntelligence(input: TimelineInput) {
       time_zone: timeZone,
       label: operationalTimeZoneLabel(timeZone),
     },
+    timeframe: {
+      requested: timeframe,
+      local_day: localDayRange.localDate,
+      day_offset: explicitWindow ? null : dayOffset,
+      elapsed_local_day_minutes: elapsedLocalDayMinutes,
+      new_day_rollover_window: newDayRolloverWindow,
+    },
     local_day: localDayRange.localDate,
     query_window_utc: {
       start: localDayRange.startUtc,
@@ -312,6 +350,9 @@ export async function buildTruckTimelineIntelligence(input: TimelineInput) {
     day_story: {
       coverage_start_at: firstTelemetry?.recorded_at || null,
       coverage_end_at: latestTelemetry?.recorded_at || asset.last_seen_at || null,
+      coverage_minutes: coverageMinutes,
+      first_point_minutes_after_day_start: firstPointMinutesAfterDayStart,
+      new_day_rollover_window: newDayRolloverWindow,
       coverage_is_partial:
         telemetryRows.length === 0 ||
         isCoveragePartial(localDayRange.startUtc, firstTelemetry?.recorded_at),
@@ -658,19 +699,25 @@ function findBlockForTimestamp(blocks: TimelineBlock[], timestamp: number) {
   );
 }
 
-function getOperationalLocalDayUtcRange(timeZone: string) {
+function getOperationalLocalDayUtcRange(timeZone: string, dayOffset = 0) {
   const now = new Date();
   const localParts = getZonedDateParts(now, timeZone);
+  const targetLocalDate = new Date(
+    Date.UTC(localParts.year, localParts.month - 1, localParts.day + dayOffset)
+  );
+  const targetParts = getZonedDateParts(targetLocalDate, "UTC");
   const start = zonedDateTimeToUtc(
-    localParts.year,
-    localParts.month,
-    localParts.day,
+    targetParts.year,
+    targetParts.month,
+    targetParts.day,
     0,
     0,
     0,
     timeZone
   );
-  const nextLocalDay = new Date(Date.UTC(localParts.year, localParts.month - 1, localParts.day + 1));
+  const nextLocalDay = new Date(
+    Date.UTC(targetParts.year, targetParts.month - 1, targetParts.day + 1)
+  );
   const nextParts = getZonedDateParts(nextLocalDay, "UTC");
   const end = zonedDateTimeToUtc(
     nextParts.year,
@@ -683,8 +730,8 @@ function getOperationalLocalDayUtcRange(timeZone: string) {
   );
 
   return {
-    localDate: `${localParts.year}-${String(localParts.month).padStart(2, "0")}-${String(
-      localParts.day
+    localDate: `${targetParts.year}-${String(targetParts.month).padStart(2, "0")}-${String(
+      targetParts.day
     ).padStart(2, "0")}`,
     startUtc: start.toISOString(),
     endUtc: end.toISOString(),
@@ -710,7 +757,7 @@ function getZonedDateParts(date: Date, timeZone: string) {
     year: lookup.year,
     month: lookup.month,
     day: lookup.day,
-    hour: lookup.hour || 0,
+    hour: lookup.hour === 24 ? 0 : lookup.hour || 0,
     minute: lookup.minute || 0,
     second: lookup.second || 0,
   };

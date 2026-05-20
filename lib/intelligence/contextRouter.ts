@@ -116,6 +116,7 @@ export async function routeContext(
     financials_visible: financialsVisible,
     coordinate_request: detectCoordinateRequest(lower),
     timeline_detail_requested: detectDetailedTimelineRequest(lower),
+    timeline_timeframe: detectTimelineTimeframe(lower),
     capabilities: sanitizeCapabilities(roleCapabilities),
     permission_boundary: permissionBoundary,
     display_timezone: {
@@ -187,7 +188,8 @@ export async function routeContext(
           companyId,
           truckId,
           geofences,
-          company
+          company,
+          context.timeline_timeframe
         );
       }
     } else {
@@ -221,7 +223,8 @@ export async function routeContext(
         companyId,
         truckId,
         geofences,
-        company
+        company,
+        context.timeline_timeframe
       );
     }
   }
@@ -719,7 +722,17 @@ function detectStopMotionTimelineComparison(lower: string) {
         lower.includes("show the log blocks") ||
         lower.includes("log blocks") ||
         lower.includes("today's movement") ||
+        lower.includes("today’s movement") ||
         lower.includes("today movement") ||
+        (lower.includes("today") && lower.includes("movement")) ||
+        lower.includes("yesterday's movement") ||
+        lower.includes("yesterday’s movement") ||
+        lower.includes("yesterday movement") ||
+        lower.includes("yesterday's route") ||
+        lower.includes("yesterday’s route") ||
+        lower.includes("yesterday route") ||
+        (lower.includes("yesterday") &&
+          (lower.includes("movement") || lower.includes("route") || lower.includes("timeline"))) ||
         lower.includes("movement for") ||
         lower.includes("moved today") ||
         lower.includes("stopped today") ||
@@ -733,6 +746,26 @@ function detectStopMotionTimelineComparison(lower: string) {
         lower.includes("against nava idle"))) ||
     lower.includes("compare today's stop/motion timeline")
   );
+}
+
+function detectTimelineTimeframe(lower: string) {
+  if (
+    lower.includes("yesterday") ||
+    lower.includes("previous day") ||
+    lower.includes("previous-day") ||
+    lower.includes("last operating day") ||
+    lower.includes("last full route")
+  ) {
+    return {
+      requested: "yesterday",
+      dayOffset: -1,
+    };
+  }
+
+  return {
+    requested: "today",
+    dayOffset: 0,
+  };
 }
 
 function detectDetailedTimelineRequest(lower: string) {
@@ -1352,13 +1385,16 @@ async function fetchTruckStopMotionTimelineComparison(
   companyId: string,
   truckId: string,
   geofences: any[] = [],
-  company: any = {}
+  company: any = {},
+  timeframe: any = { requested: "today", dayOffset: 0 }
 ) {
   const operationalTimeZone = resolveOperationalTimeZone(company);
   return buildTruckTimelineIntelligence({
     companyId,
     truckId,
     timeZone: operationalTimeZone,
+    dayOffset: Number.isFinite(Number(timeframe?.dayOffset)) ? Number(timeframe.dayOffset) : 0,
+    timeframe: timeframe?.requested === "yesterday" ? "yesterday" : "today",
     geofences,
     maxRows: 2000,
     maxBlocks: 12,

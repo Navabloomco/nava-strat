@@ -1030,6 +1030,14 @@ function buildPendingFollowup(context: any, answer: string) {
     truckLabel &&
     !context.timeline_detail_requested
   ) {
+    const timeline = context.truck_timeline_comparison || {};
+    if (timeline.timeframe?.new_day_rollover_window || timeline.day_story?.new_day_rollover_window) {
+      return {
+        type: "compare_stop_motion_timeline",
+        truck_id: truckLabel,
+        prompt: `Show yesterday's movement for ${truckLabel}. Summarize the previous operating day's corridor route, stop/rest pattern, and idle marker interpretation without raw coordinates or provider payloads.`,
+      };
+    }
     return {
       type: "show_detailed_timeline",
       truck_id: truckLabel,
@@ -1313,6 +1321,10 @@ function buildTruckTimelineComparisonAnswer(context: any) {
   const blocks = Array.isArray(timeline.motion_blocks) ? timeline.motion_blocks : [];
   const idleEvents = Array.isArray(timeline.idle_events) ? timeline.idle_events : [];
   const continuity = timeline.continuity || {};
+  const timeframe = timeline.timeframe || {
+    requested: "today",
+    new_day_rollover_window: Boolean(dayStory.new_day_rollover_window),
+  };
   const detailed = Boolean(context.timeline_detail_requested);
   const parts: string[] = [];
 
@@ -1327,11 +1339,14 @@ function buildTruckTimelineComparisonAnswer(context: any) {
       blocks,
       idleEvents,
       continuity,
+      timeframe,
     });
   }
 
-  parts.push(buildLogisticsTimelineOpening(label, dayStory, summary, continuity, latest, timeZone));
-  const coverageNote = formatNarrativeCoverageNote(dayStory, summary, timeZone);
+  const rollover = isNewDayRolloverWindow(timeframe, dayStory, summary);
+
+  parts.push(buildLogisticsTimelineOpening(label, dayStory, summary, continuity, latest, timeZone, timeframe));
+  const coverageNote = formatNarrativeCoverageNote(dayStory, summary, timeZone, timeframe);
   if (coverageNote) {
     parts.push("");
     parts.push(coverageNote);
@@ -1339,7 +1354,7 @@ function buildTruckTimelineComparisonAnswer(context: any) {
 
   parts.push("");
   parts.push("The corridor route");
-  parts.push(buildCorridorRouteNarrative(label, dayStory, summary, timeZone));
+  parts.push(buildCorridorRouteNarrative(label, dayStory, summary, timeZone, timeframe));
 
   parts.push("");
   parts.push("Idle alerts");
@@ -1350,7 +1365,11 @@ function buildTruckTimelineComparisonAnswer(context: any) {
   parts.push(formatHardwareNote(latest));
 
   parts.push("");
-  parts.push("I can show the detailed timeline if you want.");
+  parts.push(
+    rollover
+      ? "I can check yesterday's full route if you want the complete corridor story."
+      : "I can show the detailed timeline if you want."
+  );
 
   return parts.join("\n");
 }
@@ -1361,7 +1380,8 @@ function buildLogisticsTimelineOpening(
   summary: any,
   continuity: any,
   latest: any,
-  timeZone: string
+  timeZone: string,
+  timeframe: any
 ) {
   const latestSeen = dayStory.latest_seen || latest || null;
   const location =
@@ -1378,25 +1398,31 @@ function buildLogisticsTimelineOpening(
   const routeEvidence =
     continuity.historical_idle_markers_broken_by_movement ||
     Number(summary.movement_blocks || 0) > 0;
-  const verdict = routeEvidence
+  const rollover = isNewDayRolloverWindow(timeframe, dayStory, summary);
+  const verdict = rollover
+    ? "This is a new-day window after the EAT rollover, so Nava has not yet accumulated a full-day route for today."
+    : routeEvidence
     ? "The truck was not stuck in an all-day delay."
-    : "Nava has a limited same-day movement window for this truck.";
-  const metricSentence = buildHumanTimelineMetrics(dayStory.stop_summary || {});
+    : "This is a narrow operating read, so Nava should not force it into a full-day route story.";
+  const metricSentence = rollover ? "" : buildHumanTimelineMetrics(dayStory.stop_summary || {});
 
   return `${positionText}, last seen at ${time}${speedText}. ${verdict}${
     metricSentence ? ` ${metricSentence}` : ""
   }`;
 }
 
-function formatNarrativeCoverageNote(dayStory: any, summary: any, timeZone: string) {
+function formatNarrativeCoverageNote(dayStory: any, summary: any, timeZone: string, timeframe: any = {}) {
+  if (isNewDayRolloverWindow(timeframe, dayStory, summary)) {
+    return "";
+  }
   if (dayStory.coverage_is_partial && dayStory.coverage_start_at && dayStory.coverage_end_at) {
-    return `Nava only has telemetry history from ${formatTimelineTime(
+    return `This ${formatTimeframeLabel(timeframe)} operating window currently runs from ${formatTimelineTime(
       dayStory.coverage_start_at,
       timeZone
-    )} to ${formatTimelineTime(dayStory.coverage_end_at, timeZone)} today, so this summary covers that available window.`;
+    )} to ${formatTimelineTime(dayStory.coverage_end_at, timeZone)}. The route read below is based on that window.`;
   }
   if (summary.data_density === "low") {
-    return "Nava has limited history for this truck today, so this compares the available movement window with the idle markers.";
+    return `This is a thin ${formatTimeframeLabel(timeframe)} operating read, so Nava is comparing the visible movement window with any idle markers rather than forcing a full-day route story.`;
   }
   return "";
 }
@@ -1406,12 +1432,20 @@ function buildHumanTimelineMetrics(stopSummary: any) {
   const stopped = finiteNumberOrNull(stopSummary.total_stopped_minutes);
   const sentences: string[] = [];
 
-  if (moving !== null || stopped !== null) {
-    sentences.push(
-      `It logged ${moving === null ? "unknown movement time" : `about ${formatDurationWords(moving)} of movement`} against ${
-        stopped === null ? "unknown stationary time" : `about ${formatDurationWords(stopped)} of stationary/rest periods`
-      }.`
-    );
+  if (Number(moving || 0) > 0 || Number(stopped || 0) > 0) {
+    if (moving !== null && stopped !== null) {
+      sentences.push(
+        `It logged about ${formatDurationWords(moving)} of movement against about ${formatDurationWords(
+          stopped
+        )} of stationary/rest periods.`
+      );
+    } else if (moving !== null) {
+      sentences.push(`It logged about ${formatDurationWords(moving)} of movement in the visible window.`);
+    } else if (stopped !== null) {
+      sentences.push(
+        `It logged about ${formatDurationWords(stopped)} of stationary/rest time in the visible window.`
+      );
+    }
   }
 
   const stopPhrase = buildHumanStopMix(stopSummary);
@@ -1440,12 +1474,48 @@ function buildHumanStopMix(stopSummary: any) {
   return "";
 }
 
-function buildCorridorRouteNarrative(label: string, dayStory: any, summary: any, timeZone: string) {
+function isNewDayRolloverWindow(timeframe: any, dayStory: any, summary: any) {
+  if (timeframe?.requested !== "today") return false;
+  if (timeframe?.new_day_rollover_window || dayStory?.new_day_rollover_window) return true;
+
+  const elapsedLocalDayMinutes = finiteNumberOrNull(timeframe?.elapsed_local_day_minutes);
+  const coverageMinutes = finiteNumberOrNull(dayStory?.coverage_minutes);
+  const firstPointMinutesAfterDayStart = finiteNumberOrNull(
+    dayStory?.first_point_minutes_after_day_start
+  );
+  const points = Number(summary?.points_found || 0);
+  const movingBlocks = Number(summary?.movement_blocks || 0);
+  const stationaryBlocks = Number(summary?.stationary_blocks || 0);
+
+  if (elapsedLocalDayMinutes !== null && elapsedLocalDayMinutes <= 240 && points < 12) {
+    return true;
+  }
+
+  return Boolean(
+    firstPointMinutesAfterDayStart !== null &&
+      firstPointMinutesAfterDayStart <= 30 &&
+      Number(coverageMinutes || 0) <= 90 &&
+      movingBlocks === 0 &&
+      stationaryBlocks <= 1
+  );
+}
+
+function formatTimeframeLabel(timeframe: any) {
+  if (timeframe?.requested === "yesterday") return "yesterday";
+  if (timeframe?.requested === "custom") return "selected";
+  return "same-day";
+}
+
+function buildCorridorRouteNarrative(label: string, dayStory: any, summary: any, timeZone: string, timeframe: any = {}) {
   const route = cleanRoutePlaces(dayStory.route_progression || []);
   const first = dayStory.first_seen || null;
   const stopSummary = dayStory.stop_summary || {};
   const sentences: string[] = [];
   const firstLocation = formatNarrativeLocation(first?.location);
+
+  if (isNewDayRolloverWindow(timeframe, dayStory, summary)) {
+    return "This is an overnight rollover window. Today's route has not matured yet, so Nava should not treat the first post-midnight reads as a complete corridor story.";
+  }
 
   if (first?.recorded_at) {
     sentences.push(
@@ -1564,7 +1634,7 @@ function buildNarrativeIdleAlerts(idleEvents: any[], continuity: any, summary: a
   }
 
   if (summary.data_density === "low") {
-    return "Nava has too little same-day history to prove whether the idle alerts are continuous or separate.";
+    return "The idle alert trail is too thin to connect the markers into one continuous delay.";
   }
 
   return "Idle alerts exist, but Nava does not have enough continuity evidence to merge them into one continuous delay.";
@@ -1618,6 +1688,7 @@ function buildDetailedTruckTimelineAnswer({
   blocks,
   idleEvents,
   continuity,
+  timeframe = {},
 }: any) {
   const parts: string[] = [];
   parts.push(`Detailed timeline evidence for ${label}, displayed in ${timeLabel}.`);
@@ -1625,10 +1696,10 @@ function buildDetailedTruckTimelineAnswer({
 
   if (dayStory.coverage_is_partial && dayStory.coverage_start_at && dayStory.coverage_end_at) {
     parts.push(
-      `Nava only has telemetry history from ${formatTimelineTime(
+      `This ${formatTimeframeLabel(timeframe)} operating window runs from ${formatTimelineTime(
         dayStory.coverage_start_at,
         timeZone
-      )} to ${formatTimelineTime(dayStory.coverage_end_at, timeZone)} today, so this expands that available window.`
+      )} to ${formatTimelineTime(dayStory.coverage_end_at, timeZone)}. This expands that available window.`
     );
   }
 
@@ -1646,7 +1717,7 @@ function buildDetailedTruckTimelineAnswer({
       );
     }
   } else {
-    parts.push("- No same-day movement/stationary blocks were found in telemetry_logs.");
+    parts.push("- No movement/stationary blocks were found in this operating window.");
   }
 
   parts.push("");
@@ -1654,7 +1725,7 @@ function buildDetailedTruckTimelineAnswer({
   if (idleEvents.length) {
     parts.push(...idleEvents.map((event: any) => formatIdleComparison(event, timeZone)));
   } else {
-    parts.push("- No same-day idle or excessive-idle telemetry events were found for this truck.");
+    parts.push("- No idle or excessive-idle events were found for this truck in this operating window.");
   }
 
   parts.push("");
