@@ -716,6 +716,8 @@ function detectStopMotionTimelineComparison(lower: string) {
         lower.includes("raw timeline") ||
         lower.includes("expand the timeline") ||
         lower.includes("expand timeline") ||
+        lower.includes("show the log blocks") ||
+        lower.includes("log blocks") ||
         lower.includes("today's movement") ||
         lower.includes("today movement") ||
         lower.includes("movement for") ||
@@ -742,7 +744,9 @@ function detectDetailedTimelineRequest(lower: string) {
     lower.includes("full evidence") ||
     lower.includes("raw timeline") ||
     lower.includes("expand the timeline") ||
-    lower.includes("expand timeline")
+    lower.includes("expand timeline") ||
+    lower.includes("show the log blocks") ||
+    lower.includes("log blocks")
   );
 }
 

@@ -523,7 +523,7 @@ async function hydrateBlockLocations(companyId: string, block: TimelineBlock, ge
 }
 
 function buildRouteProgression(blocks: any[]) {
-  const labels: string[] = [];
+  const labels: { label: string; key: string }[] = [];
 
   for (const block of blocks || []) {
     const start = conciseLocationLabel(block.start_location);
@@ -532,19 +532,40 @@ function buildRouteProgression(blocks: any[]) {
     if (end) labels.push(end);
   }
 
-  return labels
-    .filter(Boolean)
-    .filter((label, index, list) => {
-      if (index > 0 && list[index - 1] === label) return false;
-      return list.findIndex((item) => item === label) === index;
-    })
-    .slice(0, 10);
+  const seen = new Set<string>();
+  const route: string[] = [];
+
+  for (const item of labels) {
+    const previous = route[route.length - 1];
+    const previousKey = previous ? routeLabelKey(previous) : "";
+    if (!item.key || item.key === previousKey || seen.has(item.key)) continue;
+    seen.add(item.key);
+    route.push(item.label);
+  }
+
+  return route.slice(0, 10);
 }
 
 function conciseLocationLabel(location: ResolvedOperationalLocation | null | undefined) {
   const label = String(location?.display_label || "").trim();
   if (!label || location?.confidence_source === "coordinates_only") return null;
-  return label.replace(/^(near|inside|at)\s+/i, "");
+  const cleaned = label
+    .replace(/^(near|inside|at)\s+/i, "")
+    .split(",")[0]
+    .replace(/\babout\s+\d+(?:\.\d+)?\s*km\b.*$/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!cleaned) return null;
+  return {
+    label: cleaned,
+    key: routeLabelKey(cleaned),
+  };
+}
+
+function routeLabelKey(value: string) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
 }
 
 function classifyStopSeverity(durationMinutes: any) {

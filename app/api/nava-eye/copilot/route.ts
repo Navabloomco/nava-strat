@@ -993,7 +993,9 @@ function isDetailedTimelineRequest(question: string) {
     lower.includes("full evidence") ||
     lower.includes("raw timeline") ||
     lower.includes("expand the timeline") ||
-    lower.includes("expand timeline")
+    lower.includes("expand timeline") ||
+    lower.includes("show the log blocks") ||
+    lower.includes("log blocks")
   );
 }
 
@@ -1328,42 +1330,282 @@ function buildTruckTimelineComparisonAnswer(context: any) {
     });
   }
 
-  parts.push(`**${buildExecutiveVerdict(label, dayStory, summary, continuity)}**`);
-  parts.push(`**${buildExecutiveCurrentLine(label, dayStory, latest, timeZone)}**`);
-  if (dayStory.coverage_is_partial && dayStory.coverage_start_at && dayStory.coverage_end_at) {
-    parts.push(
-      `Nava only has telemetry history from ${formatTimelineTime(
-        dayStory.coverage_start_at,
-        timeZone
-      )} to ${formatTimelineTime(dayStory.coverage_end_at, timeZone)} today, so this is a summary of that available window.`
-    );
-  } else if (summary.data_density === "low") {
-    parts.push(
-      "Nava has limited history for this truck today, so I can compare only the latest snapshot and idle markers."
-    );
+  parts.push(buildLogisticsTimelineOpening(label, dayStory, summary, continuity, latest, timeZone));
+  const coverageNote = formatNarrativeCoverageNote(dayStory, summary, timeZone);
+  if (coverageNote) {
+    parts.push("");
+    parts.push(coverageNote);
   }
 
   parts.push("");
-  parts.push("Current status");
-  parts.push(...formatCurrentStatusBlock(latest, timeZone));
+  parts.push("The corridor route");
+  parts.push(buildCorridorRouteNarrative(label, dayStory, summary, timeZone));
 
   parts.push("");
-  parts.push("Key metrics");
-  parts.push(...formatExecutiveMetrics(dayStory.stop_summary || {}, summary, timeZone));
+  parts.push("Idle alerts");
+  parts.push(buildNarrativeIdleAlerts(idleEvents, continuity, summary));
 
   parts.push("");
-  parts.push("Forensic idle verdict");
-  parts.push(formatExecutiveIdleVerdict(idleEvents, continuity, summary));
-  const unresolvedMarkerCount = countUnresolvedGpsMarkers(idleEvents);
-  if (unresolvedMarkerCount > 0) {
-    parts.push(
-      `Some marker locations are unresolved GPS points, so Nava used timing and movement continuity rather than place names for those markers.`
-    );
-  }
+  parts.push("Hardware note");
+  parts.push(formatHardwareNote(latest));
+
   parts.push("");
   parts.push("I can show the detailed timeline if you want.");
 
   return parts.join("\n");
+}
+
+function buildLogisticsTimelineOpening(
+  label: string,
+  dayStory: any,
+  summary: any,
+  continuity: any,
+  latest: any,
+  timeZone: string
+) {
+  const latestSeen = dayStory.latest_seen || latest || null;
+  const location =
+    formatNarrativeLocation(latestSeen?.location || latest?.location_resolution) ||
+    "at its latest known GPS point";
+  const speed = finiteNumberOrNull(latestSeen?.speed ?? latest?.speed);
+  const movementState = formatNarrativeMovementState(speed);
+  const time = formatTimelineTime(latestSeen?.recorded_at || latest?.recorded_at, timeZone);
+  const speedText = speed === null ? "" : ` with speed ${formatNumber(speed)}`;
+  const positionText =
+    speed === null
+      ? `${label} has a latest known position ${location}`
+      : `${label} is currently ${movementState} ${location}`;
+  const routeEvidence =
+    continuity.historical_idle_markers_broken_by_movement ||
+    Number(summary.movement_blocks || 0) > 0;
+  const verdict = routeEvidence
+    ? "The truck was not stuck in an all-day delay."
+    : "Nava has a limited same-day movement window for this truck.";
+  const metricSentence = buildHumanTimelineMetrics(dayStory.stop_summary || {});
+
+  return `${positionText}, last seen at ${time}${speedText}. ${verdict}${
+    metricSentence ? ` ${metricSentence}` : ""
+  }`;
+}
+
+function formatNarrativeCoverageNote(dayStory: any, summary: any, timeZone: string) {
+  if (dayStory.coverage_is_partial && dayStory.coverage_start_at && dayStory.coverage_end_at) {
+    return `Nava only has telemetry history from ${formatTimelineTime(
+      dayStory.coverage_start_at,
+      timeZone
+    )} to ${formatTimelineTime(dayStory.coverage_end_at, timeZone)} today, so this summary covers that available window.`;
+  }
+  if (summary.data_density === "low") {
+    return "Nava has limited history for this truck today, so this compares the available movement window with the idle markers.";
+  }
+  return "";
+}
+
+function buildHumanTimelineMetrics(stopSummary: any) {
+  const moving = finiteNumberOrNull(stopSummary.total_moving_minutes);
+  const stopped = finiteNumberOrNull(stopSummary.total_stopped_minutes);
+  const sentences: string[] = [];
+
+  if (moving !== null || stopped !== null) {
+    sentences.push(
+      `It logged ${moving === null ? "unknown movement time" : `about ${formatDurationWords(moving)} of movement`} against ${
+        stopped === null ? "unknown stationary time" : `about ${formatDurationWords(stopped)} of stationary/rest periods`
+      }.`
+    );
+  }
+
+  const stopPhrase = buildHumanStopMix(stopSummary);
+  if (stopPhrase) sentences.push(stopPhrase);
+
+  return sentences.join(" ");
+}
+
+function buildHumanStopMix(stopSummary: any) {
+  const major = Number(stopSummary.major_stop_count || 0);
+  const medium = Number(stopSummary.medium_stop_count || 0);
+  const short = Number(stopSummary.short_stop_count || 0);
+  const shorter = medium + short;
+
+  if (major > 0 && shorter > 0) {
+    return `It made ${major.toLocaleString()} major stop${major === 1 ? "" : "s"} and ${
+      shorter === 1 ? "one shorter operational stop" : "several shorter operational stops"
+    }.`;
+  }
+  if (major > 0) {
+    return `It made ${major.toLocaleString()} major stop${major === 1 ? "" : "s"}.`;
+  }
+  if (shorter > 0) {
+    return `It made ${shorter === 1 ? "one shorter operational stop" : "several shorter operational stops"}.`;
+  }
+  return "";
+}
+
+function buildCorridorRouteNarrative(label: string, dayStory: any, summary: any, timeZone: string) {
+  const route = cleanRoutePlaces(dayStory.route_progression || []);
+  const first = dayStory.first_seen || null;
+  const stopSummary = dayStory.stop_summary || {};
+  const sentences: string[] = [];
+  const firstLocation = formatNarrativeLocation(first?.location);
+
+  if (first?.recorded_at) {
+    sentences.push(
+      `${label} first appeared${firstLocation ? ` ${firstLocation}` : " in Nava's same-day track"} at ${formatTimelineTime(
+        first.recorded_at,
+        timeZone
+      )}.`
+    );
+  }
+
+  if (route.length >= 2) {
+    sentences.push(`The observed corridor runs ${formatCorridorRoute(route)}.`);
+  } else if (route.length === 1) {
+    sentences.push(`The available points are concentrated around ${route[0]}.`);
+  } else if (Number(summary.movement_blocks || 0) > 0) {
+    sentences.push("Nava can see movement and stop periods, but the key places are not resolved into clean town labels yet.");
+  } else {
+    sentences.push("The available telemetry does not yet show a clear route progression for today.");
+  }
+
+  const longestStop = stopSummary.longest_stop || null;
+  const longestLocation = formatNarrativeLocation(longestStop?.location);
+  if (longestStop?.duration_minutes) {
+    sentences.push(
+      `The longest observed stop was about ${formatDurationWords(longestStop.duration_minutes)}${
+        longestLocation ? ` ${longestLocation}` : ""
+      }.`
+    );
+  }
+
+  return sentences.join(" ");
+}
+
+function formatNarrativeMovementState(speed: number | null) {
+  if (speed === null) return "at its latest known position";
+  if (speed > 5) return "moving";
+  return "stopped";
+}
+
+function formatNarrativeLocation(location: any) {
+  if (!location) return null;
+  return formatOperationalLocation({ location_resolution: location }, { gpsFallback: null });
+}
+
+function cleanRoutePlaces(route: any[]) {
+  const seen = new Set<string>();
+  const cleaned: string[] = [];
+
+  for (const item of route || []) {
+    const label = cleanRoutePlaceLabel(item);
+    const key = routePlaceKey(label);
+    const previous = cleaned[cleaned.length - 1];
+    if (!label || !key || key === routePlaceKey(previous) || seen.has(key)) continue;
+    seen.add(key);
+    cleaned.push(label);
+  }
+
+  return cleaned;
+}
+
+function cleanRoutePlaceLabel(value: any) {
+  return String(value || "")
+    .trim()
+    .replace(/^(near|inside|at)\s+/i, "")
+    .split(",")[0]
+    .replace(/\babout\s+\d+(?:\.\d+)?\s*km\b.*$/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function routePlaceKey(value: any) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function formatCorridorRoute(route: string[]) {
+  const places = cleanRoutePlaces(route);
+  if (places.length <= 1) return places[0] ? `around ${places[0]}` : "through the available corridor";
+  if (places.length === 2) return `from ${places[0]} toward ${places[1]}`;
+  const first = places[0];
+  const last = places[places.length - 1];
+  const middle = places.slice(1, -1).slice(0, 6);
+  return `from ${first} through ${formatAndList(middle)} toward ${last}`;
+}
+
+function formatAndList(items: string[]) {
+  const values = (items || []).filter(Boolean);
+  if (values.length <= 1) return values[0] || "";
+  if (values.length === 2) return `${values[0]} and ${values[1]}`;
+  return `${values.slice(0, -1).join(", ")}, and ${values[values.length - 1]}`;
+}
+
+function buildNarrativeIdleAlerts(idleEvents: any[], continuity: any, summary: any) {
+  if (!idleEvents.length) {
+    return "No same-day idle or excessive-idle alerts are present in Nava's event trail for this truck.";
+  }
+
+  const broken = idleEvents.filter(
+    (event) => event.classification === "historical_broken_by_movement"
+  ).length;
+  const current = idleEvents.filter(
+    (event) => event.classification === "possibly_current_same_location"
+  ).length;
+
+  if (broken > 0 && current > 0) {
+    return "Do not treat the earlier idle alerts as one continuous all-day delay. The timeline shows clear movement between stop periods. The latest idle marker may relate to the current stop.";
+  }
+
+  if (broken > 0) {
+    return "Do not treat the earlier idle alerts as one continuous all-day delay. The timeline shows clear movement between stop periods, so those alerts are historical markers rather than one unbroken delay.";
+  }
+
+  if (continuity.continuous_all_day_idle_supported || current > 0) {
+    return "The latest idle marker may relate to the current stop because Nava does not see later movement after that marker.";
+  }
+
+  if (summary.data_density === "low") {
+    return "Nava has too little same-day history to prove whether the idle alerts are continuous or separate.";
+  }
+
+  return "Idle alerts exist, but Nava does not have enough continuity evidence to merge them into one continuous delay.";
+}
+
+function formatHardwareNote(latest: any) {
+  const speed = finiteNumberOrNull(latest?.speed);
+  const ignitionState = normalizeIgnitionState(
+    latest?.ignition_status ??
+      latest?.engine_status ??
+      latest?.ignition ??
+      latest?.engine_on ??
+      latest?.ignition_on
+  );
+
+  if (ignitionState === "on" && speed !== null && speed <= 5) {
+    return "Ignition data shows the engine is on while the truck is stationary, so this is an active idle-risk condition.";
+  }
+  if (ignitionState === "off" && speed !== null && speed <= 5) {
+    return "Ignition data shows the truck is stopped or parked and the engine appears off.";
+  }
+  if (ignitionState === "on") {
+    return "Ignition data shows the engine is on.";
+  }
+  if (ignitionState === "off") {
+    return "Ignition data shows the engine appears off.";
+  }
+  if (speed !== null && speed <= 5) {
+    return "Ignition data is not available in this feed, so Nava can confirm the truck is stopped but cannot confirm active fuel-burn idling.";
+  }
+  return "Ignition data is not available in this feed, so Nava can describe movement from speed and location but cannot confirm engine state.";
+}
+
+function normalizeIgnitionState(value: any) {
+  if (value === true || value === 1) return "on";
+  if (value === false || value === 0) return "off";
+  const text = String(value || "").trim().toLowerCase();
+  if (!text) return null;
+  if (["on", "engine_on", "ignition_on", "running", "true", "yes"].includes(text)) return "on";
+  if (["off", "engine_off", "ignition_off", "stopped", "false", "no"].includes(text)) return "off";
+  return null;
 }
 
 function buildDetailedTruckTimelineAnswer({
