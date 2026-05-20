@@ -273,6 +273,7 @@ export async function POST(req: Request) {
       !context.fuel_investigation &&
       !context.dashboard_followup &&
       context.intent !== "truck_status" &&
+      context.intent !== "truck_compound" &&
       !context.asset_access_restricted &&
       !context.no_enabled_intelligence_assets &&
       !context.permission_boundary
@@ -505,6 +506,9 @@ function buildFallbackAnswer(context: any): string {
   }
   if (context.dashboard_followup) {
     return buildDashboardFollowupAnswer(context);
+  }
+  if (context.compound_truck_request && context.truck) {
+    return buildCompoundTruckAnswer(context);
   }
   if (context.truck_timeline_comparison) {
     return buildTruckTimelineComparisonAnswer(context);
@@ -1174,7 +1178,141 @@ function buildDashboardFollowupAnswer(context: any) {
   return parts.join("\n");
 }
 
-function buildTruckStatusFallbackAnswer(context: any) {
+function buildCompoundTruckAnswer(context: any) {
+  const sections = context.compound_truck_request?.sections || [];
+  const parts: string[] = [];
+
+  sections.forEach((section: any, index: number) => {
+    const title = formatCompoundTruckSectionTitle(section);
+    parts.push(`${index + 1}. ${title}`);
+
+    if (section.type === "current_status") {
+      parts.push(
+        buildTruckStatusFallbackAnswer(context, {
+          includeIdleRead: false,
+          includeFollowUp: false,
+        })
+      );
+    } else if (section.type === "idle_status") {
+      parts.push(buildTruckIdleStatusAnswer(context));
+    } else if (section.type === "movement_timeline") {
+      const timeline = getCompoundTimeline(context, section);
+      parts.push(
+        buildTruckTimelineComparisonAnswer({
+          ...context,
+          truck_timeline_comparison: timeline,
+          timeline_detail_requested: false,
+        })
+      );
+    } else if (section.type === "detailed_timeline") {
+      const timeline = getCompoundTimeline(context, section);
+      parts.push(
+        buildTruckTimelineComparisonAnswer({
+          ...context,
+          truck_timeline_comparison: timeline,
+          timeline_detail_requested: true,
+        })
+      );
+    }
+
+    if (index < sections.length - 1) parts.push("");
+  });
+
+  return parts.join("\n");
+}
+
+function formatCompoundTruckSectionTitle(section: any) {
+  if (section.type === "current_status") return "Current location";
+  if (section.type === "idle_status") return "Idle status";
+  if (section.type === "movement_timeline") {
+    return section.timeframe?.requested === "yesterday"
+      ? "Yesterday's movement"
+      : "Movement timeline";
+  }
+  if (section.type === "detailed_timeline") return "Detailed timeline";
+  return "Truck check";
+}
+
+function getCompoundTimeline(context: any, section: any) {
+  const key =
+    section.timeline_key ||
+    (section.timeframe?.requested === "yesterday" ? "yesterday" : "today");
+  return context.truck_timelines?.[key] || context.truck_timeline_comparison || {};
+}
+
+function buildTruckStatusFallbackAnswer(context: any, options: any = {}) {
+  const includeIdleRead = options.includeIdleRead !== false;
+  const includeFollowUp = options.includeFollowUp !== false;
+  const model = buildLiveTruckStatusModel(context);
+  const parts: string[] = [];
+
+  parts.push(
+    `**${formatLiveTruckTopLine(
+      model.matchedLabel,
+      model.locationText,
+      model.lastSeenAt,
+      model.speed,
+      model.stale,
+      model.timeZone
+    )}**`
+  );
+  parts.push(formatTimelineTimeNote(model.timeZone));
+
+  if (context.coordinate_request && model.hasGpsPoint) {
+    parts.push(
+      `Coordinates: ${formatCoordinate(model.locationPoint.latitude)}, ${formatCoordinate(
+        model.locationPoint.longitude
+      )}.`
+    );
+  }
+
+  parts.push(formatLiveOperationalState(model.speed, model.stale));
+
+  if (hasAmbiguousTimestampWarning(model.timestampWarnings)) {
+    parts.push(
+      "Provider time appears local/ambiguous, so treat this timeline as approximate."
+    );
+  }
+
+  if (includeIdleRead) {
+    const idleRead = formatLiveIdleMarkerRead({
+      idleEvents: model.idleEvents,
+      latestPoint: model.locationPoint,
+      speed: model.speed,
+      idleFocus: Boolean(context.live_status_idle_focus),
+      ignitionState: model.ignitionState,
+    });
+    if (idleRead) parts.push(idleRead);
+  }
+
+  if (includeFollowUp) {
+    parts.push(
+      context.live_status_idle_focus
+        ? "I can compare today's idle markers against movement if you want."
+        : "I can review today's movement timeline if you want."
+    );
+  }
+
+  return parts.join("\n");
+}
+
+function buildTruckIdleStatusAnswer(context: any) {
+  const model = buildLiveTruckStatusModel(context);
+  const parts = [formatLiveOperationalState(model.speed, model.stale)];
+  const idleRead = formatLiveIdleMarkerRead({
+    idleEvents: model.idleEvents,
+    latestPoint: model.locationPoint,
+    speed: model.speed,
+    idleFocus: true,
+    ignitionState: model.ignitionState,
+  });
+  if (idleRead) {
+    parts.push(idleRead);
+  }
+  return parts.join("\n");
+}
+
+function buildLiveTruckStatusModel(context: any) {
   const truck = context.truck || {};
   const telemetry = Array.isArray(context.recent_telemetry)
     ? context.recent_telemetry
@@ -1208,57 +1346,36 @@ function buildTruckStatusFallbackAnswer(context: any) {
   const hasGpsPoint = hasCoordinates(locationPoint);
   const freshnessMinutes = freshnessMinutesFromNow(lastSeenAt);
   const stale = freshnessMinutes !== null && freshnessMinutes > 60;
-  const parts: string[] = [];
-
-  parts.push(
-    `**${formatLiveTruckTopLine(matchedLabel, locationText, lastSeenAt, speed, stale, timeZone)}**`
-  );
-  parts.push(formatTimelineTimeNote(timeZone));
-
-  if (context.coordinate_request && hasGpsPoint) {
-    parts.push(
-      `Coordinates: ${formatCoordinate(locationPoint.latitude)}, ${formatCoordinate(
-        locationPoint.longitude
-      )}.`
-    );
-  }
-
-  parts.push(formatLiveOperationalState(speed, stale));
-
   const timestampWarnings = latestTelemetry?.validation?.warnings || [];
-  if (hasAmbiguousTimestampWarning(timestampWarnings)) {
-    parts.push(
-      "Provider time appears local/ambiguous, so treat this timeline as approximate."
-    );
-  }
-
-  const idleRead = formatLiveIdleMarkerRead({
-    idleEvents,
-    latestPoint: locationPoint,
-    speed,
-    idleFocus: Boolean(context.live_status_idle_focus),
-    ignitionState: normalizeIgnitionState(
-      latestTelemetry?.ignition_status ??
-        latestTelemetry?.engine_status ??
-        latestTelemetry?.ignition ??
-        latestTelemetry?.engine_on ??
-        latestTelemetry?.ignition_on ??
-        truck.ignition_status ??
-        truck.engine_status ??
-        truck.ignition ??
-        truck.engine_on ??
-        truck.ignition_on
-    ),
-  });
-  if (idleRead) parts.push(idleRead);
-
-  parts.push(
-    context.live_status_idle_focus
-      ? "I can compare today's idle markers against movement if you want."
-      : "I can review today's movement timeline if you want."
+  const ignitionState = normalizeIgnitionState(
+    latestTelemetry?.ignition_status ??
+      latestTelemetry?.engine_status ??
+      latestTelemetry?.ignition ??
+      latestTelemetry?.engine_on ??
+      latestTelemetry?.ignition_on ??
+      truck.ignition_status ??
+      truck.engine_status ??
+      truck.ignition ??
+      truck.engine_on ??
+      truck.ignition_on
   );
 
-  return parts.join("\n");
+  return {
+    truck,
+    latestTelemetry,
+    idleEvents,
+    matchedLabel,
+    timeZone,
+    latestPoint,
+    lastSeenAt,
+    speed,
+    locationPoint,
+    locationText,
+    hasGpsPoint,
+    stale,
+    timestampWarnings,
+    ignitionState,
+  };
 }
 
 function formatLiveTruckTopLine(
@@ -3106,6 +3223,10 @@ function formatDurationWords(value: any) {
 
 function formatIdleComparison(event: any, timeZone: string) {
   const eventTime = event.started_at || event.created_at;
+  const eventMs = new Date(eventTime || 0).getTime();
+  const movementMs = new Date(event.movement_after_event_at || 0).getTime();
+  const hasValidMovementAfter =
+    Number.isFinite(eventMs) && Number.isFinite(movementMs) && movementMs > eventMs;
   const base = `${formatTimelineClock(eventTime, timeZone)} - ${formatSpareEventType(event.event_type)}`;
   const location = formatOperationalLocation(event, { gpsFallback: null });
   const locationText = location
@@ -3116,11 +3237,15 @@ function formatIdleComparison(event: any, timeZone: string) {
       ? ""
       : `, duration ${formatNumber(event.duration_minutes)} min`;
 
-  if (event.classification === "historical_broken_by_movement") {
+  if (event.classification === "historical_broken_by_movement" && hasValidMovementAfter) {
     const movementAt = event.movement_after_event_at
       ? ` Movement later appears at ${formatTimelineClock(event.movement_after_event_at, timeZone)}.`
       : "";
     return `- ${base}${duration}${locationText}: historical marker, broken by later movement.${movementAt}`;
+  }
+
+  if (event.classification === "historical_broken_by_movement") {
+    return `- ${base}${duration}${locationText}: no later movement found after this marker in the selected window.`;
   }
 
   if (event.classification === "possibly_current_same_location") {
@@ -3129,6 +3254,10 @@ function formatIdleComparison(event: any, timeZone: string) {
         ? ""
         : ` Latest location is about ${formatNumber(event.location_distance_km)} km from the event marker.`;
     return `- ${base}${duration}${locationText}: possibly connected to the current stop.${distance}`;
+  }
+
+  if (event.classification === "no_movement_after_event_but_not_confirmed_current") {
+    return `- ${base}${duration}${locationText}: no later movement found after this marker in the selected window.`;
   }
 
   return `- ${base}${duration}${locationText}: continuity not proven from the available movement blocks.`;

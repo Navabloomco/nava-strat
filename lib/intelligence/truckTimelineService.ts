@@ -626,7 +626,7 @@ function classifyStopSeverity(durationMinutes: any) {
 
 function compareIdleEventToMotionBlocks(event: any, blocks: TimelineBlock[], latestPoint: any) {
   const eventTime = eventTimestampMillis(event);
-  const movementAfterEvent = findMovementAfter(blocks, eventTime);
+  const movementAfterEvent = validateMovementAfterEvent(findMovementAfter(blocks, eventTime), eventTime);
   const nearbyBlock = findBlockForTimestamp(blocks, eventTime);
   const locationDistanceKm = distanceBetweenPointsKm(event, latestPoint);
 
@@ -668,6 +668,15 @@ function compareIdleEventToMotionBlocks(event: any, blocks: TimelineBlock[], lat
     location_distance_km: roundNumber(locationDistanceKm),
     classification,
   };
+}
+
+function validateMovementAfterEvent(movement: any, eventTime: number) {
+  if (!movement || !Number.isFinite(eventTime)) return null;
+  const movementTime = new Date(
+    movement.movement_after_at || movement.start_at || 0
+  ).getTime();
+  if (!Number.isFinite(movementTime) || movementTime <= eventTime) return null;
+  return movement;
 }
 
 function classifyTelemetryMotionState(row: any): TimelineBlock["state"] {

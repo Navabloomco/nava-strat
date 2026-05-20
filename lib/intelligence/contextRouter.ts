@@ -37,6 +37,7 @@ export type ContextIntent =
   | "investigation_context"
   | "spares_context"
   | "dashboard_followup"
+  | "truck_compound"
   | "general";
 
 type RouteContextOptions = {
@@ -78,6 +79,12 @@ export async function routeContext(
   }
   const vehicleMatch = await matchVehicleInFleet(question, companyId);
   const timelineHistoryRequest = detectTimelineHistoryRequest(lower);
+  const compoundTruckRequest = vehicleMatch.input
+    ? detectCompoundTruckRequest(lower)
+    : null;
+  if (compoundTruckRequest) {
+    intent = "truck_compound";
+  }
   if (
     vehicleMatch.input &&
     timelineHistoryRequest &&
@@ -127,6 +134,7 @@ export async function routeContext(
     timeline_detail_requested: detectDetailedTimelineRequest(lower),
     timeline_history_requested: timelineHistoryRequest,
     timeline_timeframe: detectTimelineTimeframe(lower),
+    compound_truck_request: compoundTruckRequest,
     capabilities: sanitizeCapabilities(roleCapabilities),
     permission_boundary: permissionBoundary,
     display_timezone: {
@@ -156,6 +164,41 @@ export async function routeContext(
       dashboardReference,
       geofences
     );
+    return context;
+  }
+  if (intent === "truck_compound" && truckId && !context.asset_access_restricted) {
+    context.truck = await fetchTruckStatus(
+      companyId,
+      truckId,
+      geofences,
+      assignmentLookup
+    );
+    context.recent_events = await fetchTruckEvents(
+      companyId,
+      truckId,
+      geofences,
+      assignmentLookup
+    );
+    context.recent_telemetry = await fetchTruckTelemetry(companyId, truckId);
+
+    const timelineSections = (compoundTruckRequest?.sections || []).filter((section: any) =>
+      ["movement_timeline", "detailed_timeline"].includes(section.type)
+    );
+    const timelines: Record<string, any> = {};
+    for (const section of timelineSections) {
+      const key = timelineRequestKey(section.timeframe);
+      if (!timelines[key]) {
+        timelines[key] = await fetchTruckStopMotionTimelineComparison(
+          companyId,
+          truckId,
+          geofences,
+          company,
+          section.timeframe
+        );
+      }
+      section.timeline_key = key;
+    }
+    context.truck_timelines = timelines;
     return context;
   }
   if (intent === "offline_trucks") {
@@ -338,6 +381,7 @@ function usesLocationContext(intent: ContextIntent) {
     "journey_context",
     "offline_trucks",
     "dashboard_followup",
+    "truck_compound",
     "country_trucks",
     "general",
   ].includes(intent);
@@ -351,6 +395,7 @@ function usesDriverAssignmentContext(intent: ContextIntent) {
     "journey_context",
     "driver_activity",
     "offline_trucks",
+    "truck_compound",
     "general",
   ].includes(intent);
 }
@@ -778,6 +823,100 @@ function detectTimelineTimeframe(lower: string) {
     requested: "today",
     dayOffset: 0,
   };
+}
+
+function detectCompoundTruckRequest(lower: string) {
+  const sections: any[] = [];
+  const normalized = lower.replace(/[’]/g, "'");
+
+  addCompoundSection(sections, normalized, "current_status", [
+    /\bwhere\s+is\b/,
+    /\bwhere's\b/,
+    /\bcurrent\s+(location|status)\b/,
+    /\blive\s+status\b/,
+  ]);
+  addCompoundSection(sections, normalized, "idle_status", [
+    /\bis\s+(?:it|[a-z0-9\s-]{2,30})\s+idling\b/,
+    /\bidle\s+risk\b/,
+    /\bcurrently\s+idling\b/,
+  ]);
+  addCompoundSection(sections, normalized, "movement_timeline", [
+    /\byesterday'?s\s+movements?\b/,
+    /\btoday'?s\s+movements?\b/,
+    /\bmovements?\s+(?:for|of)?\s*(?:today|yesterday)\b/,
+    /\bwhat\s+are\s+.*\bmovements?\b/,
+    /\bshow\s+(?:today|yesterday)'?s\s+movement\b/,
+    /\bwhere\s+did\b/,
+    /\broute\b/,
+    /\bstopped\s+all\s+day\b/,
+  ]);
+  addCompoundSection(sections, normalized, "detailed_timeline", [
+    /\bshow\s+detailed\s+timeline\b/,
+    /\bdetailed\s+timeline\b/,
+    /\bshow\s+all\s+blocks\b/,
+    /\bfull\s+evidence\b/,
+    /\bshow\s+log\s+blocks\b/,
+    /\bshow\s+the\s+log\s+blocks\b/,
+  ]);
+
+  const ordered = sections
+    .sort((a, b) => a.order - b.order)
+    .filter(
+      (section, index, list) =>
+        list.findIndex((item) => item.type === section.type) === index
+    );
+
+  if (ordered.length < 2) return null;
+
+  let lastMovementTimeframe: any = null;
+  const hydratedSections = ordered.map((section) => {
+    if (section.type === "movement_timeline") {
+      const timeframe = detectTimelineTimeframeNear(normalized, section.order);
+      lastMovementTimeframe = timeframe;
+      return { ...section, timeframe };
+    }
+    if (section.type === "detailed_timeline") {
+      const nearbyTimeframe = detectTimelineTimeframeNear(normalized, section.order);
+      const timeframe =
+        nearbyTimeframe.requested !== "today" || !lastMovementTimeframe
+          ? nearbyTimeframe
+          : lastMovementTimeframe;
+      return { ...section, timeframe };
+    }
+    return section;
+  });
+
+  return {
+    type: "truck_compound",
+    answer_in_order: normalized.includes("answer these") && normalized.includes("order"),
+    sections: hydratedSections,
+  };
+}
+
+function addCompoundSection(
+  sections: any[],
+  lower: string,
+  type: string,
+  patterns: RegExp[]
+) {
+  for (const pattern of patterns) {
+    const match = pattern.exec(lower);
+    if (match?.index !== undefined) {
+      sections.push({ type, order: match.index });
+      return;
+    }
+  }
+}
+
+function detectTimelineTimeframeNear(lower: string, index: number) {
+  const start = Math.max(0, index - 100);
+  const end = Math.min(lower.length, index + 140);
+  const nearby = lower.slice(start, end);
+  return detectTimelineTimeframe(nearby);
+}
+
+function timelineRequestKey(timeframe: any) {
+  return timeframe?.requested === "yesterday" ? "yesterday" : "today";
 }
 
 function detectDetailedTimelineRequest(lower: string) {
