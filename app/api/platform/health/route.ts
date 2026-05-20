@@ -112,6 +112,31 @@ const REQUIRED_TABLES: RequiredTable[] = [
     columns: [],
   },
   {
+    table: "billing_invoices",
+    columns: [
+      "id",
+      "company_id",
+      "invoice_number",
+      "period_start",
+      "period_end",
+      "currency",
+      "strict_billable_assets",
+      "included_assets",
+      "extra_billable_assets",
+      "asset_unit_price",
+      "subtotal",
+      "total",
+      "status",
+      "notes",
+      "created_by",
+      "created_at",
+      "updated_at",
+      "sent_at",
+      "paid_at",
+      "voided_at",
+    ],
+  },
+  {
     table: "drivers",
     columns: [
       "id",
@@ -218,6 +243,13 @@ const OPTIONAL_COLUMN_CHECKS = [
 
 const PROBE_CONCURRENCY = 8;
 const PROBE_TIMEOUT_MS = 5000;
+
+const BILLING_INVOICE_INDEXES = [
+  "billing_invoices_company_period_idx",
+  "billing_invoices_company_period_active_idx",
+  "billing_invoices_company_status_idx",
+  "billing_invoices_created_at_idx",
+];
 
 function noStoreJson(body: any, init?: ResponseInit) {
   return NextResponse.json(body, {
@@ -521,6 +553,136 @@ async function checkFleetAssetsUniqueIndex(): Promise<HealthCheck> {
   };
 }
 
+async function checkBillingInvoiceIndexes(): Promise<HealthCheck[]> {
+  try {
+    const { data, error } = await withTimeout<any>(
+      (supabaseAdmin as any)
+        .schema("pg_catalog")
+        .from("pg_indexes")
+        .select("indexname,indexdef")
+        .eq("schemaname", "public")
+        .eq("tablename", "billing_invoices"),
+      PROBE_TIMEOUT_MS,
+      { data: null, error: { message: "Timed out checking pg_indexes" } }
+    );
+
+    if (error) throw error;
+
+    const foundIndexes = new Set(
+      (data || []).map((index: any) => String(index.indexname || ""))
+    );
+
+    return BILLING_INVOICE_INDEXES.map((indexName) => ({
+      category: "Constraints/RPCs",
+      name: `${indexName} index`,
+      status: foundIndexes.has(indexName) ? "pass" : "fail",
+      detail: foundIndexes.has(indexName)
+        ? "Expected billing invoice index is present."
+        : "Expected billing invoice index is missing. Apply the additive billing_invoices index migration before pilot billing.",
+    })) as HealthCheck[];
+  } catch (err) {
+    const detail = `Could not inspect billing invoice indexes safely. Verify manually. ${sanitizeError(
+      err
+    )}`;
+    return BILLING_INVOICE_INDEXES.map((indexName) => ({
+      category: "Constraints/RPCs",
+      name: `${indexName} index`,
+      status: "warn",
+      detail,
+    })) as HealthCheck[];
+  }
+}
+
+async function checkBillingInvoiceStatusConstraint(): Promise<HealthCheck> {
+  const checkName = "billing_invoices status check constraint";
+
+  try {
+    const { data: constraints, error: constraintError } = await withTimeout<any>(
+      (supabaseAdmin as any)
+        .schema("information_schema")
+        .from("table_constraints")
+        .select("constraint_name,constraint_type,table_schema,table_name")
+        .eq("table_schema", "public")
+        .eq("table_name", "billing_invoices")
+        .eq("constraint_type", "CHECK"),
+      PROBE_TIMEOUT_MS,
+      {
+        data: null,
+        error: { message: "Timed out checking information_schema.table_constraints" },
+      }
+    );
+
+    if (constraintError) throw constraintError;
+
+    const constraintNames = (constraints || [])
+      .map((item: any) => String(item.constraint_name || ""))
+      .filter(Boolean);
+
+    if (constraintNames.length === 0) {
+      return {
+        category: "Constraints/RPCs",
+        name: checkName,
+        status: "fail",
+        detail:
+          "No CHECK constraint was found for billing_invoices. Status should be limited to draft, sent, paid, and void.",
+      };
+    }
+
+    const { data: checks, error: checkError } = await withTimeout<any>(
+      (supabaseAdmin as any)
+        .schema("information_schema")
+        .from("check_constraints")
+        .select("constraint_name,constraint_schema,check_clause")
+        .eq("constraint_schema", "public")
+        .in("constraint_name", constraintNames),
+      PROBE_TIMEOUT_MS,
+      {
+        data: null,
+        error: { message: "Timed out checking information_schema.check_constraints" },
+      }
+    );
+
+    if (checkError) throw checkError;
+
+    const matchingCheck = (checks || []).find((item: any) => {
+      const clause = String(item.check_clause || "").toLowerCase();
+      return (
+        clause.includes("status") &&
+        clause.includes("draft") &&
+        clause.includes("sent") &&
+        clause.includes("paid") &&
+        clause.includes("void")
+      );
+    });
+
+    if (matchingCheck) {
+      return {
+        category: "Constraints/RPCs",
+        name: checkName,
+        status: "pass",
+        detail: `Found ${matchingCheck.constraint_name}.`,
+      };
+    }
+
+    return {
+      category: "Constraints/RPCs",
+      name: checkName,
+      status: "fail",
+      detail:
+        "A billing_invoices CHECK constraint exists, but it does not clearly limit status to draft, sent, paid, and void.",
+    };
+  } catch (err) {
+    return {
+      category: "Constraints/RPCs",
+      name: checkName,
+      status: "warn",
+      detail: `Could not inspect billing invoice status constraint safely. Verify manually. ${sanitizeError(
+        err
+      )}`,
+    };
+  }
+}
+
 async function checkClientVisibilityRpc(): Promise<HealthCheck> {
   try {
     const { data, error } = await withTimeout<any>(
@@ -616,6 +778,8 @@ export async function GET(req: Request) {
       ...buildEnvironmentChecks(),
       ...(await buildTableColumnChecks()),
       await checkFleetAssetsUniqueIndex(),
+      ...(await checkBillingInvoiceIndexes()),
+      await checkBillingInvoiceStatusConstraint(),
       await checkClientVisibilityRpc(),
     ];
 

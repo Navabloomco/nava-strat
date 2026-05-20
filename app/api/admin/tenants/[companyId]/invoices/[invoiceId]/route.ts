@@ -99,7 +99,19 @@ export async function PATCH(
       .select(BILLING_INVOICE_FIELDS)
       .single();
 
-    if (updateError) throw updateError;
+    if (updateError) {
+      if (isMissingBillingInvoicesTable(updateError)) {
+        return noStoreJson(
+          {
+            success: false,
+            error: "Billing invoice table is not configured.",
+            ...billingInvoicesSetupResponse(),
+          },
+          { status: 503 }
+        );
+      }
+      throw updateError;
+    }
 
     return noStoreJson({
       success: true,

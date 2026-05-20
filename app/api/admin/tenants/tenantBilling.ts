@@ -230,11 +230,23 @@ export function sanitizeInvoice(invoice: any) {
 }
 
 export function isMissingBillingInvoicesTable(error: any) {
-  const message = String(error?.message || error?.details || "");
+  const message = [
+    error?.code,
+    error?.message,
+    error?.details,
+    error?.hint,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
   return (
     error?.code === "42P01" ||
+    error?.code === "42703" ||
     message.includes("billing_invoices") ||
-    message.toLowerCase().includes("could not find the table")
+    message.includes("could not find the table") ||
+    message.includes("could not find the column") ||
+    message.includes("schema cache")
   );
 }
 
@@ -242,7 +254,7 @@ export function billingInvoicesSetupResponse() {
   return {
     setup_required: true,
     setup_message:
-      "The billing_invoices table is not available yet. Apply the additive SQL migration before creating invoice records.",
+      "The billing_invoices table or required columns are not available yet. Apply the additive SQL migration before creating invoice records.",
   };
 }
 

@@ -495,6 +495,8 @@ Creating a draft invoice:
 
 Invoice records are still MVP internal records. They must not create Stripe charges, PDFs, emails, customer-facing billing artifacts, or payment collection behavior.
 
+Platform Health must verify the `billing_invoices` table before pilot invoice operations. Required readiness checks include all invoice columns, the named billing invoice indexes, and a status constraint that limits records to `draft`, `sent`, `paid`, and `void`. Invoice APIs and UI should degrade to a setup-required message if the table or required columns have not been applied yet.
+
 ### Enable Asset
 
 Enabling an asset should:
@@ -555,6 +557,7 @@ Review later should:
 - Do not add schema migrations silently from app code.
 - Do not treat platform tenant billing preview as invoicing. It is internal readiness/math only until a real billing engine exists.
 - Do not treat manual invoice records as external billing. They are internal lifecycle records only until a real billing engine is designed.
+- Do not let invoice record pages crash when the additive `billing_invoices` SQL has not been applied; show setup-required guidance instead.
 
 ## 11. Recent Important Commits/Features
 
@@ -634,3 +637,5 @@ The preview is read-only and deliberately excludes invoice creation, PDFs, email
 Platform owners now have `GET/POST /api/admin/tenants/[companyId]/invoices` and `PATCH /api/admin/tenants/[companyId]/invoices/[invoiceId]` for simple invoice record lifecycle tracking.
 
 Draft invoices are created from server-side preview calculations only. The lifecycle is `draft -> sent -> paid` or `draft/sent -> void`. The tenant detail page lists recent invoices and can update status. No Stripe, PDF, email, payment collection, amount editing, or customer-facing invoice portal exists yet.
+
+Platform Health checks `billing_invoices` columns, expected invoice indexes, and the invoice status constraint. Invoice APIs return setup-required guidance when the table or required columns are missing instead of exposing a generic server crash.
