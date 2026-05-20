@@ -1141,6 +1141,8 @@ function buildTruckStatusFallbackAnswer(context: any) {
     ...truck,
     latitude: latestPoint?.latitude ?? truck.latitude,
     longitude: latestPoint?.longitude ?? truck.longitude,
+    provider_location_label:
+      latestTelemetry?.provider_location_label || truck.provider_location_label || null,
   };
   const location = formatOperationalLocation(locationPoint, {
     includeCoordinates: Boolean(context.coordinate_request),
@@ -1270,9 +1272,7 @@ function buildTruckTimelineComparisonAnswer(context: any) {
   const continuity = timeline.continuity || {};
   const parts: string[] = [];
 
-  parts.push(
-    `I reconstructed today's stop/motion trail for ${label} from Nava telemetry logs and idle events, displayed in ${timeLabel}.`
-  );
+  parts.push(`I reconstructed today's Nava movement timeline for ${label}, displayed in ${timeLabel}.`);
 
   if (summary.data_density === "low") {
     parts.push(
@@ -1290,10 +1290,11 @@ function buildTruckTimelineComparisonAnswer(context: any) {
         : speed > 5
           ? "it appears to be moving"
           : "it appears stationary or stopped";
+    const latestTime = formatTimelineTime(latest.recorded_at, timeZone);
     parts.push(
-      `Latest snapshot: ${formatTimelineTime(latest.recorded_at, timeZone)}; ${speedText}${
-        location ? `, ${location}` : ""
-      }. On that latest point, ${state}.`
+      location
+        ? `${label} is ${location} as of ${latestTime}. Current read: ${speedText}; ${state}.`
+        : `Latest snapshot for ${label}: ${latestTime}. Current read: ${speedText}; ${state}.`
     );
     if (hasAmbiguousTimestampWarning(latest.timestamp_warnings)) {
       parts.push(
@@ -1305,18 +1306,23 @@ function buildTruckTimelineComparisonAnswer(context: any) {
   }
 
   parts.push("");
-  parts.push("Stop/motion blocks");
+  parts.push("Today's movement/stationary timeline");
   if (blocks.length) {
     parts.push(...blocks.slice(0, 10).map((block: any) => formatTimelineBlock(block, timeZone)));
     if (blocks.length > 10) {
       parts.push(`- ${blocks.length - 10} additional block(s) omitted from this concise view.`);
+    }
+    if (Number(summary.omitted_blocks || 0) > 0) {
+      parts.push(
+        `- ${Number(summary.omitted_blocks).toLocaleString()} shorter or less relevant block(s) were summarized out of this view.`
+      );
     }
   } else {
     parts.push("- No same-day movement/stationary blocks were found in telemetry_logs.");
   }
 
   parts.push("");
-  parts.push("Idle marker comparison");
+  parts.push("Idle interpretation");
   if (idleEvents.length) {
     parts.push(...idleEvents.slice(0, 8).map((event: any) => formatIdleComparison(event, timeZone)));
   } else {
@@ -2277,28 +2283,41 @@ function formatEventBrief(event: any) {
 function formatTimelineBlock(block: any, timeZone: string) {
   const state =
     block.state === "moving"
-      ? "Moving"
+      ? "moving"
       : block.state === "stationary"
-        ? "Stationary"
-        : "Unknown motion";
+        ? "stopped/stationary"
+        : "unknown motion";
   const speedRange =
-    block.min_speed === null || block.max_speed === null
+    block.max_speed === null && block.average_speed === null
       ? "speed unknown"
-      : block.min_speed === block.max_speed
-        ? `speed ${formatNumber(block.max_speed)}`
-        : `speed ${formatNumber(block.min_speed)}-${formatNumber(block.max_speed)}`;
-  const location = formatOperationalLocation({
-    latitude: block.end_latitude,
-    longitude: block.end_longitude,
-    geofence_match: block.geofence_match,
-  }, { gpsFallback: null });
+      : block.state === "moving"
+        ? `avg ${formatNumber(block.average_speed)} / max ${formatNumber(block.max_speed)}`
+        : `max speed ${formatNumber(block.max_speed)}`;
+  const startLocation = formatOperationalLocation({
+    location_resolution: block.start_location,
+  });
+  const endLocation = formatOperationalLocation({
+    location_resolution: block.end_location,
+  });
+  const location =
+    block.state === "moving" && startLocation && endLocation && startLocation !== endLocation
+      ? `from ${stripLeadingPlacePrefix(startLocation)} to ${stripLeadingPlacePrefix(endLocation)}`
+      : endLocation || startLocation
+        ? `${block.state === "moving" ? "around" : "at"} ${stripLeadingPlacePrefix(
+            endLocation || startLocation
+          )}`
+        : null;
+  const duration =
+    block.duration_minutes === null || block.duration_minutes === undefined
+      ? ""
+      : `; ${formatNumber(block.duration_minutes)} min`;
 
-  return `- ${state}: ${formatTimelineTime(block.start_at, timeZone)} to ${formatTimelineTime(
+  return `- ${formatTimelineTime(block.start_at, timeZone)} to ${formatTimelineTime(
     block.end_at,
     timeZone
-  )}; ${speedRange}; ${block.sample_count || 0} point(s)${
-    location ? `; last position ${location}` : ""
-  }.`;
+  )}: ${state}${location ? ` ${location}` : ""}${duration}; ${speedRange}; ${
+    block.sample_count || 0
+  } point(s).`;
 }
 
 function formatIdleComparison(event: any, timeZone: string) {
@@ -2342,6 +2361,10 @@ function formatTimelineTime(value: any, timeZone: string) {
   }).format(date);
   const label = timeZone === DEFAULT_OPERATIONAL_TIME_ZONE ? "EAT" : timeZone;
   return `${formatted} ${label}`;
+}
+
+function stripLeadingPlacePrefix(value: any) {
+  return String(value || "").replace(/^(near|inside|at)\s+/i, "");
 }
 
 function formatJourneyBrief(journey: any) {
