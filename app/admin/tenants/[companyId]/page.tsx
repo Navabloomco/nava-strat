@@ -446,8 +446,9 @@ export default function PlatformTenantDetailPage() {
               </div>
             ) : (
               <div className="p-5 text-sm text-slate-400">
-                No invoice records yet. Create the first draft from invoice
-                preview when the tenant is ready.
+                {invoiceSetupMessage
+                  ? "Invoice records will appear here after the billing_invoices setup SQL has been applied."
+                  : "No invoice records yet. Create the first draft from invoice preview when the tenant is ready."}
               </div>
             )}
           </Panel>
@@ -496,17 +497,20 @@ export default function PlatformTenantDetailPage() {
         </section>
 
         <section className="mt-8 grid gap-4 md:grid-cols-3">
-          <ActionNote
+          <AdminContextLink
             title="Asset Review"
-            body="Company-specific Asset Review deep-linking is not wired in the page yet. Use the company switcher/default platform context before reviewing assets."
+            body="Review imported assets for this tenant before enabling intelligence and billing readiness."
+            href={tenant.links?.asset_review}
           />
-          <ActionNote
+          <AdminContextLink
             title="Provider Vault"
-            body="Company-specific Provider Vault deep-linking is not wired in the page yet. Use platform context carefully before editing provider setup."
+            body="Open provider setup, tests, sync status, and enrichment diagnostics in this tenant context."
+            href={tenant.links?.provider_vault}
           />
-          <ActionNote
+          <AdminContextLink
             title="Company Settings"
-            body="Company-specific Company Settings deep-linking is not wired in the page yet. Keep tenant changes under the intended active company."
+            body="Update operating context for this tenant without changing the active platform workspace manually."
+            href={tenant.links?.company_settings}
           />
         </section>
       </div>
@@ -538,12 +542,26 @@ function Metric({ label, value }: { label: string; value: any }) {
   );
 }
 
-function ActionNote({ title, body }: { title: string; body: string }) {
+function AdminContextLink({
+  title,
+  body,
+  href,
+}: {
+  title: string;
+  body: string;
+  href?: string | null;
+}) {
   return (
-    <Panel dark className="p-5">
-      <h2 className="text-base font-semibold text-white">{title}</h2>
-      <p className="mt-2 text-sm leading-6 text-slate-400">{body}</p>
-    </Panel>
+    <Link href={href || "/admin/tenants"} className="group block">
+      <Panel
+        dark
+        className="h-full p-5 transition group-hover:border-cyan-200/40 group-hover:bg-cyan-300/10"
+      >
+        <h2 className="text-base font-semibold text-white">{title}</h2>
+        <p className="mt-2 text-sm leading-6 text-slate-400">{body}</p>
+        <div className="mt-4 text-sm font-semibold text-cyan-100">Open</div>
+      </Panel>
+    </Link>
   );
 }
 
