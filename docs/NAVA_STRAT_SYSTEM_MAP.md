@@ -523,6 +523,8 @@ Readiness categories:
 
 Pilot readiness routes are read-only. They must not create invoices, mutate setup data, expose provider secrets, expose raw payloads, expose private driver data, or reveal Nava Eye memory internals beyond safe counts.
 
+The manual pre-pilot/demo smoke test checklist lives in `docs/PILOT_SMOKE_TEST.md`. Use it before pilot, demo, or go-live checks, and batch any discovered bug fixes into one focused patch prompt unless a single issue blocks testing.
+
 ### Enable Asset
 
 Enabling an asset should:
