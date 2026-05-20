@@ -1,3 +1,9 @@
+import {
+  DEFAULT_OPERATIONAL_TIME_ZONE,
+  isAmbiguousProviderTimestampValue,
+  parseProviderTimestamp,
+} from "../timeFormatting";
+
 export type CanonicalVehicle = {
   truck_id: string;
 
@@ -45,6 +51,12 @@ export function normalizeVehicle(
   const speed = getNullableNumber(raw, mapping.speed);
   const fuel_level = getFuelLevel(raw, mapping);
   const location_label = getLocationLabel(raw, mapping);
+  const recordedAtValue = getValue(raw, mapping.recorded_at);
+  if (isAmbiguousProviderTimestampValue(recordedAtValue)) {
+    warnings.push(
+      "Provider timestamp has no timezone; interpreted as Africa/Nairobi local time and should be treated as approximate"
+    );
+  }
   const recorded_at = getTimestamp(raw, mapping.recorded_at);
 
   // REQUIRED FIELDS
@@ -465,10 +477,10 @@ function getTimestamp(raw: any, path?: string): string {
     return new Date().toISOString();
   }
 
-  const date = new Date(value);
+  const date = parseProviderTimestamp(value, DEFAULT_OPERATIONAL_TIME_ZONE);
 
   // INVALID DATE FALLBACK
-  if (isNaN(date.getTime())) {
+  if (!date || isNaN(date.getTime())) {
     return new Date().toISOString();
   }
 

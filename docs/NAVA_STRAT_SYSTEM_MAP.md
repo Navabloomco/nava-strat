@@ -328,6 +328,8 @@ Current shared helper behavior:
 
 Nava Eye and Nava Eye Watch use explicit safe capability flags derived from the resolved same-company role. These include finance, expenses, billing, platform billing, ops, fuel, journeys, spares, and platform-owner capabilities. Nava Eye should answer broadly inside those permissions and return a clear permission-boundary message instead of exposing restricted finance, billing, invoice, expense, provider-secret, raw-payload, or cross-tenant data.
 
+Nava Eye should compare telemetry and event timestamps as actual instants, but user-facing fleet timelines should be displayed in the company/operator timezone where available. Until a durable company timezone field exists, Kenyan fleet answers default to `Africa/Nairobi` and label times as EAT/Kenya time. Do not present UTC in normal fleet answers unless the user explicitly asks for UTC.
+
 ## 6. Multi-Tenancy Rules
 
 - `company_users` is the access-control source.

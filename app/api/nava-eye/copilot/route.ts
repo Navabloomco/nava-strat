@@ -13,6 +13,11 @@ import {
   rolesForCompany,
 } from "../../../../lib/api/roleAccess";
 import { recordAnalyticsEvent } from "../../../../lib/api/analyticsEvents";
+import {
+  DEFAULT_OPERATIONAL_TIME_ZONE,
+  formatOperationalDateTime,
+  hasAmbiguousTimestampWarning,
+} from "../../../../lib/timeFormatting";
 
 export async function POST(req: Request) {
   try {
@@ -215,7 +220,7 @@ export async function POST(req: Request) {
             {
               role: "system",
               content:
-                "You are Nava Eye, a company operations intelligence analyst for logistics. Use only the provided data. If evidence is missing, say so. Answer concisely and recommend the next operational action. Include relevant active memories if they help answer the question.",
+                "You are Nava Eye, a company operations intelligence analyst for logistics. Use only the provided data. If evidence is missing, say so. Answer concisely and recommend the next operational action. Include relevant active memories if they help answer the question. For fleet status answers, describe user-facing times in the provided operational timezone, normally EAT/Kenya time, and do not present UTC unless the user explicitly asks for UTC.",
             },
             {
               role: "user",
@@ -285,7 +290,10 @@ export async function POST(req: Request) {
               memoryType: "offline_truck",
               severity: "warning",
               title: `Truck ${truckId} is offline`,
-              summary: `Truck ${truckId} has not reported telemetry for more than 30 minutes. Last seen: ${context.offline_trucks?.find((t: any) => t.truck_id === truckId)?.last_seen_at || "unknown"}.`,
+              summary: `Truck ${truckId} has not reported telemetry for more than 30 minutes. Last seen: ${formatReadableDate(
+                context.offline_trucks?.find((t: any) => t.truck_id === truckId)
+                  ?.last_seen_at
+              )}.`,
               entityType: "truck",
               entityId: truckId,
               confidence: 0.9,
@@ -588,9 +596,9 @@ function buildFallbackAnswer(context: any): string {
                 ? "freshness unknown"
                 : `${t.freshness_minutes} minutes old`;
             const location = t.location ? ` near ${t.location}` : "";
-            return `${t.registration || t.truck_id}${location}, last seen ${
-              t.last_seen_at || "unknown"
-            } at ${t.latitude}, ${t.longitude} (${freshness})`;
+            return `${t.registration || t.truck_id}${location}, last seen ${formatReadableDate(
+              t.last_seen_at
+            )} at ${t.latitude}, ${t.longitude} (${freshness})`;
           })
           .join("; ")}.`
       );
@@ -615,8 +623,12 @@ function buildFallbackAnswer(context: any): string {
     const location = formatOperationalLocation(context.truck);
     parts.push(
       location
-        ? `Truck ${context.detected_truck_id} was last seen ${location} at ${context.truck.last_seen_at}.`
-        : `Truck ${context.detected_truck_id} was last seen at ${context.truck.last_seen_at}.`
+        ? `Truck ${context.detected_truck_id} was last seen ${location} at ${formatReadableDate(
+            context.truck.last_seen_at
+          )}.`
+        : `Truck ${context.detected_truck_id} was last seen at ${formatReadableDate(
+            context.truck.last_seen_at
+          )}.`
     );
     if (context.truck.assigned_driver?.driver_name) {
       parts.push(`Assigned driver: ${context.truck.assigned_driver.driver_name}.`);
@@ -746,6 +758,9 @@ function buildDashboardFollowupAnswer(context: any) {
   }
 
   parts.push(`I used the ${label} currently shown on this dashboard, not unrelated recent events.`);
+  parts.push(
+    "I am comparing actual telemetry timestamps internally, then showing the timeline in EAT/Kenya time. Earlier idle events are historical markers, not proof of one continuous idle period if later movement appears."
+  );
   if (strongIdleCount) {
     parts.push(
       `${strongIdleCount} of them have fresh low-speed telemetry and a recent idle event, so the current idle/stationary read is strong. I cannot prove engine-on idling without ignition or engine-status data.`
@@ -800,16 +815,17 @@ function formatDashboardTruckLine(truck: any) {
   const location = formatOperationalLocation(truck);
   const locationText = location ? `, ${location}` : "";
   const latestIdle = truck.latest_idle_event
-    ? ` Latest idle event: ${formatDashboardIdleEvent(truck.latest_idle_event)}.`
+    ? ` Latest idle/stop event marker: ${formatDashboardIdleEvent(truck.latest_idle_event)}.`
     : " No recent idle event found in the last 24 hours.";
   const dashboardMetric = formatDashboardMetric(truck.dashboard_context);
   const dataQualityNote = formatDashboardDataQualityNote(truck.dashboard_context);
+  const timestampNote = formatTimestampQualityNote(truck);
 
   return `- ${label || truck.truck_id}: ${status} Last seen ${formatReadableDate(
     truck.last_seen_at
   )} (${freshness}), ${speed}${locationText}. Confidence: ${
     truck.confidence || "unknown"
-  }.${dashboardMetric}${dataQualityNote}${latestIdle} ${truck.reason || ""}`;
+  }.${dashboardMetric}${dataQualityNote}${timestampNote}${latestIdle} ${truck.reason || ""}`;
 }
 
 function formatDashboardTruckStatus(truck: any) {
@@ -864,6 +880,14 @@ function formatDashboardDataQualityNote(dashboardContext: any) {
   }
 
   return " Data-quality note: that accumulated idle total is unusually high, so I would treat the duration as suspect until idle-event closure is reviewed.";
+}
+
+function formatTimestampQualityNote(value: any) {
+  if (!hasAmbiguousTimestampWarning(value?.timestamp_warnings)) {
+    return "";
+  }
+
+  return " Timeline note: provider timestamps appear local/ambiguous, so treat the event timing as approximate.";
 }
 
 function hasSuspiciousDashboardIdleTotal(truck: any) {
@@ -1715,9 +1739,7 @@ function formatDriverAssignment(assignment: any) {
 }
 
 function formatReadableDate(value: any) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "an unknown time";
-  return date.toLocaleString();
+  return formatOperationalDateTime(value, DEFAULT_OPERATIONAL_TIME_ZONE);
 }
 
 function hasCoordinates(value: any) {

@@ -17,6 +17,10 @@ import {
   normalizeVehicleKey,
 } from "./entityResolver";
 import { getRoleCapabilities } from "../api/roleAccess";
+import {
+  operationalTimeZoneLabel,
+  resolveOperationalTimeZone,
+} from "../timeFormatting";
 
 export type ContextIntent =
   | "fleet_health"
@@ -58,6 +62,7 @@ export async function routeContext(
 ) {
   const company = await getCompanyBySlug(tenantSlug);
   const companyId = company.id;
+  const operationalTimeZone = resolveOperationalTimeZone(company);
   const lower = question.toLowerCase();
   const detectedCountryName = detectSupportedCountryName(question);
   let intent = detectIntent(lower, detectedCountryName);
@@ -109,6 +114,10 @@ export async function routeContext(
     financials_visible: financialsVisible,
     capabilities: sanitizeCapabilities(roleCapabilities),
     permission_boundary: permissionBoundary,
+    display_timezone: {
+      time_zone: operationalTimeZone,
+      label: operationalTimeZoneLabel(operationalTimeZone),
+    },
     generated_at: new Date().toISOString(),
   };
 
@@ -737,6 +746,7 @@ async function fetchDashboardFollowupContext(
         last_seen_at: latestTelemetry?.recorded_at || asset.last_seen_at || null,
         latest_recorded_at: latestTelemetry?.recorded_at || null,
         latest_speed: latestTelemetry?.speed ?? null,
+        timestamp_warnings: latestTelemetry?.validation?.warnings || [],
         provider_location_label: asset.provider_location_label || null,
         geofence_match: matchPointToGeofence(locationPoint, geofences),
         recent_idle_events_count: idleEvents.length,
@@ -773,7 +783,7 @@ async function fetchDashboardFollowupContext(
 async function fetchLatestDashboardTelemetry(companyId: string, truckId: string) {
   const { data, error } = await supabaseAdmin
     .from("telemetry_logs")
-    .select("truck_id, recorded_at, latitude, longitude, speed")
+    .select("truck_id, recorded_at, latitude, longitude, speed, validation")
     .eq("company_id", companyId)
     .eq("truck_id", truckId)
     .order("recorded_at", { ascending: false })
