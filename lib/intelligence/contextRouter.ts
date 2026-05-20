@@ -123,6 +123,7 @@ export async function routeContext(
     spares_cost_visible: sparesCostVisible,
     financials_visible: financialsVisible,
     coordinate_request: detectCoordinateRequest(lower),
+    live_status_idle_focus: /\b(idle|idling|excessive idle|stopped|stationary)\b/.test(lower),
     timeline_detail_requested: detectDetailedTimelineRequest(lower),
     timeline_history_requested: timelineHistoryRequest,
     timeline_timeframe: detectTimelineTimeframe(lower),

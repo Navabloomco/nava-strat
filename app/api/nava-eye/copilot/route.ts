@@ -1189,6 +1189,7 @@ function buildTruckStatusFallbackAnswer(context: any) {
     context.vehicle_match?.matched_truck_id ||
     context.detected_truck_id ||
     "the vehicle";
+  const timeZone = context.display_timezone?.time_zone || DEFAULT_OPERATIONAL_TIME_ZONE;
   const latestPoint = latestTelemetry || truck;
   const lastSeenAt = latestTelemetry?.recorded_at || truck.last_seen_at || null;
   const speed = finiteNumberOrNull(latestTelemetry?.speed);
@@ -1203,68 +1204,25 @@ function buildTruckStatusFallbackAnswer(context: any) {
     includeCoordinates: Boolean(context.coordinate_request),
     gpsFallback: null,
   });
+  const locationText = location || "at its latest known GPS point";
   const hasGpsPoint = hasCoordinates(locationPoint);
   const freshnessMinutes = freshnessMinutesFromNow(lastSeenAt);
   const stale = freshnessMinutes !== null && freshnessMinutes > 60;
   const parts: string[] = [];
 
-  if (location) {
+  parts.push(
+    `**${formatLiveTruckTopLine(matchedLabel, locationText, lastSeenAt, speed, stale, timeZone)}**`
+  );
+
+  if (context.coordinate_request && hasGpsPoint) {
     parts.push(
-      stale
-        ? `${matchedLabel}'s last known location is ${location}.`
-        : `${matchedLabel} is ${location}.`
-    );
-    if (context.coordinate_request && hasGpsPoint) {
-      parts.push(
-        `Coordinates: ${formatCoordinate(locationPoint.latitude)}, ${formatCoordinate(
-          locationPoint.longitude
-        )}.`
-      );
-    }
-  } else if (hasGpsPoint) {
-    const coordinateText = context.coordinate_request
-      ? ` Coordinates: ${formatCoordinate(locationPoint.latitude)}, ${formatCoordinate(
-          locationPoint.longitude
-        )}.`
-      : "";
-    parts.push(
-      `I only have a GPS point for ${matchedLabel}, not a resolved place name yet.${coordinateText}`
-    );
-  } else {
-    parts.push(
-      `${matchedLabel} is in the enabled fleet, but I do not have a clean location label yet.`
+      `Coordinates: ${formatCoordinate(locationPoint.latitude)}, ${formatCoordinate(
+        locationPoint.longitude
+      )}.`
     );
   }
 
-  parts.push(`Last update: ${formatReadableDate(lastSeenAt)}.`);
-
-  if (speed !== null) {
-    if (stale) {
-      const state =
-        speed > 5
-          ? "moving at the last update"
-          : speed <= 2
-            ? "stopped/stationary at the last update"
-            : "low-speed/unclear at the last update";
-      parts.push(
-        `Last known read: ${state}, speed ${formatNumber(speed)}. Because the timestamp is stale, I would treat this as last-known status rather than live status.`
-      );
-    } else if (speed <= 2) {
-      parts.push(
-        `Current read: stopped/stationary, speed ${formatNumber(speed)}. I am not treating that as confirmed engine-on idling without ignition or engine-status data.`
-      );
-    } else if (speed > 5) {
-      parts.push(
-        `Current read: moving, speed ${formatNumber(speed)}.`
-      );
-    } else {
-      parts.push(
-        `Current read: low-speed/unclear, speed ${formatNumber(speed)}.`
-      );
-    }
-  } else {
-    parts.push("Latest speed is not available, so I cannot classify the current motion state confidently.");
-  }
+  parts.push(formatLiveOperationalState(speed, stale));
 
   const timestampWarnings = latestTelemetry?.validation?.warnings || [];
   if (hasAmbiguousTimestampWarning(timestampWarnings)) {
@@ -1273,39 +1231,145 @@ function buildTruckStatusFallbackAnswer(context: any) {
     );
   }
 
-  if (idleEvents.length) {
-    const latestIdle = idleEvents[0];
-    const movementAfterIdle = hasMovementAfterEvent(telemetry, latestIdle);
-    const latestIdleLine = formatEventBrief(latestIdle);
-    parts.push(`Nava also has idle/stop history for this truck. Latest marker: ${latestIdleLine}.`);
-    if (movementAfterIdle) {
-      parts.push(
-        "I cannot treat those events as one continuous idle period because later movement appears in the Nava telemetry after at least one idle/stop event."
-      );
-    } else {
-      parts.push(
-        "I cannot treat those events as one continuous idle period because the available Nava data does not prove one still-open stop/idle event at the current location."
-      );
-    }
-    parts.push("Current stop duration is not confirmed from the available Nava data.");
-  } else {
-    parts.push("I do not see recent idle/stop events for this truck in Nava's event trail.");
-  }
-
-  const driverName = truck.assigned_driver?.driver_name;
-  if (driverName) {
-    if (isPlaceholderDriverName(driverName)) {
-      parts.push("Driver assignment appears to be placeholder/test data.");
-    } else {
-      parts.push(`Assigned driver: ${driverName}.`);
-    }
-  }
+  const idleRead = formatLiveIdleMarkerRead({
+    idleEvents,
+    latestPoint: locationPoint,
+    speed,
+    idleFocus: Boolean(context.live_status_idle_focus),
+    ignitionState: normalizeIgnitionState(
+      latestTelemetry?.ignition_status ??
+        latestTelemetry?.engine_status ??
+        latestTelemetry?.ignition ??
+        latestTelemetry?.engine_on ??
+        latestTelemetry?.ignition_on ??
+        truck.ignition_status ??
+        truck.engine_status ??
+        truck.ignition ??
+        truck.engine_on ??
+        truck.ignition_on
+    ),
+  });
+  if (idleRead) parts.push(idleRead);
 
   parts.push(
-    "Would you like me to compare today's stop/motion timeline against Nava idle events?"
+    context.live_status_idle_focus
+      ? "I can compare today's idle markers against movement if you want."
+      : "I can review today's movement timeline if you want."
   );
 
   return parts.join("\n");
+}
+
+function formatLiveTruckTopLine(
+  label: string,
+  location: string,
+  lastSeenAt: any,
+  speed: number | null,
+  stale: boolean,
+  timeZone: string
+) {
+  const time = formatTimelineTime(lastSeenAt, timeZone);
+  if (stale) {
+    return `${label} was last seen ${location} at ${time}; this is a last-known position, not confirmed live status.`;
+  }
+  if (speed !== null && speed > 5) {
+    return `${label} is moving ${location}, last seen at ${time} at ${formatNumber(speed)} km/h.`;
+  }
+  if (speed !== null) {
+    return `${label} is currently stopped ${location}, last seen at ${time} with speed ${formatNumber(speed)}.`;
+  }
+  return `${label} is at its latest known position ${location}, last seen at ${time}; speed is not available.`;
+}
+
+function formatLiveOperationalState(speed: number | null, stale: boolean) {
+  if (stale) {
+    return "Provider data is stale; refresh sync or live tracking before treating it as current.";
+  }
+  if (speed === null) {
+    return "Nava has a location read, but speed is missing, so the live motion state is unverified.";
+  }
+  if (speed > 5) {
+    return "Nava reads this as active movement.";
+  }
+  return "Nava reads this as a stopped/stationary state.";
+}
+
+function formatLiveIdleMarkerRead({
+  idleEvents,
+  latestPoint,
+  speed,
+  idleFocus,
+  ignitionState,
+}: {
+  idleEvents: any[];
+  latestPoint: any;
+  speed: number | null;
+  idleFocus: boolean;
+  ignitionState: string | null;
+}) {
+  const latestIdle = idleEvents[0] || null;
+  if (!latestIdle) {
+    return idleFocus ? "No recent idle marker is attached to this truck's current status." : "";
+  }
+  if (!isRecentOperationalEvent(latestIdle, 24)) {
+    return idleFocus
+      ? "Nava has older idle markers for this truck, but no recent marker strong enough to support a live idle read."
+      : "";
+  }
+
+  const distanceKm = distanceBetweenPointsKm(latestPoint, latestIdle);
+  const nearSameLocation = distanceKm !== null ? distanceKm <= 0.5 : false;
+  const markerText = formatIdleMarkerLabel(latestIdle);
+  const locationPhrase = nearSameLocation ? " near this location" : " in this truck's event trail";
+  const base = `${markerText} is present${locationPhrase}.`;
+
+  if (ignitionState === "on" && speed !== null && speed <= 5) {
+    return `${base} Ignition is on, so this is an active idle risk.`;
+  }
+  if (ignitionState === "off" && speed !== null && speed <= 5) {
+    return `${base} Ignition is off, so this looks like a parked/stopped state rather than active idling.`;
+  }
+  if (speed !== null && speed <= 5) {
+    return `${base} Without ignition data, Nava treats this as an unverified idle risk, not confirmed fuel-burn idling.`;
+  }
+
+  return `${base} Latest speed does not support a stopped live-idle read right now.`;
+}
+
+function formatIdleMarkerLabel(event: any) {
+  const type = String(event?.event_type || "").trim().toLowerCase();
+  if (type === "excessive_idle") return "An excessive-idle marker";
+  if (type === "idle") return "An idle marker";
+  return "A stop/idle marker";
+}
+
+function isRecentOperationalEvent(event: any, hours: number) {
+  const timestamp = new Date(event?.created_at || event?.started_at || 0).getTime();
+  if (!Number.isFinite(timestamp)) return false;
+  return Date.now() - timestamp <= hours * 60 * 60 * 1000;
+}
+
+function distanceBetweenPointsKm(first: any, second: any) {
+  const lat1 = finiteNumberOrNull(first?.latitude);
+  const lon1 = finiteNumberOrNull(first?.longitude);
+  const lat2 = finiteNumberOrNull(second?.latitude);
+  const lon2 = finiteNumberOrNull(second?.longitude);
+  if (lat1 === null || lon1 === null || lat2 === null || lon2 === null) return null;
+
+  const earthRadiusKm = 6371;
+  const deltaLat = toRadians(lat2 - lat1);
+  const deltaLon = toRadians(lon2 - lon1);
+  const haversine =
+    Math.sin(deltaLat / 2) * Math.sin(deltaLat / 2) +
+    Math.cos(toRadians(lat1)) *
+      Math.cos(toRadians(lat2)) *
+      Math.sin(deltaLon / 2) *
+      Math.sin(deltaLon / 2);
+  return earthRadiusKm * 2 * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
+}
+
+function toRadians(value: number) {
+  return (value * Math.PI) / 180;
 }
 
 function buildTruckTimelineComparisonAnswer(context: any) {
