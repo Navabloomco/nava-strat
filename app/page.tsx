@@ -72,7 +72,7 @@ export default function Home() {
 
           <div className="grid flex-1 items-center gap-12 py-16 lg:grid-cols-[1.05fr_0.95fr]">
             <div>
-              <p className="mb-5 inline-flex max-w-full whitespace-normal break-words rounded-full border border-cyan-300/20 bg-cyan-300/10 px-4 py-2 text-sm font-medium leading-6 text-cyan-100">
+              <p className="mb-5 inline-flex max-w-full whitespace-normal break-words rounded-md border border-cyan-300/20 bg-cyan-300/10 px-4 py-2 text-sm font-medium leading-6 text-cyan-100">
                 Technology company building operational intelligence products
               </p>
               <h1 className="max-w-5xl break-words text-4xl font-semibold leading-[1.05] tracking-normal text-white sm:text-5xl md:text-7xl">

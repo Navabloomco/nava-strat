@@ -618,7 +618,7 @@ export default function DashboardPage() {
                   {selectedCompany.name}
                 </span>
                 {isPlatformOwner && (
-                  <span className="rounded-full border border-blue-500/30 bg-blue-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-300">
+                  <span className="rounded-md border border-blue-500/30 bg-blue-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-300">
                     Platform Owner
                   </span>
                 )}
@@ -626,7 +626,7 @@ export default function DashboardPage() {
               </button>
 
               {companySwitcherOpen && (
-                <div className="absolute left-0 top-full z-50 mt-2 w-80 overflow-hidden rounded-xl border border-slate-700 bg-slate-950 shadow-2xl shadow-black/40">
+                <div className="absolute left-0 top-full z-50 mt-2 w-80 overflow-hidden rounded-lg border border-slate-700 bg-slate-950 shadow-2xl shadow-black/40">
                   <div className="border-b border-slate-800 p-2">
                     <input
                       autoFocus
@@ -707,7 +707,7 @@ export default function DashboardPage() {
         <main className="flex-1 p-8">
           {isPlatformWorkspace ? (
             <div className="space-y-8">
-              <section className="rounded-2xl border border-blue-500/20 bg-blue-500/10 p-6">
+              <section className="rounded-lg border border-blue-500/20 bg-blue-500/10 p-6">
                 <div className="flex flex-wrap items-start justify-between gap-4">
                   <div className="max-w-3xl">
                     <div className="text-xs font-semibold uppercase tracking-[0.24em] text-blue-300">
@@ -724,7 +724,7 @@ export default function DashboardPage() {
                   </div>
                   <Link
                     href="/admin"
-                    className="rounded-xl border border-blue-400/40 px-4 py-2 text-sm font-semibold text-blue-100 hover:bg-blue-500/10"
+                    className="rounded-md border border-blue-400/40 px-4 py-2 text-sm font-semibold text-blue-100 hover:bg-blue-500/10"
                   >
                     Open Admin Hub
                   </Link>
@@ -732,19 +732,19 @@ export default function DashboardPage() {
               </section>
 
               <section className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-4">
-                <div className="rounded-2xl border border-slate-800 bg-slate-900/50 p-5">
+                <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-5">
                   <div className="text-3xl font-bold text-white">
                     {platformSummary?.tenant_count ?? 0}
                   </div>
                   <div className="mt-1 text-sm text-slate-500">Customer tenants</div>
                 </div>
-                <div className="rounded-2xl border border-slate-800 bg-slate-900/50 p-5">
+                <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-5">
                   <div className="text-3xl font-bold text-emerald-300">
                     {platformSummary?.strict_billable_asset_count ?? 0}
                   </div>
                   <div className="mt-1 text-sm text-slate-500">Strict billable assets</div>
                 </div>
-                <div className="rounded-2xl border border-slate-800 bg-slate-900/50 p-5">
+                <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-5">
                   <div className="text-2xl font-bold text-blue-200">
                     {formatRevenueTotals(
                       platformSummary?.estimated_monthly_revenue_by_currency
@@ -757,7 +757,7 @@ export default function DashboardPage() {
                     </div>
                   )}
                 </div>
-                <div className="rounded-2xl border border-slate-800 bg-slate-900/50 p-5">
+                <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-5">
                   <div className="text-3xl font-bold text-yellow-300">
                     {platformSummary?.readiness
                       ? `${platformSummary.readiness.blocked}/${platformSummary.readiness.needs_attention}`
@@ -792,7 +792,7 @@ export default function DashboardPage() {
                       <Link
                         key={item.href}
                         href={item.href}
-                        className="group rounded-2xl border border-slate-800 bg-slate-900/50 p-5 transition hover:border-blue-500/50 hover:bg-slate-900"
+                        className="group rounded-lg border border-slate-800 bg-slate-900/50 p-5 transition hover:border-blue-500/50 hover:bg-slate-900"
                       >
                         <div className="flex items-start justify-between gap-3">
                           <div>
@@ -815,19 +815,19 @@ export default function DashboardPage() {
           ) : (
             <>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-5 mb-10">
-                <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-5">
+                <div className="bg-slate-900/50 border border-slate-800 rounded-lg p-5">
                   <div className="text-4xl font-bold">{fh.total_trucks}</div>
                   <div className="text-slate-500 text-sm">Active Trucks</div>
                 </div>
-                <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-5">
+                <div className="bg-slate-900/50 border border-slate-800 rounded-lg p-5">
                   <div className="text-4xl font-bold text-green-500">{fh.online_trucks}</div>
                   <div className="text-slate-500 text-sm">Online</div>
                 </div>
-                <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-5">
+                <div className="bg-slate-900/50 border border-slate-800 rounded-lg p-5">
                   <div className="text-4xl font-bold text-yellow-500">{fh.critical_events_24h}</div>
                   <div className="text-slate-500 text-sm">Critical Events (24h)</div>
                 </div>
-                <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-5">
+                <div className="bg-slate-900/50 border border-slate-800 rounded-lg p-5">
                   <div className="text-4xl font-bold text-purple-500">{ugandaTrucks.length}</div>
                   <div className="text-slate-500 text-sm">Trucks in Uganda</div>
                 </div>
@@ -835,7 +835,7 @@ export default function DashboardPage() {
 
               <div className="grid lg:grid-cols-2 gap-8">
                 <div className="space-y-6">
-                  <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-5">
+                  <div className="bg-slate-900/50 border border-slate-800 rounded-lg p-5">
                     <h2 className="text-lg font-semibold mb-4">⚠️ Highest Risk Trucks</h2>
                     {fh.highest_risk_trucks.map((t: any) => (
                       <div key={t.truck_id} className="flex justify-between border-b border-slate-800 py-2">
@@ -844,7 +844,7 @@ export default function DashboardPage() {
                       </div>
                     ))}
                   </div>
-                  <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-5">
+                  <div className="bg-slate-900/50 border border-slate-800 rounded-lg p-5">
                     <h2 className="text-lg font-semibold mb-4">🛑 Highest Idle Trucks</h2>
                     {fh.highest_idle_trucks.map((t: any) => (
                       <div key={t.truck_id} className="flex justify-between border-b border-slate-800 py-2">
@@ -856,7 +856,7 @@ export default function DashboardPage() {
                 </div>
 
                 <div className="space-y-6">
-                  <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-5">
+                  <div className="bg-slate-900/50 border border-slate-800 rounded-lg p-5">
                     <h2 className="text-lg font-semibold mb-4">🔥 Recent Critical Events</h2>
                     <div className="space-y-3 max-h-64 overflow-y-auto">
                       {fh.recent_critical_events.map((e: any, idx: number) => (
@@ -872,7 +872,7 @@ export default function DashboardPage() {
                     </div>
                   </div>
 
-                  <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-5">
+                  <div className="bg-slate-900/50 border border-slate-800 rounded-lg p-5">
                     <div className="flex items-start justify-between gap-4 mb-4">
                       <div>
                         <h2 className="text-lg font-semibold">Nava Eye Watch</h2>
@@ -880,7 +880,7 @@ export default function DashboardPage() {
                           Evidence-led items from the current dashboard data.
                         </p>
                       </div>
-                      <span className="rounded-full border border-blue-500/30 bg-blue-500/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-blue-300">
+                      <span className="rounded-md border border-blue-500/30 bg-blue-500/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-blue-300">
                         Live read
                       </span>
                     </div>
@@ -890,7 +890,7 @@ export default function DashboardPage() {
                         {watchItems.map((item) => (
                           <div
                             key={item.id}
-                            className={`rounded-xl border p-3 ${severityClasses(item.severity)}`}
+                            className={`rounded-lg border p-3 ${severityClasses(item.severity)}`}
                           >
                             <div className="flex flex-wrap items-start justify-between gap-2">
                               <div className="min-w-0">
@@ -901,7 +901,7 @@ export default function DashboardPage() {
                                   {item.summary}
                                 </div>
                               </div>
-                              <span className="shrink-0 rounded-full border border-current/30 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide">
+                              <span className="shrink-0 rounded-md border border-current/30 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide">
                                 {item.severity}
                               </span>
                             </div>
@@ -943,42 +943,42 @@ export default function DashboardPage() {
                         ))}
                       </div>
                     ) : (
-                      <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-4 text-sm text-slate-400">
+                      <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-4 text-sm text-slate-400">
                         No urgent watch items from the current dashboard data.
                       </div>
                     )}
                   </div>
 
-                  <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-5">
+                  <div className="bg-slate-900/50 border border-slate-800 rounded-lg p-5">
                     <h2 className="text-lg font-semibold mb-4">🧠 Nava Eye fleet answers</h2>
                     <textarea
                       value={copilotQuery}
                       onChange={(e) => setCopilotQuery(e.target.value)}
                       placeholder="Ask about fleet health, fuel risk, specific trucks..."
-                      className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-600"
                       rows={3}
                     />
                     <button
                       onClick={askCopilot}
                       disabled={copilotLoading || !copilotQuery.trim()}
-                      className="mt-3 w-full bg-blue-600 hover:bg-blue-500 disabled:bg-blue-800 text-white font-medium py-2 rounded-xl transition"
+                      className="mt-3 w-full bg-blue-600 hover:bg-blue-500 disabled:bg-blue-800 text-white font-medium py-2 rounded-md transition"
                     >
                       {copilotLoading ? "Checking your fleet data..." : "Ask Nava Eye"}
                     </button>
                     {copilotAnswer && (
-                      <div className="mt-4 bg-slate-800/50 rounded-xl p-4 border border-slate-700">
+                      <div className="mt-4 bg-slate-800/50 rounded-lg p-4 border border-slate-700">
                         <div className="text-sm text-slate-300 whitespace-pre-wrap">{copilotAnswer}</div>
                       </div>
                     )}
                   </div>
 
-                  <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-5">
+                  <div className="bg-slate-900/50 border border-slate-800 rounded-lg p-5">
                     <h2 className="text-lg font-semibold mb-4">💡 Active Insights</h2>
                     <div className="space-y-3">
                       {memories.map((m) => (
-                        <div key={m.id} className="border border-slate-700 rounded-xl p-3">
+                        <div key={m.id} className="border border-slate-700 rounded-lg p-3">
                           <div className="flex items-center gap-2 mb-1">
-                            <span className={`px-2 py-0.5 text-xs rounded-full font-medium ${
+                            <span className={`px-2 py-0.5 text-xs rounded-md font-medium ${
                               m.severity === "critical" ? "bg-red-900/50 text-red-300" :
                               m.severity === "warning" ? "bg-yellow-900/50 text-yellow-300" :
                               "bg-blue-900/50 text-blue-300"

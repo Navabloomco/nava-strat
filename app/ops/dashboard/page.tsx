@@ -317,11 +317,11 @@ export default function OpsDashboard() {
                   This may be a shared operational delay rather than separate vehicle issues.
                 </p>
                 <div className="mt-4 flex flex-wrap gap-2 text-sm">
-                  <span className="rounded-full border border-amber-200/30 bg-amber-200/10 px-3 py-1 font-semibold text-amber-100">
+                  <span className="rounded-md border border-amber-200/30 bg-amber-200/10 px-3 py-1 font-semibold text-amber-100">
                     {sharedDisruption.affected_count} of{" "}
                     {sharedDisruption.enabled_assets} assets affected
                   </span>
-                  <span className="rounded-full border border-cyan-200/30 bg-cyan-300/10 px-3 py-1 font-semibold text-cyan-100">
+                  <span className="rounded-md border border-cyan-200/30 bg-cyan-300/10 px-3 py-1 font-semibold text-cyan-100">
                     {sharedDisruption.affected_percentage}% in last{" "}
                     {sharedDisruption.window_minutes} minutes
                   </span>
@@ -336,7 +336,7 @@ export default function OpsDashboard() {
                         key={reason.type}
                         type="button"
                         onClick={() => setSelectedContextType(reason.type)}
-                        className={`rounded-full border px-3 py-1 text-xs font-semibold ${
+                        className={`rounded-md border px-3 py-1 text-xs font-semibold ${
                           selectedContextType === reason.type
                             ? "border-cyan-200/40 bg-cyan-300/15 text-cyan-50"
                             : "border-white/10 bg-white/[0.04] text-slate-200 hover:bg-white/10"

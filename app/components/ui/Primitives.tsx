@@ -118,7 +118,7 @@ export function StatusPill({
 
   return (
     <span
-      className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${classes[tone]}`}
+      className={`inline-flex rounded-md border px-2.5 py-1 text-xs font-semibold ${classes[tone]}`}
     >
       {children}
     </span>

@@ -185,7 +185,7 @@ export default function NavaEyeChatPage() {
                     key={suggestion}
                     type="button"
                     onClick={() => setQuestion(suggestion)}
-                    className="max-w-full whitespace-normal break-words rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-left text-xs font-medium leading-5 text-slate-300 hover:border-cyan-200/30 hover:bg-cyan-300/10 hover:text-cyan-100"
+                    className="max-w-full whitespace-normal break-words rounded-md border border-white/10 bg-white/[0.04] px-3 py-1.5 text-left text-xs font-medium leading-5 text-slate-300 hover:border-cyan-200/30 hover:bg-cyan-300/10 hover:text-cyan-100"
                   >
                     {suggestion}
                   </button>
