@@ -77,6 +77,14 @@ export async function routeContext(
     intent = "dashboard_followup";
   }
   const vehicleMatch = await matchVehicleInFleet(question, companyId);
+  const timelineHistoryRequest = detectTimelineHistoryRequest(lower);
+  if (
+    vehicleMatch.input &&
+    timelineHistoryRequest &&
+    ["general", "truck_status", "driver_activity", "journey_context"].includes(intent)
+  ) {
+    intent = "truck_status";
+  }
   if (intent === "general" && vehicleMatch.input) {
     intent = "truck_status";
   }
@@ -116,6 +124,7 @@ export async function routeContext(
     financials_visible: financialsVisible,
     coordinate_request: detectCoordinateRequest(lower),
     timeline_detail_requested: detectDetailedTimelineRequest(lower),
+    timeline_history_requested: timelineHistoryRequest,
     timeline_timeframe: detectTimelineTimeframe(lower),
     capabilities: sanitizeCapabilities(roleCapabilities),
     permission_boundary: permissionBoundary,
@@ -183,7 +192,7 @@ export async function routeContext(
           financialsVisible,
         }
       );
-      if (detectStopMotionTimelineComparison(lower)) {
+      if (timelineHistoryRequest) {
         context.truck_timeline_comparison = await fetchTruckStopMotionTimelineComparison(
           companyId,
           truckId,
@@ -218,7 +227,7 @@ export async function routeContext(
       assignmentLookup
     );
     context.recent_telemetry = await fetchTruckTelemetry(companyId, truckId);
-    if (detectStopMotionTimelineComparison(lower)) {
+    if (timelineHistoryRequest) {
       context.truck_timeline_comparison = await fetchTruckStopMotionTimelineComparison(
         companyId,
         truckId,
@@ -709,42 +718,44 @@ function detectCoordinateRequest(lower: string) {
 }
 
 function detectStopMotionTimelineComparison(lower: string) {
-  return (
-    (/\b(compare|timeline|motion|movement|moved|moving|stop|stops|stopped|idle|idling)\b/.test(lower) &&
-      (lower.includes("stop/motion") ||
-        lower.includes("stop motion") ||
-        lower.includes("detailed timeline") ||
-        lower.includes("full evidence") ||
-        lower.includes("all blocks") ||
-        lower.includes("raw timeline") ||
-        lower.includes("expand the timeline") ||
-        lower.includes("expand timeline") ||
-        lower.includes("show the log blocks") ||
-        lower.includes("log blocks") ||
-        lower.includes("today's movement") ||
-        lower.includes("today’s movement") ||
-        lower.includes("today movement") ||
-        (lower.includes("today") && lower.includes("movement")) ||
-        lower.includes("yesterday's movement") ||
-        lower.includes("yesterday’s movement") ||
-        lower.includes("yesterday movement") ||
-        lower.includes("yesterday's route") ||
-        lower.includes("yesterday’s route") ||
-        lower.includes("yesterday route") ||
-        (lower.includes("yesterday") &&
-          (lower.includes("movement") || lower.includes("route") || lower.includes("timeline"))) ||
-        lower.includes("movement for") ||
-        lower.includes("moved today") ||
-        lower.includes("stopped today") ||
-        lower.includes("stopped all day") ||
-        lower.includes("stops today") ||
-        lower.includes("stop today") ||
-        lower.includes("idle events") ||
-        lower.includes("continuous") ||
-        lower.includes("all-day") ||
-        lower.includes("all day") ||
-        lower.includes("against nava idle"))) ||
-    lower.includes("compare today's stop/motion timeline")
+  return detectTimelineHistoryRequest(lower);
+}
+
+function detectTimelineHistoryRequest(lower: string) {
+  const hasDetailedEvidenceRequest =
+    lower.includes("stop/motion") ||
+    lower.includes("stop motion") ||
+    lower.includes("detailed timeline") ||
+    lower.includes("full evidence") ||
+    lower.includes("all blocks") ||
+    lower.includes("raw timeline") ||
+    lower.includes("expand the timeline") ||
+    lower.includes("expand timeline") ||
+    lower.includes("show the log blocks") ||
+    lower.includes("log blocks");
+  const hasTimeframe =
+    lower.includes("today") ||
+    lower.includes("yesterday") ||
+    lower.includes("previous day") ||
+    lower.includes("previous-day") ||
+    lower.includes("last operating day") ||
+    lower.includes("last full route") ||
+    lower.includes("all-day") ||
+    lower.includes("all day");
+  const hasExplicitHistoryTerm =
+    /\b(movements?|moved|route|timeline|history)\b/.test(lower) ||
+    /\bwhere\s+did\b/.test(lower);
+  const hasStopOrMotionTerm =
+    /\b(moving|motion|stops?|stopped|idle|idling)\b/.test(
+      lower
+    );
+
+  return Boolean(
+    hasDetailedEvidenceRequest ||
+      lower.includes("compare today's stop/motion timeline") ||
+      hasExplicitHistoryTerm ||
+      (hasStopOrMotionTerm && hasTimeframe) ||
+      lower.includes("movement for")
   );
 }
 

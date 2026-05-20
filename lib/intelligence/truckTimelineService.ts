@@ -195,7 +195,7 @@ export async function buildTruckTimelineIntelligence(input: TimelineInput) {
     : null;
   const firstTelemetry = telemetryRows[0] || null;
   const latestTelemetry = telemetryRows[telemetryRows.length - 1] || null;
-  const latestPoint = latestTelemetry || asset || null;
+  const latestPoint = latestTelemetry || (timeframe === "today" ? asset : null);
   const firstLocationResolution = firstTelemetry
     ? await resolveOperationalLocation({
         company_id: input.companyId,
@@ -327,7 +327,8 @@ export async function buildTruckTimelineIntelligence(input: TimelineInput) {
     },
     latest_snapshot: latestPoint
       ? {
-          recorded_at: latestTelemetry?.recorded_at || asset.last_seen_at || null,
+          recorded_at:
+            latestTelemetry?.recorded_at || (timeframe === "today" ? asset.last_seen_at : null),
           speed: latestTelemetry?.speed ?? null,
           location_resolution: latestLocationResolution,
           geofence_match: matchPointToGeofence(latestPoint, geofences),
@@ -336,11 +337,15 @@ export async function buildTruckTimelineIntelligence(input: TimelineInput) {
       : null,
     current_status: {
       state: rawBlocks[rawBlocks.length - 1]?.state || "unknown",
-      recorded_at: latestTelemetry?.recorded_at || asset.last_seen_at || null,
-      freshness_minutes: latestPoint?.recorded_at || asset.last_seen_at
+      recorded_at:
+        latestTelemetry?.recorded_at || (timeframe === "today" ? asset.last_seen_at : null),
+      freshness_minutes:
+        latestPoint?.recorded_at || (timeframe === "today" ? asset.last_seen_at : null)
         ? Math.floor(
             (Date.now() -
-              new Date(latestTelemetry?.recorded_at || asset.last_seen_at).getTime()) /
+              new Date(
+                latestTelemetry?.recorded_at || (timeframe === "today" ? asset.last_seen_at : null)
+              ).getTime()) /
               60000
           )
         : null,
@@ -349,7 +354,8 @@ export async function buildTruckTimelineIntelligence(input: TimelineInput) {
     },
     day_story: {
       coverage_start_at: firstTelemetry?.recorded_at || null,
-      coverage_end_at: latestTelemetry?.recorded_at || asset.last_seen_at || null,
+      coverage_end_at:
+        latestTelemetry?.recorded_at || (timeframe === "today" ? asset.last_seen_at : null),
       coverage_minutes: coverageMinutes,
       first_point_minutes_after_day_start: firstPointMinutesAfterDayStart,
       new_day_rollover_window: newDayRolloverWindow,
@@ -365,7 +371,8 @@ export async function buildTruckTimelineIntelligence(input: TimelineInput) {
         : null,
       latest_seen: latestPoint
         ? {
-            recorded_at: latestTelemetry?.recorded_at || asset.last_seen_at || null,
+            recorded_at:
+              latestTelemetry?.recorded_at || (timeframe === "today" ? asset.last_seen_at : null),
             location: latestLocationResolution,
             speed: latestTelemetry?.speed ?? null,
           }

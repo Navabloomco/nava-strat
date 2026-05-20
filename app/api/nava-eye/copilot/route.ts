@@ -1031,17 +1031,22 @@ function buildPendingFollowup(context: any, answer: string) {
     !context.timeline_detail_requested
   ) {
     const timeline = context.truck_timeline_comparison || {};
+    const requestedTimeframe = timeline.timeframe?.requested || "today";
     if (timeline.timeframe?.new_day_rollover_window || timeline.day_story?.new_day_rollover_window) {
       return {
         type: "compare_stop_motion_timeline",
         truck_id: truckLabel,
+        timeframe: "yesterday",
         prompt: `Show yesterday's movement for ${truckLabel}. Summarize the previous operating day's corridor route, stop/rest pattern, and idle marker interpretation without raw coordinates or provider payloads.`,
       };
     }
     return {
       type: "show_detailed_timeline",
       truck_id: truckLabel,
-      prompt: `Show the detailed timeline for ${truckLabel}. Include movement/stationary blocks and idle marker evidence, but do not show raw coordinates or provider payloads.`,
+      timeframe: requestedTimeframe,
+      prompt: `Show the detailed timeline for ${truckLabel}${
+        requestedTimeframe === "yesterday" ? " for yesterday" : ""
+      }. Include movement/stationary blocks and idle marker evidence, but do not show raw coordinates or provider payloads.`,
     };
   }
 
@@ -1343,6 +1348,10 @@ function buildTruckTimelineComparisonAnswer(context: any) {
     });
   }
 
+  if (isEmptyRequestedTimeline(timeframe, summary)) {
+    return buildEmptyTimelineWindowAnswer(label, timeframe);
+  }
+
   const rollover = isNewDayRolloverWindow(timeframe, dayStory, summary);
 
   parts.push(buildLogisticsTimelineOpening(label, dayStory, summary, continuity, latest, timeZone, timeframe));
@@ -1392,14 +1401,21 @@ function buildLogisticsTimelineOpening(
   const time = formatTimelineTime(latestSeen?.recorded_at || latest?.recorded_at, timeZone);
   const speedText = speed === null ? "" : ` with speed ${formatNumber(speed)}`;
   const positionText =
-    speed === null
+    timeframe?.requested === "yesterday"
+      ? `${label}'s yesterday movement ended ${location}`
+      : speed === null
       ? `${label} has a latest known position ${location}`
       : `${label} is currently ${movementState} ${location}`;
   const routeEvidence =
     continuity.historical_idle_markers_broken_by_movement ||
     Number(summary.movement_blocks || 0) > 0;
   const rollover = isNewDayRolloverWindow(timeframe, dayStory, summary);
-  const verdict = rollover
+  const verdict =
+    timeframe?.requested === "yesterday"
+      ? routeEvidence
+        ? "This is a previous-day route narrative, not a current-status snapshot."
+        : "This is a narrow previous-day operating read, so Nava should not force it into a full route story."
+      : rollover
     ? "This is a new-day window after the EAT rollover, so Nava has not yet accumulated a full-day route for today."
     : routeEvidence
     ? "The truck was not stuck in an all-day delay."
@@ -1409,6 +1425,18 @@ function buildLogisticsTimelineOpening(
   return `${positionText}, last seen at ${time}${speedText}. ${verdict}${
     metricSentence ? ` ${metricSentence}` : ""
   }`;
+}
+
+function isEmptyRequestedTimeline(timeframe: any, summary: any) {
+  return timeframe?.requested === "yesterday" && Number(summary?.points_found || 0) === 0;
+}
+
+function buildEmptyTimelineWindowAnswer(label: string, timeframe: any) {
+  if (timeframe?.requested === "yesterday") {
+    return `${label} has no telemetry history for yesterday in this company workspace, so Nava cannot reconstruct that route. I can check the current truck status or another operating day if you want.`;
+  }
+
+  return `${label} has no telemetry history in this operating window, so Nava cannot reconstruct the route from movement logs.`;
 }
 
 function formatNarrativeCoverageNote(dayStory: any, summary: any, timeZone: string, timeframe: any = {}) {
