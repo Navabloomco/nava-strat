@@ -21,13 +21,18 @@ type NavItem = {
 };
 
 type NavSection = {
+  key: string;
   label?: string;
+  collapsible?: boolean;
   items: NavItem[];
 };
 
 export default function Sidebar() {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [sectionOpenOverrides, setSectionOpenOverrides] = useState<
+    Record<string, boolean>
+  >({});
 
   const [roles, setRoles] = useState(EMPTY_ROLES);
 
@@ -109,6 +114,7 @@ export default function Sidebar() {
 
   const navSections: NavSection[] = [
     {
+      key: "primary",
       items: [
         {
           name: "Dashboard",
@@ -128,7 +134,9 @@ export default function Sidebar() {
       ],
     },
     {
+      key: "platform",
       label: "Platform",
+      collapsible: true,
       items: [
         {
           name: "Platform Health",
@@ -148,7 +156,9 @@ export default function Sidebar() {
       ],
     },
     {
+      key: "providers",
       label: "Providers",
+      collapsible: true,
       items: [
         {
           name: "Provider Requests",
@@ -168,7 +178,9 @@ export default function Sidebar() {
       ],
     },
     {
+      key: "company-admin",
       label: "Company Admin",
+      collapsible: true,
       items: [
         {
           name: "Asset Review",
@@ -188,7 +200,9 @@ export default function Sidebar() {
       ],
     },
     {
+      key: "fleet",
       label: "Fleet",
+      collapsible: true,
       items: [
         {
           name: "Operations",
@@ -225,7 +239,9 @@ export default function Sidebar() {
       ],
     },
     {
+      key: "business",
       label: "Business",
+      collapsible: true,
       items: [
         {
           name: "Finance",
@@ -268,10 +284,95 @@ export default function Sidebar() {
       : "block rounded-md px-3 py-2.5 text-sm font-medium text-slate-400 transition hover:bg-white/[0.05] hover:text-white";
   }
 
-  function sectionLabelClass(first: boolean) {
-    return first
-      ? "px-3 pb-1 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500"
-      : "px-3 pb-1 pt-3 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500";
+  function isNavItemActive(item: NavItem) {
+    if (item.href === "/admin") return pathname === "/admin";
+    return pathname === item.href || pathname.startsWith(`${item.href}/`);
+  }
+
+  function sectionHasActiveItem(section: NavSection) {
+    return section.items.some(isNavItemActive);
+  }
+
+  function defaultSectionOpen(section: NavSection) {
+    if (!section.collapsible) return true;
+    if (sectionHasActiveItem(section)) return true;
+    if (
+      roles.isPlatformOwner &&
+      pathname.startsWith("/admin") &&
+      ["platform", "providers", "company-admin"].includes(section.key)
+    ) {
+      return true;
+    }
+    return false;
+  }
+
+  function isSectionOpen(section: NavSection) {
+    if (!section.collapsible) return true;
+    return sectionOpenOverrides[section.key] ?? defaultSectionOpen(section);
+  }
+
+  function toggleSection(sectionKey: string) {
+    setSectionOpenOverrides((current) => {
+      const section = visibleNavSections.find((item) => item.key === sectionKey);
+      const currentOpen = section
+        ? current[section.key] ?? defaultSectionOpen(section)
+        : current[sectionKey] ?? true;
+
+      return {
+        ...current,
+        [sectionKey]: !currentOpen,
+      };
+    });
+  }
+
+  function sectionHeaderClass(first: boolean, interactive: boolean) {
+    const spacing = first ? "" : "mt-2";
+    const base = `${spacing} flex w-full items-center justify-between rounded-md px-3 py-1 text-left text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500`;
+    return interactive
+      ? `${base} transition hover:bg-white/[0.04] hover:text-slate-300`
+      : base;
+  }
+
+  function renderNavSection(section: NavSection, sectionIndex: number, mobile: boolean) {
+    const open = isSectionOpen(section);
+
+    return (
+      <div key={section.key} className="grid gap-1.5">
+        {section.label && section.collapsible && (
+          <button
+            type="button"
+            onClick={() => toggleSection(section.key)}
+            className={sectionHeaderClass(sectionIndex === 0, true)}
+            aria-expanded={open}
+          >
+            <span>{section.label}</span>
+            <span className="text-xs text-slate-400">{open ? "-" : "+"}</span>
+          </button>
+        )}
+
+        {section.label && !section.collapsible && (
+          <div className={sectionHeaderClass(sectionIndex === 0, false)}>
+            <span>{section.label}</span>
+          </div>
+        )}
+
+        {open &&
+          section.items.map((item) => {
+            const active = isNavItemActive(item);
+
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                onClick={mobile ? () => setMobileOpen(false) : undefined}
+                className={`${navLinkClass(active)} whitespace-normal break-words`}
+              >
+                {item.name}
+              </Link>
+            );
+          })}
+      </div>
+    );
   }
 
   return (
@@ -303,29 +404,9 @@ export default function Sidebar() {
             id="mobile-nava-nav"
             className="mt-3 grid max-h-[70vh] gap-1.5 overflow-y-auto rounded-lg border border-white/10 bg-slate-900 p-2 shadow-2xl shadow-black/30"
           >
-            {visibleNavSections.map((section, sectionIndex) => (
-              <div key={section.label || "primary"} className="grid gap-1.5">
-                {section.label && (
-                  <div className={sectionLabelClass(sectionIndex === 0)}>
-                    {section.label}
-                  </div>
-                )}
-                {section.items.map((item) => {
-                  const active = pathname === item.href;
-
-                  return (
-                    <Link
-                      key={item.href}
-                      href={item.href}
-                      onClick={() => setMobileOpen(false)}
-                      className={`${navLinkClass(active)} whitespace-normal break-words`}
-                    >
-                      {item.name}
-                    </Link>
-                  );
-                })}
-              </div>
-            ))}
+            {visibleNavSections.map((section, sectionIndex) =>
+              renderNavSection(section, sectionIndex, true)
+            )}
           </nav>
         )}
       </div>
@@ -341,28 +422,9 @@ export default function Sidebar() {
         </div>
 
         <nav className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto pr-1">
-          {visibleNavSections.map((section, sectionIndex) => (
-            <div key={section.label || "primary"} className="grid gap-1.5">
-              {section.label && (
-                <div className={sectionLabelClass(sectionIndex === 0)}>
-                  {section.label}
-                </div>
-              )}
-              {section.items.map((item) => {
-                const active = pathname === item.href;
-
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    className={navLinkClass(active)}
-                  >
-                    {item.name}
-                  </Link>
-                );
-              })}
-            </div>
-          ))}
+          {visibleNavSections.map((section, sectionIndex) =>
+            renderNavSection(section, sectionIndex, false)
+          )}
         </nav>
       </aside>
     </>
