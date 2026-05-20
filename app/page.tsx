@@ -8,7 +8,7 @@ export const metadata: Metadata = {
   metadataBase: new URL("https://www.navabloomco.com"),
   title: "Nava Bloom Co. | Practical intelligence infrastructure",
   description:
-    "Nava Bloom Co. builds software products for asset-heavy operators, starting with Nava Strat.",
+    "Nava Bloom Co. builds software products that help asset-heavy operators see clearly, reduce blind spots, and protect operating margins.",
   applicationName: "Nava Bloom Co.",
   alternates: {
     canonical: "/",
@@ -26,15 +26,15 @@ export const metadata: Metadata = {
 const buildAreas = [
   {
     title: "Fleet intelligence platforms",
-    body: "Secure workspaces that help operators understand vehicle activity, journeys, costs, and operational patterns.",
+    body: "Secure workspaces that help operators understand vehicle activity, journeys, fuel movement, operating costs, and fleet patterns.",
   },
   {
     title: "Operational data systems",
-    body: "Practical tools that bring fragmented information into clearer, more usable business workflows.",
+    body: "Tools that consolidate fragmented information from the field, the corridor, and the back office into usable management workflows.",
   },
   {
     title: "AI-assisted decision support",
-    body: "Decision support that helps teams ask better questions and act with more confidence from the data they already have.",
+    body: "Context-aware decision support that helps teams spot risk, ask sharper questions, and act with more confidence.",
   },
 ];
 
@@ -80,8 +80,8 @@ export default function Home() {
               </h1>
               <p className="mt-7 max-w-2xl text-lg leading-8 text-slate-300">
                 Nava Bloom Co. builds software products that help asset-heavy
-                teams see operations clearly, reduce blind spots, and make better
-                decisions.
+                teams see operations clearly, reduce blind spots, and protect
+                operating margins.
               </p>
               <div className="mt-9 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
                 <a
@@ -105,18 +105,17 @@ export default function Home() {
               <div className="rounded-md border border-white/10 bg-slate-950/70 p-5">
                 <div className="border-b border-white/10 pb-4">
                   <div className="text-sm font-semibold text-white">
-                    Practical operating clarity
+                    Company focus
                   </div>
                   <div className="mt-1 text-xs text-slate-400">
-                    High-level signals Nava Bloom Co. builds for
+                    Practical software for asset-heavy operators
                   </div>
                 </div>
                 <div className="mt-5 space-y-3">
                   {[
-                    ["Fleet visibility", "See what is happening across assets."],
-                    ["Cost awareness", "Understand fuel, journey, and operating cost movement."],
-                    ["Decision support", "Give teams clearer questions and better next steps."],
-                    ["Secure workspace", "Keep business operations inside controlled access."],
+                    ["Built for operators", "Software for companies that move, maintain, and manage physical assets."],
+                    ["Built for clarity", "Cleaner operating signals for teams that need fewer blind spots."],
+                    ["Built for decisions", "Practical intelligence that supports action, not theatre."],
                   ].map(([title, body]) => (
                     <div
                       key={title}
@@ -139,37 +138,19 @@ export default function Home() {
 
       <section className="bg-slate-50 px-4 py-16 text-slate-950 sm:px-8 sm:py-20">
         <div className="mx-auto max-w-7xl">
-          <div className="grid gap-10 lg:grid-cols-[0.9fr_1.1fr] lg:items-start">
-            <div>
-              <p className="text-sm font-bold uppercase tracking-[0.18em] text-cyan-700">
-                Our first platform
-              </p>
-              <h2 className="mt-3 text-3xl font-semibold tracking-normal md:text-4xl">
-                Nava Strat
-              </h2>
-              <p className="mt-5 text-base leading-8 text-slate-600">
-                Nava Strat helps fleet operators bring vehicle activity,
-                journeys, fuel, operating costs, maintenance signals, and
-                management visibility into one secure workspace.
-              </p>
-              <a
-                href={productUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="mt-7 inline-flex rounded-md bg-slate-950 px-5 py-3 text-sm font-semibold text-white hover:bg-slate-800"
-              >
-                Visit Nava Strat
-              </a>
-            </div>
-
-            <div className="rounded-lg border border-slate-200 bg-white p-6">
-              <h3 className="text-xl font-semibold">Why it matters</h3>
-              <p className="mt-4 text-base leading-8 text-slate-600">
-                Many operators still rely on disconnected tools, manual updates,
-                and fragmented dashboards. Nava Bloom Co. builds systems that
-                make operational data easier to trust and act on.
-              </p>
-            </div>
+          <div className="max-w-3xl">
+            <p className="text-sm font-bold uppercase tracking-[0.18em] text-cyan-700">
+              Problem
+            </p>
+            <h2 className="mt-3 text-3xl font-semibold tracking-normal md:text-4xl">
+              The reality of modern operations
+            </h2>
+            <p className="mt-5 text-base leading-8 text-slate-600">
+              Many operators still rely on disconnected tools, manual updates,
+              and fragmented dashboards. Nava Bloom Co. builds systems that make
+              operational data easier to trust, harder to lose, and faster to
+              act on.
+            </p>
           </div>
         </div>
       </section>
@@ -196,6 +177,32 @@ export default function Home() {
                 </p>
               </div>
             ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="bg-slate-50 px-4 py-16 text-slate-950 sm:px-8 sm:py-20">
+        <div className="mx-auto max-w-7xl">
+          <div className="max-w-3xl">
+            <p className="text-sm font-bold uppercase tracking-[0.18em] text-cyan-700">
+              Product spotlight
+            </p>
+            <h2 className="mt-3 text-3xl font-semibold tracking-normal md:text-4xl">
+              Our first platform: Nava Strat
+            </h2>
+            <p className="mt-5 text-base leading-8 text-slate-600">
+              Nava Strat helps fleet operators bring vehicle activity, journeys,
+              fuel awareness, operating costs, maintenance signals, and
+              management visibility into one secure workspace.
+            </p>
+            <a
+              href={productUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-7 inline-flex rounded-md bg-slate-950 px-5 py-3 text-sm font-semibold text-white hover:bg-slate-800"
+            >
+              Visit Nava Strat
+            </a>
           </div>
         </div>
       </section>
