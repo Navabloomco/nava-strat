@@ -41,7 +41,7 @@ The main product principle is convenience. Every user-facing page should make th
 
 | Route | Purpose |
 | --- | --- |
-| `/dashboard` | Customer-facing app dashboard and navigation hub. Embedded Nava Eye widget may pass safe page context for visible dashboard follow-ups. |
+| `/dashboard` | Customer-facing app dashboard and navigation hub. Includes Nava Eye Watch items built from safe dashboard summaries, and an embedded Nava Eye widget that may pass safe page context for visible dashboard follow-ups. |
 | `/nava-eye` | Nava Eye assistant UI. |
 | `/tracking/live` | Live tracking view for enabled intelligence assets. |
 | `/tracking/link` | Tracking link helper page. |
@@ -116,6 +116,7 @@ The main product principle is convenience. Every user-facing page should make th
 | API Route | Purpose |
 | --- | --- |
 | `GET /api/companies` | Returns active company memberships, normalized roles, platform-owner status, and visible companies. |
+| `GET /api/dashboard/overview` | Authenticated company dashboard overview. Returns safe fleet health, asset-review counts, fuel telemetry/risk usability summary, active memory summaries, and visible dashboard context. |
 | `POST /api/onboarding/company` | Creates/updates company onboarding data, operating context, and provider setup requests. |
 | `GET/PATCH /api/company-settings` | Reads and updates safe company operating context. Supports platform-owner `companyId` context. No billing/provider secrets. |
 | `GET /api/admin/pilot-readiness` | Platform-owner-only pilot readiness checklist list across companies. Returns pass/warning/fail counts and safe tenant summaries. |

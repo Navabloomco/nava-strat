@@ -10,6 +10,31 @@ export const dynamic = "force-dynamic";
 const SAFE_MEMORY_FIELDS =
   "id, memory_type, severity, title, summary, recommendation, last_seen_at";
 
+async function getAssetReviewSummary(companyId: string) {
+  const { data, error } = await supabaseAdmin
+    .from("fleet_assets")
+    .select("id, status, billing_status, intelligence_enabled")
+    .eq("company_id", companyId);
+
+  if (error) throw error;
+
+  const assets = data || [];
+  const enabledAssets = assets.filter(
+    (asset) => asset.status === "active" && asset.intelligence_enabled === true
+  );
+
+  return {
+    imported_assets: assets.length,
+    enabled_assets: enabledAssets.length,
+    unreviewed_assets: assets.filter(
+      (asset) => asset.billing_status === "unreviewed"
+    ).length,
+    disabled_or_excluded_assets: assets.filter((asset) =>
+      ["disabled", "excluded"].includes(String(asset.billing_status || ""))
+    ).length,
+  };
+}
+
 export async function GET(req: Request) {
   try {
     const authHeader = req.headers.get("authorization");
@@ -109,7 +134,10 @@ export async function GET(req: Request) {
       company = assignedCompany;
     }
 
-    const fleetHealth = await getFleetHealth(company.id);
+    const [fleetHealth, assetReviewSummary] = await Promise.all([
+      getFleetHealth(company.id),
+      getAssetReviewSummary(company.id),
+    ]);
 
     // Active memories
     const { data: memories, error: memoryError } = await supabaseAdmin
@@ -131,6 +159,7 @@ export async function GET(req: Request) {
         slug: company.slug,
       },
       fleet_health: fleetHealth,
+      asset_review_summary: assetReviewSummary,
       active_memories: memories || [],
       trucks_in_uganda: ugandaTrucks,
     });

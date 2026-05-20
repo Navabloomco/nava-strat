@@ -9,6 +9,7 @@ interface OverviewData {
   error?: string;
   company?: any;
   fleet_health?: any;
+  asset_review_summary?: any;
   active_memories?: any[];
   trucks_in_uganda?: any[];
 }
@@ -27,12 +28,253 @@ const dashboardLinks = [
   { label: "Settings", href: "/admin/company" },
 ];
 
+interface WatchItem {
+  id: string;
+  severity: "info" | "warning" | "critical";
+  title: string;
+  summary: string;
+  evidence: string[];
+  suggested_next_check: string;
+  suggested_question?: string;
+  href?: string;
+}
+
+function buildWatchItems(
+  overview: OverviewData | null,
+  canReviewAssets: boolean,
+  adminCompanyId: string
+): WatchItem[] {
+  const fleetHealth = overview?.fleet_health || {};
+  const assetReview = overview?.asset_review_summary || {};
+  const items: WatchItem[] = [];
+  const idleTrucks = fleetHealth.highest_idle_trucks || [];
+  const highIdleDurations = idleTrucks.filter((truck: any) => {
+    const hours = parseWatchNumber(truck.idle_hours);
+    return hours !== null && hours > 24;
+  });
+  const extremeIdleDurations = highIdleDurations.filter(
+    (truck: any) => {
+      const hours = parseWatchNumber(truck.idle_hours);
+      return hours !== null && hours > 168;
+    }
+  );
+  const stationaryIdleTrucks = idleTrucks.filter(isFreshStationaryIdleTruck);
+  const offlineTruckIds = (fleetHealth.offline_truck_ids || []).filter(Boolean);
+  const recentCriticalEvents = fleetHealth.recent_critical_events || [];
+  const fuelSummary = fleetHealth.fuel_telemetry_summary || {};
+  const importedAssets = Number(assetReview.imported_assets || 0);
+  const enabledAssets = Number(assetReview.enabled_assets || 0);
+  const unreviewedAssets = Number(assetReview.unreviewed_assets || 0);
+
+  if (highIdleDurations.length) {
+    const trucks = highIdleDurations.slice(0, 3);
+    items.push({
+      id: "idle-duration-quality",
+      severity: extremeIdleDurations.length ? "critical" : "warning",
+      title: "Idle duration looks suspicious",
+      summary:
+        "One or more top idle totals are too large to treat as continuous idling. This may be an unclosed idle event or accumulator issue.",
+      evidence: trucks.map(
+        (truck: any) => `${truck.truck_id}: ${formatWatchNumber(truck.idle_hours)} hours accumulated`
+      ),
+      suggested_next_check:
+        "Investigate whether idle events are closing correctly before using the total as a continuous-duration fact.",
+      suggested_question:
+        "Check whether the top idle trucks have an idle-event closure or data-quality problem.",
+      href: "/nava-eye",
+    });
+  }
+
+  if (stationaryIdleTrucks.length) {
+    const trucks = stationaryIdleTrucks.slice(0, 3);
+    items.push({
+      id: "current-stationary-idle",
+      severity: "warning",
+      title: "Top idle trucks appear stationary",
+      summary:
+        "These trucks have fresh low-speed telemetry and recent idle events. Nava can interpret that as current stationary/idle evidence, without claiming engine-on idling.",
+      evidence: trucks.map(
+        (truck: any) =>
+          `${truck.truck_id}: speed ${formatWatchNumber(truck.latest_speed)}, ${formatFreshness(
+            truck.freshness_minutes
+          )}, latest idle ${formatRelativeTime(truck.latest_idle_event_at)}`
+      ),
+      suggested_next_check:
+        "Check active journeys, geofences, driver assignment, and provider freshness for the same trucks.",
+      suggested_question:
+        "Are the top idle trucks still idling, and what context explains the stop?",
+      href: "/tracking/live",
+    });
+  }
+
+  if (offlineTruckIds.length) {
+    items.push({
+      id: "stale-offline-assets",
+      severity: offlineTruckIds.length >= 3 ? "warning" : "info",
+      title: "Some enabled assets are stale or offline",
+      summary:
+        "Enabled intelligence assets are missing fresh location updates, so live status may be incomplete.",
+      evidence: [
+        `${fleetHealth.offline_trucks || offlineTruckIds.length} offline or stale enabled asset(s)`,
+        `Examples: ${offlineTruckIds.slice(0, 4).join(", ")}`,
+      ],
+      suggested_next_check:
+        "Check provider sync freshness and whether the affected trucks are expected to be reporting now.",
+      suggested_question:
+        "Which enabled trucks are stale or offline, and what should I check next?",
+      href: "/tracking/live",
+    });
+  }
+
+  if (
+    Number(fuelSummary.enabled_assets_checked || 0) > 0 &&
+    Number(fuelSummary.enabled_assets_with_usable_fuel || 0) === 0 &&
+    Number(fuelSummary.enabled_assets_with_recent_fuel_scores || 0) === 0
+  ) {
+    const recentReadings = Number(fuelSummary.recent_readings || 0);
+    items.push({
+      id: "fuel-telemetry-limited",
+      severity: "info",
+      title: "Fuel telemetry is limited",
+      summary:
+        "Nava does not currently see usable recent fuel-level telemetry across enabled assets. Manual fuel logs and provider diagnostics can still support investigation.",
+      evidence: [
+        `${fuelSummary.enabled_assets_checked} enabled asset(s) checked`,
+        recentReadings
+          ? `${recentReadings} recent fuel reading(s), but none were usable positive values`
+          : "No recent fuel readings found",
+        "No recent enabled-asset fuel risk scores found",
+      ],
+      suggested_next_check:
+        "Review provider enrichment diagnostics and compare manual fuel logs until the fuel feed is usable.",
+      suggested_question:
+        "Which enabled trucks have usable fuel telemetry, and what can Nava use while fuel data is limited?",
+      href: canReviewAssets ? withCompanyContext("/admin/providers", adminCompanyId) : "/fuel",
+    });
+  }
+
+  if (importedAssets > enabledAssets || unreviewedAssets > 0) {
+    items.push({
+      id: "unreviewed-imported-assets",
+      severity: enabledAssets === 0 && importedAssets > 0 ? "warning" : "info",
+      title: "Imported assets are waiting for review",
+      summary:
+        "Some imported assets are not enabled for Nava intelligence yet, so Nava Eye and Live Tracking will not use them.",
+      evidence: [
+        `${importedAssets} imported asset(s)`,
+        `${enabledAssets} enabled intelligence asset(s)`,
+        `${unreviewedAssets} unreviewed asset(s)`,
+      ],
+      suggested_next_check:
+        "Review imported assets before expecting them in live tracking, alerts, or Nava Eye answers.",
+      suggested_question:
+        "Which imported assets are waiting for review before Nava Eye can use them?",
+      href: canReviewAssets ? withCompanyContext("/admin/assets", adminCompanyId) : undefined,
+    });
+  }
+
+  if (recentCriticalEvents.length) {
+    const events = recentCriticalEvents.slice(0, 3);
+    items.push({
+      id: "recent-critical-events",
+      severity: "critical",
+      title: "Recent critical events need context",
+      summary:
+        "High-severity events are present in the current dashboard data. Nava can help separate operational context from true risk.",
+      evidence: events.map(
+        (event: any) =>
+          `${event.truck_id}: ${formatWatchLabel(event.event_type)} ${formatRelativeTime(event.created_at)}`
+      ),
+      suggested_next_check:
+        "Check whether these events line up with journeys, geofences, driver assignment, or shared disruption context.",
+      suggested_question:
+        "Explain the recent critical events and what context might matter.",
+      href: "/ops/dashboard",
+    });
+  }
+
+  return items
+    .sort((a, b) => severityRank(b.severity) - severityRank(a.severity))
+    .slice(0, 5);
+}
+
+function isFreshStationaryIdleTruck(truck: any) {
+  const speed = parseWatchNumber(truck.latest_speed);
+  const freshness = parseWatchNumber(truck.freshness_minutes);
+  const idleAgeMinutes = minutesSince(truck.latest_idle_event_at);
+
+  return (
+    speed !== null &&
+    speed <= 2 &&
+    freshness !== null &&
+    freshness <= 30 &&
+    idleAgeMinutes !== null &&
+    idleAgeMinutes <= 120
+  );
+}
+
+function parseWatchNumber(value: any) {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(String(value).replace(/,/g, ""));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function minutesSince(value: any) {
+  if (!value) return null;
+  const minutes = Math.floor((Date.now() - new Date(value).getTime()) / 60000);
+  return Number.isFinite(minutes) ? minutes : null;
+}
+
+function formatFreshness(value: any) {
+  const minutes = parseWatchNumber(value);
+  if (minutes === null) return "freshness unknown";
+  if (minutes < 1) return "just now";
+  return `${minutes} min old`;
+}
+
+function formatRelativeTime(value: any) {
+  const minutes = minutesSince(value);
+  if (minutes === null) return "unknown";
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round((minutes / 60) * 10) / 10;
+  return `${hours}h ago`;
+}
+
+function formatWatchNumber(value: any) {
+  const number = parseWatchNumber(value);
+  if (number === null) return "unknown";
+  return number.toLocaleString();
+}
+
+function formatWatchLabel(value: any) {
+  return String(value || "event").replace(/_/g, " ");
+}
+
+function severityRank(severity: WatchItem["severity"]) {
+  if (severity === "critical") return 3;
+  if (severity === "warning") return 2;
+  return 1;
+}
+
+function severityClasses(severity: WatchItem["severity"]) {
+  if (severity === "critical") return "border-red-500/40 bg-red-500/10 text-red-200";
+  if (severity === "warning") return "border-yellow-500/40 bg-yellow-500/10 text-yellow-200";
+  return "border-blue-500/40 bg-blue-500/10 text-blue-200";
+}
+
+function withCompanyContext(path: string, companyId: string) {
+  if (!companyId) return path;
+  return `${path}?companyId=${encodeURIComponent(companyId)}`;
+}
+
 export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<OverviewData | null>(null);
   const [errorDetail, setErrorDetail] = useState<string | null>(null);
   const [companies, setCompanies] = useState<CompanyOption[]>([]);
   const [isPlatformOwner, setIsPlatformOwner] = useState(false);
+  const [userRoles, setUserRoles] = useState<string[]>([]);
   const [selectedCompanyId, setSelectedCompanyId] = useState("");
   const [companySwitcherOpen, setCompanySwitcherOpen] = useState(false);
   const [companySearch, setCompanySearch] = useState("");
@@ -112,9 +354,13 @@ export default function DashboardPage() {
           const nextCompanies = companiesJson.companies || [];
           const nextIsPlatformOwner = Boolean(companiesJson.is_platform_owner);
           const nextSelectedCompanyId = nextCompanies[0]?.id || "";
+          const nextRoles = (companiesJson.roles || []).map((role: any) =>
+            String(role || "").trim().toLowerCase()
+          );
 
           setCompanies(nextCompanies);
           setIsPlatformOwner(nextIsPlatformOwner);
+          setUserRoles(nextRoles);
           setSelectedCompanyId(nextSelectedCompanyId);
 
           await loadOverview(token, nextSelectedCompanyId, nextIsPlatformOwner);
@@ -205,6 +451,10 @@ export default function DashboardPage() {
   const selectedCompany =
     companies.find((companyOption) => companyOption.id === selectedCompanyId) ||
     company;
+  const canReviewAssets =
+    isPlatformOwner || userRoles.some((role) => ["owner", "admin"].includes(role));
+  const adminCompanyId = isPlatformOwner ? selectedCompanyId || company.id : "";
+  const watchItems = buildWatchItems(data, canReviewAssets, adminCompanyId);
   const normalizedCompanySearch = companySearch.toLowerCase();
   const filteredCompanies = companies.filter(
     (companyOption) =>
@@ -375,6 +625,83 @@ export default function DashboardPage() {
                     </div>
                   ))}
                 </div>
+              </div>
+
+              <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-5">
+                <div className="flex items-start justify-between gap-4 mb-4">
+                  <div>
+                    <h2 className="text-lg font-semibold">Nava Eye Watch</h2>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Evidence-led items from the current dashboard data.
+                    </p>
+                  </div>
+                  <span className="rounded-full border border-blue-500/30 bg-blue-500/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-blue-300">
+                    Live read
+                  </span>
+                </div>
+
+                {watchItems.length ? (
+                  <div className="space-y-3">
+                    {watchItems.map((item) => (
+                      <div
+                        key={item.id}
+                        className={`rounded-xl border p-3 ${severityClasses(item.severity)}`}
+                      >
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="text-sm font-semibold text-slate-100">
+                              {item.title}
+                            </div>
+                            <div className="mt-1 text-xs leading-5 text-slate-300">
+                              {item.summary}
+                            </div>
+                          </div>
+                          <span className="shrink-0 rounded-full border border-current/30 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide">
+                            {item.severity}
+                          </span>
+                        </div>
+
+                        {item.evidence.length > 0 && (
+                          <ul className="mt-3 space-y-1 text-xs text-slate-300">
+                            {item.evidence.slice(0, 4).map((evidence) => (
+                              <li key={evidence} className="break-words">
+                                • {evidence}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+
+                        <div className="mt-3 rounded-lg bg-slate-950/40 p-2 text-xs text-slate-300">
+                          {item.suggested_next_check}
+                        </div>
+
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {item.suggested_question && (
+                            <button
+                              type="button"
+                              onClick={() => setCopilotQuery(item.suggested_question || "")}
+                              className="rounded-lg border border-blue-500/40 px-3 py-1.5 text-xs font-medium text-blue-200 hover:bg-blue-500/10"
+                            >
+                              Ask Nava Eye
+                            </button>
+                          )}
+                          {item.href && (
+                            <Link
+                              href={item.href}
+                              className="rounded-lg border border-slate-600 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-800"
+                            >
+                              Open related view
+                            </Link>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-4 text-sm text-slate-400">
+                    No urgent watch items from the current dashboard data.
+                  </div>
+                )}
               </div>
 
               <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-5">
