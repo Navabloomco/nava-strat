@@ -1266,15 +1266,23 @@ function buildTruckTimelineComparisonAnswer(context: any) {
   const timeZone = timeline.timezone?.time_zone || DEFAULT_OPERATIONAL_TIME_ZONE;
   const timeLabel = timeline.timezone?.label || "EAT (Kenya time)";
   const summary = timeline.telemetry_summary || {};
+  const dayStory = timeline.day_story || {};
   const latest = timeline.latest_snapshot || null;
   const blocks = Array.isArray(timeline.motion_blocks) ? timeline.motion_blocks : [];
   const idleEvents = Array.isArray(timeline.idle_events) ? timeline.idle_events : [];
   const continuity = timeline.continuity || {};
   const parts: string[] = [];
 
-  parts.push(`I reconstructed today's Nava movement timeline for ${label}, displayed in ${timeLabel}.`);
+  parts.push(buildTruckJourneyNarrative(label, dayStory, summary, continuity, timeZone));
 
-  if (summary.data_density === "low") {
+  if (dayStory.coverage_is_partial && dayStory.coverage_start_at && dayStory.coverage_end_at) {
+    parts.push(
+      `Nava only has telemetry history from ${formatTimelineTime(
+        dayStory.coverage_start_at,
+        timeZone
+      )} to ${formatTimelineTime(dayStory.coverage_end_at, timeZone)} today, so this is a summary of that available window.`
+    );
+  } else if (summary.data_density === "low") {
     parts.push(
       "Nava has limited history for this truck today, so I can compare only the latest snapshot and idle markers."
     );
@@ -1306,7 +1314,11 @@ function buildTruckTimelineComparisonAnswer(context: any) {
   }
 
   parts.push("");
-  parts.push("Today's movement/stationary timeline");
+  parts.push("Stop pattern");
+  parts.push(...formatStopPattern(dayStory.stop_summary || {}, timeZone));
+
+  parts.push("");
+  parts.push("Structured timeline evidence");
   if (blocks.length) {
     parts.push(...blocks.slice(0, 10).map((block: any) => formatTimelineBlock(block, timeZone)));
     if (blocks.length > 10) {
@@ -1358,6 +1370,88 @@ function buildTruckTimelineComparisonAnswer(context: any) {
   );
 
   return parts.join("\n");
+}
+
+function buildTruckJourneyNarrative(
+  label: string,
+  dayStory: any,
+  summary: any,
+  continuity: any,
+  timeZone: string
+) {
+  const route = Array.isArray(dayStory.route_progression)
+    ? dayStory.route_progression.filter(Boolean)
+    : [];
+  const first = dayStory.first_seen || null;
+  const latest = dayStory.latest_seen || null;
+  const firstLocation = formatOperationalLocation({ location_resolution: first?.location });
+  const latestLocation = formatOperationalLocation({ location_resolution: latest?.location });
+  const latestSpeed = finiteNumberOrNull(latest?.speed);
+  const stopSummary = dayStory.stop_summary || {};
+  const meaningfulStops = Number(stopSummary.meaningful_stop_count || 0);
+  const movingBlocks = Number(summary.movement_blocks || 0);
+  const stationaryBlocks = Number(summary.stationary_blocks || 0);
+  const opening =
+    continuity.historical_idle_markers_broken_by_movement || movingBlocks > 0
+      ? `${label}'s day looks like a route movement with stops, not one continuous idle event.`
+      : `${label}'s available day history is mostly stationary or limited, so Nava is treating this as a partial operational read.`;
+  const sentences = [opening];
+
+  if (first?.recorded_at) {
+    sentences.push(
+      `It first appeared${firstLocation ? ` ${firstLocation}` : ""} at ${formatTimelineTime(
+        first.recorded_at,
+        timeZone
+      )}.`
+    );
+  }
+
+  if (route.length >= 2) {
+    sentences.push(
+      `The observed route progression is ${formatRouteProgression(route)}.`
+    );
+  } else if (route.length === 1) {
+    sentences.push(`The available points are concentrated around ${route[0]}.`);
+  }
+
+  const longestStop = stopSummary.longest_stop || null;
+  const longestStopLocation = formatOperationalLocation({
+    location_resolution: longestStop?.location,
+  });
+  if (longestStop?.duration_minutes) {
+    sentences.push(
+      `The longest stop was about ${formatDurationWords(
+        longestStop.duration_minutes
+      )}${longestStopLocation ? ` ${longestStopLocation}` : ""}.`
+    );
+  } else if (meaningfulStops > 0) {
+    sentences.push(`Nava found ${meaningfulStops} meaningful stop(s) in the available window.`);
+  } else if (stationaryBlocks > 0) {
+    sentences.push("Nava sees stationary points, but none are long enough to classify as meaningful stops.");
+  }
+
+  if (latest?.recorded_at) {
+    const status =
+      latestSpeed === null
+        ? "motion state unclear"
+        : latestSpeed > 5
+          ? "moving"
+          : "currently stopped";
+    sentences.push(
+      `Latest telemetry places it${latestLocation ? ` ${latestLocation}` : ""} at ${formatTimelineTime(
+        latest.recorded_at,
+        timeZone
+      )} with ${latestSpeed === null ? "speed unknown" : `speed ${formatNumber(latestSpeed)}`}, so it is ${status}.`
+    );
+  }
+
+  if (summary.truncated) {
+    sentences.push(
+      `The row cap was reached at ${Number(summary.max_rows || 0).toLocaleString()} points, so the middle of the day may be sampled.`
+    );
+  }
+
+  return sentences.join(" ");
 }
 
 function isIdleStopEvent(event: any) {
@@ -2280,6 +2374,54 @@ function formatEventBrief(event: any) {
   )}${location ? ` ${location}` : ""}${driver}`;
 }
 
+function formatStopPattern(stopSummary: any, timeZone: string) {
+  const lines = [
+    `- Major stops: ${Number(stopSummary.major_stop_count || 0).toLocaleString()}`,
+    `- Medium stops: ${Number(stopSummary.medium_stop_count || 0).toLocaleString()}`,
+    `- Short stops: ${Number(stopSummary.short_stop_count || 0).toLocaleString()}`,
+  ];
+  const longest = stopSummary.longest_stop || null;
+  const longestLocation = formatOperationalLocation({
+    location_resolution: longest?.location,
+  });
+
+  if (longest?.duration_minutes) {
+    lines.push(
+      `- Longest stop: about ${formatDurationWords(longest.duration_minutes)}${
+        longestLocation ? ` ${longestLocation}` : ""
+      } (${formatTimelineTime(longest.start_at, timeZone)} to ${formatTimelineTime(
+        longest.end_at,
+        timeZone
+      )})`
+    );
+  } else {
+    lines.push("- Longest stop: not enough stationary history to classify.");
+  }
+
+  if (stopSummary.average_non_major_stop_minutes !== null && stopSummary.average_non_major_stop_minutes !== undefined) {
+    lines.push(
+      `- Average short/medium stop: about ${formatDurationWords(
+        stopSummary.average_non_major_stop_minutes
+      )}`
+    );
+  } else if (stopSummary.average_meaningful_stop_minutes !== null && stopSummary.average_meaningful_stop_minutes !== undefined) {
+    lines.push(
+      `- Average meaningful stop: about ${formatDurationWords(
+        stopSummary.average_meaningful_stop_minutes
+      )}`
+    );
+  }
+
+  if (stopSummary.total_moving_minutes !== null && stopSummary.total_moving_minutes !== undefined) {
+    lines.push(`- Total moving time observed: about ${formatDurationWords(stopSummary.total_moving_minutes)}`);
+  }
+  if (stopSummary.total_stopped_minutes !== null && stopSummary.total_stopped_minutes !== undefined) {
+    lines.push(`- Total stopped/stationary time observed: about ${formatDurationWords(stopSummary.total_stopped_minutes)}`);
+  }
+
+  return lines;
+}
+
 function formatTimelineBlock(block: any, timeZone: string) {
   const state =
     block.state === "moving"
@@ -2318,6 +2460,27 @@ function formatTimelineBlock(block: any, timeZone: string) {
   )}: ${state}${location ? ` ${location}` : ""}${duration}; ${speedRange}; ${
     block.sample_count || 0
   } point(s).`;
+}
+
+function formatRouteProgression(route: string[]) {
+  const cleaned = route
+    .map((item) => String(item || "").trim())
+    .filter(Boolean)
+    .filter((item, index, list) => index === 0 || item !== list[index - 1]);
+
+  if (cleaned.length <= 1) return cleaned[0] || "the available corridor";
+  if (cleaned.length <= 6) return cleaned.join(" -> ");
+  return `${cleaned.slice(0, 4).join(" -> ")} -> ... -> ${cleaned.slice(-2).join(" -> ")}`;
+}
+
+function formatDurationWords(value: any) {
+  const minutes = finiteNumberOrNull(value);
+  if (minutes === null) return "unknown duration";
+  if (minutes < 60) return `${formatNumber(minutes)} min`;
+  const hours = Math.floor(minutes / 60);
+  const remainder = Math.round(minutes % 60);
+  if (remainder === 0) return `${hours} hr${hours === 1 ? "" : "s"}`;
+  return `${hours} hr ${remainder} min`;
 }
 
 function formatIdleComparison(event: any, timeZone: string) {

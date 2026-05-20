@@ -44,8 +44,9 @@ type TimelineBlock = {
 const DEFAULT_MAX_ROWS = 2000;
 const DEFAULT_MAX_BLOCKS = 12;
 const MOVING_SPEED_THRESHOLD = 5;
-const SHORT_STOP_MINUTES = 10;
-const LONG_STOP_MINUTES = 30;
+const SHORT_STOP_MINUTES = 5;
+const MEDIUM_STOP_MINUTES = 15;
+const MAJOR_STOP_MINUTES = 45;
 
 export async function buildTruckTimelineIntelligence(input: TimelineInput) {
   const timeZone = input.timeZone || DEFAULT_OPERATIONAL_TIME_ZONE;
@@ -158,8 +159,36 @@ export async function buildTruckTimelineIntelligence(input: TimelineInput) {
   const hydratedBlocks = await Promise.all(
     selectedBlocks.map((block) => hydrateBlockLocations(input.companyId, block, geofences))
   );
+  const allStationaryBlocks = rawBlocks.filter((block) => block.state === "stationary");
+  const meaningfulStopBlocks = allStationaryBlocks.filter(
+    (block) => Number(block.duration_minutes || 0) >= SHORT_STOP_MINUTES
+  );
+  const longestStopBlock = meaningfulStopBlocks
+    .slice()
+    .sort((a, b) => Number(b.duration_minutes || 0) - Number(a.duration_minutes || 0))[0] || null;
+  const longestStopLocation = longestStopBlock
+    ? await resolveOperationalLocation({
+        company_id: input.companyId,
+        latitude: longestStopBlock.end_point?.latitude,
+        longitude: longestStopBlock.end_point?.longitude,
+        provider_location_label: longestStopBlock.end_point?.provider_location_label,
+        truck_id: canonicalTruckId,
+        geofences,
+      })
+    : null;
+  const firstTelemetry = telemetryRows[0] || null;
   const latestTelemetry = telemetryRows[telemetryRows.length - 1] || null;
   const latestPoint = latestTelemetry || asset || null;
+  const firstLocationResolution = firstTelemetry
+    ? await resolveOperationalLocation({
+        company_id: input.companyId,
+        latitude: firstTelemetry.latitude,
+        longitude: firstTelemetry.longitude,
+        provider_location_label: firstTelemetry.provider_location_label,
+        truck_id: canonicalTruckId,
+        geofences,
+      })
+    : null;
   const latestLocationResolution = latestPoint
     ? await resolveOperationalLocation({
         company_id: input.companyId,
@@ -188,8 +217,7 @@ export async function buildTruckTimelineIntelligence(input: TimelineInput) {
     .filter((block) => block.state === "stationary" && Number(block.duration_minutes || 0) >= SHORT_STOP_MINUTES)
     .map((block) => ({
       block_index: block.index,
-      severity:
-        Number(block.duration_minutes || 0) >= LONG_STOP_MINUTES ? "long_stop" : "stop",
+      severity: classifyStopSeverity(block.duration_minutes),
       start_at: block.start_at,
       end_at: block.end_at,
       duration_minutes: block.duration_minutes,
@@ -208,6 +236,27 @@ export async function buildTruckTimelineIntelligence(input: TimelineInput) {
   const firstIdleComparison = idleEventComparisons[0] || null;
   const movementBlocks = rawBlocks.filter((block) => block.state === "moving");
   const stationaryBlocks = rawBlocks.filter((block) => block.state === "stationary");
+  const totalMovingMinutes = sumDurations(movementBlocks);
+  const totalStoppedMinutes = sumDurations(stationaryBlocks);
+  const averageMeaningfulStopMinutes =
+    meaningfulStopBlocks.length > 0
+      ? Math.round(sumDurations(meaningfulStopBlocks) / meaningfulStopBlocks.length)
+      : null;
+  const majorStops = meaningfulStopBlocks.filter(
+    (block) => Number(block.duration_minutes || 0) >= MAJOR_STOP_MINUTES
+  );
+  const mediumStops = meaningfulStopBlocks.filter((block) => {
+    const duration = Number(block.duration_minutes || 0);
+    return duration >= MEDIUM_STOP_MINUTES && duration < MAJOR_STOP_MINUTES;
+  });
+  const shortStops = meaningfulStopBlocks.filter((block) => {
+    const duration = Number(block.duration_minutes || 0);
+    return duration >= SHORT_STOP_MINUTES && duration < MEDIUM_STOP_MINUTES;
+  });
+  const nonMajorStops = [...mediumStops, ...shortStops];
+  const averageNonMajorStopMinutes =
+    nonMajorStops.length > 0 ? Math.round(sumDurations(nonMajorStops) / nonMajorStops.length) : null;
+  const progression = buildRouteProgression(hydratedBlocks);
   const latestSpeed = finiteOrNull(latestTelemetry?.speed);
   const continuousIdleSupported = Boolean(
     latestTelemetry &&
@@ -258,6 +307,46 @@ export async function buildTruckTimelineIntelligence(input: TimelineInput) {
         : null,
       location: latestLocationResolution,
       speed: latestTelemetry?.speed ?? null,
+    },
+    day_story: {
+      coverage_start_at: firstTelemetry?.recorded_at || null,
+      coverage_end_at: latestTelemetry?.recorded_at || asset.last_seen_at || null,
+      coverage_is_partial:
+        telemetryRows.length === 0 ||
+        isCoveragePartial(localDayRange.startUtc, firstTelemetry?.recorded_at),
+      first_seen: firstTelemetry
+        ? {
+            recorded_at: firstTelemetry.recorded_at,
+            location: firstLocationResolution,
+            speed: firstTelemetry.speed ?? null,
+          }
+        : null,
+      latest_seen: latestPoint
+        ? {
+            recorded_at: latestTelemetry?.recorded_at || asset.last_seen_at || null,
+            location: latestLocationResolution,
+            speed: latestTelemetry?.speed ?? null,
+          }
+        : null,
+      route_progression: progression,
+      stop_summary: {
+        total_moving_minutes: totalMovingMinutes,
+        total_stopped_minutes: totalStoppedMinutes,
+        meaningful_stop_count: meaningfulStopBlocks.length,
+        major_stop_count: majorStops.length,
+        medium_stop_count: mediumStops.length,
+        short_stop_count: shortStops.length,
+        average_meaningful_stop_minutes: averageMeaningfulStopMinutes,
+        average_non_major_stop_minutes: averageNonMajorStopMinutes,
+        longest_stop: longestStopBlock
+          ? {
+              start_at: longestStopBlock.start_at,
+              end_at: longestStopBlock.end_at,
+              duration_minutes: longestStopBlock.duration_minutes,
+              location: longestStopLocation,
+            }
+          : null,
+      },
     },
     telemetry_summary: {
       points_found: telemetryRows.length,
@@ -354,7 +443,7 @@ function selectTimelineBlocksForContext(
   selected.add(blocks.length - 1);
 
   blocks.forEach((block) => {
-    if (block.state === "stationary" && Number(block.duration_minutes || 0) >= LONG_STOP_MINUTES) {
+    if (block.state === "stationary" && Number(block.duration_minutes || 0) >= MAJOR_STOP_MINUTES) {
       selected.add(block.index);
     }
   });
@@ -428,6 +517,39 @@ async function hydrateBlockLocations(companyId: string, block: TimelineBlock, ge
     end_location: endLocation,
     geofence_match: block.geofence_match || endLocation?.geofence || startLocation?.geofence || null,
   };
+}
+
+function buildRouteProgression(blocks: any[]) {
+  const labels: string[] = [];
+
+  for (const block of blocks || []) {
+    const start = conciseLocationLabel(block.start_location);
+    const end = conciseLocationLabel(block.end_location);
+    if (start) labels.push(start);
+    if (end) labels.push(end);
+  }
+
+  return labels
+    .filter(Boolean)
+    .filter((label, index, list) => {
+      if (index > 0 && list[index - 1] === label) return false;
+      return list.findIndex((item) => item === label) === index;
+    })
+    .slice(0, 10);
+}
+
+function conciseLocationLabel(location: ResolvedOperationalLocation | null | undefined) {
+  const label = String(location?.display_label || "").trim();
+  if (!label || location?.confidence_source === "coordinates_only") return null;
+  return label.replace(/^(near|inside|at)\s+/i, "");
+}
+
+function classifyStopSeverity(durationMinutes: any) {
+  const duration = Number(durationMinutes || 0);
+  if (duration >= MAJOR_STOP_MINUTES) return "major_stop";
+  if (duration >= MEDIUM_STOP_MINUTES) return "medium_stop";
+  if (duration >= SHORT_STOP_MINUTES) return "short_stop";
+  return "noise_stop";
 }
 
 function compareIdleEventToMotionBlocks(event: any, blocks: TimelineBlock[], latestPoint: any) {
@@ -609,6 +731,17 @@ function minutesBetween(start: any, end: any) {
   const endMs = new Date(end || 0).getTime();
   if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return null;
   return Math.max(0, Math.round((endMs - startMs) / 60000));
+}
+
+function sumDurations(blocks: TimelineBlock[]) {
+  return blocks.reduce((total, block) => total + Number(block.duration_minutes || 0), 0);
+}
+
+function isCoveragePartial(dayStartUtc: string, firstTelemetryAt: any) {
+  const dayStartMs = new Date(dayStartUtc || 0).getTime();
+  const firstMs = new Date(firstTelemetryAt || 0).getTime();
+  if (!Number.isFinite(dayStartMs) || !Number.isFinite(firstMs)) return true;
+  return firstMs - dayStartMs > 60 * 60 * 1000;
 }
 
 function finiteOrNull(value: any) {
