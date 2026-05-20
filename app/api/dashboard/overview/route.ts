@@ -15,6 +15,45 @@ export const dynamic = "force-dynamic";
 const SAFE_MEMORY_FIELDS =
   "id, memory_type, severity, title, summary, recommendation, last_seen_at";
 
+function sanitizeDashboardMemories(
+  memories: any[],
+  capabilities: ReturnType<typeof getRoleCapabilities>
+) {
+  return (memories || [])
+    .filter((memory) => {
+      if (
+        capabilities.canViewFinance &&
+        capabilities.canViewBilling &&
+        capabilities.canViewExpenses
+      ) {
+        return true;
+      }
+
+      const text = [
+        memory.memory_type,
+        memory.title,
+        memory.summary,
+        memory.recommendation,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+
+      return !/\b(revenue|profit|margin|rate|invoice|billing|billable|expense|payment)\b/.test(
+        text
+      );
+    })
+    .map((memory) => ({
+      id: memory.id,
+      memory_type: memory.memory_type,
+      severity: memory.severity,
+      title: memory.title,
+      summary: memory.summary,
+      recommendation: memory.recommendation || null,
+      last_seen_at: memory.last_seen_at || null,
+    }));
+}
+
 async function getAssetReviewSummary(companyId: string) {
   const { data, error } = await supabaseAdmin
     .from("fleet_assets")
@@ -177,7 +216,7 @@ export async function GET(req: Request) {
       fleet_health: fleetHealth,
       capabilities,
       ...(assetReviewSummary ? { asset_review_summary: assetReviewSummary } : {}),
-      active_memories: memories || [],
+      active_memories: sanitizeDashboardMemories(memories || [], capabilities),
       trucks_in_uganda: ugandaTrucks,
     });
   } catch (err: any) {

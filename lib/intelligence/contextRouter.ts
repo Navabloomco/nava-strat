@@ -87,7 +87,9 @@ export async function routeContext(
     options.roleCapabilities || getRoleCapabilities(options.roles || []);
   const sparesCostVisible = roleCapabilities.canViewFinance;
   const financialsVisible = roleCapabilities.canViewFinance;
-  const permissionBoundary = getPermissionBoundary(lower, roleCapabilities);
+  const permissionBoundary =
+    getPermissionBoundary(lower, roleCapabilities) ||
+    getIntentPermissionBoundary(intent, roleCapabilities);
   const context: any = {
     company,
     intent,
@@ -256,6 +258,21 @@ export async function routeContext(
     );
   }
   return context;
+}
+
+function getIntentPermissionBoundary(
+  intent: ContextIntent,
+  capabilities: ReturnType<typeof getRoleCapabilities>
+) {
+  if (intent === "dashboard_followup" && !capabilities.canViewOps) {
+    return {
+      category: "operations",
+      message:
+        "I can help within your role, but dashboard truck follow-ups, live status, idle/stops, and operational telemetry are restricted for this role.",
+    };
+  }
+
+  return null;
 }
 
 function usesLocationContext(intent: ContextIntent) {

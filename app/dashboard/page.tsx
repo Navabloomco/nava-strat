@@ -348,6 +348,7 @@ export default function DashboardPage() {
         rolesForDashboardCompany(memberships, activeCompanyId),
         isPlatformOwner
       );
+    const canSendOpsDashboardContext = Boolean(capabilities.canViewOps);
 
     return {
       page: "dashboard",
@@ -363,28 +364,28 @@ export default function DashboardPage() {
         canViewSpares: capabilities.canViewSpares,
         isPlatformOwner: capabilities.isPlatformOwner,
       },
-      highest_idle_trucks: (fleetHealth.highest_idle_trucks || [])
-        .slice(0, 5)
-        .map((truck: any) => ({
-          truck_id: truck.truck_id,
-          idle_minutes: truck.idle_minutes ?? null,
-          idle_hours: truck.idle_hours ?? null,
-        })),
-      highest_risk_trucks: (fleetHealth.highest_risk_trucks || [])
-        .slice(0, 5)
-        .map((truck: any) => ({
-          truck_id: truck.truck_id,
-          event_count: truck.event_count ?? null,
-        })),
-      recent_critical_events: (fleetHealth.recent_critical_events || [])
-        .slice(0, 5)
-        .map((event: any) => ({
-          truck_id: event.truck_id,
-          event_type: event.event_type,
-          severity: event.severity,
-          location_name: event.location_name || null,
-          created_at: event.created_at || null,
-        })),
+      highest_idle_trucks: canSendOpsDashboardContext
+        ? (fleetHealth.highest_idle_trucks || []).slice(0, 5).map((truck: any) => ({
+            truck_id: truck.truck_id,
+            idle_minutes: truck.idle_minutes ?? null,
+            idle_hours: truck.idle_hours ?? null,
+          }))
+        : [],
+      highest_risk_trucks: canSendOpsDashboardContext
+        ? (fleetHealth.highest_risk_trucks || []).slice(0, 5).map((truck: any) => ({
+            truck_id: truck.truck_id,
+            event_count: truck.event_count ?? null,
+          }))
+        : [],
+      recent_critical_events: canSendOpsDashboardContext
+        ? (fleetHealth.recent_critical_events || []).slice(0, 5).map((event: any) => ({
+            truck_id: event.truck_id,
+            event_type: event.event_type,
+            severity: event.severity,
+            location_name: event.location_name || null,
+            created_at: event.created_at || null,
+          }))
+        : [],
     };
   }
 
