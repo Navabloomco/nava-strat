@@ -123,6 +123,11 @@ export default function Sidebar() {
       show: roles.isPlatformOwner,
     },
     {
+      name: "Pilot Readiness",
+      href: "/admin/pilot-readiness",
+      show: roles.isPlatformOwner,
+    },
+    {
       name: "Provider Requests",
       href: "/admin/provider-requests",
       show: roles.isPlatformOwner,

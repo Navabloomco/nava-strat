@@ -91,6 +91,8 @@ The main product principle is convenience. Every user-facing page should make th
 | `/admin/providers/new` | Add provider page. |
 | `/admin/provider-requests` | Platform-owner provider setup requests. |
 | `/admin/provider-playbook` | Platform-owner internal provider onboarding playbook. |
+| `/admin/pilot-readiness` | Platform-owner pilot/go-live readiness checklist across tenants. |
+| `/admin/pilot-readiness/[companyId]` | Platform-owner tenant readiness detail grouped by setup, provider, asset, billing, role, operations, and Nava Eye checks. |
 | `/admin/tenants` | Platform-owner tenant billing/readiness preview across companies. |
 | `/admin/tenants/[companyId]` | Platform-owner tenant detail view with provider, member, telemetry, and strict billable asset summaries. |
 | `/admin/tenants/[companyId]/invoice-preview` | Platform-owner manual invoice preview for one tenant and billing period. Preview only; no invoice is created. |
@@ -116,6 +118,8 @@ The main product principle is convenience. Every user-facing page should make th
 | `GET /api/companies` | Returns active company memberships, normalized roles, platform-owner status, and visible companies. |
 | `POST /api/onboarding/company` | Creates/updates company onboarding data, operating context, and provider setup requests. |
 | `GET/PATCH /api/company-settings` | Reads and updates safe company operating context. No billing/provider secrets. |
+| `GET /api/admin/pilot-readiness` | Platform-owner-only pilot readiness checklist list across companies. Returns pass/warning/fail counts and safe tenant summaries. |
+| `GET /api/admin/pilot-readiness/[companyId]` | Platform-owner-only tenant pilot readiness detail grouped by readiness category. No mutation. |
 | `GET /api/admin/tenants` | Platform-owner-only tenant billing/readiness list using strict billable asset counts. |
 | `GET /api/admin/tenants/[companyId]` | Platform-owner-only tenant detail with safe company, member, provider, asset, pricing, and telemetry summaries. |
 | `GET /api/admin/tenants/[companyId]/invoice-preview` | Platform-owner-only manual invoice preview using strict billable assets, included allowance, and company asset pricing. No mutation. |
@@ -303,6 +307,7 @@ Current shared helper behavior:
 | Expense edit | elevated, `finance` |
 | Asset review/enablement | `platform_owner`, `owner`, `admin` |
 | Platform Health | `platform_owner` only |
+| Pilot Readiness Checklist | `platform_owner` only |
 | Tenant billing/readiness preview | `platform_owner` only |
 
 ## 6. Multi-Tenancy Rules
@@ -497,6 +502,26 @@ Invoice records are still MVP internal records. They must not create Stripe char
 
 Platform Health must verify the `billing_invoices` table before pilot invoice operations. Required readiness checks include all invoice columns, the named billing invoice indexes, and a status constraint that limits records to `draft`, `sent`, `paid`, and `void`. Invoice APIs and UI should degrade to a setup-required message if the table or required columns have not been applied yet.
 
+### Pilot Readiness Checklist
+
+`/admin/pilot-readiness` and `/admin/pilot-readiness/[companyId]` are platform-owner-only go-live checklists. They combine existing tenant, provider, asset review, billing, role, operations, and Nava Eye signals into a clear status:
+
+- `ready`: no failed checks and no warnings
+- `needs_attention`: no failed checks, but at least one warning
+- `blocked`: at least one failed check
+
+Readiness categories:
+
+- Company setup: company record, name/slug, operating context, billing currency, and asset unit price.
+- Provider setup: active provider, test/sync history, and recent sync freshness.
+- Asset review: imported assets, enabled intelligence assets, strict billable assets, unreviewed assets, and imported-but-not-enabled warnings.
+- Billing readiness: `billing_invoices` availability, invoice preview possibility, pricing, strict billable assets, and recent invoice records.
+- Role/security readiness: active owner/admin/platform-owner membership and role counts only.
+- Operations readiness: enabled assets, drivers, geofences, journeys, and saved routes.
+- Nava Eye readiness: enabled intelligence context, company AI settings count, and memory count.
+
+Pilot readiness routes are read-only. They must not create invoices, mutate setup data, expose provider secrets, expose raw payloads, expose private driver data, or reveal Nava Eye memory internals beyond safe counts.
+
 ### Enable Asset
 
 Enabling an asset should:
@@ -558,6 +583,7 @@ Review later should:
 - Do not treat platform tenant billing preview as invoicing. It is internal readiness/math only until a real billing engine exists.
 - Do not treat manual invoice records as external billing. They are internal lifecycle records only until a real billing engine is designed.
 - Do not let invoice record pages crash when the additive `billing_invoices` SQL has not been applied; show setup-required guidance instead.
+- Do not let pilot readiness mutate tenant setup or expose secrets; it is a platform-owner-only checklist built from safe counts and summaries.
 
 ## 11. Recent Important Commits/Features
 
@@ -639,3 +665,9 @@ Platform owners now have `GET/POST /api/admin/tenants/[companyId]/invoices` and 
 Draft invoices are created from server-side preview calculations only. The lifecycle is `draft -> sent -> paid` or `draft/sent -> void`. The tenant detail page lists recent invoices and can update status. No Stripe, PDF, email, payment collection, amount editing, or customer-facing invoice portal exists yet.
 
 Platform Health checks `billing_invoices` columns, expected invoice indexes, and the invoice status constraint. Invoice APIs return setup-required guidance when the table or required columns are missing instead of exposing a generic server crash.
+
+### Pilot Readiness Checklist
+
+Platform owners now have `/admin/pilot-readiness`, `/admin/pilot-readiness/[companyId]`, `GET /api/admin/pilot-readiness`, and `GET /api/admin/pilot-readiness/[companyId]`.
+
+The checklist returns pass/warning/fail checks grouped by company setup, provider setup, asset review, billing readiness, role/security readiness, operations readiness, and Nava Eye readiness. It is read-only and uses safe counts/summaries only.

@@ -23,6 +23,11 @@ const platformCards = [
     href: "/admin/tenants",
   },
   {
+    title: "Pilot Readiness",
+    body: "Run the go-live checklist across company setup, providers, assets, billing, roles, operations, and Nava Eye.",
+    href: "/admin/pilot-readiness",
+  },
+  {
     title: "Provider Requests",
     body: "Review client requests for provider setup.",
     href: "/admin/provider-requests",
