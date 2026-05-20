@@ -110,6 +110,88 @@ export function buildPricingPreview(company: any, strictBillableAssetCount: numb
   };
 }
 
+export function buildInvoicePreview(input: {
+  company: any;
+  importedAssetCount: number;
+  strictBillableAssetCount: number;
+  period?: string | null;
+}) {
+  const period = resolveBillingPeriod(input.period);
+  const assetUnitPrice = Number(input.company?.asset_unit_price || 0);
+  const pricingSet = Number.isFinite(assetUnitPrice) && assetUnitPrice > 0;
+  const billingCurrency = input.company?.billing_currency || "KES";
+  const includedAssets = Math.max(Number(input.company?.included_assets || 0), 0);
+  const extraBillableAssets = Math.max(
+    Number(input.strictBillableAssetCount || 0) - includedAssets,
+    0
+  );
+  const estimatedMonthlyTotal = pricingSet
+    ? extraBillableAssets * assetUnitPrice
+    : null;
+  const readinessWarnings = [];
+
+  if (!pricingSet) {
+    readinessWarnings.push("Pricing is missing or zero for this company.");
+  }
+
+  if (input.strictBillableAssetCount === 0) {
+    readinessWarnings.push("No strict billable assets are enabled for this company.");
+  }
+
+  return {
+    company: safeCompany(input.company),
+    billing_currency: billingCurrency,
+    selected_billing_period: period.selected_billing_period,
+    period_start: period.period_start,
+    period_end: period.period_end,
+    imported_asset_count: input.importedAssetCount,
+    strict_billable_asset_count: input.strictBillableAssetCount,
+    included_assets: includedAssets,
+    extra_billable_assets: extraBillableAssets,
+    asset_unit_price: pricingSet ? assetUnitPrice : null,
+    pricing_set: pricingSet,
+    estimated_monthly_total: estimatedMonthlyTotal,
+    line_items: [
+      {
+        label: "Included assets allowance",
+        description: "Included enabled intelligence vehicles covered by the tenant plan.",
+        quantity: includedAssets,
+        included_used: Math.min(input.strictBillableAssetCount, includedAssets),
+        unit_price: 0,
+        amount: 0,
+      },
+      {
+        label: "Extra enabled intelligence vehicles",
+        description: "Strict billable assets above the included asset allowance.",
+        quantity: extraBillableAssets,
+        unit_price: pricingSet ? assetUnitPrice : null,
+        amount: estimatedMonthlyTotal,
+      },
+    ],
+    readiness_warnings: readinessWarnings,
+    note: "Preview only. No invoice has been created.",
+  };
+}
+
+export function resolveBillingPeriod(period?: string | null) {
+  const now = new Date();
+  const periodText =
+    typeof period === "string" && /^\d{4}-\d{2}$/.test(period)
+      ? period
+      : `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const [yearText, monthText] = periodText.split("-");
+  const year = Number(yearText);
+  const monthIndex = Number(monthText) - 1;
+  const start = new Date(Date.UTC(year, monthIndex, 1, 0, 0, 0, 0));
+  const end = new Date(Date.UTC(year, monthIndex + 1, 0, 23, 59, 59, 999));
+
+  return {
+    selected_billing_period: periodText,
+    period_start: start.toISOString(),
+    period_end: end.toISOString(),
+  };
+}
+
 export function buildReadinessStatus(input: {
   providerCount: number;
   importedAssetCount: number;

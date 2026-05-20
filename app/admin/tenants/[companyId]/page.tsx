@@ -167,18 +167,23 @@ export default function PlatformTenantDetailPage() {
           body="Internal platform view for pilot billing readiness, provider setup, asset review, and telemetry freshness."
           actions={
             <div className="flex flex-col gap-2 sm:flex-row">
+              <Link href={`/admin/tenants/${companyId || ""}/invoice-preview`}>
+                <PrimaryButton type="button" className="w-full sm:w-auto">
+                  Invoice Preview
+                </PrimaryButton>
+              </Link>
               <Link href="/admin/tenants">
                 <SecondaryButton type="button" className="w-full sm:w-auto">
                   Back to Tenants
                 </SecondaryButton>
               </Link>
-              <PrimaryButton
+              <SecondaryButton
                 type="button"
                 onClick={() => companyId && loadTenant(companyId)}
                 className="w-full sm:w-auto"
               >
                 Refresh
-              </PrimaryButton>
+              </SecondaryButton>
             </div>
           }
         />
@@ -245,6 +250,13 @@ export default function PlatformTenantDetailPage() {
               <Metric label="Unreviewed" value={summary.unreviewed_asset_count || 0} />
               <Metric label="Excluded" value={summary.excluded_asset_count || 0} />
               <Metric label="Disabled" value={summary.disabled_asset_count || 0} />
+            </div>
+            <div className="mt-5">
+              <Link href={`/admin/tenants/${companyId || ""}/invoice-preview`}>
+                <PrimaryButton type="button" className="w-full sm:w-auto">
+                  Open Invoice Preview
+                </PrimaryButton>
+              </Link>
             </div>
           </Panel>
         </section>

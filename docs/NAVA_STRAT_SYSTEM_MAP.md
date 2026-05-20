@@ -93,6 +93,7 @@ The main product principle is convenience. Every user-facing page should make th
 | `/admin/provider-playbook` | Platform-owner internal provider onboarding playbook. |
 | `/admin/tenants` | Platform-owner tenant billing/readiness preview across companies. |
 | `/admin/tenants/[companyId]` | Platform-owner tenant detail view with provider, member, telemetry, and strict billable asset summaries. |
+| `/admin/tenants/[companyId]/invoice-preview` | Platform-owner manual invoice preview for one tenant and billing period. Preview only; no invoice is created. |
 | `/admin/client-visibility` | Client visibility link management. |
 | `/admin/company` | Company operating context settings. |
 | `/admin/health` | Platform-owner pilot readiness health check. |
@@ -117,6 +118,7 @@ The main product principle is convenience. Every user-facing page should make th
 | `GET/PATCH /api/company-settings` | Reads and updates safe company operating context. No billing/provider secrets. |
 | `GET /api/admin/tenants` | Platform-owner-only tenant billing/readiness list using strict billable asset counts. |
 | `GET /api/admin/tenants/[companyId]` | Platform-owner-only tenant detail with safe company, member, provider, asset, pricing, and telemetry summaries. |
+| `GET /api/admin/tenants/[companyId]/invoice-preview` | Platform-owner-only manual invoice preview using strict billable assets, included allowance, and company asset pricing. No mutation. |
 | `GET /api/platform/health` | Platform-owner-only environment, schema, constraint, and RPC health check. |
 
 ### Provider and Tracking
@@ -442,6 +444,26 @@ If `asset_unit_price` is missing or zero, the preview must show `Pricing not set
 
 The preview may show safe provider status and telemetry freshness, but must not show provider credentials, tokens, auth configs, raw provider payloads, private driver data, or public client data.
 
+### Manual Invoice Preview
+
+`/admin/tenants/[companyId]/invoice-preview` is a platform-owner-only manual invoice preview for one tenant and billing period. It is not an invoice engine.
+
+Invoice preview uses:
+
+- strict billable asset count
+- `companies.included_assets`
+- `companies.asset_unit_price`
+- `companies.billing_currency`
+- selected billing period, defaulting to the current month
+
+The estimated invoice total is:
+
+`max(strict_billable_asset_count - included_assets, 0) * asset_unit_price`
+
+If pricing is missing or zero, the preview must show a readiness warning and no monetary total. If strict billable count is zero, it must show a readiness warning. The preview must include the note: "Preview only. No invoice has been created."
+
+Manual invoice preview must not create invoice rows, billing events, PDFs, exports, emails, Stripe records, payment statuses, or customer-facing billing artifacts.
+
 ### Enable Asset
 
 Enabling an asset should:
@@ -501,6 +523,7 @@ Review later should:
 - Do not hard delete operational records in MVP workflows where archive/disable/end is available.
 - Do not add schema migrations silently from app code.
 - Do not treat platform tenant billing preview as invoicing. It is internal readiness/math only until a real billing engine exists.
+- Do not treat manual invoice preview as an invoice record. It must stay read-only until a real billing engine is designed.
 
 ## 11. Recent Important Commits/Features
 
@@ -568,3 +591,9 @@ This prepares the product for per-enabled-vehicle billing without building the f
 Platform owners now have `/admin/tenants` and `/admin/tenants/[companyId]` to review tenant readiness, provider presence, active member counts, imported assets, strict billable assets, pricing setup, telemetry freshness, and estimated monthly revenue.
 
 The preview is platform-only and deliberately excludes provider secrets, raw payloads, private driver data, and invoice/Stripe behavior.
+
+### Manual Invoice Preview
+
+Platform owners now have `/admin/tenants/[companyId]/invoice-preview` and `GET /api/admin/tenants/[companyId]/invoice-preview` to preview a tenant's monthly invoice math from strict billable assets, included asset allowance, and company pricing fields.
+
+The preview is read-only and deliberately excludes invoice creation, PDFs, email sending, Stripe/payment status, provider secrets, raw payloads, and private driver data.
