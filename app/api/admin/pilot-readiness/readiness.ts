@@ -375,7 +375,7 @@ function buildChecks(input: {
         : operatingFieldCount > 0
           ? "Some operating context is present, but pilot answers and asset suggestions will be better after completion."
           : "Operating context is missing.",
-      "Complete business type, asset types, billing unit, regions, and primary use case.",
+      "Complete business type, asset types, default billing/work unit, regions, and primary use case.",
       `/admin/company?companyId=${companyId}`
     ),
     check(

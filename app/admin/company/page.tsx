@@ -280,7 +280,7 @@ export default function CompanySettingsPage() {
               </div>
             </div>
 
-            <FormField label="Main billing unit" dark>
+            <FormField label="Default billing / work unit" dark>
               <select
                 value={mainBillingUnit}
                 onChange={(e) => setMainBillingUnit(e.target.value)}
@@ -292,6 +292,10 @@ export default function CompanySettingsPage() {
                   </option>
                 ))}
               </select>
+              <p className="mt-2 text-xs leading-5 text-slate-400">
+                This is only the default for this company. Actual billing can vary by
+                client, route, journey, or cargo terms.
+              </p>
             </FormField>
 
             <FormField label="Operating regions" dark>

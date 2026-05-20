@@ -332,7 +332,7 @@ export default function PlatformTenantDetailPage() {
                 value={formatContextValue(context.primary_asset_types)}
               />
               <KeyValue
-                label="Main billing unit"
+                label="Default billing / work unit"
                 value={formatContextValue(context.main_billing_unit)}
               />
               <KeyValue

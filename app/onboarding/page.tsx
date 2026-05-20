@@ -340,7 +340,7 @@ export default function Onboarding() {
 
                   <label className="block">
                     <span className="text-sm font-semibold text-slate-700">
-                      Main billing unit
+                      Default billing / work unit
                     </span>
                     <select
                       value={mainBillingUnit}
@@ -353,6 +353,10 @@ export default function Onboarding() {
                         </option>
                       ))}
                     </select>
+                    <p className="mt-2 text-xs leading-5 text-slate-500">
+                      This is only the company default. Actual billing can vary by client,
+                      route, journey, or cargo terms.
+                    </p>
                   </label>
 
                   <label className="block">

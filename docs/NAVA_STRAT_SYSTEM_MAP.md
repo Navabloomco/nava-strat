@@ -240,6 +240,8 @@ The main product principle is convenience. Every user-facing page should make th
 | `billing_invoices` | Platform-owner-created manual invoice records for tenant billing lifecycle tracking. Draft/sent/paid/void only; no Stripe/PDF/email. |
 | `analytics_events` | Privacy-safe internal product/activation analytics events. Best-effort only; no third-party analytics, no raw prompts/answers, and no secrets/raw provider payloads. |
 
+`companies.main_billing_unit` is a default billing/work measurement for operating context, not Nava Strat subscription billing and not a fixed rule for every customer job. Actual commercial billing can vary by client, route, journey, cargo, or revenue entry.
+
 ### Provider and Telemetry
 
 | Table | Used For |
