@@ -1,0 +1,544 @@
+# Nava Strat System Map
+
+Last updated: 2026-05-20
+
+This document is the repo source of truth for the current Nava Strat product surface. Keep it current when routes, tenant rules, provider sync, asset review, or role behavior changes.
+
+## 1. Product Summary
+
+Nava Strat is a multi-tenant fleet intelligence SaaS platform for transport, logistics, field service, construction, and mixed fleet operators.
+
+The product combines:
+
+- Company onboarding and operating context.
+- GPS/telematics provider connection and sync.
+- Asset review before intelligence/billing activation.
+- Live tracking for enabled intelligence assets.
+- Journeys, fuel, expenses, revenue, and profitability.
+- Driver directory and standing vehicle assignments.
+- Geofences for saved operational places.
+- Spares and repair lifecycle records.
+- Nava Eye, the cross-domain fleet intelligence assistant.
+- Platform-owner pilot readiness and provider onboarding tools.
+
+The main product principle is convenience. Every user-facing page should make the next action obvious and should not require users to know internal URLs, table IDs, provider payload structure, or tenant architecture.
+
+## 2. Current Route/Page Map
+
+### Public and Entry Routes
+
+| Route | Purpose |
+| --- | --- |
+| `/` | Public landing/root page. |
+| `/login` | Supabase-auth login entry. |
+| `/pricing` | Public pricing page. |
+| `/privacy` | Privacy policy. |
+| `/terms` | Terms page. |
+| `/onboarding` | Company creation, operating context capture, and initial provider setup request flow. |
+| `/client/track/[token]` | Public client tracking portal for tokenized client visibility links. |
+
+### Core App Routes
+
+| Route | Purpose |
+| --- | --- |
+| `/dashboard` | Customer-facing app dashboard and navigation hub. |
+| `/nava-eye` | Nava Eye assistant UI. |
+| `/tracking/live` | Live tracking view for enabled intelligence assets. |
+| `/tracking/link` | Tracking link helper page. |
+| `/tracking/processor` | Tracking processing/admin helper page. |
+| `/tracking/providers` | Older provider-facing tracking route. Provider Vault is the current admin route. |
+
+### Operations Routes
+
+| Route | Purpose |
+| --- | --- |
+| `/ops/dashboard` | Operations command center: active journeys, enabled assets, alerts, shared disruption context, geofences, and assigned drivers. |
+| `/ops/journey` | Journey list with create CTA and journey cards/table. |
+| `/ops/journey/new` | Create journey form with saved route picker, enabled vehicle picker, and driver picker. |
+| `/ops/journey/templates` | Saved Routes management for route presets. |
+| `/ops/drivers` | Driver directory and current vehicle assignments. |
+| `/geofences` | Company-scoped geofence list and archive/manage UI. |
+| `/geofences/new` | Create geofence form. |
+
+### Finance and Cost Routes
+
+| Route | Purpose |
+| --- | --- |
+| `/finance/dashboard` | Role-aware Finance Hub linking to safe finance workflows. |
+| `/finance/revenue` | Revenue management and rate/quantity workflow. |
+| `/fuel` | Fuel ledger. |
+| `/fuel/new` | Fuel entry form with JourneyPicker. |
+| `/fuel/providers` | Company-scoped fuel provider management. |
+| `/expenses` | Expense ledger. |
+| `/expenses/new` | Expense entry form with JourneyPicker. |
+| `/management/dashboard` | Management dashboard. |
+
+### Spares and Maintenance Routes
+
+| Route | Purpose |
+| --- | --- |
+| `/spares` | Spares and repairs lifecycle ledger. |
+| `/spares/usage/new` | Record spare usage, repair, transfer, retread, purchase, inspection, or removal. |
+| `/spares/parts` | Lightweight company parts catalog. No inventory counts or serial tracking yet. |
+
+### Admin and Platform Routes
+
+| Route | Purpose |
+| --- | --- |
+| `/admin` | Role-aware Admin Hub. Platform owners see platform tools; company owners/admins see company tools. |
+| `/admin/assets` | Asset Review for imported provider assets and intelligence/billing readiness. |
+| `/admin/providers` | Provider Vault for tracking provider configuration, testing, sync diagnostics, and enrichment diagnostics. |
+| `/admin/providers/new` | Add provider page. |
+| `/admin/provider-requests` | Platform-owner provider setup requests. |
+| `/admin/provider-playbook` | Platform-owner internal provider onboarding playbook. |
+| `/admin/client-visibility` | Client visibility link management. |
+| `/admin/company` | Company operating context settings. |
+| `/admin/health` | Platform-owner pilot readiness health check. |
+
+### Shared Components
+
+| File | Purpose |
+| --- | --- |
+| `app/components/AppShell.tsx` | App shell wrapper. |
+| `app/components/Sidebar.tsx` | Role-aware navigation. Uses `/api/companies` role payload defensively. |
+| `app/components/JourneyPicker.tsx` | Searchable open journey selector used in fuel, expenses, and revenue helper flows. |
+| `app/components/ui/Primitives.tsx` | Shared dark UI primitives such as `PageHeader`, `Panel`, `EmptyState`, buttons, and pills. |
+
+## 3. API Route Map
+
+### Auth, Companies, and Platform
+
+| API Route | Purpose |
+| --- | --- |
+| `GET /api/companies` | Returns active company memberships, normalized roles, platform-owner status, and visible companies. |
+| `POST /api/onboarding/company` | Creates/updates company onboarding data, operating context, and provider setup requests. |
+| `GET/PATCH /api/company-settings` | Reads and updates safe company operating context. No billing/provider secrets. |
+| `GET /api/platform/health` | Platform-owner-only environment, schema, constraint, and RPC health check. |
+
+### Provider and Tracking
+
+| API Route | Purpose |
+| --- | --- |
+| `GET/POST /api/providers` | Provider Vault list/create. Sanitizes provider credentials in responses. |
+| `GET/PATCH /api/providers/[id]` | Provider detail/update. Platform-owner-only advanced fleet config including supplemental feeds and auth profiles. |
+| `POST /api/providers/[id]/test` | Tests provider sync and returns sanitized diagnostics. |
+| `GET /api/providers/templates` | Provider templates. |
+| `GET/POST /api/providers/setup-requests` | Provider setup request list/create. |
+| `PATCH /api/providers/setup-requests/[id]` | Provider setup request status management. |
+| `POST /api/sync/providers` | Cron/provider automation sync. Requires `Authorization: Bearer <CRON_SECRET>`. |
+| `GET /api/tracking/live` | Live enabled-asset tracking response with geofence labels. |
+| `POST /api/tracking/analyze` | Tracking analysis helper. |
+| `POST /api/tracking/enrich-locations` | Location enrichment/cache helper. |
+| `POST /api/tracking/pull` | Provider pull helper. |
+| `POST /api/tracking/test-provider` | Retired legacy route. Returns HTTP 410. |
+| `GET /api/place-search` | Authenticated sanitized Nominatim place helper. |
+| `GET /api/reverse-geocode` | Authenticated sanitized reverse geocode helper. |
+
+### Asset Review and Intelligence Enablement
+
+| API Route | Purpose |
+| --- | --- |
+| `GET /api/fleet-assets` | Asset Review list, operating context, billing preview data, and strict billable counts. |
+| `PATCH /api/fleet-assets/[id]` | Enable, exclude, disable, or review-later an imported asset. |
+| `POST /api/fleet-assets/suggest-classification` | Asset classification suggestion endpoint using company operating context as weak signal. |
+
+### Operations
+
+| API Route | Purpose |
+| --- | --- |
+| `GET/POST /api/journeys` | Company-scoped journey list/create with role-gated finance fields. |
+| `GET/POST /api/journey-templates` | Saved Routes list/create. |
+| `PATCH /api/journey-templates/[id]` | Saved Route update/disable. |
+| `GET /api/ops/dashboard` | Ops dashboard data, alerts, shared disruption candidate, geofence context, and assigned drivers. |
+| `GET /api/ops/enabled-assets` | Active, intelligence-enabled asset picker with current assigned driver. |
+| `POST /api/ops/alerts/apply-context` | Applies context labels to excessive idle telemetry events. No suppression or deletion. |
+| `GET/POST /api/geofences` | Company-scoped geofence list/create. |
+| `PATCH /api/geofences/[id]` | Geofence update/archive. No hard delete. |
+
+### Drivers
+
+| API Route | Purpose |
+| --- | --- |
+| `GET/POST /api/drivers` | Company-scoped driver directory. GET hides license number in list. |
+| `PATCH /api/drivers/[id]` | Driver update. |
+| `GET/POST /api/driver-assignments` | Current standing vehicle assignment list/create. |
+| `PATCH /api/driver-assignments/[id]` | End assignment or update active assignment start. No hard delete. |
+
+### Finance, Fuel, and Expenses
+
+| API Route | Purpose |
+| --- | --- |
+| `GET/PATCH /api/finance/revenue` | Revenue/rates/quantity workflow. Finance visibility/edit gates apply. |
+| `GET/POST /api/fuel` | Fuel ledger and fuel entry. Role-gated, company-scoped, explicit safe fields. |
+| `GET/POST /api/fuel/providers` | Company-scoped fuel provider settings. |
+| `PATCH /api/fuel/providers/[id]` | Fuel provider update/disable. No hard delete. |
+| `GET/POST /api/expenses` | Expense ledger and creation. Finance role gates apply. |
+| `GET /api/management/dashboard` | Management dashboard data. |
+
+### Spares and Maintenance
+
+| API Route | Purpose |
+| --- | --- |
+| `GET/POST /api/spares/usage` | Company-scoped spare lifecycle event ledger. No inventory mutation. |
+| `GET/POST /api/spares/parts` | Lightweight parts catalog. No stock counts or serial tracking. |
+| `PATCH /api/spares/parts/[id]` | Parts catalog update/disable. No hard delete. |
+
+### Nava Eye
+
+| API Route | Purpose |
+| --- | --- |
+| `POST /api/nava-eye/copilot` | Main Nava Eye assistant route. Uses context router, entity resolver, role-aware context, deterministic fallbacks, and AI provider when configured. |
+| `POST /api/nava-eye/ask` | Older Nava Eye ask route. |
+| `GET /api/nava-eye/fleet-summary` | Fleet summary helper. |
+| `POST /api/nava-eye/fuel-risk` | Fuel risk helper. |
+| `POST /api/nava-eye/run-events` | Event engine runner. |
+| `GET /api/nava-eye/truck-report` | Truck report helper. |
+
+### Client Visibility
+
+| API Route | Purpose |
+| --- | --- |
+| `GET/POST /api/client-visibility-links` | Admin-managed tokenized customer tracking links. |
+| `PATCH /api/client-visibility-links/[id]` | Update/archive client visibility link. |
+| `GET /api/client/track/[token]` | Public token-scoped client tracking response. Must remain privacy-limited. |
+
+## 4. Database Tables and Usage
+
+### Core Tenancy and Settings
+
+| Table | Used For |
+| --- | --- |
+| `companies` | Tenant record, subscription/billing config, operating context, and workspace identity. |
+| `company_users` | Active user memberships and roles. This is the source of tenant access. |
+| `company_ai_settings` | Nava Eye provider/model settings. |
+| `nava_eye_memory` | Nava Eye memory and recurring operational facts. |
+
+### Provider and Telemetry
+
+| Table | Used For |
+| --- | --- |
+| `tracking_providers` | Provider credentials/config, auth type, fleet URL, field mapping, fleet config, sync status, and test diagnostics. |
+| `provider_setup_requests` | Assisted provider onboarding requests. |
+| `provider_templates` | Reusable provider setup templates. |
+| `fleet_assets` | Imported provider assets, latest asset state, review status, intelligence enablement, and billing readiness. |
+| `telemetry_logs` | Historical telemetry points from provider sync: location, speed, fuel level, provider location label, validation, and raw payload server-side. |
+| `telemetry_events` | Derived operational events and alert context annotations. |
+| `location_cache` | Reverse-geocoded location cache. |
+| `fuel_risk_scores` | Fuel risk scoring output from fuel risk engine. |
+
+### Operations
+
+| Table | Used For |
+| --- | --- |
+| `journeys` | Operational trips, client/route/truck/driver text, fuel estimate, status, and finance/revenue fields. |
+| `journey_templates` | Saved Routes for faster journey creation. |
+| `geofences` | Company-scoped saved places: depots, yards, ports, customer sites, loading/offloading zones, border points, risk zones, service areas, and other. |
+| `drivers` | Company driver directory. License fields are not exposed broadly. |
+| `asset_driver_assignments` | Standing driver-to-asset responsibility windows until ended. |
+
+### Finance and Cost
+
+| Table | Used For |
+| --- | --- |
+| `fuel_logs` | Manual fuel entries linked to journeys when available. |
+| `fuel_providers` | Fuel vendor/default price settings. |
+| `truck_route_fuel_profiles` | Route/truck fuel profile averages for operational fuel expectations. |
+| `expenses` | Expense ledger records linked to journeys when available. |
+
+### Spares and Maintenance
+
+| Table | Used For |
+| --- | --- |
+| `spare_lifecycle_events` | Spare usage, install/remove/repair/retread/transfer/purchase/inspection lifecycle records. |
+| `spare_catalog_parts` | Lightweight reusable parts catalog. No inventory counts yet. |
+
+### Client Visibility
+
+| Table | Used For |
+| --- | --- |
+| `client_visibility_links` | Tokenized public portal links for selected journeys/customers. |
+
+### Legacy or Caution Tables Still Referenced
+
+| Table | Current Status |
+| --- | --- |
+| `user_roles` | Referenced by older role components/hooks. Active product role source should be `company_users`. |
+| `financial_documents` / `financial-documents` | Referenced by legacy finance evidence components. Current `/finance/dashboard` does not render those components. |
+| `trucks` | Referenced by legacy financial evidence uploader. Current fleet identity should flow through `fleet_assets`. |
+
+## 5. Role Model
+
+Roles are normalized by trimming and lowercasing. Shared helpers live in `lib/api/roleAccess.ts`.
+
+| Role | Meaning |
+| --- | --- |
+| `platform_owner` | Platform-level operator. Can see all companies through controlled APIs and platform-only tools. |
+| `owner` | Company owner. Can administer company setup and business workflows. |
+| `admin` | Company admin. Can administer company setup and business workflows. |
+| `ops` | Operations user. Can manage operational workflows such as journeys, fuel, drivers, assignments, spares usage, and alerts where allowed. |
+| `finance` | Finance user. Can view/edit finance workflows where allowed. |
+| `management` | Management viewer. Can view management/finance/operations summaries where allowed, generally not edit. |
+
+Current shared helper behavior:
+
+| Capability | Roles |
+| --- | --- |
+| Elevated/admin | `platform_owner`, `owner`, `admin` |
+| Finance view | elevated, `finance`, `management` |
+| Finance edit | elevated, `finance` |
+| Journey view | elevated, `ops`, `management`, `finance` |
+| Journey edit | elevated, `ops` |
+| Fuel view | elevated, `ops`, `finance`, `management` |
+| Fuel edit | elevated, `ops`, `finance` |
+| Expense view | elevated, `finance`, `management` |
+| Expense edit | elevated, `finance` |
+| Asset review/enablement | `platform_owner`, `owner`, `admin` |
+| Platform Health | `platform_owner` only |
+
+## 6. Multi-Tenancy Rules
+
+- `company_users` is the access-control source.
+- Active membership requires `is_active = true`.
+- APIs must resolve a company before querying tenant data.
+- Same-company role checks matter: a role in one company must not authorize mutation in another company.
+- `platform_owner` can pass `companyId` on supported internal/admin APIs.
+- Non-platform users may only access companies where they have an active membership.
+- Tenant data should be scoped by `company_id` before returning or mutating.
+- Public client portal routes must remain token-scoped and must not expose internal company dashboards, provider payloads, driver private data, or unreviewed assets.
+- Raw provider payloads are server-side diagnostics/storage only and must not be returned to normal browser UI.
+
+## 7. Provider Integration Model
+
+Provider sync is implemented in `lib/providers/engine.ts` with normalization in `lib/providers/normalizeVehicle.ts`.
+
+### Primary Flow
+
+1. Read an active `tracking_providers` record.
+2. Authenticate with the provider using `auth_type` and configured credentials.
+3. Fetch the primary fleet feed from `fleet_url` or `fleet_config.fleet_url`.
+4. Normalize provider rows into canonical fields:
+   - `truck_id`
+   - `latitude`
+   - `longitude`
+   - `speed`
+   - `fuel_level`
+   - `location_label`
+   - `recorded_at`
+5. Upsert `fleet_assets` by `(provider_id, truck_id)`.
+6. Insert `telemetry_logs`.
+7. Do not overwrite reviewed asset classification, billing, or intelligence enablement fields on sync.
+
+### Provider Import Defaults
+
+New imported assets default to:
+
+- `asset_category = unknown`
+- `billing_status = unreviewed`
+- `intelligence_enabled = false`
+- `first_seen_at = now`
+- `status = active`
+
+This is intentional. Imported provider assets must be reviewed before appearing as enabled intelligence vehicles.
+
+### Supplemental Enrichment Feeds
+
+`tracking_providers.fleet_config.supplemental_feeds` supports provider-agnostic enrichment feeds for data that is not present in the primary feed, such as fuel, odometer, engine hours, temperature, battery voltage, or driver name.
+
+Supported feed capabilities:
+
+- `GET` or `POST`.
+- JSON payloads.
+- Recursive template macros.
+- Vehicle row paths.
+- Match keys.
+- Explicit field mappings.
+- Sanitized diagnostics.
+
+Currently persisted enrichment is intentionally conservative. `fuel_level` is the main end-to-end stored enrichment field. Other mapped fields may be diagnosed or merged internally only where code supports them.
+
+### Supplemental Auth Profiles
+
+`tracking_providers.fleet_config.supplemental_auth_profiles` allows a supplemental feed to use a different login flow than the primary fleet feed.
+
+Key rules:
+
+- Platform-owner-only advanced configuration.
+- Tokens are captured for the current sync/test run only and are never persisted.
+- Diagnostics may show status, key names, paths checked, macro names, and booleans.
+- Diagnostics must never show tokens, cookies, passwords, Authorization values, raw auth responses, raw request bodies, or credential values.
+- `username_override` lets a supplemental auth profile use a different login identifier than `tracking_providers.username`.
+
+## 8. BlueTrax Current Status and Limitation
+
+Current known BlueTrax state:
+
+- Primary location endpoint works:
+  - `https://public-api.bluetrax.co.ke/api/Public/fleet_current_location`
+- Primary feed includes location-style fields such as:
+  - alerts
+  - course
+  - timezone
+  - fixtime
+  - latitude
+  - location
+  - longitude
+  - mileage
+  - reg_no
+  - speed
+  - unit_id
+- Primary feed does not include the Fleet Current Status `Current Fuel` column.
+- BlueTrax web UI Fleet Current Status uses:
+  - `POST https://api.bluetrax.co.ke/rest/analytics/vehicle`
+  - `reportType = FleetCurrentStatus`
+  - row path `items`
+  - fuel key `currentFuelLevel`
+- That analytics endpoint appears to require BlueTrax web-session style auth, not the same public fleet API credential flow.
+
+Nava has generic support for the needed shape:
+
+- `supplemental_feeds`
+- `supplemental_auth_profiles`
+- `username_override`
+- auth metadata macros such as `analytics_user_id`
+- sanitized feed/auth/request/response diagnostics
+
+Current limitation:
+
+- BlueTrax current fuel will not ingest until the configured supplemental auth profile successfully captures the correct web analytics token or BlueTrax provides official report/API access for that endpoint.
+- Do not paste browser cookies, session tokens, or Authorization values into config, chat, logs, or docs.
+- Do not scrape the visual UI unless explicitly approved as a separate product/security decision.
+
+## 9. Asset Review and Billing Readiness Rules
+
+Asset Review is the gate between imported provider devices and billable Nava intelligence vehicles.
+
+### Billable Asset Rule
+
+An asset is billable-ready only when all are true:
+
+- `fleet_assets.status = active`
+- `fleet_assets.billing_status = enabled`
+- `fleet_assets.intelligence_enabled = true`
+- `fleet_assets.billing_enabled_at is not null`
+
+Do not count assets as billable merely because one of `billing_status = enabled` or `intelligence_enabled = true` is true.
+
+### Enable Asset
+
+Enabling an asset should:
+
+- require a non-`unknown` `asset_category`
+- set `billing_status = enabled`
+- set `intelligence_enabled = true`
+- set `reviewed_at = now`
+- set `reviewed_by = user.id`
+- set `billing_enabled_at = existing billing_enabled_at OR now`
+- set `billing_disabled_at = null`
+- clear `excluded_reason`
+
+### Disable or Exclude Asset
+
+Disabling or excluding should:
+
+- set `intelligence_enabled = false`
+- set `billing_status = disabled` or `excluded`
+- set `billing_disabled_at = now` when currently enabled/billable or when empty
+- keep `billing_enabled_at` as historical first-enable trace
+- set `excluded_reason` for excluded assets
+
+### Review Later
+
+Review later should:
+
+- set `billing_status = unreviewed`
+- set `intelligence_enabled = false`
+- set `billing_disabled_at = now` when it was enabled/billable
+- keep `billing_enabled_at` as historical trace
+- follow current code intent for `excluded_reason`; at present this action clears it
+
+### Intelligence Visibility
+
+- Live tracking, ops dashboard, Nava Eye, enabled vehicle pickers, and client-visible live context should only use reviewed/enabled intelligence assets unless a route is explicitly an admin review route.
+- Imported unreviewed assets may be visible in Asset Review and platform/admin diagnostics, but must not become live/intelligence/client-visible assets automatically.
+
+## 10. Known "Do Not Break" Rules
+
+- Do not hardcode customer emails, company IDs, truck IDs, or provider IDs for permissions.
+- Do not use old `SUPER_ADMIN` or contact-email permission gates.
+- Do not weaken `company_users` role semantics.
+- Do not expose provider credentials, cookies, tokens, Authorization headers, API keys, passwords, or raw provider payloads.
+- Do not expose disabled or unreviewed asset telemetry/location outside admin review/diagnostics.
+- Do not auto-enable imported assets.
+- Do not let provider sync overwrite reviewed asset category, billing status, intelligence enablement, or billing timestamps.
+- Do not expose driver phone, license, notes, or employee code in Nava Eye or public/client routes.
+- Do not expose financial values to plain ops users.
+- Do not suppress, delete, or mutate telemetry alerts unless the route explicitly does so. Shared disruption context annotation only adds context fields.
+- Do not remove geofencing. Geofencing is core Nava Strat functionality.
+- Do not require inventory, serial numbers, or catalog parts before recording spare usage.
+- Do not make accusations in Nava Eye. Use evidence-based wording such as "I cannot confirm" and "what to verify next."
+- Do not treat `fuel_level > 100` as invalid by default. Provider fuel readings may be litres or provider units, not percent.
+- Do not display fuel as `%` unless the unit is known to be percent.
+- Do not call external news/weather APIs for disruption context.
+- Do not hard delete operational records in MVP workflows where archive/disable/end is available.
+- Do not add schema migrations silently from app code.
+
+## 11. Recent Important Commits/Features
+
+### Supplemental Provider Auth Profiles
+
+Provider enrichment feeds can use named auth profiles in `fleet_config.supplemental_auth_profiles`. A feed can specify `auth_profile`, authenticate lazily, use that token only for the current test/sync run, and expose only sanitized diagnostics.
+
+This enables providers where primary location data and analytics/report data use different auth sessions.
+
+### `username_override`
+
+Supplemental auth profiles support `username_override` so a report/login feed can use a different username/email than the primary provider sync.
+
+This is important for providers such as BlueTrax where:
+
+- the public API username may be a short API account name
+- the web analytics login may require an email address
+
+The override is redacted in provider responses and diagnostics.
+
+### `roleAccess` Helper
+
+`lib/api/roleAccess.ts` centralizes role normalization and key workflow capabilities:
+
+- finance view/edit
+- journey view/edit
+- fuel view/edit
+- expense view/edit
+- same-company role extraction
+
+Use this helper for new active APIs instead of reimplementing broad "any active user" checks.
+
+### Sanitized API Response Fields
+
+Active APIs have been moving away from broad `select("*")` and broad full-row returns.
+
+Rules for new/updated APIs:
+
+- select explicit fields
+- return only UI-needed fields
+- hide raw payloads and credentials
+- hide finance fields from roles that should not see them
+- keep company scoping strict
+
+### Strict Billable Asset Count
+
+Asset Review now distinguishes:
+
+- imported assets
+- unreviewed assets
+- enabled intelligence assets
+- strict billable enabled assets
+
+Strict billable count requires:
+
+- active asset
+- enabled billing status
+- intelligence enabled
+- non-null billing enabled timestamp
+
+This prepares the product for per-enabled-vehicle billing without building the full invoicing engine yet.
