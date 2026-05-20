@@ -1,4 +1,5 @@
 import { supabaseAdmin } from "../../../../../../lib/supabaseAdmin";
+import { recordAnalyticsEvent } from "../../../../../../lib/api/analyticsEvents";
 import {
   BILLING_INVOICE_FIELDS,
   billingInvoicesSetupResponse,
@@ -161,6 +162,23 @@ export async function POST(
       }
       throw insertError;
     }
+
+    await recordAnalyticsEvent({
+      companyId: params.companyId,
+      userId: access.user.id,
+      eventName: "draft_invoice_created",
+      eventCategory: "billing",
+      source: "api/admin/tenants/invoices",
+      metadata: {
+        invoice_id: invoice.id,
+        period_start: invoice.period_start,
+        period_end: invoice.period_end,
+        strict_billable_assets: invoice.strict_billable_assets,
+        extra_billable_assets: invoice.extra_billable_assets,
+        currency: invoice.currency,
+        total: invoice.total,
+      },
+    });
 
     return noStoreJson(
       {

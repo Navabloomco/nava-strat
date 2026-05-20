@@ -226,6 +226,7 @@ The main product principle is convenience. Every user-facing page should make th
 | `company_ai_settings` | Nava Eye provider/model settings. |
 | `nava_eye_memory` | Nava Eye memory and recurring operational facts. |
 | `billing_invoices` | Platform-owner-created manual invoice records for tenant billing lifecycle tracking. Draft/sent/paid/void only; no Stripe/PDF/email. |
+| `analytics_events` | Privacy-safe internal product/activation analytics events. Best-effort only; no third-party analytics, no raw prompts/answers, and no secrets/raw provider payloads. |
 
 ### Provider and Telemetry
 
@@ -591,6 +592,7 @@ Review later should:
 - Do not treat manual invoice records as external billing. They are internal lifecycle records only until a real billing engine is designed.
 - Do not let invoice record pages crash when the additive `billing_invoices` SQL has not been applied; show setup-required guidance instead.
 - Do not let pilot readiness mutate tenant setup or expose secrets; it is a platform-owner-only checklist built from safe counts and summaries.
+- Do not let analytics event recording break a primary user workflow. Analytics metadata must be sanitized and must not contain provider secrets, raw payloads, tokens, cookies, passwords, driver private data, or full Nava Eye prompt/answer text.
 
 ## 11. Recent Important Commits/Features
 
@@ -678,3 +680,22 @@ Platform Health checks `billing_invoices` columns, expected invoice indexes, and
 Platform owners now have `/admin/pilot-readiness`, `/admin/pilot-readiness/[companyId]`, `GET /api/admin/pilot-readiness`, and `GET /api/admin/pilot-readiness/[companyId]`.
 
 The checklist returns pass/warning/fail checks grouped by company setup, provider setup, asset review, billing readiness, role/security readiness, operations readiness, and Nava Eye readiness. It is read-only and uses safe counts/summaries only.
+
+### Analytics Events Phase 1
+
+Nava Strat now has a server-only helper at `lib/api/analyticsEvents.ts` for privacy-safe internal product analytics. The helper records to `analytics_events` on a best-effort basis and never blocks the user workflow if the table is missing or an insert fails.
+
+Phase 1 instruments only high-value server-side events:
+
+- `provider_test_success`
+- `provider_test_failed`
+- `first_asset_enabled`
+- `asset_enabled`
+- `draft_invoice_created`
+- `invoice_marked_sent`
+- `invoice_marked_paid`
+- `invoice_voided`
+- `nava_eye_question_asked`
+- `nava_eye_permission_boundary_shown`
+
+Analytics metadata is sanitized before insert. It must not store provider credentials, auth config, tokens, cookies, passwords, raw provider payloads, private driver fields, or full Nava Eye prompt/answer text. There is no client-side tracking, third-party analytics vendor, or user-facing analytics dashboard yet.

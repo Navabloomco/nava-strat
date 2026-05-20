@@ -1,4 +1,5 @@
 import { supabaseAdmin } from "../../../../../../../lib/supabaseAdmin";
+import { recordAnalyticsEvent } from "../../../../../../../lib/api/analyticsEvents";
 import {
   BILLING_INVOICE_FIELDS,
   billingInvoicesSetupResponse,
@@ -111,6 +112,27 @@ export async function PATCH(
         );
       }
       throw updateError;
+    }
+
+    const statusEventName: Record<string, string> = {
+      sent: "invoice_marked_sent",
+      paid: "invoice_marked_paid",
+      void: "invoice_voided",
+    };
+
+    if (statusEventName[nextStatus]) {
+      await recordAnalyticsEvent({
+        companyId: params.companyId,
+        userId: access.user.id,
+        eventName: statusEventName[nextStatus],
+        eventCategory: "billing",
+        source: "api/admin/tenants/invoices/status",
+        metadata: {
+          invoice_id: updatedInvoice.id,
+          previous_status: currentStatus,
+          new_status: nextStatus,
+        },
+      });
     }
 
     return noStoreJson({

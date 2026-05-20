@@ -5,6 +5,7 @@ import {
   ProviderRecord,
   runProviderSync,
 } from "../../../../../lib/providers/engine";
+import { recordAnalyticsEvent } from "../../../../../lib/api/analyticsEvents";
 
 export const dynamic = "force-dynamic";
 
@@ -25,6 +26,7 @@ type ProviderCapabilities = {
 type ResolveCompanyResult =
   | {
       company: ResolvedCompany;
+      userId: string;
       isPlatformOwner: boolean;
       roles: string[];
       capabilities: ProviderCapabilities;
@@ -33,6 +35,7 @@ type ResolveCompanyResult =
   | {
       error: NextResponse;
       company?: never;
+      userId?: never;
       isPlatformOwner?: never;
       roles?: never;
       capabilities?: never;
@@ -309,6 +312,45 @@ function sanitizeResultPathMap(value: any) {
   );
 }
 
+function providerFailureCategory(result: any) {
+  if (result?.success) return null;
+  const message = String(result?.message || "").toLowerCase();
+  if (message.includes("auth") || message.includes("login") || message.includes("token")) {
+    return "authentication";
+  }
+  if (message.includes("fetch") || message.includes("network") || message.includes("url")) {
+    return "fetch";
+  }
+  if (message.includes("vehicle") || message.includes("normalize")) {
+    return "parsing";
+  }
+  if (message.includes("schema") || message.includes("column") || message.includes("database")) {
+    return "storage";
+  }
+  return "provider_test_failed";
+}
+
+function analyticsSupplementalCounts(diagnostics: any) {
+  const feeds = Array.isArray(diagnostics?.feeds) ? diagnostics.feeds : [];
+  const fieldsMergedTotal = feeds.reduce((sum: number, feed: any) => {
+    const merged = feed?.mapped_fields_merged;
+    if (!merged || typeof merged !== "object" || Array.isArray(merged)) return sum;
+
+    return sum + Object.values(merged).reduce((fieldSum: number, value: any) => {
+      const count = Number(value || 0);
+      return fieldSum + (Number.isFinite(count) ? count : 0);
+    }, 0);
+  }, 0);
+
+  return {
+    supplemental_feeds_configured: Number(diagnostics?.supplemental_feeds_configured || 0),
+    supplemental_feeds_attempted: Number(diagnostics?.supplemental_feeds_attempted || 0),
+    supplemental_rows_found: Number(diagnostics?.supplemental_rows_found || 0),
+    supplemental_matches_found: Number(diagnostics?.supplemental_matches_found || 0),
+    supplemental_fields_merged_total: fieldsMergedTotal,
+  };
+}
+
 async function resolveCompany(
   req: Request,
   requestedCompanyId?: string | null
@@ -368,7 +410,13 @@ async function resolveCompany(
       };
     }
 
-    return { company: company as ResolvedCompany, isPlatformOwner, roles, capabilities };
+    return {
+      company: company as ResolvedCompany,
+      userId: user.id,
+      isPlatformOwner,
+      roles,
+      capabilities,
+    };
   }
 
   const companyId = activeMemberships
@@ -400,7 +448,13 @@ async function resolveCompany(
     };
   }
 
-  return { company: company as ResolvedCompany, isPlatformOwner, roles, capabilities };
+  return {
+    company: company as ResolvedCompany,
+    userId: user.id,
+    isPlatformOwner,
+    roles,
+    capabilities,
+  };
 }
 
 export async function POST(
@@ -490,6 +544,25 @@ export async function POST(
       result.supplemental_diagnostics,
       resolved.isPlatformOwner
     );
+
+    await recordAnalyticsEvent({
+      companyId: resolved.company.id,
+      userId: resolved.userId,
+      eventName: result.success ? "provider_test_success" : "provider_test_failed",
+      eventCategory: "provider",
+      source: "api/providers/test",
+      metadata: {
+        provider_id: provider.id,
+        provider_name: provider.provider_name || null,
+        provider_slug: provider.provider_slug || null,
+        success: Boolean(result.success),
+        failure_category: providerFailureCategory(result),
+        vehicles_found: result.vehicleCount,
+        assets_count: assetsCount || 0,
+        telemetry_count: telemetryCount || 0,
+        ...analyticsSupplementalCounts(result.supplemental_diagnostics),
+      },
+    });
 
     if (resolved.capabilities.can_edit_advanced_provider_config) {
       responseBody.sample_normalized = sanitizeNormalizedSample(

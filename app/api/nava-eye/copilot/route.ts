@@ -12,6 +12,7 @@ import {
   normalizeRole,
   rolesForCompany,
 } from "../../../../lib/api/roleAccess";
+import { recordAnalyticsEvent } from "../../../../lib/api/analyticsEvents";
 
 export async function POST(req: Request) {
   try {
@@ -122,6 +123,38 @@ export async function POST(req: Request) {
       roleCapabilities,
       dashboardContext,
     });
+
+    await recordAnalyticsEvent({
+      companyId: company.id,
+      userId: user.id,
+      eventName: "nava_eye_question_asked",
+      eventCategory: "nava_eye",
+      source: "api/nava-eye/copilot",
+      metadata: {
+        company_id: company.id,
+        question_category: context.intent || "general",
+        intent: context.intent || "general",
+        role_category: roleCategory(companyRoles, roleCapabilities),
+        role_capabilities: context.capabilities || {},
+        had_dashboard_context: Boolean(dashboardContext),
+      },
+    });
+
+    if (context.permission_boundary && !context.investigation_case_file) {
+      await recordAnalyticsEvent({
+        companyId: company.id,
+        userId: user.id,
+        eventName: "nava_eye_permission_boundary_shown",
+        eventCategory: "nava_eye",
+        source: "api/nava-eye/copilot",
+        metadata: {
+          boundary_category: context.permission_boundary.category || "restricted",
+          intent: context.intent || "general",
+          role_category: roleCategory(companyRoles, roleCapabilities),
+          had_dashboard_context: Boolean(dashboardContext),
+        },
+      });
+    }
 
     // 3. Fetch active memories for this company (up to 5 most recent)
     const activeMemories = sanitizeActiveMemories(
@@ -651,6 +684,18 @@ function sanitizeActiveMemories(
       recommendation: memory.recommendation || null,
       last_seen_at: memory.last_seen_at || null,
     }));
+}
+
+function roleCategory(
+  roles: string[],
+  capabilities: ReturnType<typeof getRoleCapabilities>
+) {
+  if (capabilities.isPlatformOwner) return "platform_owner";
+  if (roles.some((role) => ["owner", "admin"].includes(role))) return "elevated";
+  if (roles.includes("finance")) return "finance";
+  if (roles.includes("management")) return "management";
+  if (roles.includes("ops")) return "ops";
+  return "member";
 }
 
 function buildPermissionBoundaryAnswer(permissionBoundary: any) {

@@ -6,6 +6,7 @@ import {
   normalizeRole,
   rolesForCompany,
 } from "../../../../lib/api/roleAccess";
+import { recordAnalyticsEvent } from "../../../../lib/api/analyticsEvents";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -266,6 +267,24 @@ export async function PATCH(
       .single();
 
     if (updateError) throw updateError;
+
+    if (action === "enable") {
+      const firstTime = !asset.billing_enabled_at;
+      await recordAnalyticsEvent({
+        companyId: resolved.company.id,
+        userId: resolved.userId,
+        eventName: firstTime ? "first_asset_enabled" : "asset_enabled",
+        eventCategory: "tenant_activation",
+        source: "api/fleet-assets",
+        metadata: {
+          asset_id: updatedAsset.id,
+          asset_category: updatedAsset.asset_category,
+          billing_status: updatedAsset.billing_status,
+          intelligence_enabled: Boolean(updatedAsset.intelligence_enabled),
+          first_time: firstTime,
+        },
+      });
+    }
 
     return noStoreJson({
       success: true,

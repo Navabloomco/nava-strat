@@ -143,6 +143,19 @@ const REQUIRED_TABLES: RequiredTable[] = [
     ],
   },
   {
+    table: "analytics_events",
+    columns: [
+      "id",
+      "company_id",
+      "user_id",
+      "event_name",
+      "event_category",
+      "source",
+      "metadata",
+      "created_at",
+    ],
+  },
+  {
     table: "drivers",
     columns: [
       "id",
