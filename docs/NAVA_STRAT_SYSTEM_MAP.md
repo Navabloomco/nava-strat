@@ -16,6 +16,8 @@ Brand and domain architecture:
 - Existing company domain: `https://www.navabloomco.com`.
 - Existing Vercel production domain: `https://nava-strat.vercel.app`.
 
+The public root route is domain-aware: `navabloomco.com` and `www.navabloomco.com` render the Nava Bloom Co. parent-company homepage, while `navastrat.co`, `www.navastrat.co`, and `nava-strat.vercel.app` render the Nava Strat product landing page.
+
 Keep the existing company and Vercel domains working during the product-domain transition. Public metadata and canonical product URLs should resolve to `https://navastrat.co` through `NEXT_PUBLIC_SITE_URL`, while product URL generation should still prefer request origin where appropriate and use `NEXT_PUBLIC_SITE_URL` as the canonical fallback instead of hardcoding production domains throughout app logic.
 
 The product combines:
@@ -39,7 +41,7 @@ The main product principle is convenience. Every user-facing page should make th
 
 | Route | Purpose |
 | --- | --- |
-| `/` | Public Nava Bloom Co. company homepage. Positions Nava Bloom Co. as the legal/operator company and links to Nava Strat as the first SaaS product without exposing internal architecture. |
+| `/` | Domain-aware public landing route. `navabloomco.com`/`www.navabloomco.com` show the Nava Bloom Co. parent-company homepage; `navastrat.co`/`www.navastrat.co`/`nava-strat.vercel.app` show the Nava Strat product landing page. Both are public-safe and do not expose internal architecture. |
 | `/login` | Supabase-auth login entry. |
 | `/pricing` | Public pricing page. |
 | `/privacy` | Privacy policy. |
