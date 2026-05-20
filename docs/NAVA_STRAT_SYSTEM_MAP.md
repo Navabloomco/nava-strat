@@ -39,7 +39,7 @@ The main product principle is convenience. Every user-facing page should make th
 
 | Route | Purpose |
 | --- | --- |
-| `/` | Public landing/root page. |
+| `/` | Public Nava Bloom Co. company homepage. Positions Nava Bloom Co. as the legal/operator company and links to Nava Strat as the first SaaS product without exposing internal architecture. |
 | `/login` | Supabase-auth login entry. |
 | `/pricing` | Public pricing page. |
 | `/privacy` | Privacy policy. |
