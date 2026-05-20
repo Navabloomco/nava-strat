@@ -105,6 +105,18 @@ interface WatchItem {
   href?: string;
 }
 
+type TenantWorkspaceSummary = {
+  company: {
+    id: string;
+    name: string;
+    slug: string;
+  };
+  readiness_status: string;
+  strict_billable_asset_count: number;
+  provider_count: number;
+  active_provider_count: number;
+};
+
 type DashboardRoleCapabilities = {
   canViewFinance: boolean;
   canEditFinance: boolean;
@@ -130,11 +142,75 @@ type PlatformOperatorSummary = {
     blocked: number;
   } | null;
   readiness_unavailable_reason?: string | null;
+  tenant_workspaces?: TenantWorkspaceSummary[];
   operator_company_detection?: {
     method: string;
     matched_key: string;
   };
 };
+
+const platformActionGroups = [
+  {
+    title: "Platform Operations",
+    body: "Keep the product, providers, and platform foundation healthy.",
+    items: [
+      {
+        label: "Platform Health",
+        href: "/admin/health",
+        description:
+          "Check environment, schema, billing, provider, and pilot readiness foundations.",
+      },
+      {
+        label: "Provider Requests",
+        href: "/admin/provider-requests",
+        description:
+          "Triage assisted onboarding requests and provider setup work.",
+      },
+      {
+        label: "Provider Vault",
+        href: "/admin/providers",
+        description:
+          "Inspect provider connections, tests, and enrichment diagnostics safely.",
+      },
+    ],
+  },
+  {
+    title: "Tenant Operations",
+    body: "Move customer workspaces toward readiness and billing clarity.",
+    items: [
+      {
+        label: "Tenant Billing",
+        href: "/admin/tenants",
+        description:
+          "Review strict billable assets, pricing setup, and tenant billing previews.",
+      },
+      {
+        label: "Pilot Readiness",
+        href: "/admin/pilot-readiness",
+        description:
+          "See which tenants are ready, blocked, or need setup attention.",
+      },
+      {
+        label: "Customer Dashboards",
+        href: "#customer-workspaces",
+        description:
+          "Open customer fleet workspaces from the tenant cards below.",
+      },
+    ],
+  },
+  {
+    title: "Product Intelligence",
+    body: "Use Nava Strat itself to inspect operational questions.",
+    items: [
+      {
+        label: "Nava Eye",
+        href: "/nava-eye",
+        description:
+          "Ask cross-domain fleet questions inside your current permission boundary.",
+      },
+    ],
+  },
+];
 
 function buildWatchItems(
   overview: OverviewData | null,
@@ -387,6 +463,32 @@ function formatRevenueTotals(totals: Record<string, number> | undefined) {
     .join(", ");
 }
 
+function maybeHideMetric(value: string | number, hidden: boolean) {
+  return hidden ? "••••" : value;
+}
+
+function readinessLabel(status: string) {
+  const normalized = String(status || "").toLowerCase();
+  if (normalized === "ready") return "Ready";
+  if (normalized === "blocked") return "Blocked";
+  if (normalized === "needs_attention") return "Needs attention";
+  return "Review";
+}
+
+function readinessClasses(status: string) {
+  const normalized = String(status || "").toLowerCase();
+  if (normalized === "ready") {
+    return "border-emerald-300/30 bg-emerald-300/10 text-emerald-100";
+  }
+  if (normalized === "blocked") {
+    return "border-rose-300/30 bg-rose-300/10 text-rose-100";
+  }
+  if (normalized === "needs_attention") {
+    return "border-amber-300/30 bg-amber-300/10 text-amber-100";
+  }
+  return "border-slate-500/30 bg-slate-500/10 text-slate-300";
+}
+
 function withCompanyContext(path: string, companyId: string) {
   if (!companyId) return path;
   return `${path}?companyId=${encodeURIComponent(companyId)}`;
@@ -435,6 +537,7 @@ export default function DashboardPage() {
   const [copilotQuery, setCopilotQuery] = useState("");
   const [copilotAnswer, setCopilotAnswer] = useState("");
   const [copilotLoading, setCopilotLoading] = useState(false);
+  const [sensitiveMetricsHidden, setSensitiveMetricsHidden] = useState(false);
   const router = useRouter();
 
   function buildDashboardCopilotContext() {
@@ -642,6 +745,7 @@ export default function DashboardPage() {
     ? []
     : buildWatchItems(data, roleCapabilities, adminCompanyId);
   const platformSummary = data.platform_operator_summary;
+  const tenantWorkspaces = platformSummary?.tenant_workspaces || [];
   const normalizedCompanySearch = companySearch.toLowerCase();
   const filteredCompanies = companies.filter(
     (companyOption) =>
@@ -654,7 +758,9 @@ export default function DashboardPage() {
       <header className="border-b border-slate-800 px-8 py-5 flex justify-between items-center sticky top-0 bg-slate-950/95 backdrop-blur-sm z-10">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 bg-blue-600 rounded-full animate-pulse" />
-          <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
+          <h1 className="text-2xl font-bold tracking-tight">
+            {isPlatformWorkspace ? "Platform Workspace" : "Dashboard"}
+          </h1>
           {showCompanySelector ? (
             <div className="relative ml-2">
               <button
@@ -758,27 +864,39 @@ export default function DashboardPage() {
         <main className="flex-1 p-8">
           {isPlatformWorkspace ? (
             <div className="space-y-8">
-              <section className="rounded-lg border border-blue-500/20 bg-blue-500/10 p-6">
-                <div className="flex flex-wrap items-start justify-between gap-4">
+              <section className="rounded-lg border border-white/10 bg-slate-900/50 p-6 shadow-2xl shadow-black/20">
+                <div className="flex flex-wrap items-start justify-between gap-5">
                   <div className="max-w-3xl">
-                    <div className="text-xs font-semibold uppercase tracking-[0.24em] text-blue-300">
-                      Platform workspace
+                    <div className="text-xs font-semibold uppercase tracking-[0.24em] text-cyan-200">
+                      Platform HQ
                     </div>
-                    <h2 className="mt-2 text-2xl font-semibold text-white">
-                      {company.name} is your platform workspace.
+                    <h2 className="mt-2 text-3xl font-semibold text-white">
+                      Nava Bloom Co. platform workspace
                     </h2>
                     <p className="mt-3 text-sm leading-6 text-slate-300">
-                      Fleet dashboards live under customer tenants. Select a
-                      customer fleet tenant from the company switcher to see live
-                      vehicles, idle events, Nava Eye Watch, and fleet alerts.
+                      Manage customer tenants, readiness, billing, provider
+                      operations, and product health from one place.
                     </p>
                   </div>
-                  <Link
-                    href="/admin"
-                    className="rounded-md border border-blue-400/40 px-4 py-2 text-sm font-semibold text-blue-100 hover:bg-blue-500/10"
-                  >
-                    Open Admin Hub
-                  </Link>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setSensitiveMetricsHidden((current) => !current)
+                      }
+                      className="rounded-md border border-slate-700 bg-slate-950/40 px-4 py-2 text-sm font-semibold text-slate-200 transition hover:border-cyan-300/40 hover:text-cyan-100 focus:outline-none focus:ring-2 focus:ring-cyan-400/40"
+                    >
+                      {sensitiveMetricsHidden
+                        ? "Show sensitive metrics"
+                        : "Hide sensitive metrics"}
+                    </button>
+                    <Link
+                      href="/admin"
+                      className="rounded-md border border-cyan-300/40 bg-cyan-300/10 px-4 py-2 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-300/15 focus:outline-none focus:ring-2 focus:ring-cyan-400/40"
+                    >
+                      Open Admin Hub
+                    </Link>
+                  </div>
                 </div>
               </section>
 
@@ -791,14 +909,20 @@ export default function DashboardPage() {
                 </div>
                 <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-5">
                   <div className="text-3xl font-bold text-emerald-300">
-                    {platformSummary?.strict_billable_asset_count ?? 0}
+                    {maybeHideMetric(
+                      platformSummary?.strict_billable_asset_count ?? 0,
+                      sensitiveMetricsHidden
+                    )}
                   </div>
                   <div className="mt-1 text-sm text-slate-500">Strict billable assets</div>
                 </div>
                 <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-5">
                   <div className="text-2xl font-bold text-blue-200">
-                    {formatRevenueTotals(
-                      platformSummary?.estimated_monthly_revenue_by_currency
+                    {maybeHideMetric(
+                      formatRevenueTotals(
+                        platformSummary?.estimated_monthly_revenue_by_currency
+                      ),
+                      sensitiveMetricsHidden
                     )}
                   </div>
                   <div className="mt-1 text-sm text-slate-500">Estimated monthly</div>
@@ -810,9 +934,12 @@ export default function DashboardPage() {
                 </div>
                 <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-5">
                   <div className="text-3xl font-bold text-yellow-300">
-                    {platformSummary?.readiness
-                      ? `${platformSummary.readiness.blocked}/${platformSummary.readiness.needs_attention}`
-                      : "Review"}
+                    {maybeHideMetric(
+                      platformSummary?.readiness
+                        ? `${platformSummary.readiness.blocked}/${platformSummary.readiness.needs_attention}`
+                        : "Review",
+                      sensitiveMetricsHidden
+                    )}
                   </div>
                   <div className="mt-1 text-sm text-slate-500">
                     Blocked / needs attention
@@ -825,42 +952,143 @@ export default function DashboardPage() {
                 </div>
               </section>
 
-              <section>
-                <div className="mb-4 flex items-center justify-between gap-4">
+              <section className="grid gap-5 xl:grid-cols-3">
+                {platformActionGroups.map((group) => (
+                  <div
+                    key={group.title}
+                    className="rounded-lg border border-slate-800 bg-slate-900/50 p-5"
+                  >
+                    <div className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-200/80">
+                      {group.title}
+                    </div>
+                    <p className="mt-2 text-sm leading-6 text-slate-400">
+                      {group.body}
+                    </p>
+                    <div className="mt-5 grid gap-3">
+                      {group.items.map((item) => (
+                        <Link
+                          key={`${group.title}-${item.href}`}
+                          href={item.href}
+                          className="group rounded-lg border border-white/10 bg-slate-950/40 p-4 transition hover:border-cyan-300/40 hover:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-cyan-400/30"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="text-base font-semibold text-slate-100 group-hover:text-blue-200">
+                                {item.label}
+                              </div>
+                              <div className="mt-2 text-sm leading-5 text-slate-500">
+                                {item.description}
+                              </div>
+                            </div>
+                            <span className="text-slate-500 group-hover:text-blue-300">
+                              →
+                            </span>
+                          </div>
+                        </Link>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </section>
+
+              <section id="customer-workspaces" className="space-y-4">
+                <div className="flex flex-wrap items-end justify-between gap-4">
                   <div>
                     <h2 className="text-lg font-semibold text-white">
-                      Platform operations
+                      Customer workspaces
                     </h2>
                     <p className="mt-1 text-sm text-slate-500">
-                      Work from safe platform summaries and tenant-scoped admin tools.
+                      Open a tenant fleet dashboard or readiness detail from the
+                      platform workspace.
                     </p>
                   </div>
                 </div>
-                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                  {platformDashboardLinks
-                    .filter((item) => item.label !== "Admin Hub")
-                    .map((item) => (
-                      <Link
-                        key={item.href}
-                        href={item.href}
-                        className="group rounded-lg border border-slate-800 bg-slate-900/50 p-5 transition hover:border-blue-500/50 hover:bg-slate-900"
+
+                {tenantWorkspaces.length ? (
+                  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                    {tenantWorkspaces.map((workspace) => (
+                      <div
+                        key={workspace.company.id}
+                        className="rounded-lg border border-slate-800 bg-slate-900/50 p-5"
                       >
                         <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <div className="text-base font-semibold text-slate-100 group-hover:text-blue-200">
-                              {item.label}
-                            </div>
-                            <div className="mt-2 text-sm leading-5 text-slate-500">
-                              {platformActionDescription(item.label)}
+                          <div className="min-w-0">
+                            <h3 className="truncate text-base font-semibold text-white">
+                              {workspace.company.name}
+                            </h3>
+                            <div className="mt-1 truncate text-xs text-slate-500">
+                              {workspace.company.slug}
                             </div>
                           </div>
-                          <span className="text-slate-500 group-hover:text-blue-300">
-                            →
+                          <span
+                            className={`shrink-0 rounded-md border px-2 py-1 text-[10px] font-semibold uppercase tracking-wide ${readinessClasses(
+                              workspace.readiness_status
+                            )}`}
+                          >
+                            {readinessLabel(workspace.readiness_status)}
                           </span>
                         </div>
-                      </Link>
+
+                        <div className="mt-5 grid grid-cols-2 gap-3 text-sm">
+                          <div className="rounded-md border border-white/10 bg-slate-950/40 p-3">
+                            <div className="text-xs text-slate-500">
+                              Strict billable
+                            </div>
+                            <div className="mt-1 font-semibold text-emerald-200">
+                              {maybeHideMetric(
+                                workspace.strict_billable_asset_count ?? 0,
+                                sensitiveMetricsHidden
+                              )}
+                            </div>
+                          </div>
+                          <div className="rounded-md border border-white/10 bg-slate-950/40 p-3">
+                            <div className="text-xs text-slate-500">
+                              Active providers
+                            </div>
+                            <div className="mt-1 font-semibold text-blue-200">
+                              {workspace.active_provider_count}/
+                              {workspace.provider_count}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="mt-5 flex flex-wrap gap-2">
+                          <Link
+                            href={`/dashboard?companyId=${encodeURIComponent(
+                              workspace.company.id
+                            )}`}
+                            onClick={(event) => {
+                              event.preventDefault();
+                              window.history.pushState(
+                                null,
+                                "",
+                                `/dashboard?companyId=${encodeURIComponent(
+                                  workspace.company.id
+                                )}`
+                              );
+                              handleCompanyChange(workspace.company.id);
+                            }}
+                            className="rounded-md border border-cyan-300/40 px-3 py-2 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-300/10 focus:outline-none focus:ring-2 focus:ring-cyan-400/30"
+                          >
+                            Open Fleet Dashboard
+                          </Link>
+                          <Link
+                            href={`/admin/pilot-readiness/${encodeURIComponent(
+                              workspace.company.id
+                            )}`}
+                            className="rounded-md border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-cyan-400/30"
+                          >
+                            Open Readiness
+                          </Link>
+                        </div>
+                      </div>
                     ))}
-                </div>
+                  </div>
+                ) : (
+                  <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-5 text-sm text-slate-400">
+                    No customer tenant workspaces are available yet.
+                  </div>
+                )}
               </section>
             </div>
           ) : (
@@ -1053,23 +1281,4 @@ export default function DashboardPage() {
       </div>
     </div>
   );
-}
-
-function platformActionDescription(label: string) {
-  if (label === "Tenant Billing") {
-    return "Review strict billable assets, pricing setup, and tenant billing previews.";
-  }
-  if (label === "Pilot Readiness") {
-    return "See which tenants are ready, blocked, or need setup attention.";
-  }
-  if (label === "Platform Health") {
-    return "Check environment, schema, billing, provider, and pilot readiness foundations.";
-  }
-  if (label === "Provider Requests") {
-    return "Triage assisted onboarding requests and provider setup work.";
-  }
-  if (label === "Provider Vault") {
-    return "Inspect provider connections, tests, and enrichment diagnostics safely.";
-  }
-  return "Open the platform admin tool.";
 }

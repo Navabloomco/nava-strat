@@ -104,13 +104,16 @@ function isPlatformOperatorCompany(company: any) {
 }
 
 async function getPlatformOperatorSummary(operatorCompanyId: string) {
-  const [companiesResult, assetsResult, readinessResult] = await Promise.all([
+  const [companiesResult, assetsResult, providersResult, readinessResult] = await Promise.all([
     fetchCompanies(),
     supabaseAdmin
       .from("fleet_assets")
       .select(
         "company_id, status, billing_status, intelligence_enabled, billing_enabled_at"
       ),
+    supabaseAdmin
+      .from("tracking_providers")
+      .select("id, company_id, is_active"),
     buildPilotReadinessList().catch((error) => ({
       error: error?.message || "Pilot readiness summary unavailable",
     })),
@@ -118,6 +121,7 @@ async function getPlatformOperatorSummary(operatorCompanyId: string) {
 
   if (companiesResult.error) throw companiesResult.error;
   if (assetsResult.error) throw assetsResult.error;
+  if (providersResult.error) throw providersResult.error;
 
   const companies = companiesResult.data || [];
   const operatorCompanyIds = new Set(
@@ -132,6 +136,10 @@ async function getPlatformOperatorSummary(operatorCompanyId: string) {
     (company: any) => !operatorCompanyIds.has(company.id)
   );
   const assetsByCompany = new Map<string, any[]>();
+  const providersByCompany = new Map<
+    string,
+    { provider_count: number; active_provider_count: number }
+  >();
 
   for (const asset of assetsResult.data || []) {
     if (!asset.company_id || operatorCompanyIds.has(asset.company_id)) continue;
@@ -141,15 +149,53 @@ async function getPlatformOperatorSummary(operatorCompanyId: string) {
     ]);
   }
 
+  for (const provider of providersResult.data || []) {
+    if (!provider.company_id || operatorCompanyIds.has(provider.company_id)) continue;
+    const current = providersByCompany.get(provider.company_id) || {
+      provider_count: 0,
+      active_provider_count: 0,
+    };
+    providersByCompany.set(provider.company_id, {
+      provider_count: current.provider_count + 1,
+      active_provider_count:
+        current.active_provider_count + (provider.is_active ? 1 : 0),
+    });
+  }
+
+  const readinessTenants =
+    "tenants" in readinessResult
+      ? readinessResult.tenants.filter(
+          (tenant: any) => !operatorCompanyIds.has(tenant.company?.id)
+        )
+      : null;
+  const readinessByCompany = new Map(
+    (readinessTenants || []).map((tenant: any) => [
+      tenant.company?.id,
+      tenant.overall_readiness?.status || "unknown",
+    ])
+  );
+
   const tenantSummaries = tenantCompanies.map((company: any) => {
     const assetSummary = summarizeAssets(assetsByCompany.get(company.id) || []);
     const pricing = buildPricingPreview(
       company,
       assetSummary.strict_billable_asset_count
     );
+    const providerSummary = providersByCompany.get(company.id) || {
+      provider_count: 0,
+      active_provider_count: 0,
+    };
 
     return {
+      company: {
+        id: company.id,
+        name: company.name,
+        slug: company.slug,
+      },
+      readiness_status: readinessByCompany.get(company.id) || "unknown",
       strict_billable_asset_count: assetSummary.strict_billable_asset_count,
+      provider_count: providerSummary.provider_count,
+      active_provider_count: providerSummary.active_provider_count,
       estimated_monthly_revenue: pricing.estimated_monthly_revenue,
       billing_currency: pricing.billing_currency,
       pricing_set: pricing.pricing_set,
@@ -170,12 +216,6 @@ async function getPlatformOperatorSummary(operatorCompanyId: string) {
     {}
   );
 
-  const readinessTenants =
-    "tenants" in readinessResult
-      ? readinessResult.tenants.filter(
-          (tenant: any) => !operatorCompanyIds.has(tenant.company?.id)
-        )
-      : null;
   const readinessTotals = readinessTenants
     ? readinessTenants.reduce(
         (totals: any, tenant: any) => ({
@@ -203,6 +243,28 @@ async function getPlatformOperatorSummary(operatorCompanyId: string) {
     tenants_missing_pricing: tenantSummaries.filter(
       (tenant) => !tenant.pricing_set
     ).length,
+    tenant_workspaces: tenantSummaries
+      .map((tenant) => ({
+        company: tenant.company,
+        readiness_status: tenant.readiness_status,
+        strict_billable_asset_count: tenant.strict_billable_asset_count,
+        provider_count: tenant.provider_count,
+        active_provider_count: tenant.active_provider_count,
+      }))
+      .sort((a, b) => {
+        const rank: Record<string, number> = {
+          blocked: 0,
+          needs_attention: 1,
+          ready: 2,
+          unknown: 3,
+        };
+        const aRank = rank[a.readiness_status] ?? 4;
+        const bRank = rank[b.readiness_status] ?? 4;
+        if (aRank !== bRank) return aRank - bRank;
+        return String(a.company.name || "").localeCompare(
+          String(b.company.name || "")
+        );
+      }),
     readiness: readinessTotals
       ? {
           ready: readinessTotals.ready,

@@ -53,7 +53,7 @@ The main product principle is convenience. Every user-facing page should make th
 
 | Route | Purpose |
 | --- | --- |
-| `/dashboard` | Customer-facing app dashboard and navigation hub for fleet tenants. Platform owners default to the Nava Bloom Co./Navabloomco platform operator workspace on first load, using the documented temporary slug/name heuristic until a durable operator-company flag exists. For the platform/operator workspace, platform owners see a platform operations overview instead of empty fleet metrics. Customer tenants remain selectable from the company switcher. Includes Nava Eye Watch items built from safe dashboard summaries, and an embedded Nava Eye widget for customer fleet tenants that may pass safe page context for visible dashboard follow-ups. |
+| `/dashboard` | Customer-facing app dashboard and navigation hub for fleet tenants. Platform owners default to the Nava Bloom Co./Navabloomco platform operator workspace on first load, using the documented temporary slug/name heuristic until a durable operator-company flag exists. For the platform/operator workspace, platform owners see a platform workspace home with safe aggregate KPIs, grouped platform/tenant/product actions, customer workspace cards, and a presentation-only sensitive metric toggle instead of empty fleet metrics. Customer tenants remain selectable from the company switcher. Includes Nava Eye Watch items built from safe dashboard summaries, and an embedded Nava Eye widget for customer fleet tenants that may pass safe page context for visible dashboard follow-ups. |
 | `/nava-eye` | Nava Eye assistant UI. |
 | `/tracking/live` | Live tracking view for enabled intelligence assets. |
 | `/tracking/link` | Tracking link helper page. |
@@ -128,7 +128,7 @@ The main product principle is convenience. Every user-facing page should make th
 | API Route | Purpose |
 | --- | --- |
 | `GET /api/companies` | Returns active company memberships, normalized roles, platform-owner status, and visible companies. |
-| `GET /api/dashboard/overview` | Authenticated company dashboard overview. Returns `dashboard_mode = fleet` with role-aware safe fleet health for customer tenants, or `dashboard_mode = platform_operator` with safe aggregate platform stats for the operator workspace when viewed by a platform owner. |
+| `GET /api/dashboard/overview` | Authenticated company dashboard overview. Returns `dashboard_mode = fleet` with role-aware safe fleet health for customer tenants, or `dashboard_mode = platform_operator` with safe aggregate platform stats and sanitized customer workspace summaries for the operator workspace when viewed by a platform owner. |
 | `POST /api/onboarding/company` | Creates/updates company onboarding data, operating context, and provider setup requests. |
 | `GET/PATCH /api/company-settings` | Reads and updates safe company operating context. Supports platform-owner `companyId` context. No billing/provider secrets. |
 | `GET /api/admin/pilot-readiness` | Platform-owner-only pilot readiness checklist list across companies. Returns pass/warning/fail counts and safe tenant summaries. |
@@ -705,7 +705,7 @@ The checklist returns pass/warning/fail checks grouped by company setup, provide
 
 ### Platform Workspace Dashboard Mode
 
-When a platform owner selects the Navabloomco platform/operator workspace and opens `/dashboard`, the dashboard returns `dashboard_mode = platform_operator` and shows a platform operations overview instead of fleet metrics.
+When a platform owner selects the Navabloomco platform/operator workspace and opens `/dashboard`, the dashboard returns `dashboard_mode = platform_operator` and shows a platform workspace home instead of fleet metrics.
 
 The platform workspace dashboard shows:
 
@@ -713,7 +713,9 @@ The platform workspace dashboard shows:
 - strict billable assets across customer tenants
 - estimated monthly revenue by currency where pricing exists
 - pilot readiness blocked / needs-attention counts
-- action cards for Tenant Billing, Pilot Readiness, Platform Health, Provider Requests, and Provider Vault
+- grouped action cards for Platform Operations, Tenant Operations, and Product Intelligence
+- sanitized customer workspace cards with tenant name/slug, readiness status, strict billable count, provider counts, and links to the fleet dashboard/readiness detail
+- a local presentation-only hide/show sensitive metrics toggle that masks selected KPI values without changing API authorization or data
 
 It must not aggregate or expose raw cross-tenant telemetry, provider secrets, auth configs, raw payloads, or private driver data. Customer tenant selection keeps the normal fleet dashboard behavior.
 
