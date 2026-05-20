@@ -1228,7 +1228,7 @@ async function fetchTruckEvents(
 async function fetchTruckTelemetry(companyId: string, truckId: string) {
   const { data } = await supabaseAdmin
     .from("telemetry_logs")
-    .select("truck_id, recorded_at, latitude, longitude, speed, fuel_level, fuel_unit")
+    .select("truck_id, recorded_at, latitude, longitude, speed, fuel_level, fuel_unit, validation")
     .eq("company_id", companyId)
     .eq("truck_id", truckId)
     .order("recorded_at", { ascending: false })

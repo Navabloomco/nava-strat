@@ -207,6 +207,7 @@ export async function POST(req: Request) {
       !context.investigation_case_file &&
       !context.fuel_investigation &&
       !context.dashboard_followup &&
+      context.intent !== "truck_status" &&
       !context.asset_access_restricted &&
       !context.no_enabled_intelligence_assets &&
       !context.permission_boundary
@@ -394,6 +395,9 @@ function buildFallbackAnswer(context: any): string {
   }
   if (context.dashboard_followup) {
     return buildDashboardFollowupAnswer(context);
+  }
+  if (context.intent === "truck_status" && context.truck) {
+    return buildTruckStatusFallbackAnswer(context);
   }
   if (context.investigation_case_file) {
     return buildInvestigationFallbackAnswer(context);
@@ -796,6 +800,131 @@ function buildDashboardFollowupAnswer(context: any) {
   );
 
   return parts.join("\n");
+}
+
+function buildTruckStatusFallbackAnswer(context: any) {
+  const truck = context.truck || {};
+  const telemetry = Array.isArray(context.recent_telemetry)
+    ? context.recent_telemetry
+    : [];
+  const latestTelemetry = telemetry[0] || null;
+  const events = Array.isArray(context.recent_events) ? context.recent_events : [];
+  const idleEvents = events.filter(isIdleStopEvent);
+  const matchedLabel =
+    truck.registration ||
+    truck.truck_id ||
+    context.vehicle_match?.matched_registration ||
+    context.vehicle_match?.matched_truck_id ||
+    context.detected_truck_id ||
+    "the vehicle";
+  const latestPoint = latestTelemetry || truck;
+  const lastSeenAt = latestTelemetry?.recorded_at || truck.last_seen_at || null;
+  const speed = finiteNumberOrNull(latestTelemetry?.speed);
+  const location = formatOperationalLocation({
+    ...truck,
+    latitude: latestPoint?.latitude ?? truck.latitude,
+    longitude: latestPoint?.longitude ?? truck.longitude,
+  });
+  const parts: string[] = [];
+
+  const locationText = location
+    ? `${matchedLabel} is currently ${location}`
+    : `${matchedLabel} is in the enabled fleet, but I do not have a clean location label`;
+  parts.push(`${locationText}. Latest telemetry was ${formatReadableDate(lastSeenAt)}.`);
+
+  if (speed !== null) {
+    if (speed <= 2) {
+      parts.push(
+        `Latest speed is ${formatNumber(speed)}, so it currently appears stationary or stopped. I am not treating that as confirmed engine-on idling without ignition or engine-status data.`
+      );
+    } else if (speed > 5) {
+      parts.push(
+        `Latest speed is ${formatNumber(speed)}, so it does not look stationary right now.`
+      );
+    } else {
+      parts.push(
+        `Latest speed is ${formatNumber(speed)}, so the current motion state is low/unclear rather than a confirmed idle.`
+      );
+    }
+  } else {
+    parts.push("Latest speed is not available, so I cannot classify the current motion state confidently.");
+  }
+
+  const timestampWarnings = latestTelemetry?.validation?.warnings || [];
+  if (hasAmbiguousTimestampWarning(timestampWarnings)) {
+    parts.push(
+      "Provider time appears local/ambiguous, so treat this timeline as approximate."
+    );
+  }
+
+  if (idleEvents.length) {
+    const latestIdle = idleEvents[0];
+    const movementAfterIdle = hasMovementAfterEvent(telemetry, latestIdle);
+    const latestIdleLine = formatEventBrief(latestIdle);
+    parts.push(`Nava also has idle/stop history for this truck. Latest marker: ${latestIdleLine}.`);
+    if (movementAfterIdle) {
+      parts.push(
+        "I cannot treat those events as one continuous idle period because later movement appears in the Nava telemetry after at least one idle/stop event."
+      );
+    } else {
+      parts.push(
+        "I cannot treat those events as one continuous idle period because the available Nava data does not prove one still-open stop/idle event at the current location."
+      );
+    }
+    parts.push("Current stop duration is not confirmed from the available Nava data.");
+  } else {
+    parts.push("I do not see recent idle/stop events for this truck in Nava's event trail.");
+  }
+
+  const driverName = truck.assigned_driver?.driver_name;
+  if (driverName) {
+    if (isPlaceholderDriverName(driverName)) {
+      parts.push("Driver assignment appears to be placeholder/test data.");
+    } else {
+      parts.push(`Assigned driver: ${driverName}.`);
+    }
+  }
+
+  parts.push(
+    "Would you like me to compare today's stop/motion timeline against Nava idle events?"
+  );
+
+  return parts.join("\n");
+}
+
+function isIdleStopEvent(event: any) {
+  return ["excessive_idle", "idle", "stopped", "long_stop"].includes(
+    String(event?.event_type || "").trim().toLowerCase()
+  );
+}
+
+function hasMovementAfterEvent(telemetry: any[], event: any) {
+  const eventTime = eventTimestampMillis(event);
+  if (!Number.isFinite(eventTime)) return false;
+
+  return telemetry.some((point: any) => {
+    const recordedAt = new Date(point?.recorded_at || 0).getTime();
+    const speed = finiteNumberOrNull(point?.speed);
+    return Number.isFinite(recordedAt) && recordedAt > eventTime && speed !== null && speed > 5;
+  });
+}
+
+function eventTimestampMillis(event: any) {
+  const value = event?.created_at || event?.started_at || null;
+  if (!value) return NaN;
+  return new Date(value).getTime();
+}
+
+function finiteNumberOrNull(value: any) {
+  if (value === null || value === undefined || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function isPlaceholderDriverName(value: any) {
+  const text = String(value || "").trim().toLowerCase();
+  if (!text) return false;
+  return /\b(test|dummy|placeholder|sample|demo)\b/.test(text);
 }
 
 function formatDashboardTruckLine(truck: any) {
@@ -1674,7 +1803,8 @@ function formatFuelLogLine(log: any) {
 
 function formatEventBrief(event: any) {
   const location = formatOperationalLocation(event);
-  const driver = event.assigned_driver?.driver_name
+  const driver = event.assigned_driver?.driver_name &&
+    !isPlaceholderDriverName(event.assigned_driver.driver_name)
     ? ` while ${event.assigned_driver.driver_name} was assigned`
     : "";
   return `${formatSpareEventType(event.event_type)} at ${formatReadableDate(
@@ -1721,6 +1851,9 @@ function formatEventLocation(event: any) {
 function formatEventDriverContext(event: any) {
   const driverName = event?.assigned_driver?.driver_name;
   if (!driverName) return null;
+  if (isPlaceholderDriverName(driverName)) {
+    return "Driver assignment appears to be placeholder/test data.";
+  }
 
   const eventName = event.event_type
     ? event.event_type.replace(/_/g, " ")
@@ -1730,7 +1863,9 @@ function formatEventDriverContext(event: any) {
 }
 
 function formatDriverAssignment(assignment: any) {
-  const driver = assignment.driver_name || "Driver";
+  const driver = isPlaceholderDriverName(assignment.driver_name)
+    ? "Placeholder/test driver"
+    : assignment.driver_name || "Driver";
   const truck = assignment.truck_id || "an enabled asset";
   const since = assignment.assigned_from
     ? ` since ${formatReadableDate(assignment.assigned_from)}`
