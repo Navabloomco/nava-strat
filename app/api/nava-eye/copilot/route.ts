@@ -933,6 +933,15 @@ function buildConversationContextForAi(
 function resolvePendingFollowupQuestion(question: string, pendingFollowup: any) {
   const pending = sanitizeConversationMetadata(pendingFollowup || {});
   const prompt = typeof pending.prompt === "string" ? pending.prompt.trim() : "";
+  const detailedTimelineRequest = isDetailedTimelineRequest(question);
+
+  if (detailedTimelineRequest && prompt && isTimelinePendingFollowup(pending)) {
+    return {
+      question: `${prompt} Show the detailed timeline evidence with movement and stationary blocks.`.slice(0, 500),
+      usedPendingFollowup: true,
+      pendingType: typeof pending.type === "string" ? pending.type : null,
+    };
+  }
 
   if (!isShortFollowupCommand(question) || !prompt) {
     return {
@@ -974,6 +983,25 @@ function isShortFollowupCommand(question: string) {
   ].includes(normalized);
 }
 
+function isDetailedTimelineRequest(question: string) {
+  const lower = String(question || "").trim().toLowerCase();
+  return (
+    lower.includes("show detailed timeline") ||
+    lower.includes("detailed timeline") ||
+    lower.includes("show all blocks") ||
+    lower.includes("all blocks") ||
+    lower.includes("full evidence") ||
+    lower.includes("raw timeline") ||
+    lower.includes("expand the timeline") ||
+    lower.includes("expand timeline")
+  );
+}
+
+function isTimelinePendingFollowup(pending: any) {
+  const type = String(pending?.type || "");
+  return type === "compare_stop_motion_timeline" || type === "show_detailed_timeline";
+}
+
 function buildPendingFollowup(context: any, answer: string) {
   const truckLabel =
     context.truck?.registration ||
@@ -992,6 +1020,18 @@ function buildPendingFollowup(context: any, answer: string) {
       type: "compare_stop_motion_timeline",
       truck_id: truckLabel,
       prompt: `Compare today's stop/motion timeline for ${truckLabel} against Nava idle events. Keep the timeline in EAT/Kenya time and do not infer continuous idling unless movement data supports it.`,
+    };
+  }
+
+  if (
+    context.truck_timeline_comparison &&
+    truckLabel &&
+    !context.timeline_detail_requested
+  ) {
+    return {
+      type: "show_detailed_timeline",
+      truck_id: truckLabel,
+      prompt: `Show the detailed timeline for ${truckLabel}. Include movement/stationary blocks and idle marker evidence, but do not show raw coordinates or provider payloads.`,
     };
   }
 
@@ -1271,10 +1311,25 @@ function buildTruckTimelineComparisonAnswer(context: any) {
   const blocks = Array.isArray(timeline.motion_blocks) ? timeline.motion_blocks : [];
   const idleEvents = Array.isArray(timeline.idle_events) ? timeline.idle_events : [];
   const continuity = timeline.continuity || {};
+  const detailed = Boolean(context.timeline_detail_requested);
   const parts: string[] = [];
 
-  parts.push(buildTruckJourneyNarrative(label, dayStory, summary, continuity, timeZone));
+  if (detailed) {
+    return buildDetailedTruckTimelineAnswer({
+      label,
+      timeZone,
+      timeLabel,
+      dayStory,
+      summary,
+      latest,
+      blocks,
+      idleEvents,
+      continuity,
+    });
+  }
 
+  parts.push(`**${buildExecutiveVerdict(label, dayStory, summary, continuity)}**`);
+  parts.push(`**${buildExecutiveCurrentLine(label, dayStory, latest, timeZone)}**`);
   if (dayStory.coverage_is_partial && dayStory.coverage_start_at && dayStory.coverage_end_at) {
     parts.push(
       `Nava only has telemetry history from ${formatTimelineTime(
@@ -1288,42 +1343,61 @@ function buildTruckTimelineComparisonAnswer(context: any) {
     );
   }
 
-  if (latest) {
-    const speed = finiteNumberOrNull(latest.speed);
-    const location = formatOperationalLocation(latest);
-    const speedText = speed === null ? "speed unknown" : `speed ${formatNumber(speed)}`;
-    const state =
-      speed === null
-        ? "current motion state is unclear"
-        : speed > 5
-          ? "it appears to be moving"
-          : "it appears stationary or stopped";
-    const latestTime = formatTimelineTime(latest.recorded_at, timeZone);
-    parts.push(
-      location
-        ? `${label} is ${location} as of ${latestTime}. Current read: ${speedText}; ${state}.`
-        : `Latest snapshot for ${label}: ${latestTime}. Current read: ${speedText}; ${state}.`
-    );
-    if (hasAmbiguousTimestampWarning(latest.timestamp_warnings)) {
-      parts.push(
-        "Provider time appears local/ambiguous, so treat this timeline as approximate."
-      );
-    }
-  } else {
-    parts.push("I do not have a latest telemetry snapshot for this truck today.");
-  }
+  parts.push("");
+  parts.push("Current status");
+  parts.push(...formatCurrentStatusBlock(latest, timeZone));
 
   parts.push("");
-  parts.push("Stop pattern");
-  parts.push(...formatStopPattern(dayStory.stop_summary || {}, timeZone));
+  parts.push("Key metrics");
+  parts.push(...formatExecutiveMetrics(dayStory.stop_summary || {}, summary, timeZone));
+
+  parts.push("");
+  parts.push("Forensic idle verdict");
+  parts.push(formatExecutiveIdleVerdict(idleEvents, continuity, summary));
+  const unresolvedMarkerCount = countUnresolvedGpsMarkers(idleEvents);
+  if (unresolvedMarkerCount > 0) {
+    parts.push(
+      `Some marker locations are unresolved GPS points, so Nava used timing and movement continuity rather than place names for those markers.`
+    );
+  }
+  parts.push("");
+  parts.push("I can show the detailed timeline if you want.");
+
+  return parts.join("\n");
+}
+
+function buildDetailedTruckTimelineAnswer({
+  label,
+  timeZone,
+  timeLabel,
+  dayStory,
+  summary,
+  latest,
+  blocks,
+  idleEvents,
+  continuity,
+}: any) {
+  const parts: string[] = [];
+  parts.push(`Detailed timeline evidence for ${label}, displayed in ${timeLabel}.`);
+  parts.push(buildTruckJourneyNarrative(label, dayStory, summary, continuity, timeZone));
+
+  if (dayStory.coverage_is_partial && dayStory.coverage_start_at && dayStory.coverage_end_at) {
+    parts.push(
+      `Nava only has telemetry history from ${formatTimelineTime(
+        dayStory.coverage_start_at,
+        timeZone
+      )} to ${formatTimelineTime(dayStory.coverage_end_at, timeZone)} today, so this expands that available window.`
+    );
+  }
+
+  if (latest?.timestamp_warnings && hasAmbiguousTimestampWarning(latest.timestamp_warnings)) {
+    parts.push("Provider time appears local/ambiguous, so treat this timeline as approximate.");
+  }
 
   parts.push("");
   parts.push("Structured timeline evidence");
   if (blocks.length) {
-    parts.push(...blocks.slice(0, 10).map((block: any) => formatTimelineBlock(block, timeZone)));
-    if (blocks.length > 10) {
-      parts.push(`- ${blocks.length - 10} additional block(s) omitted from this concise view.`);
-    }
+    parts.push(...blocks.map((block: any) => formatTimelineBlock(block, timeZone)));
     if (Number(summary.omitted_blocks || 0) > 0) {
       parts.push(
         `- ${Number(summary.omitted_blocks).toLocaleString()} shorter or less relevant block(s) were summarized out of this view.`
@@ -1334,42 +1408,178 @@ function buildTruckTimelineComparisonAnswer(context: any) {
   }
 
   parts.push("");
-  parts.push("Idle interpretation");
+  parts.push("Idle marker evidence");
   if (idleEvents.length) {
-    parts.push(...idleEvents.slice(0, 8).map((event: any) => formatIdleComparison(event, timeZone)));
+    parts.push(...idleEvents.map((event: any) => formatIdleComparison(event, timeZone)));
   } else {
     parts.push("- No same-day idle or excessive-idle telemetry events were found for this truck.");
   }
 
   parts.push("");
   parts.push("Continuity read");
-  if (continuity.continuous_all_day_idle_supported) {
-    parts.push(
-      "- The current speed is 0, the latest location closely matches the earliest idle marker, and I do not see intervening movement after that idle marker. That supports a continuous current idle/stationary interpretation."
-    );
-  } else if (continuity.historical_idle_markers_broken_by_movement) {
-    parts.push(
-      "- The idle markers should be treated as historical or separate events because later telemetry shows movement after at least one idle marker."
-    );
-  } else if (summary.data_density === "low") {
-    parts.push(
-      "- The available history is too thin to prove a continuous unbroken delay."
-    );
-  } else {
-    parts.push(
-      "- I do not have enough continuity evidence to call this a continuous all-day idle period."
-    );
-  }
-
-  parts.push("");
-  parts.push(
-    "This means I would not merge older idle markers into one continuous delay unless the same location, zero-speed current state, and absence of later movement all line up."
-  );
-  parts.push(
-    "Next, I can compare this timeline against active journeys, driver assignment, geofence/place context, or spares history for the same truck."
-  );
+  parts.push(`- ${formatContinuityRead(continuity, summary)}`);
 
   return parts.join("\n");
+}
+
+function buildExecutiveVerdict(label: string, dayStory: any, summary: any, continuity: any) {
+  const route = Array.isArray(dayStory.route_progression)
+    ? dayStory.route_progression.filter(Boolean)
+    : [];
+  const latest = dayStory.latest_seen || null;
+  const latestLocation = formatOperationalLocation({ location_resolution: latest?.location });
+  const movingBlocks = Number(summary.movement_blocks || 0);
+  const stopSummary = dayStory.stop_summary || {};
+  const hasContinuousIdle = Boolean(continuity.continuous_all_day_idle_supported);
+  const condition = hasContinuousIdle
+    ? "a current stationary/idle condition"
+    : movingBlocks > 0
+      ? "active transit with separate stops"
+      : "a mostly stationary or limited telemetry window";
+  const corridor =
+    route.length >= 2
+      ? ` through ${formatRouteProgression(route)}`
+      : route.length === 1
+        ? ` around ${route[0]}`
+        : "";
+  const stopNote =
+    Number(stopSummary.major_stop_count || 0) > 0
+      ? ` with ${Number(stopSummary.major_stop_count).toLocaleString()} major stop(s)`
+      : "";
+  const current = latestLocation ? ` It is now ${latestLocation}.` : "";
+
+  return `${label} looks like ${condition}${corridor}${stopNote}, not a raw GPS trace.${current}`;
+}
+
+function buildExecutiveCurrentLine(label: string, dayStory: any, latest: any, timeZone: string) {
+  const latestSeen = dayStory.latest_seen || latest || null;
+  const location = formatOperationalLocation({
+    location_resolution: latestSeen?.location || latest?.location_resolution,
+  });
+  const speed = finiteNumberOrNull(latestSeen?.speed ?? latest?.speed);
+  const state =
+    speed === null
+      ? "current motion state is unclear"
+      : speed > 5
+        ? "moving"
+        : "stationary/stopped";
+  const time = formatTimelineTime(latestSeen?.recorded_at || latest?.recorded_at, timeZone);
+  return `${label} latest read: ${location || "location unresolved"} at ${time}; ${state}${speed === null ? "" : `, speed ${formatNumber(speed)}`}.`;
+}
+
+function formatCurrentStatusBlock(latest: any, timeZone: string) {
+  if (!latest) {
+    return [
+      "- Location: no latest telemetry snapshot available.",
+      "- Time: unknown.",
+      "- Movement: unknown.",
+      "- Engine/ignition: not available in this telemetry.",
+    ];
+  }
+
+  const speed = finiteNumberOrNull(latest.speed);
+  const location = formatOperationalLocation(latest);
+  const state =
+    speed === null
+      ? "unknown"
+      : speed > 5
+        ? "moving"
+        : "stationary/stopped";
+  const lines = [
+    `- Location: ${location || "unresolved GPS point"}.`,
+    `- Latest timestamp: ${formatTimelineTime(latest.recorded_at, timeZone)}.`,
+    `- Movement: ${state}${speed === null ? "" : `, speed ${formatNumber(speed)}`}.`,
+    "- Engine/ignition: not available in this telemetry.",
+  ];
+
+  if (hasAmbiguousTimestampWarning(latest.timestamp_warnings)) {
+    lines.push("- Time quality: provider timestamps appear local/ambiguous; treat the timing as approximate.");
+  }
+
+  return lines;
+}
+
+function formatExecutiveMetrics(stopSummary: any, summary: any, timeZone: string) {
+  const longest = stopSummary.longest_stop || null;
+  const longestLocation = formatOperationalLocation({
+    location_resolution: longest?.location,
+  });
+  const stopCounts = `${Number(stopSummary.major_stop_count || 0).toLocaleString()} major, ${Number(
+    stopSummary.medium_stop_count || 0
+  ).toLocaleString()} medium, ${Number(stopSummary.short_stop_count || 0).toLocaleString()} short`;
+  const lines = [
+    `- Moving time observed: about ${formatDurationWords(stopSummary.total_moving_minutes)}.`,
+    `- Stopped/stationary time observed: about ${formatDurationWords(stopSummary.total_stopped_minutes)}.`,
+    `- Stop mix: ${stopCounts}.`,
+  ];
+
+  if (longest?.duration_minutes) {
+    lines.push(
+      `- Longest stop: about ${formatDurationWords(longest.duration_minutes)}${
+        longestLocation ? ` ${longestLocation}` : ""
+      } (${formatTimelineTime(longest.start_at, timeZone)} to ${formatTimelineTime(
+        longest.end_at,
+        timeZone
+      )}).`
+    );
+  } else {
+    lines.push("- Longest stop: not enough stationary history to classify.");
+  }
+
+  lines.push(
+    `- Telemetry coverage: ${Number(summary.points_found || 0).toLocaleString()} points across ${Number(
+      summary.blocks_found || 0
+    ).toLocaleString()} movement/stationary block(s).`
+  );
+
+  return lines.slice(0, 5);
+}
+
+function formatExecutiveIdleVerdict(idleEvents: any[], continuity: any, summary: any) {
+  if (!idleEvents.length) {
+    return "No same-day idle or excessive-idle markers are present in Nava's event trail for this truck.";
+  }
+
+  const currentMarkers = idleEvents.filter(
+    (event) => event.classification === "possibly_current_same_location"
+  ).length;
+
+  if (continuity.historical_idle_markers_broken_by_movement) {
+    const suffix =
+      currentMarkers > 0
+        ? " The latest marker may relate to the current stop, but engine-on idling is not confirmed without ignition data."
+        : " None of this proves engine-on idling without ignition data.";
+    return `The idle alerts should be treated as separate historical markers because later movement was recorded after at least one marker.${suffix}`;
+  }
+
+  if (continuity.continuous_all_day_idle_supported) {
+    return "The latest stationary state lines up with an idle marker and no later movement is visible after that marker. This supports a current stop/idle interpretation, but engine-on idling is still unconfirmed without ignition data.";
+  }
+
+  if (summary.data_density === "low") {
+    return "Nava has too little same-day history to prove whether the idle markers are continuous or separate.";
+  }
+
+  return "Idle markers exist, but Nava does not have enough continuity evidence to merge them into one continuous delay.";
+}
+
+function formatContinuityRead(continuity: any, summary: any) {
+  if (continuity.continuous_all_day_idle_supported) {
+    return "The latest stationary state, same-place idle marker, and lack of later movement support a current continuous stop/idle interpretation. Engine-on idling remains unconfirmed without ignition data.";
+  }
+  if (continuity.historical_idle_markers_broken_by_movement) {
+    return "The idle markers are historical or separate events because later telemetry includes moving points after at least one marker.";
+  }
+  if (summary.data_density === "low") {
+    return "The available history is too thin to prove a continuous unbroken delay.";
+  }
+  return "Continuous all-day idle is not proven from the available movement and event evidence.";
+}
+
+function countUnresolvedGpsMarkers(idleEvents: any[]) {
+  return idleEvents.filter(
+    (event) => event.location_resolution?.confidence_source === "coordinates_only"
+  ).length;
 }
 
 function buildTruckJourneyNarrative(

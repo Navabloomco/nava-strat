@@ -36,6 +36,7 @@ type TimelineBlock = {
   average_speed: number | null;
   start_point: any;
   end_point: any;
+  points: any[];
   start_location?: ResolvedOperationalLocation | null;
   end_location?: ResolvedOperationalLocation | null;
   geofence_match?: any;
@@ -405,6 +406,7 @@ function aggregateTelemetryIntoMotionBlocks(rows: any[]): TimelineBlock[] {
         average_speed: speed,
         start_point: row,
         end_point: row,
+        points: [row],
         geofence_match: row.geofence_match || null,
       });
       continue;
@@ -413,6 +415,7 @@ function aggregateTelemetryIntoMotionBlocks(rows: any[]): TimelineBlock[] {
     last.end_at = row.recorded_at || last.end_at;
     last.sample_count += 1;
     last.end_point = row;
+    last.points.push(row);
     if (speed !== null) {
       last.min_speed = last.min_speed === null ? speed : Math.min(last.min_speed, speed);
       last.max_speed = last.max_speed === null ? speed : Math.max(last.max_speed, speed);
@@ -584,7 +587,7 @@ function compareIdleEventToMotionBlocks(event: any, blocks: TimelineBlock[], lat
     geofence_match: event.geofence_match || null,
     nearby_block_index: nearbyBlock?.index ?? null,
     movement_after_event: Boolean(movementAfterEvent),
-    movement_after_event_at: movementAfterEvent?.start_at || null,
+    movement_after_event_at: movementAfterEvent?.movement_after_at || movementAfterEvent?.start_at || null,
     movement_after_event_block: movementAfterEvent
       ? {
           block_index: movementAfterEvent.index,
@@ -606,20 +609,21 @@ function classifyTelemetryMotionState(row: any): TimelineBlock["state"] {
 
 function findMovementAfter(blocks: TimelineBlock[], eventTime: number) {
   if (!Number.isFinite(eventTime)) return null;
-  return (
-    blocks.find((block) => {
-      if (block.state !== "moving") return false;
-      const start = new Date(block.start_at || 0).getTime();
-      const end = new Date(block.end_at || 0).getTime();
-      return (
-        (Number.isFinite(start) && start > eventTime) ||
-        (Number.isFinite(start) &&
-          Number.isFinite(end) &&
-          start <= eventTime &&
-          end > eventTime)
-      );
-    }) || null
-  );
+  for (const block of blocks) {
+    if (block.state !== "moving") continue;
+    const firstPointAfterEvent = (block.points || []).find((point) => {
+      const recordedAt = new Date(point?.recorded_at || 0).getTime();
+      return Number.isFinite(recordedAt) && recordedAt > eventTime;
+    });
+    if (firstPointAfterEvent) {
+      return {
+        ...block,
+        movement_after_at: firstPointAfterEvent.recorded_at,
+      };
+    }
+  }
+
+  return null;
 }
 
 function findBlockForTimestamp(blocks: TimelineBlock[], timestamp: number) {

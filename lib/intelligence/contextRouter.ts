@@ -115,6 +115,7 @@ export async function routeContext(
     spares_cost_visible: sparesCostVisible,
     financials_visible: financialsVisible,
     coordinate_request: detectCoordinateRequest(lower),
+    timeline_detail_requested: detectDetailedTimelineRequest(lower),
     capabilities: sanitizeCapabilities(roleCapabilities),
     permission_boundary: permissionBoundary,
     display_timezone: {
@@ -709,6 +710,12 @@ function detectStopMotionTimelineComparison(lower: string) {
     (/\b(compare|timeline|motion|movement|moved|moving|stop|stops|stopped|idle|idling)\b/.test(lower) &&
       (lower.includes("stop/motion") ||
         lower.includes("stop motion") ||
+        lower.includes("detailed timeline") ||
+        lower.includes("full evidence") ||
+        lower.includes("all blocks") ||
+        lower.includes("raw timeline") ||
+        lower.includes("expand the timeline") ||
+        lower.includes("expand timeline") ||
         lower.includes("today's movement") ||
         lower.includes("today movement") ||
         lower.includes("movement for") ||
@@ -723,6 +730,19 @@ function detectStopMotionTimelineComparison(lower: string) {
         lower.includes("all day") ||
         lower.includes("against nava idle"))) ||
     lower.includes("compare today's stop/motion timeline")
+  );
+}
+
+function detectDetailedTimelineRequest(lower: string) {
+  return (
+    lower.includes("show detailed timeline") ||
+    lower.includes("detailed timeline") ||
+    lower.includes("show all blocks") ||
+    lower.includes("all blocks") ||
+    lower.includes("full evidence") ||
+    lower.includes("raw timeline") ||
+    lower.includes("expand the timeline") ||
+    lower.includes("expand timeline")
   );
 }
 
