@@ -340,6 +340,8 @@ Nava Eye follows an Asymmetric Intelligence / Command Voice contract. The dark a
 
 For narrow truck-specific compound prompts, Nava Eye may answer multiple ordered sub-questions in one response. Supported sub-intents are current location/status, current idle risk, movement timeline, and detailed timeline evidence. "Show detailed timeline" must not override earlier requested live-status or movement-summary sections. Each sub-answer still uses the same enabled-asset, company-scoped, role-aware contract, and detailed block evidence remains limited to the selected truck and requested timeframe.
 
+Truck conversation threads maintain a safe active truck topic in short pending-follow-up metadata. If a follow-up omits the truck ID, such as "what are yesterday's movements?" or "show detailed timeline," Nava Eye should keep using the active truck unless the user explicitly asks for fleet/all-truck scope. If no active truck topic exists for an elliptical truck question, ask which truck to check. Relative dates such as today/yesterday must resolve once in the company/operator timezone and stay consistent between summary and detailed timeline modes.
+
 Nava Eye conversations are short investigation threads, not durable operational memory. A user can access their own conversations in companies where they have active access; platform owners can create/use conversations in an explicitly resolved company context. Role/capability checks must run on every copilot message, so old conversation context must not unlock finance, billing, provider, or tenant data that the current role cannot see. Closed conversations are read-only in the MVP and there is no admin transcript browser.
 
 ## 6. Multi-Tenancy Rules

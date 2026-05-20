@@ -133,7 +133,7 @@ export async function routeContext(
     live_status_idle_focus: /\b(idle|idling|excessive idle|stopped|stationary)\b/.test(lower),
     timeline_detail_requested: detectDetailedTimelineRequest(lower),
     timeline_history_requested: timelineHistoryRequest,
-    timeline_timeframe: detectTimelineTimeframe(lower),
+    timeline_timeframe: resolveTruckTimelineTimeframe(lower),
     compound_truck_request: compoundTruckRequest,
     capabilities: sanitizeCapabilities(roleCapabilities),
     permission_boundary: permissionBoundary,
@@ -805,7 +805,10 @@ function detectTimelineHistoryRequest(lower: string) {
   );
 }
 
-function detectTimelineTimeframe(lower: string) {
+export function resolveTruckTimelineTimeframe(input: string, fallback: any = null) {
+  const lower = String(input || "")
+    .toLowerCase()
+    .replace(/[’]/g, "'");
   if (
     lower.includes("yesterday") ||
     lower.includes("previous day") ||
@@ -819,7 +822,19 @@ function detectTimelineTimeframe(lower: string) {
     };
   }
 
-  return {
+  if (
+    lower.includes("today") ||
+    lower.includes("same day") ||
+    lower.includes("same-day") ||
+    lower.includes("current day")
+  ) {
+    return {
+      requested: "today",
+      dayOffset: 0,
+    };
+  }
+
+  return fallback || {
     requested: "today",
     dayOffset: 0,
   };
@@ -912,7 +927,7 @@ function detectTimelineTimeframeNear(lower: string, index: number) {
   const start = Math.max(0, index - 100);
   const end = Math.min(lower.length, index + 140);
   const nearby = lower.slice(start, end);
-  return detectTimelineTimeframe(nearby);
+  return resolveTruckTimelineTimeframe(nearby);
 }
 
 function timelineRequestKey(timeframe: any) {

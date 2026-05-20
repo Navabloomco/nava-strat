@@ -1,7 +1,10 @@
 // app/api/nava-eye/copilot/route.ts
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "../../../../lib/supabaseAdmin";
-import { routeContext } from "../../../../lib/intelligence/contextRouter";
+import {
+  routeContext,
+  resolveTruckTimelineTimeframe,
+} from "../../../../lib/intelligence/contextRouter";
 import {
   getActiveMemories,
   storeMemory,
@@ -105,48 +108,56 @@ export async function POST(req: Request) {
 
     const pendingFollowupResolution = resolvePendingFollowupQuestion(
       question,
-      conversation?.pending_followup
+      conversation?.pending_followup,
+      { companyId: company.id }
     );
     const effectiveQuestion = pendingFollowupResolution.question;
 
-    if (
-      conversation &&
-      isShortFollowupCommand(question) &&
-      !pendingFollowupResolution.usedPendingFollowup
-    ) {
-      await appendConversationMessage({
-        conversationId: conversation.id,
-        companyId: company.id,
-        userId: auth.user.id,
-        sender: "user",
-        role: roleCategory(companyRoles, roleCapabilities),
-        content: question,
-        intent: null,
-        metadata: { used_pending_followup: false },
-      });
+    if (pendingFollowupResolution.needsClarification) {
+      if (conversation) {
+        await appendConversationMessage({
+          conversationId: conversation.id,
+          companyId: company.id,
+          userId: auth.user.id,
+          sender: "user",
+          role: roleCategory(companyRoles, roleCapabilities),
+          content: question,
+          intent: null,
+          metadata: {
+            used_pending_followup: false,
+            clarification_reason: pendingFollowupResolution.clarificationReason || null,
+          },
+        });
+      }
 
-      const clarification =
-        "I can continue, but I need the specific check you want me to run. Ask me to compare a truck timeline, check active journeys, review fuel evidence, or name the vehicle again.";
+      const clarification = pendingFollowupResolution.clarification ||
+        "Which truck should I check?";
 
-      await appendConversationMessage({
-        conversationId: conversation.id,
-        companyId: company.id,
-        userId: auth.user.id,
-        sender: "assistant",
-        role: "assistant",
-        content: clarification,
-        intent: "clarification",
-        metadata: { reason: "missing_pending_followup" },
-      });
+      if (conversation) {
+        await appendConversationMessage({
+          conversationId: conversation.id,
+          companyId: company.id,
+          userId: auth.user.id,
+          sender: "assistant",
+          role: "assistant",
+          content: clarification,
+          intent: "clarification",
+          metadata: {
+            reason:
+              pendingFollowupResolution.clarificationReason ||
+              "missing_pending_followup",
+          },
+        });
 
-      await updateConversationAfterAnswer({
-        conversation,
-        companyId: company.id,
-        userId: auth.user.id,
-        intent: "clarification",
-        pendingFollowup: {},
-        titleQuestion: question,
-      });
+        await updateConversationAfterAnswer({
+          conversation,
+          companyId: company.id,
+          userId: auth.user.id,
+          intent: "clarification",
+          pendingFollowup: conversation.pending_followup || {},
+          titleQuestion: question,
+        });
+      }
 
       return jsonResponse({
         success: true,
@@ -154,7 +165,7 @@ export async function POST(req: Request) {
         company,
         answer: clarification,
         intent: "clarification",
-        conversation_id: conversation.id,
+        conversation_id: conversation?.id || null,
         ai_used: false,
       });
     }
@@ -171,6 +182,7 @@ export async function POST(req: Request) {
         metadata: {
           used_pending_followup: pendingFollowupResolution.usedPendingFollowup,
           pending_followup_type: pendingFollowupResolution.pendingType || null,
+          used_active_topic: pendingFollowupResolution.usedActiveTopic,
         },
       });
     }
@@ -197,6 +209,7 @@ export async function POST(req: Request) {
         had_dashboard_context: Boolean(dashboardContext),
         has_conversation: Boolean(conversation),
         used_pending_followup: pendingFollowupResolution.usedPendingFollowup,
+        used_active_topic: pendingFollowupResolution.usedActiveTopic,
       },
     });
 
@@ -934,16 +947,45 @@ function buildConversationContextForAi(
   };
 }
 
-function resolvePendingFollowupQuestion(question: string, pendingFollowup: any) {
+function resolvePendingFollowupQuestion(
+  question: string,
+  pendingFollowup: any,
+  options: { companyId?: string | null } = {}
+) {
   const pending = sanitizeConversationMetadata(pendingFollowup || {});
+  const activeTopic = getActiveTruckTopic(pending, options.companyId);
   const prompt = typeof pending.prompt === "string" ? pending.prompt.trim() : "";
   const detailedTimelineRequest = isDetailedTimelineRequest(question);
+  const explicitFleetScope = asksForExplicitFleetScope(question);
+  const ellipticalTruckQuestion = isEllipticalTruckQuestion(question);
 
   if (detailedTimelineRequest && prompt && isTimelinePendingFollowup(pending)) {
     return {
       question: `${prompt} Show the detailed timeline evidence with movement and stationary blocks.`.slice(0, 500),
       usedPendingFollowup: true,
+      usedActiveTopic: Boolean(activeTopic),
       pendingType: typeof pending.type === "string" ? pending.type : null,
+    };
+  }
+
+  if (ellipticalTruckQuestion && activeTopic && !explicitFleetScope) {
+    return {
+      question: buildTruckScopedFollowupQuestion(question, activeTopic),
+      usedPendingFollowup: false,
+      usedActiveTopic: true,
+      pendingType: typeof pending.type === "string" ? pending.type : "active_truck_topic",
+    };
+  }
+
+  if (ellipticalTruckQuestion && !activeTopic && !explicitFleetScope) {
+    return {
+      question,
+      usedPendingFollowup: false,
+      usedActiveTopic: false,
+      pendingType: null,
+      needsClarification: true,
+      clarificationReason: "missing_active_truck_topic",
+      clarification: "Which truck should I check?",
     };
   }
 
@@ -951,6 +993,7 @@ function resolvePendingFollowupQuestion(question: string, pendingFollowup: any) 
     return {
       question,
       usedPendingFollowup: false,
+      usedActiveTopic: false,
       pendingType: null,
     };
   }
@@ -958,8 +1001,119 @@ function resolvePendingFollowupQuestion(question: string, pendingFollowup: any) 
   return {
     question: prompt.slice(0, 500),
     usedPendingFollowup: true,
+    usedActiveTopic: Boolean(activeTopic),
     pendingType: typeof pending.type === "string" ? pending.type : null,
   };
+}
+
+function getActiveTruckTopic(pending: any, companyId?: string | null) {
+  const topic = pending?.active_topic;
+  if (!topic || typeof topic !== "object") return null;
+  if (String(topic.entity_type || "") !== "truck") return null;
+  const truckId = String(topic.truck_id || "").trim();
+  if (!truckId || truckId.length > 80) return null;
+  const topicCompanyId = String(topic.company_id || "").trim();
+  if (companyId && topicCompanyId && topicCompanyId !== companyId) return null;
+
+  return {
+    entity_type: "truck",
+    truck_id: truckId,
+    company_id: topicCompanyId || companyId || null,
+    timeframe: sanitizeTopicTimeframe(topic.timeframe),
+  };
+}
+
+function sanitizeTopicTimeframe(value: any) {
+  if (!value || typeof value !== "object") return null;
+  const requested = String(value.requested || "").trim().toLowerCase();
+  if (requested !== "today" && requested !== "yesterday") return null;
+  const dayOffset = requested === "yesterday" ? -1 : 0;
+  return {
+    requested,
+    dayOffset,
+    local_day: value.local_day ? String(value.local_day).slice(0, 20) : null,
+    day_start_utc: value.day_start_utc ? String(value.day_start_utc).slice(0, 40) : null,
+    day_end_utc: value.day_end_utc ? String(value.day_end_utc).slice(0, 40) : null,
+    display_date_label: value.display_date_label
+      ? String(value.display_date_label).slice(0, 80)
+      : null,
+  };
+}
+
+function buildTruckScopedFollowupQuestion(question: string, activeTopic: any) {
+  const trimmed = String(question || "").trim();
+  const normalized = trimmed.toLowerCase().replace(/[’]/g, "'");
+  const truckId = activeTopic.truck_id;
+  const fallbackTimeframe = activeTopic.timeframe || null;
+  const timeframe = resolveTruckTimelineTimeframe(normalized, fallbackTimeframe);
+  const hasExplicitTimeframe = questionHasExplicitTimeframe(normalized);
+  const timeframeSuffix =
+    !hasExplicitTimeframe && timeframe?.requested === "yesterday"
+      ? " for yesterday"
+      : !hasExplicitTimeframe && timeframe?.requested === "today" && isDetailedTimelineRequest(normalized)
+        ? " for today"
+        : "";
+
+  if (/^show\s+yesterday\b/.test(normalized) || /^what\s+about\s+yesterday\b/.test(normalized)) {
+    return `Show yesterday's movement for ${truckId}.`;
+  }
+
+  if (/^show\s+today\b/.test(normalized) || /^what\s+about\s+today\b/.test(normalized)) {
+    return `Show today's movement for ${truckId}.`;
+  }
+
+  if (isDetailedTimelineRequest(normalized)) {
+    return `Show detailed timeline for ${truckId}${timeframeSuffix}.`;
+  }
+
+  if (/\bis\s+it\s+idling\b/.test(normalized) || /\bidle\s+risk\b/.test(normalized)) {
+    return `Is ${truckId} idling?`;
+  }
+
+  if (/\bis\s+it\s+moving\b/.test(normalized)) {
+    return `Is ${truckId} moving?`;
+  }
+
+  const withoutTerminalPunctuation = trimmed.replace(/[.!?]+$/g, "");
+  return `${withoutTerminalPunctuation} for ${truckId}${timeframeSuffix}?`.slice(0, 500);
+}
+
+function questionHasExplicitTimeframe(lower: string) {
+  return (
+    lower.includes("today") ||
+    lower.includes("yesterday") ||
+    lower.includes("previous day") ||
+    lower.includes("previous-day") ||
+    lower.includes("last operating day") ||
+    lower.includes("last full route")
+  );
+}
+
+function isEllipticalTruckQuestion(question: string) {
+  const lower = String(question || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[’]/g, "'");
+  if (!lower) return false;
+  if (asksForExplicitFleetScope(lower)) return false;
+
+  return (
+    /\bwhat\s+are\s+(?:today'?s|yesterday'?s)\s+movements?\b/.test(lower) ||
+    /\b(?:today'?s|yesterday'?s)\s+movements?\b/.test(lower) ||
+    /\bshow\s+(?:today|yesterday)\b/.test(lower) ||
+    /\bwhat\s+about\s+(?:today|yesterday)\b/.test(lower) ||
+    /\bwhere\s+did\s+it\s+go\b/.test(lower) ||
+    /\bis\s+it\s+(?:moving|idling|stopped|stationary)\b/.test(lower) ||
+    /\bidle\s+risk\b/.test(lower) ||
+    isDetailedTimelineRequest(lower)
+  );
+}
+
+function asksForExplicitFleetScope(question: string) {
+  const lower = String(question || "").toLowerCase();
+  return /\b(fleet|all trucks|all vehicles|whole fleet|every truck|every vehicle|all assets|company-wide)\b/.test(
+    lower
+  );
 }
 
 function isShortFollowupCommand(question: string) {
@@ -1016,17 +1170,26 @@ function buildPendingFollowup(context: any, answer: string) {
     context.vehicle_match?.matched_truck_id ||
     context.detected_truck_id ||
     null;
-
-  if (
-    context.intent === "truck_status" &&
-    truckLabel &&
-    /compare today'?s stop\/motion timeline/i.test(answer)
-  ) {
+  const attachActiveTopic = (followup: Record<string, any>, timeframeOverride: any = null) => {
+    if (!truckLabel) return followup;
     return {
+      ...followup,
+      truck_id: followup.truck_id || truckLabel,
+      active_topic: buildActiveTruckTopic(context, truckLabel, timeframeOverride),
+    };
+  };
+
+  if (context.intent === "truck_status" && truckLabel) {
+    const prompt = context.live_status_idle_focus
+      ? `Compare today's idle markers against movement for ${truckLabel}. Keep the timeline in EAT/Kenya time and do not infer continuous idling unless movement data supports it.`
+      : `Review today's movement timeline for ${truckLabel}. Summarize the corridor route, stop/rest pattern, and idle marker interpretation without raw coordinates or provider payloads.`;
+
+    return attachActiveTopic({
       type: "compare_stop_motion_timeline",
       truck_id: truckLabel,
-      prompt: `Compare today's stop/motion timeline for ${truckLabel} against Nava idle events. Keep the timeline in EAT/Kenya time and do not infer continuous idling unless movement data supports it.`,
-    };
+      timeframe: "today",
+      prompt,
+    }, { requested: "today", dayOffset: 0 });
   }
 
   if (
@@ -1037,29 +1200,29 @@ function buildPendingFollowup(context: any, answer: string) {
     const timeline = context.truck_timeline_comparison || {};
     const requestedTimeframe = timeline.timeframe?.requested || "today";
     if (timeline.timeframe?.new_day_rollover_window || timeline.day_story?.new_day_rollover_window) {
-      return {
+      return attachActiveTopic({
         type: "compare_stop_motion_timeline",
         truck_id: truckLabel,
         timeframe: "yesterday",
         prompt: `Show yesterday's movement for ${truckLabel}. Summarize the previous operating day's corridor route, stop/rest pattern, and idle marker interpretation without raw coordinates or provider payloads.`,
-      };
+      }, { requested: "yesterday", dayOffset: -1 });
     }
-    return {
+    return attachActiveTopic({
       type: "show_detailed_timeline",
       truck_id: truckLabel,
       timeframe: requestedTimeframe,
       prompt: `Show the detailed timeline for ${truckLabel}${
         requestedTimeframe === "yesterday" ? " for yesterday" : ""
       }. Include movement/stationary blocks and idle marker evidence, but do not show raw coordinates or provider payloads.`,
-    };
+    }, timeline.timeframe);
   }
 
   if (context.fuel_investigation && truckLabel) {
-    return {
+    return attachActiveTopic({
       type: "fuel_investigation_next_checks",
       truck_id: truckLabel,
       prompt: `Continue the fuel investigation for ${truckLabel}. Check stops, journeys, manual fuel entries, and usable provider fuel telemetry without accusing anyone.`,
-    };
+    });
   }
 
   if (context.dashboard_followup?.trucks?.length) {
@@ -1076,7 +1239,60 @@ function buildPendingFollowup(context: any, answer: string) {
     }
   }
 
+  if (truckLabel) {
+    return attachActiveTopic({
+      type: "active_truck_topic",
+      truck_id: truckLabel,
+    });
+  }
+
   return {};
+}
+
+function buildActiveTruckTopic(context: any, truckLabel: string, timeframeOverride: any = null) {
+  const timeline =
+    context.truck_timeline_comparison ||
+    Object.values(context.truck_timelines || {})[0] ||
+    null;
+  const timeframe =
+    sanitizeTopicTimeframe(timeframeOverride) ||
+    sanitizeTimelineTimeframe(timeline) ||
+    sanitizeTopicTimeframe(context.timeline_timeframe) ||
+    null;
+
+  return {
+    entity_type: "truck",
+    truck_id: truckLabel,
+    company_id: context.company?.id || null,
+    last_intent: context.intent || null,
+    timeframe,
+    updated_at: new Date().toISOString(),
+  };
+}
+
+function sanitizeTimelineTimeframe(timeline: any) {
+  if (!timeline?.timeframe) return null;
+  const requested = String(timeline.timeframe.requested || "").trim().toLowerCase();
+  if (requested !== "today" && requested !== "yesterday") return null;
+  return {
+    requested,
+    dayOffset:
+      Number.isFinite(Number(timeline.timeframe.day_offset))
+        ? Number(timeline.timeframe.day_offset)
+        : requested === "yesterday"
+          ? -1
+          : 0,
+    local_day: timeline.local_day || timeline.timeframe.local_day || null,
+    day_start_utc: timeline.query_window_utc?.start || null,
+    day_end_utc: timeline.query_window_utc?.end || null,
+    display_date_label: buildTimelineDisplayDateLabel(timeline),
+  };
+}
+
+function buildTimelineDisplayDateLabel(timeline: any) {
+  const localDay = timeline?.local_day || timeline?.timeframe?.local_day || null;
+  if (!localDay) return timeline?.timeframe?.requested || null;
+  return `${localDay} ${timeline?.timezone?.label || "local time"}`;
 }
 
 function isDefaultConversationTitle(title: any) {

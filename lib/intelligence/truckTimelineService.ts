@@ -133,6 +133,8 @@ export async function buildTruckTimelineIntelligence(input: TimelineInput) {
     };
   }
 
+  const eventFetchStartUtc = shiftIsoTime(localDayRange.startUtc, -24 * 60);
+  const eventFetchEndUtc = shiftIsoTime(localDayRange.endUtc, 24 * 60);
   const [telemetryResult, eventsResult] = await Promise.all([
     supabaseAdmin
       .from("telemetry_logs")
@@ -153,8 +155,8 @@ export async function buildTruckTimelineIntelligence(input: TimelineInput) {
       .eq("company_id", input.companyId)
       .eq("truck_id", canonicalTruckId)
       .in("event_type", ["idle", "excessive_idle"])
-      .gte("created_at", localDayRange.startUtc)
-      .lt("created_at", localDayRange.endUtc)
+      .gte("created_at", eventFetchStartUtc)
+      .lt("created_at", eventFetchEndUtc)
       .order("created_at", { ascending: true })
       .limit(100),
   ]);
@@ -166,10 +168,14 @@ export async function buildTruckTimelineIntelligence(input: TimelineInput) {
     ...row,
     geofence_match: matchPointToGeofence(row, geofences),
   }));
-  const idleEvents = (eventsResult.data || []).map((event) => ({
-    ...event,
-    geofence_match: matchPointToGeofence(event, geofences),
-  }));
+  const windowStartMs = new Date(localDayRange.startUtc).getTime();
+  const windowEndMs = new Date(localDayRange.endUtc).getTime();
+  const idleEvents = (eventsResult.data || [])
+    .filter((event) => eventIsInTimelineWindow(event, windowStartMs, windowEndMs))
+    .map((event) => ({
+      ...event,
+      geofence_match: matchPointToGeofence(event, geofences),
+    }));
 
   const rawBlocks = aggregateTelemetryIntoMotionBlocks(telemetryRows);
   const selectedBlocks = selectTimelineBlocksForContext(rawBlocks, idleEvents, maxBlocks);
@@ -812,6 +818,18 @@ function eventTimestampMillis(event: any) {
   const value = event?.started_at || event?.created_at || null;
   if (!value) return NaN;
   return new Date(value).getTime();
+}
+
+function eventIsInTimelineWindow(event: any, startMs: number, endMs: number) {
+  const eventMs = eventTimestampMillis(event);
+  if (!Number.isFinite(eventMs)) return false;
+  return eventMs >= startMs && eventMs < endMs;
+}
+
+function shiftIsoTime(value: string, minutes: number) {
+  const timestamp = new Date(value || 0).getTime();
+  if (!Number.isFinite(timestamp)) return value;
+  return new Date(timestamp + minutes * 60000).toISOString();
 }
 
 function minutesBetween(start: any, end: any) {
