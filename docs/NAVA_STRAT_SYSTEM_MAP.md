@@ -501,7 +501,7 @@ Creating a draft invoice:
 
 Invoice records are still MVP internal records. They must not create Stripe charges, PDFs, emails, customer-facing billing artifacts, or payment collection behavior.
 
-Platform Health must verify the `billing_invoices` table before pilot invoice operations. Required readiness checks include all invoice columns, the named billing invoice indexes, and a status constraint that limits records to `draft`, `sent`, `paid`, and `void`. Invoice APIs and UI should degrade to a setup-required message if the table or required columns have not been applied yet.
+Platform Health must verify the `billing_invoices` table before pilot invoice operations. Required readiness checks include all invoice columns, the named billing invoice indexes, and a status constraint that limits records to `draft`, `sent`, `paid`, and `void`. If Supabase does not expose metadata schemas to the health endpoint, index/constraint/RPC checks are grouped into one manual-verification warning instead of one warning per object. Invoice APIs and UI should degrade to a setup-required message if the table or required columns have not been applied yet.
 
 ### Pilot Readiness Checklist
 
@@ -665,7 +665,7 @@ Platform owners now have `GET/POST /api/admin/tenants/[companyId]/invoices` and 
 
 Draft invoices are created from server-side preview calculations only. The lifecycle is `draft -> sent -> paid` or `draft/sent -> void`. The tenant detail page lists recent invoices and can update status. No Stripe, PDF, email, payment collection, amount editing, or customer-facing invoice portal exists yet.
 
-Platform Health checks `billing_invoices` columns, expected invoice indexes, and the invoice status constraint. Invoice APIs return setup-required guidance when the table or required columns are missing instead of exposing a generic server crash.
+Platform Health checks `billing_invoices` columns, expected invoice indexes, and the invoice status constraint. If Supabase metadata schemas are not accessible from the API context, metadata checks are grouped into one manual-verification warning while table/column checks continue normally. Invoice APIs return setup-required guidance when the table or required columns are missing instead of exposing a generic server crash.
 
 ### Pilot Readiness Checklist
 

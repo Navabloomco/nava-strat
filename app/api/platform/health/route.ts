@@ -14,6 +14,12 @@ type HealthCheck = {
   detail: string;
 };
 
+type MetadataCheckResult = {
+  checks: HealthCheck[];
+  metadataUnavailable: boolean;
+  metadataErrors: string[];
+};
+
 type RequiredTable = {
   table: string;
   columns: string[];
@@ -265,6 +271,43 @@ function sanitizeError(error: any) {
   return String(error?.message || error?.details || error || "Unknown error");
 }
 
+function isMetadataSchemaAccessError(message: string) {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("invalid schema") &&
+    (normalized.includes("pg_catalog") || normalized.includes("information_schema"))
+  );
+}
+
+function uniqueMessages(messages: string[]) {
+  return Array.from(new Set(messages.filter(Boolean)));
+}
+
+function metadataPass(check: HealthCheck | HealthCheck[]): MetadataCheckResult {
+  return {
+    checks: Array.isArray(check) ? check : [check],
+    metadataUnavailable: false,
+    metadataErrors: [],
+  };
+}
+
+function metadataUnavailable(errors: string[]): MetadataCheckResult {
+  return {
+    checks: [],
+    metadataUnavailable: true,
+    metadataErrors: uniqueMessages(errors),
+  };
+}
+
+function metadataWarning(name: string, detail: string): MetadataCheckResult {
+  return metadataPass({
+    category: "Constraints/RPCs",
+    name,
+    status: "warn",
+    detail,
+  });
+}
+
 function present(value: string | undefined, placeholder?: string) {
   return Boolean(value && value.trim() && value !== placeholder);
 }
@@ -440,7 +483,7 @@ async function buildTableColumnChecks(): Promise<HealthCheck[]> {
   });
 }
 
-async function checkFleetAssetsUniqueIndex(): Promise<HealthCheck> {
+async function checkFleetAssetsUniqueIndex(): Promise<MetadataCheckResult> {
   const metadataErrors: string[] = [];
 
   try {
@@ -467,12 +510,12 @@ async function checkFleetAssetsUniqueIndex(): Promise<HealthCheck> {
     });
 
     if (matchingIndex) {
-      return {
+      return metadataPass({
         category: "Constraints/RPCs",
         name: "fleet_assets(provider_id, truck_id) unique index",
         status: "pass",
         detail: `Found ${matchingIndex.indexname}.`,
-      };
+      });
     }
   } catch (err) {
     metadataErrors.push(sanitizeError(err));
@@ -522,38 +565,40 @@ async function checkFleetAssetsUniqueIndex(): Promise<HealthCheck> {
           .map((item: any) => item.column_name);
 
         if (names.includes("provider_id") && names.includes("truck_id")) {
-          return {
+          return metadataPass({
             category: "Constraints/RPCs",
             name: "fleet_assets(provider_id, truck_id) unique constraint",
             status: "pass",
             detail: `Found ${name}.`,
-          };
+          });
         }
       }
     }
 
-    return {
+    return metadataPass({
       category: "Constraints/RPCs",
       name: "fleet_assets(provider_id, truck_id) unique constraint",
       status: "fail",
       detail:
         "No unique constraint/index for provider_id + truck_id was found. Provider sync upsert depends on it.",
-    };
+    });
   } catch (err) {
     metadataErrors.push(sanitizeError(err));
   }
 
-  return {
-    category: "Constraints/RPCs",
-    name: "fleet_assets(provider_id, truck_id) unique constraint",
-    status: "warn",
-    detail: `Could not inspect database metadata safely. Verify manually. Metadata errors: ${metadataErrors.join(
+  if (metadataErrors.some(isMetadataSchemaAccessError)) {
+    return metadataUnavailable(metadataErrors);
+  }
+
+  return metadataWarning(
+    "fleet_assets(provider_id, truck_id) unique constraint",
+    `Manual verification required: could not inspect the fleet_assets provider/truck unique constraint safely. ${metadataErrors.join(
       " | "
-    )}`,
-  };
+    )}`
+  );
 }
 
-async function checkBillingInvoiceIndexes(): Promise<HealthCheck[]> {
+async function checkBillingInvoiceIndexes(): Promise<MetadataCheckResult> {
   try {
     const { data, error } = await withTimeout<any>(
       (supabaseAdmin as any)
@@ -572,28 +617,28 @@ async function checkBillingInvoiceIndexes(): Promise<HealthCheck[]> {
       (data || []).map((index: any) => String(index.indexname || ""))
     );
 
-    return BILLING_INVOICE_INDEXES.map((indexName) => ({
+    return metadataPass(BILLING_INVOICE_INDEXES.map((indexName) => ({
       category: "Constraints/RPCs",
       name: `${indexName} index`,
       status: foundIndexes.has(indexName) ? "pass" : "fail",
       detail: foundIndexes.has(indexName)
         ? "Expected billing invoice index is present."
         : "Expected billing invoice index is missing. Apply the additive billing_invoices index migration before pilot billing.",
-    })) as HealthCheck[];
+    })) as HealthCheck[]);
   } catch (err) {
-    const detail = `Could not inspect billing invoice indexes safely. Verify manually. ${sanitizeError(
-      err
-    )}`;
-    return BILLING_INVOICE_INDEXES.map((indexName) => ({
-      category: "Constraints/RPCs",
-      name: `${indexName} index`,
-      status: "warn",
-      detail,
-    })) as HealthCheck[];
+    const message = sanitizeError(err);
+    if (isMetadataSchemaAccessError(message)) {
+      return metadataUnavailable([message]);
+    }
+
+    return metadataWarning(
+      "billing_invoices index metadata",
+      `Manual verification required: could not inspect billing invoice indexes safely. ${message}`
+    );
   }
 }
 
-async function checkBillingInvoiceStatusConstraint(): Promise<HealthCheck> {
+async function checkBillingInvoiceStatusConstraint(): Promise<MetadataCheckResult> {
   const checkName = "billing_invoices status check constraint";
 
   try {
@@ -619,13 +664,13 @@ async function checkBillingInvoiceStatusConstraint(): Promise<HealthCheck> {
       .filter(Boolean);
 
     if (constraintNames.length === 0) {
-      return {
+      return metadataPass({
         category: "Constraints/RPCs",
         name: checkName,
         status: "fail",
         detail:
           "No CHECK constraint was found for billing_invoices. Status should be limited to draft, sent, paid, and void.",
-      };
+      });
     }
 
     const { data: checks, error: checkError } = await withTimeout<any>(
@@ -656,34 +701,35 @@ async function checkBillingInvoiceStatusConstraint(): Promise<HealthCheck> {
     });
 
     if (matchingCheck) {
-      return {
+      return metadataPass({
         category: "Constraints/RPCs",
         name: checkName,
         status: "pass",
         detail: `Found ${matchingCheck.constraint_name}.`,
-      };
+      });
     }
 
-    return {
+    return metadataPass({
       category: "Constraints/RPCs",
       name: checkName,
       status: "fail",
       detail:
         "A billing_invoices CHECK constraint exists, but it does not clearly limit status to draft, sent, paid, and void.",
-    };
+    });
   } catch (err) {
-    return {
-      category: "Constraints/RPCs",
-      name: checkName,
-      status: "warn",
-      detail: `Could not inspect billing invoice status constraint safely. Verify manually. ${sanitizeError(
-        err
-      )}`,
-    };
+    const message = sanitizeError(err);
+    if (isMetadataSchemaAccessError(message)) {
+      return metadataUnavailable([message]);
+    }
+
+    return metadataWarning(
+      checkName,
+      `Manual verification required: could not inspect the billing invoice status constraint safely. ${message}`
+    );
   }
 }
 
-async function checkClientVisibilityRpc(): Promise<HealthCheck> {
+async function checkClientVisibilityRpc(): Promise<MetadataCheckResult> {
   try {
     const { data, error } = await withTimeout<any>(
       (supabaseAdmin as any)
@@ -700,22 +746,48 @@ async function checkClientVisibilityRpc(): Promise<HealthCheck> {
     if (error) throw error;
 
     const found = Array.isArray(data) && data.length > 0;
-    return {
+    return metadataPass({
       category: "Constraints/RPCs",
       name: "record_client_visibility_link_access RPC",
       status: found ? "pass" : "warn",
       detail: found
         ? "Function is present."
         : "Function was not found. Client portal still works, but access counts will not update.",
-    };
+    });
   } catch (err) {
-    return {
-      category: "Constraints/RPCs",
-      name: "record_client_visibility_link_access RPC",
-      status: "warn",
-      detail: `Could not inspect routines safely. Verify manually. ${sanitizeError(err)}`,
-    };
+    const message = sanitizeError(err);
+    if (isMetadataSchemaAccessError(message)) {
+      return metadataUnavailable([message]);
+    }
+
+    return metadataWarning(
+      "record_client_visibility_link_access RPC",
+      `Manual verification required: could not inspect routines safely. ${message}`
+    );
   }
+}
+
+async function buildMetadataChecks(): Promise<HealthCheck[]> {
+  const results = await Promise.all([
+    checkFleetAssetsUniqueIndex(),
+    checkBillingInvoiceIndexes(),
+    checkBillingInvoiceStatusConstraint(),
+    checkClientVisibilityRpc(),
+  ]);
+
+  const checks = results.flatMap((result) => result.checks);
+
+  if (results.some((result) => result.metadataUnavailable)) {
+    checks.push({
+      category: "Constraints/RPCs",
+      name: "database metadata inspection",
+      status: "warn",
+      detail:
+        "Manual verification required: Supabase metadata schemas are not exposed to this API context, so Platform Health could not automatically inspect some indexes, constraints, or RPC metadata. Verify fleet_assets(provider_id, truck_id) uniqueness, billing_invoices indexes/status constraint, and record_client_visibility_link_access manually, or add a safe platform health RPC.",
+    });
+  }
+
+  return checks;
 }
 
 function overallStatus(checks: HealthCheck[]): CheckStatus {
@@ -777,10 +849,7 @@ export async function GET(req: Request) {
     const checks = [
       ...buildEnvironmentChecks(),
       ...(await buildTableColumnChecks()),
-      await checkFleetAssetsUniqueIndex(),
-      ...(await checkBillingInvoiceIndexes()),
-      await checkBillingInvoiceStatusConstraint(),
-      await checkClientVisibilityRpc(),
+      ...(await buildMetadataChecks()),
     ];
 
     return noStoreJson({
