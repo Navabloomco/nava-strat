@@ -640,6 +640,10 @@ function buildDashboardFollowupAnswer(context: any) {
   const visibleTrucks = trucks.filter((truck: any) => truck.enabled_for_intelligence);
   const unmatched = trucks.filter((truck: any) => !truck.enabled_for_intelligence);
   const label = followup.label || "trucks shown on the dashboard";
+  const strongIdleCount = visibleTrucks.filter(
+    (truck: any) => truck.current_status === "still_idling"
+  ).length;
+  const suspiciousDurationCount = visibleTrucks.filter(hasSuspiciousDashboardIdleTotal).length;
   const parts: string[] = [];
 
   if (!trucks.length) {
@@ -647,7 +651,19 @@ function buildDashboardFollowupAnswer(context: any) {
   }
 
   parts.push(`I used the ${label} currently shown on this dashboard, not unrelated recent events.`);
-  parts.push("I checked latest telemetry and recent idle events for those exact trucks.");
+  if (strongIdleCount) {
+    parts.push(
+      `${strongIdleCount} of them have fresh low-speed telemetry and a recent idle event, so the current idle/stationary read is strong. I cannot prove engine-on idling without ignition or engine-status data.`
+    );
+  } else {
+    parts.push("I checked latest telemetry and recent idle events for those exact trucks.");
+  }
+
+  if (suspiciousDurationCount) {
+    parts.push(
+      "The current status looks real; at least one accumulated dashboard idle total looks suspicious and may need idle-event closure or provider data-quality review."
+    );
+  }
   parts.push("");
 
   if (visibleTrucks.length) {
@@ -666,7 +682,7 @@ function buildDashboardFollowupAnswer(context: any) {
 
   parts.push("");
   parts.push(
-    "If a truck is stale or only showing low speed, treat the answer as a prompt to verify on Live Tracking before calling the situation closed."
+    buildDashboardFollowupQuestion(visibleTrucks)
   );
 
   return parts.join("\n");
@@ -685,29 +701,31 @@ function formatDashboardTruckLine(truck: any) {
   const speed =
     truck.latest_speed === null || truck.latest_speed === undefined
       ? "speed unknown"
-      : `${Number(truck.latest_speed).toLocaleString()} speed`;
+      : `latest speed ${Number(truck.latest_speed).toLocaleString()}`;
   const location = formatOperationalLocation(truck);
   const locationText = location ? `, ${location}` : "";
   const latestIdle = truck.latest_idle_event
-    ? ` Latest idle event: ${formatReadableDate(
-        truck.latest_idle_event.created_at || truck.latest_idle_event.started_at
-      )}.`
+    ? ` Latest idle event: ${formatDashboardIdleEvent(truck.latest_idle_event)}.`
     : " No recent idle event found in the last 24 hours.";
   const dashboardMetric = formatDashboardMetric(truck.dashboard_context);
+  const dataQualityNote = formatDashboardDataQualityNote(truck.dashboard_context);
 
   return `- ${label || truck.truck_id}: ${status} Last seen ${formatReadableDate(
     truck.last_seen_at
   )} (${freshness}), ${speed}${locationText}. Confidence: ${
     truck.confidence || "unknown"
-  }.${dashboardMetric}${latestIdle} ${truck.reason || ""}`;
+  }.${dashboardMetric}${dataQualityNote}${latestIdle} ${truck.reason || ""}`;
 }
 
 function formatDashboardTruckStatus(truck: any) {
   switch (truck.current_status) {
     case "still_idling":
-      return "still looks idle or stopped.";
+      if (Number(truck.latest_speed) === 0) {
+        return "fresh speed is 0 and a recent idle event exists, so this strongly suggests it is still idle or stationary.";
+      }
+      return "fresh low-speed telemetry and a recent idle event strongly suggest it is still idle or stationary.";
     case "stopped_or_idle":
-      return "looks stopped or idle, but I would not call it certain.";
+      return "fresh telemetry suggests it is stopped or idle, but the idle event trail is weaker.";
     case "moving":
       return "does not look idle now; fresh telemetry shows movement.";
     case "stale":
@@ -731,6 +749,76 @@ function formatDashboardMetric(dashboardContext: any) {
     return ` Dashboard event: ${formatSpareEventType(dashboardContext.event_type)}.`;
   }
   return "";
+}
+
+function formatDashboardIdleEvent(event: any) {
+  const label = formatSpareEventType(event.event_type || "idle");
+  const at = formatReadableDate(event.created_at || event.started_at);
+  const duration =
+    event.duration_minutes === null || event.duration_minutes === undefined
+      ? ""
+      : `, ${Number(event.duration_minutes).toLocaleString()} min`;
+  const context = event.context_label ? `, context: ${event.context_label}` : "";
+
+  return `${label} at ${at}${duration}${context}`;
+}
+
+function formatDashboardDataQualityNote(dashboardContext: any) {
+  if (!hasSuspiciousDashboardIdleTotal({ dashboard_context: dashboardContext })) {
+    return "";
+  }
+
+  return " Data-quality note: that accumulated idle total is unusually high, so I would treat the duration as suspect until idle-event closure is reviewed.";
+}
+
+function hasSuspiciousDashboardIdleTotal(truck: any) {
+  const hours = parseDashboardNumber(truck?.dashboard_context?.idle_hours);
+  return hours !== null && hours > 24;
+}
+
+function parseDashboardNumber(value: any) {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(String(value).replace(/,/g, ""));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function buildDashboardFollowupQuestion(trucks: any[]) {
+  const hasDriverContext = trucks.some((truck) => truck.assigned_driver?.driver_name);
+  const hasGeofenceContext = trucks.some((truck) => truck.geofence_match?.name);
+  const hasSuspiciousTotals = trucks.some(hasSuspiciousDashboardIdleTotal);
+  const options = [
+    "whether these trucks are on active journeys",
+    "whether they have recent mechanical or spares issues",
+  ];
+
+  if (hasDriverContext) {
+    options.push("which assigned drivers were responsible at the time");
+  } else {
+    options.push("whether standing driver assignments exist for them");
+  }
+
+  if (hasGeofenceContext) {
+    options.push("whether their saved-place or geofence context explains the stop");
+  } else {
+    options.push("whether their locations point to yards, queues, borders, or client sites");
+  }
+
+  options.push("whether provider sync freshness is affecting the read");
+
+  if (hasSuspiciousTotals) {
+    options.push("whether this is an idle-event closure/data-quality problem");
+  }
+
+  options.push("fuel impact if usable fuel data exists");
+
+  return `Would you like me to check ${formatNaturalList(options)} for these same trucks?`;
+}
+
+function formatNaturalList(items: string[]) {
+  const unique = items.filter((item, index, list) => list.indexOf(item) === index);
+  if (unique.length <= 1) return unique[0] || "";
+  if (unique.length === 2) return `${unique[0]} or ${unique[1]}`;
+  return `${unique.slice(0, -1).join(", ")}, or ${unique[unique.length - 1]}`;
 }
 
 function buildInvestigationFallbackAnswer(context: any) {
