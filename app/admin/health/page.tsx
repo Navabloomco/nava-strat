@@ -237,15 +237,15 @@ export default function PlatformHealthPage() {
                   {categoryChecks.map((check) => (
                     <div
                       key={`${check.category}:${check.name}`}
-                      className="grid gap-3 px-5 py-4 lg:grid-cols-[220px_1fr_120px] lg:items-start"
+                      className="grid gap-3 px-5 py-4 sm:grid-cols-[minmax(0,1fr)_auto] lg:grid-cols-[minmax(180px,1fr)_minmax(240px,2fr)_max-content] lg:items-start"
                     >
-                      <div className="min-w-0 text-sm font-semibold text-white">
+                      <div className="min-w-0 whitespace-normal break-all font-mono text-xs font-semibold leading-6 text-white sm:pr-3 lg:pr-0">
                         {check.name}
                       </div>
-                      <div className="min-w-0 break-words text-sm leading-6 text-slate-300">
+                      <div className="min-w-0 whitespace-normal break-words text-sm leading-6 text-slate-300 sm:col-span-2 lg:col-span-1">
                         {check.detail}
                       </div>
-                      <div className="lg:text-right">
+                      <div className="min-w-max justify-self-start sm:col-start-2 sm:row-start-1 sm:justify-self-end lg:col-start-auto lg:row-start-auto">
                         <StatusPill tone={statusTone(check.status)}>
                           {statusLabel(check.status)}
                         </StatusPill>
