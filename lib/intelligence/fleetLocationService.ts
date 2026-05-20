@@ -114,7 +114,7 @@ export async function getCurrentFleetLocations(
 
   const { data: assets, error } = await supabaseAdmin
     .from("fleet_assets")
-    .select("truck_id, registration, latitude, longitude, last_seen_at, status")
+    .select("truck_id, registration, latitude, longitude, last_seen_at, status, provider_location_label")
     .eq("company_id", companyId)
     .eq("status", "active")
     .eq("intelligence_enabled", true)
@@ -149,6 +149,7 @@ export async function getCurrentFleetLocations(
       freshness_minutes: freshnessMinutes,
       status: asset.status,
       location,
+      provider_location_label: asset.provider_location_label || null,
     });
   }
 

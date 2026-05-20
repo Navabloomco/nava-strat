@@ -24,6 +24,7 @@ import {
   sanitizeId,
   NAVA_EYE_CONVERSATION_SETUP_MESSAGE,
 } from "../../../../lib/api/navaEyeConversations";
+import { normalizeProviderLocationLabel } from "../../../../lib/location/resolveOperationalLocation";
 
 export async function POST(req: Request) {
   try {
@@ -2360,14 +2361,23 @@ type OperationalLocationOptions = {
 
 function formatOperationalLocation(value: any, options: OperationalLocationOptions = {}) {
   if (!value) return null;
+  const resolvedLocation = value.location_resolution;
+  if (resolvedLocation?.display_label) {
+    if (resolvedLocation.confidence_source !== "coordinates_only") {
+      return String(resolvedLocation.display_label);
+    }
+    return options.gpsFallback === undefined
+      ? String(resolvedLocation.display_label)
+      : options.gpsFallback;
+  }
   if (value.provider_location_label) {
-    return formatProviderLocationLabel(value.provider_location_label);
+    return normalizeProviderLocationLabel(value.provider_location_label);
   }
   if (value.location_label) {
-    return formatProviderLocationLabel(value.location_label);
+    return normalizeProviderLocationLabel(value.location_label);
   }
   if (value.location_name) {
-    return formatProviderLocationLabel(value.location_name);
+    return normalizeProviderLocationLabel(value.location_name);
   }
   if (value.geofence_match?.name) {
     return `inside ${value.geofence_match.name}`;
@@ -2379,33 +2389,6 @@ function formatOperationalLocation(value: any, options: OperationalLocationOptio
     return options.gpsFallback === undefined ? "at an unresolved GPS point" : options.gpsFallback;
   }
   return null;
-}
-
-function formatProviderLocationLabel(value: any) {
-  const label = String(value || "").trim().replace(/\s+/g, " ");
-  if (!label) return null;
-
-  const distanceMatch = label.match(
-    /^([0-9]+(?:\.[0-9]+)?)\s*(km|kilometres|kilometers|kms?)\s+([a-z -]+?)\s+of\s+(.+)$/i
-  );
-  if (distanceMatch) {
-    const [, distance, , directionRaw, placeRaw] = distanceMatch;
-    const direction = directionRaw.trim().toLowerCase();
-    const place = toTitleCase(placeRaw.trim());
-    return `near ${place}, about ${Number(distance).toLocaleString()} km ${direction} of town`;
-  }
-
-  if (/^(at|near|inside)\b/i.test(label)) {
-    return label;
-  }
-
-  return `near ${label}`;
-}
-
-function toTitleCase(value: string) {
-  return value
-    .toLowerCase()
-    .replace(/\b[a-z]/g, (letter) => letter.toUpperCase());
 }
 
 function formatEventLocation(event: any) {

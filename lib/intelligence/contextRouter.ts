@@ -21,6 +21,7 @@ import {
   operationalTimeZoneLabel,
   resolveOperationalTimeZone,
 } from "../timeFormatting";
+import { resolveOperationalLocation } from "../location/resolveOperationalLocation";
 
 export type ContextIntent =
   | "fleet_health"
@@ -241,12 +242,25 @@ export async function routeContext(
         );
   }
   if (intent === "country_trucks" && detectedCountryName) {
+    const countryTrucks = await getCurrentTrucksInCountry(companyId, detectedCountryName, {
+      includeLocation: false,
+    });
     context.country_fleet_location = {
       country: detectedCountryName,
       freshness_window_minutes: 30,
-      trucks: await getCurrentTrucksInCountry(companyId, detectedCountryName, {
-        includeLocation: true,
-      }),
+      trucks: await Promise.all(
+        countryTrucks.map(async (truck: any) => ({
+          ...truck,
+          location_resolution: await resolveOperationalLocation({
+            company_id: companyId,
+            latitude: truck.latitude,
+            longitude: truck.longitude,
+            provider_location_label: truck.provider_location_label || truck.location,
+            truck_id: truck.truck_id,
+            geofences,
+          }),
+        }))
+      ),
     };
   }
   if (intent === "profit_simulation") {
@@ -309,6 +323,7 @@ function usesLocationContext(intent: ContextIntent) {
     "journey_context",
     "offline_trucks",
     "dashboard_followup",
+    "country_trucks",
     "general",
   ].includes(intent);
 }
@@ -774,6 +789,14 @@ async function fetchDashboardFollowupContext(
         Number.isFinite(Number(latestTelemetry?.longitude))
           ? latestTelemetry
           : asset;
+      const locationResolution = await resolveOperationalLocation({
+        company_id: companyId,
+        latitude: locationPoint.latitude,
+        longitude: locationPoint.longitude,
+        provider_location_label: asset.provider_location_label,
+        truck_id: asset.truck_id,
+        geofences,
+      });
 
       return {
         truck_id: asset.truck_id,
@@ -786,6 +809,7 @@ async function fetchDashboardFollowupContext(
         timestamp_warnings: latestTelemetry?.validation?.warnings || [],
         provider_location_label: asset.provider_location_label || null,
         geofence_match: matchPointToGeofence(locationPoint, geofences),
+        location_resolution: locationResolution,
         recent_idle_events_count: idleEvents.length,
         latest_idle_event: idleEvents[0]
           ? {
@@ -1238,6 +1262,14 @@ async function fetchTruckStatus(
   return {
     ...asset,
     geofence_match: matchPointToGeofence(asset, geofences),
+    location_resolution: await resolveOperationalLocation({
+      company_id: companyId,
+      latitude: asset.latitude,
+      longitude: asset.longitude,
+      provider_location_label: asset.provider_location_label,
+      truck_id: asset.truck_id,
+      geofences,
+    }),
     assigned_driver: findAssignedDriverForAsset(asset, assignmentLookup),
   };
 }
@@ -1255,11 +1287,21 @@ async function fetchTruckEvents(
     .eq("truck_id", truckId)
     .order("created_at", { ascending: false })
     .limit(20);
-  return (data || []).map((event) => ({
-    ...event,
-    geofence_match: matchPointToGeofence(event, geofences),
-    assigned_driver: findAssignedDriverForEvent(event, assignmentLookup),
-  }));
+  return Promise.all(
+    (data || []).map(async (event) => ({
+      ...event,
+      geofence_match: matchPointToGeofence(event, geofences),
+      location_resolution: await resolveOperationalLocation({
+        company_id: companyId,
+        latitude: event.latitude,
+        longitude: event.longitude,
+        provider_location_label: event.location_name,
+        truck_id: event.truck_id,
+        geofences,
+      }),
+      assigned_driver: findAssignedDriverForEvent(event, assignmentLookup),
+    }))
+  );
 }
 
 async function fetchTruckTelemetry(companyId: string, truckId: string) {
@@ -1336,10 +1378,30 @@ async function fetchTruckStopMotionTimelineComparison(
   const blocks = aggregateTelemetryIntoMotionBlocks(telemetryRows);
   const latestTelemetry = telemetryRows[telemetryRows.length - 1] || null;
   const latestPoint = latestTelemetry || asset || null;
+  const latestLocationResolution = latestPoint
+    ? await resolveOperationalLocation({
+        company_id: companyId,
+        latitude: latestPoint.latitude,
+        longitude: latestPoint.longitude,
+        provider_location_label: asset?.provider_location_label || null,
+        truck_id: canonicalTruckId,
+        geofences,
+      })
+    : null;
   const movementBlocks = blocks.filter((block) => block.state === "moving");
   const stationaryBlocks = blocks.filter((block) => block.state === "stationary");
-  const idleEventComparisons = idleEvents.map((event) =>
-    compareIdleEventToMotionBlocks(event, blocks, latestPoint)
+  const idleEventComparisons = await Promise.all(
+    idleEvents.map(async (event) => ({
+      ...compareIdleEventToMotionBlocks(event, blocks, latestPoint),
+      location_resolution: await resolveOperationalLocation({
+        company_id: companyId,
+        latitude: event.latitude,
+        longitude: event.longitude,
+        provider_location_label: event.location_name,
+        truck_id: canonicalTruckId,
+        geofences,
+      }),
+    }))
   );
   const firstIdleComparison = idleEventComparisons[0] || null;
   const continuousIdleSupported = Boolean(
@@ -1378,6 +1440,7 @@ async function fetchTruckStopMotionTimelineComparison(
           longitude: latestPoint.longitude ?? null,
           provider_location_label: asset?.provider_location_label || null,
           geofence_match: matchPointToGeofence(latestPoint, geofences),
+          location_resolution: latestLocationResolution,
           timestamp_warnings: latestTelemetry?.validation?.warnings || [],
         }
       : null,
