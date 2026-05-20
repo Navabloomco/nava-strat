@@ -19,6 +19,30 @@ function normalizeRole(role: any) {
   return String(role || "").trim().toLowerCase();
 }
 
+function normalizeCompanyKey(value: any) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "");
+}
+
+function isPlatformOperatorCompany(company: any) {
+  const slugKey = normalizeCompanyKey(company?.slug);
+  const nameKey = normalizeCompanyKey(company?.name);
+
+  return slugKey === "navabloomco" || nameKey === "navabloomco";
+}
+
+function sortCompaniesForDefault(companies: any[]) {
+  return [...(companies || [])].sort((a, b) => {
+    const aIsOperator = isPlatformOperatorCompany(a);
+    const bIsOperator = isPlatformOperatorCompany(b);
+
+    if (aIsOperator !== bIsOperator) return aIsOperator ? -1 : 1;
+    return String(a?.name || "").localeCompare(String(b?.name || ""));
+  });
+}
+
 export async function GET(req: Request) {
   try {
     const authHeader = req.headers.get("authorization");
@@ -74,7 +98,7 @@ export async function GET(req: Request) {
         is_platform_owner: true,
         roles,
         memberships: membershipSummary,
-        companies: companies || [],
+        companies: sortCompaniesForDefault(companies || []),
       });
     }
 

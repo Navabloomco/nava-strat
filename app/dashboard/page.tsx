@@ -29,6 +29,54 @@ interface MembershipOption {
   is_active?: boolean;
 }
 
+function normalizeCompanyKey(value: any) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "");
+}
+
+function isPlatformOperatorCompany(company: Partial<CompanyOption> | null | undefined) {
+  const slugKey = normalizeCompanyKey(company?.slug);
+  const nameKey = normalizeCompanyKey(company?.name);
+
+  return slugKey === "navabloomco" || nameKey === "navabloomco";
+}
+
+function getExplicitDashboardCompanyId(companies: CompanyOption[]) {
+  if (typeof window === "undefined") return "";
+
+  const requestedCompanyId = new URLSearchParams(window.location.search).get(
+    "companyId"
+  );
+
+  if (
+    requestedCompanyId &&
+    companies.some((company) => company.id === requestedCompanyId)
+  ) {
+    return requestedCompanyId;
+  }
+
+  return "";
+}
+
+function chooseDefaultDashboardCompanyId(
+  companies: CompanyOption[],
+  platformOwner: boolean
+) {
+  if (!companies.length) return "";
+
+  const explicitCompanyId = getExplicitDashboardCompanyId(companies);
+  if (explicitCompanyId) return explicitCompanyId;
+
+  if (platformOwner) {
+    const operatorCompany = companies.find(isPlatformOperatorCompany);
+    if (operatorCompany?.id) return operatorCompany.id;
+  }
+
+  return companies[0]?.id || "";
+}
+
 const dashboardLinks = [
   { label: "Fleet / live tracking", href: "/tracking/live" },
   { label: "Journeys", href: "/ops/journey" },
@@ -476,7 +524,10 @@ export default function DashboardPage() {
         if (companiesJson.success) {
           const nextCompanies = companiesJson.companies || [];
           const nextIsPlatformOwner = Boolean(companiesJson.is_platform_owner);
-          const nextSelectedCompanyId = nextCompanies[0]?.id || "";
+          const nextSelectedCompanyId = chooseDefaultDashboardCompanyId(
+            nextCompanies,
+            nextIsPlatformOwner
+          );
           const nextMemberships = (companiesJson.memberships || []).map(
             (membership: any) => ({
               company_id: String(membership.company_id || ""),

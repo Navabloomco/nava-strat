@@ -274,15 +274,17 @@ export async function GET(req: Request) {
 
         company = requestedCompany;
       } else {
-        const { data: defaultCompany, error: companyError } =
-          await supabaseAdmin
-            .from("companies")
-            .select("id, name, slug")
-            .order("name", { ascending: true })
-            .limit(1)
-            .maybeSingle();
+        const { data: companies, error: companyError } = await supabaseAdmin
+          .from("companies")
+          .select("id, name, slug")
+          .order("name", { ascending: true });
 
         if (companyError) throw companyError;
+        const defaultCompany =
+          (companies || []).find((candidate) =>
+            isPlatformOperatorCompany(candidate)
+          ) || (companies || [])[0];
+
         if (!defaultCompany) {
           return NextResponse.json(
             { success: false, error: "Company not found" },

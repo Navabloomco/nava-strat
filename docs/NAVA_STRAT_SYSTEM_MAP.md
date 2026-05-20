@@ -53,7 +53,7 @@ The main product principle is convenience. Every user-facing page should make th
 
 | Route | Purpose |
 | --- | --- |
-| `/dashboard` | Customer-facing app dashboard and navigation hub for fleet tenants. For the platform/operator workspace, platform owners see a platform operations overview instead of empty fleet metrics. Includes Nava Eye Watch items built from safe dashboard summaries, and an embedded Nava Eye widget for customer fleet tenants that may pass safe page context for visible dashboard follow-ups. |
+| `/dashboard` | Customer-facing app dashboard and navigation hub for fleet tenants. Platform owners default to the Nava Bloom Co./Navabloomco platform operator workspace on first load, using the documented temporary slug/name heuristic until a durable operator-company flag exists. For the platform/operator workspace, platform owners see a platform operations overview instead of empty fleet metrics. Customer tenants remain selectable from the company switcher. Includes Nava Eye Watch items built from safe dashboard summaries, and an embedded Nava Eye widget for customer fleet tenants that may pass safe page context for visible dashboard follow-ups. |
 | `/nava-eye` | Nava Eye assistant UI. |
 | `/tracking/live` | Live tracking view for enabled intelligence assets. |
 | `/tracking/link` | Tracking link helper page. |
