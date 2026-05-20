@@ -70,3 +70,41 @@ export function canViewExpenses(roles: string[]) {
 export function canEditExpenses(roles: string[]) {
   return hasAnyRole(roles, [...ELEVATED_ROLES, "finance"]);
 }
+
+export function canViewBilling(roles: string[]) {
+  return canViewFinance(roles);
+}
+
+export function canViewPlatformBilling(roles: string[]) {
+  return hasAnyRole(roles, ["platform_owner"]);
+}
+
+export function canViewOps(roles: string[]) {
+  return hasAnyRole(roles, [...ELEVATED_ROLES, "ops", "management"]);
+}
+
+export function canViewSpares(roles: string[]) {
+  return hasAnyRole(roles, [...ELEVATED_ROLES, "ops", "finance", "management"]);
+}
+
+export function canReviewAssets(roles: string[]) {
+  return hasAnyRole(roles, ELEVATED_ROLES);
+}
+
+export function getRoleCapabilities(roles: string[]) {
+  const normalizedRoles = normalizeRoles(roles);
+
+  return {
+    canViewFinance: canViewFinance(normalizedRoles),
+    canEditFinance: canEditFinance(normalizedRoles),
+    canViewExpenses: canViewExpenses(normalizedRoles),
+    canViewBilling: canViewBilling(normalizedRoles),
+    canViewPlatformBilling: canViewPlatformBilling(normalizedRoles),
+    canViewOps: canViewOps(normalizedRoles),
+    canViewFuel: canViewFuel(normalizedRoles),
+    canViewJourneys: canViewJourneys(normalizedRoles),
+    canViewSpares: canViewSpares(normalizedRoles),
+    isPlatformOwner: hasAnyRole(normalizedRoles, ["platform_owner"]),
+    canReviewAssets: canReviewAssets(normalizedRoles),
+  };
+}

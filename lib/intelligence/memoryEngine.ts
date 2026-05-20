@@ -118,7 +118,7 @@ export async function getActiveMemories(
 ) {
   let query = supabaseAdmin
     .from("nava_eye_memory")
-    .select("*")
+    .select("id, memory_type, severity, title, summary, recommendation, last_seen_at")
     .eq("company_id", companyId)
     .eq("status", "active")
     .order("last_seen_at", { ascending: false });

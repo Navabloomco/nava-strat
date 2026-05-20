@@ -4,6 +4,11 @@ import { getFleetHealth } from "../../../../lib/intelligence/fleetHealthService"
 import { getCurrentTrucksInCountry } from "../../../../lib/intelligence/fleetLocationService";
 import { supabaseAdmin } from "../../../../lib/supabaseAdmin";
 import { supabase } from "../../../../lib/supabase";
+import {
+  getRoleCapabilities,
+  normalizeRole,
+  rolesForCompany,
+} from "../../../../lib/api/roleAccess";
 
 export const dynamic = "force-dynamic";
 
@@ -61,7 +66,10 @@ export async function GET(req: Request) {
 
     if (membershipError) throw membershipError;
 
-    const activeMemberships = memberships || [];
+    const activeMemberships = (memberships || []).map((membership) => ({
+      ...membership,
+      role: normalizeRole(membership.role),
+    }));
     const isPlatformOwner = activeMemberships.some(
       (membership) => membership.role === "platform_owner"
     );
@@ -134,10 +142,18 @@ export async function GET(req: Request) {
       company = assignedCompany;
     }
 
+    const companyRoles = rolesForCompany(activeMemberships, company.id, isPlatformOwner);
+    const capabilities = getRoleCapabilities(companyRoles);
     const [fleetHealth, assetReviewSummary] = await Promise.all([
       getFleetHealth(company.id),
-      getAssetReviewSummary(company.id),
+      capabilities.canReviewAssets
+        ? getAssetReviewSummary(company.id)
+        : Promise.resolve(null),
     ]);
+
+    if (!capabilities.canViewFuel) {
+      delete (fleetHealth as any).fuel_telemetry_summary;
+    }
 
     // Active memories
     const { data: memories, error: memoryError } = await supabaseAdmin
@@ -159,7 +175,8 @@ export async function GET(req: Request) {
         slug: company.slug,
       },
       fleet_health: fleetHealth,
-      asset_review_summary: assetReviewSummary,
+      capabilities,
+      ...(assetReviewSummary ? { asset_review_summary: assetReviewSummary } : {}),
       active_memories: memories || [],
       trucks_in_uganda: ugandaTrucks,
     });

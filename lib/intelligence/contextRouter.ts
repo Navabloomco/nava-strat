@@ -16,6 +16,7 @@ import {
   matchVehicleInFleet,
   normalizeVehicleKey,
 } from "./entityResolver";
+import { getRoleCapabilities } from "../api/roleAccess";
 
 export type ContextIntent =
   | "fleet_health"
@@ -34,6 +35,7 @@ export type ContextIntent =
 
 type RouteContextOptions = {
   roles?: string[];
+  roleCapabilities?: ReturnType<typeof getRoleCapabilities>;
   dashboardContext?: any;
 };
 
@@ -81,8 +83,11 @@ export async function routeContext(
   const assignmentLookup = usesDriverAssignmentContext(intent)
     ? await fetchDriverAssignmentLookup(companyId)
     : null;
-  const sparesCostVisible = canViewSparesCost(options.roles || []);
-  const financialsVisible = canViewFinancialContext(options.roles || []);
+  const roleCapabilities =
+    options.roleCapabilities || getRoleCapabilities(options.roles || []);
+  const sparesCostVisible = roleCapabilities.canViewFinance;
+  const financialsVisible = roleCapabilities.canViewFinance;
+  const permissionBoundary = getPermissionBoundary(lower, roleCapabilities);
   const context: any = {
     company,
     intent,
@@ -100,8 +105,21 @@ export async function routeContext(
       fleetAssetCounts.imported_assets > 0 && fleetAssetCounts.enabled_assets === 0,
     spares_cost_visible: sparesCostVisible,
     financials_visible: financialsVisible,
+    capabilities: sanitizeCapabilities(roleCapabilities),
+    permission_boundary: permissionBoundary,
     generated_at: new Date().toISOString(),
   };
+
+  if (
+    permissionBoundary &&
+    !(
+      intent === "investigation_context" &&
+      truckId &&
+      !context.asset_access_restricted
+    )
+  ) {
+    return context;
+  }
 
   if (intent === "fleet_health") {
     context.fleet_health = await fetchFleetHealth(companyId);
@@ -204,7 +222,13 @@ export async function routeContext(
     };
   }
   if (intent === "profit_simulation") {
-    context.profit_simulation = simulateProfit(question);
+    if (financialsVisible) {
+      context.profit_simulation = simulateProfit(question);
+    } else {
+      context.financial_access_restricted = true;
+      context.financial_access_message =
+        "Financial calculations are available to owner, admin, finance, management, and platform owner roles.";
+    }
   }
   if (intent === "profitability") {
     if (financialsVisible) {
@@ -408,31 +432,99 @@ function finiteOrNull(value: any) {
   return Number.isFinite(number) ? number : null;
 }
 
-function canViewSparesCost(roles: string[]) {
-  const normalizedRoles = new Set(
-    roles.map((role) => String(role || "").toLowerCase())
-  );
+function sanitizeCapabilities(capabilities: ReturnType<typeof getRoleCapabilities>) {
+  return {
+    canViewFinance: Boolean(capabilities.canViewFinance),
+    canEditFinance: Boolean(capabilities.canEditFinance),
+    canViewExpenses: Boolean(capabilities.canViewExpenses),
+    canViewBilling: Boolean(capabilities.canViewBilling),
+    canViewPlatformBilling: Boolean(capabilities.canViewPlatformBilling),
+    canViewOps: Boolean(capabilities.canViewOps),
+    canViewFuel: Boolean(capabilities.canViewFuel),
+    canViewJourneys: Boolean(capabilities.canViewJourneys),
+    canViewSpares: Boolean(capabilities.canViewSpares),
+    isPlatformOwner: Boolean(capabilities.isPlatformOwner),
+  };
+}
 
+function getPermissionBoundary(
+  lower: string,
+  capabilities: ReturnType<typeof getRoleCapabilities>
+) {
+  if (asksForProviderSecrets(lower)) {
+    return {
+      category: "provider_secrets",
+      message:
+        "I can help with provider status and safe diagnostics, but I cannot expose provider credentials, tokens, auth configs, cookies, or raw payloads.",
+    };
+  }
+
+  if (asksForPlatformBilling(lower) && !capabilities.canViewPlatformBilling) {
+    return {
+      category: "platform_billing",
+      message:
+        "I can help with operational context, but platform tenant billing and pilot billing data are restricted to platform owners.",
+    };
+  }
+
+  if (asksForBilling(lower) && !capabilities.canViewBilling) {
+    return {
+      category: "billing",
+      message:
+        "I can help with operational context, but billing and invoice data are restricted for your role.",
+    };
+  }
+
+  if (asksForExpenses(lower) && !capabilities.canViewExpenses) {
+    return {
+      category: "expenses",
+      message:
+        "I can help with operational context, but expense ledger data is restricted for your role.",
+    };
+  }
+
+  if (asksForFinance(lower) && !capabilities.canViewFinance) {
+    return {
+      category: "finance",
+      message:
+        "I can help with operational context, but revenue, rates, profit, and margin data are restricted for your role.",
+    };
+  }
+
+  return null;
+}
+
+function asksForProviderSecrets(lower: string) {
   return (
-    normalizedRoles.has("platform_owner") ||
-    normalizedRoles.has("owner") ||
-    normalizedRoles.has("admin") ||
-    normalizedRoles.has("finance") ||
-    normalizedRoles.has("management")
+    /\b(password|secret|token|cookie|authorization|auth config|api key|credentials?|raw payload|raw response)\b/.test(
+      lower
+    ) &&
+    /\b(provider|tracking|bluetrax|feed|sync|api)\b/.test(lower)
   );
 }
 
-function canViewFinancialContext(roles: string[]) {
-  const normalizedRoles = new Set(
-    roles.map((role) => String(role || "").toLowerCase())
-  );
-
+function asksForPlatformBilling(lower: string) {
   return (
-    normalizedRoles.has("platform_owner") ||
-    normalizedRoles.has("owner") ||
-    normalizedRoles.has("admin") ||
-    normalizedRoles.has("finance") ||
-    normalizedRoles.has("management")
+    lower.includes("tenant billing") ||
+    lower.includes("platform billing") ||
+    lower.includes("pilot billing") ||
+    lower.includes("billing readiness") ||
+    lower.includes("invoice preview") ||
+    lower.includes("strict billable")
+  );
+}
+
+function asksForBilling(lower: string) {
+  return /\b(invoice|invoices|billing|billable|payment|paid|unpaid)\b/.test(lower);
+}
+
+function asksForExpenses(lower: string) {
+  return /\b(expense|expenses|expense ledger|vendor spend|cost ledger)\b/.test(lower);
+}
+
+function asksForFinance(lower: string) {
+  return /\b(revenue|profit|profits|profitable|profitability|margin|rate|rates|loss|losses|costing too much|unprofitable|financial|finance)\b/.test(
+    lower
   );
 }
 

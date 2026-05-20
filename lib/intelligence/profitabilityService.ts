@@ -37,18 +37,20 @@ export async function getCompanyProfitability(companyId: string) {
   const [journeysResult, fuelResult, expensesResult] = await Promise.all([
     supabaseAdmin
       .from("journeys")
-      .select("*")
+      .select(
+        "id, truck, driver, client_name, from_location, to_location, status, revenue_kes, created_at"
+      )
       .eq("company_id", companyId)
       .eq("is_demo", false)
       .order("created_at", { ascending: false }),
     supabaseAdmin
       .from("fuel_logs")
-      .select("*")
+      .select("journey_id, truck_text, total_cost, created_at")
       .eq("company_id", companyId)
       .order("created_at", { ascending: false }),
     supabaseAdmin
       .from("expenses")
-      .select("*")
+      .select("journey_id, truck, amount, created_at")
       .eq("company_id", companyId)
       .order("created_at", { ascending: false }),
   ]);
@@ -155,9 +157,6 @@ export async function getCompanyProfitability(companyId: string) {
   );
 
   return {
-    journeys,
-    fuel_logs: fuelLogs,
-    expenses,
     summary: {
       total_revenue: totalRevenue,
       total_fuel_cost: totalFuelCost,

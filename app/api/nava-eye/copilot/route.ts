@@ -7,6 +7,11 @@ import {
   getActiveMemories,
   storeMemory,
 } from "../../../../lib/intelligence/memoryEngine";
+import {
+  getRoleCapabilities,
+  normalizeRole,
+  rolesForCompany,
+} from "../../../../lib/api/roleAccess";
 
 export async function POST(req: Request) {
   try {
@@ -45,7 +50,10 @@ export async function POST(req: Request) {
 
     if (membershipError) throw membershipError;
 
-    const activeMemberships = memberships || [];
+    const activeMemberships = (memberships || []).map((membership) => ({
+      ...membership,
+      role: normalizeRole(membership.role),
+    }));
     const isPlatformOwner = activeMemberships.some(
       (membership) => membership.role === "platform_owner"
     );
@@ -105,23 +113,21 @@ export async function POST(req: Request) {
       company = assignedCompany;
     }
 
-    const companyRoles = Array.from(
-      new Set(
-        activeMemberships
-          .filter((membership) => isPlatformOwner || membership.company_id === company.id)
-          .map((membership) => String(membership.role || "").toLowerCase())
-          .filter(Boolean)
-      )
-    );
+    const companyRoles = rolesForCompany(activeMemberships, company.id, isPlatformOwner);
+    const roleCapabilities = getRoleCapabilities(companyRoles);
 
     // 2. Get deterministic context from router
     const context = await routeContext(question, company.slug, {
       roles: companyRoles,
+      roleCapabilities,
       dashboardContext,
     });
 
     // 3. Fetch active memories for this company (up to 5 most recent)
-    const activeMemories = await getActiveMemories(company.id, { limit: 5 });
+    const activeMemories = sanitizeActiveMemories(
+      await getActiveMemories(company.id, { limit: 5 }),
+      roleCapabilities
+    );
     const memoryContext = activeMemories.map(m => 
       `[${m.severity.toUpperCase()}] ${m.title}: ${m.summary}`
     ).join("\n");
@@ -164,7 +170,8 @@ export async function POST(req: Request) {
       !context.fuel_investigation &&
       !context.dashboard_followup &&
       !context.asset_access_restricted &&
-      !context.no_enabled_intelligence_assets
+      !context.no_enabled_intelligence_assets &&
+      !context.permission_boundary
     ) {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 8000);
@@ -315,6 +322,7 @@ export async function POST(req: Request) {
       intent: context.intent,
       context: enhancedContext,
       active_memories: activeMemories,
+      capabilities: context.capabilities,
       ai_used: aiUsed,
     });
   } catch (err: any) {
@@ -328,6 +336,9 @@ export async function POST(req: Request) {
 
 function buildFallbackAnswer(context: any): string {
   const parts: string[] = [];
+  if (context.permission_boundary && !context.investigation_case_file) {
+    return buildPermissionBoundaryAnswer(context.permission_boundary);
+  }
   if (
     context.vehicle_match?.match_type === "multiple_candidates" &&
     context.vehicle_match?.candidates?.length
@@ -610,6 +621,45 @@ function buildFallbackAnswer(context: any): string {
   return parts.join(" ");
 }
 
+function sanitizeActiveMemories(
+  memories: any[],
+  capabilities: ReturnType<typeof getRoleCapabilities>
+) {
+  return (memories || [])
+    .filter((memory) => {
+      if (capabilities.canViewFinance && capabilities.canViewBilling) return true;
+      const text = [
+        memory.memory_type,
+        memory.title,
+        memory.summary,
+        memory.recommendation,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+
+      return !/\b(revenue|profit|margin|rate|invoice|billing|billable|expense|payment)\b/.test(
+        text
+      );
+    })
+    .map((memory) => ({
+      id: memory.id,
+      memory_type: memory.memory_type,
+      severity: memory.severity,
+      title: memory.title,
+      summary: memory.summary,
+      recommendation: memory.recommendation || null,
+      last_seen_at: memory.last_seen_at || null,
+    }));
+}
+
+function buildPermissionBoundaryAnswer(permissionBoundary: any) {
+  return (
+    permissionBoundary?.message ||
+    "I can help with operational context, but that data is restricted for your role."
+  );
+}
+
 function buildVehicleCandidateAnswer(vehicleMatch: any) {
   const candidates = vehicleMatch?.candidates || [];
   const input = vehicleMatch?.input || "that vehicle";
@@ -852,7 +902,7 @@ function buildInvestigationFallbackAnswer(context: any) {
   parts.push(...formatInvestigationNextChecks(caseFile, focus, label));
   parts.push("");
 
-  parts.push(formatInvestigationFollowUps(focus, label));
+  parts.push(formatInvestigationFollowUps(focus, label, caseFile));
 
   return parts.join("\n");
 }
@@ -1405,6 +1455,7 @@ function formatInvestigationLimits(caseFile: any, focus: any) {
 
 function formatInvestigationNextChecks(caseFile: any, focus: any, label: string) {
   const checks: string[] = [];
+  const financialsVisible = Boolean(caseFile.financial_summary?.visible);
 
   if (focus?.fuel_focus) {
     checks.push("- Compare fuel receipts, tank dips, route distance, and expected consumption for this vehicle.");
@@ -1413,8 +1464,10 @@ function formatInvestigationNextChecks(caseFile: any, focus: any, label: string)
   if (focus?.stops_focus) {
     checks.push("- Review the latest stop/idle locations and whether they match yards, queues, borders, ports, or client sites.");
   }
-  if (focus?.profitability_focus) {
+  if (focus?.profitability_focus && financialsVisible) {
     checks.push("- Compare this vehicle against similar routes and clients before deciding it is expensive.");
+  } else if (focus?.profitability_focus) {
+    checks.push("- Review operational clues first: routes, stops, fuel availability, and repair history.");
   }
   if (focus?.repair_focus) {
     checks.push("- Check whether the same part was repaired, removed, or replaced again after the last repair.");
@@ -1426,20 +1479,24 @@ function formatInvestigationNextChecks(caseFile: any, focus: any, label: string)
   return checks;
 }
 
-function formatInvestigationFollowUps(focus: any, label: string) {
+function formatInvestigationFollowUps(focus: any, label: string, caseFile: any = {}) {
+  const financialsVisible = Boolean(caseFile.financial_summary?.visible);
   if (focus?.fuel_focus) {
     return `I can next check stops around the suspicious times, show enabled trucks with usable fuel data, or compare ${label} against similar trips.`;
   }
   if (focus?.stops_focus) {
     return `I can next group the stop locations for ${label}, or compare this vehicle's idle pattern against the rest of the fleet.`;
   }
-  if (focus?.profitability_focus) {
+  if (focus?.profitability_focus && financialsVisible) {
     return `I can next compare ${label} against similar routes, clients, or fuel/expense patterns.`;
+  }
+  if (focus?.profitability_focus) {
+    return `I can next compare ${label} against similar routes and fuel/expense patterns if your role can view finance data, or stay with operational clues like stops, journeys, and repairs.`;
   }
   if (focus?.repair_focus) {
     return `I can next list the repair/spares timeline for ${label}, or look for repeat parts and mechanics.`;
   }
-  return `I can next narrow this by stops, fuel, journeys, repairs, or profitability for ${label}.`;
+  return `I can next narrow this by stops, fuel, journeys, or repairs for ${label}.`;
 }
 
 function formatFuelTelemetryExplanation(telemetry: any) {

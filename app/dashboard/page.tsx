@@ -10,6 +10,7 @@ interface OverviewData {
   company?: any;
   fleet_health?: any;
   asset_review_summary?: any;
+  capabilities?: DashboardRoleCapabilities;
   active_memories?: any[];
   trucks_in_uganda?: any[];
 }
@@ -18,6 +19,12 @@ interface CompanyOption {
   id: string;
   name: string;
   slug: string;
+}
+
+interface MembershipOption {
+  company_id: string;
+  role: string;
+  is_active?: boolean;
 }
 
 const dashboardLinks = [
@@ -39,9 +46,23 @@ interface WatchItem {
   href?: string;
 }
 
+type DashboardRoleCapabilities = {
+  canViewFinance: boolean;
+  canEditFinance: boolean;
+  canViewExpenses: boolean;
+  canViewBilling: boolean;
+  canViewPlatformBilling: boolean;
+  canViewOps: boolean;
+  canViewFuel: boolean;
+  canViewJourneys: boolean;
+  canViewSpares: boolean;
+  isPlatformOwner: boolean;
+  canReviewAssets: boolean;
+};
+
 function buildWatchItems(
   overview: OverviewData | null,
-  canReviewAssets: boolean,
+  capabilities: DashboardRoleCapabilities,
   adminCompanyId: string
 ): WatchItem[] {
   const fleetHealth = overview?.fleet_health || {};
@@ -66,7 +87,7 @@ function buildWatchItems(
   const enabledAssets = Number(assetReview.enabled_assets || 0);
   const unreviewedAssets = Number(assetReview.unreviewed_assets || 0);
 
-  if (highIdleDurations.length) {
+  if (capabilities.canViewOps && highIdleDurations.length) {
     const trucks = highIdleDurations.slice(0, 3);
     items.push({
       id: "idle-duration-quality",
@@ -85,7 +106,7 @@ function buildWatchItems(
     });
   }
 
-  if (stationaryIdleTrucks.length) {
+  if (capabilities.canViewOps && stationaryIdleTrucks.length) {
     const trucks = stationaryIdleTrucks.slice(0, 3);
     items.push({
       id: "current-stationary-idle",
@@ -107,7 +128,7 @@ function buildWatchItems(
     });
   }
 
-  if (offlineTruckIds.length) {
+  if (capabilities.canViewOps && offlineTruckIds.length) {
     items.push({
       id: "stale-offline-assets",
       severity: offlineTruckIds.length >= 3 ? "warning" : "info",
@@ -129,7 +150,8 @@ function buildWatchItems(
   if (
     Number(fuelSummary.enabled_assets_checked || 0) > 0 &&
     Number(fuelSummary.enabled_assets_with_usable_fuel || 0) === 0 &&
-    Number(fuelSummary.enabled_assets_with_recent_fuel_scores || 0) === 0
+    Number(fuelSummary.enabled_assets_with_recent_fuel_scores || 0) === 0 &&
+    capabilities.canViewFuel
   ) {
     const recentReadings = Number(fuelSummary.recent_readings || 0);
     items.push({
@@ -149,11 +171,16 @@ function buildWatchItems(
         "Review provider enrichment diagnostics and compare manual fuel logs until the fuel feed is usable.",
       suggested_question:
         "Which enabled trucks have usable fuel telemetry, and what can Nava use while fuel data is limited?",
-      href: canReviewAssets ? withCompanyContext("/admin/providers", adminCompanyId) : "/fuel",
+      href: capabilities.canReviewAssets
+        ? withCompanyContext("/admin/providers", adminCompanyId)
+        : "/fuel",
     });
   }
 
-  if (importedAssets > enabledAssets || unreviewedAssets > 0) {
+  if (
+    capabilities.canReviewAssets &&
+    (importedAssets > enabledAssets || unreviewedAssets > 0)
+  ) {
     items.push({
       id: "unreviewed-imported-assets",
       severity: enabledAssets === 0 && importedAssets > 0 ? "warning" : "info",
@@ -169,11 +196,11 @@ function buildWatchItems(
         "Review imported assets before expecting them in live tracking, alerts, or Nava Eye answers.",
       suggested_question:
         "Which imported assets are waiting for review before Nava Eye can use them?",
-      href: canReviewAssets ? withCompanyContext("/admin/assets", adminCompanyId) : undefined,
+      href: withCompanyContext("/admin/assets", adminCompanyId),
     });
   }
 
-  if (recentCriticalEvents.length) {
+  if (capabilities.canViewOps && recentCriticalEvents.length) {
     const events = recentCriticalEvents.slice(0, 3);
     items.push({
       id: "recent-critical-events",
@@ -268,13 +295,43 @@ function withCompanyContext(path: string, companyId: string) {
   return `${path}?companyId=${encodeURIComponent(companyId)}`;
 }
 
+function rolesForDashboardCompany(memberships: MembershipOption[], companyId: string | null) {
+  if (!companyId) return [];
+
+  return memberships
+    .filter((membership) => membership.company_id === companyId)
+    .map((membership) => membership.role)
+    .filter(Boolean);
+}
+
+function buildDashboardRoleCapabilities(roles: string[], isPlatformOwner: boolean) {
+  const normalizedRoles = roles.map((role) => String(role || "").trim().toLowerCase());
+  const hasRole = (allowed: string[]) =>
+    isPlatformOwner || allowed.some((role) => normalizedRoles.includes(role));
+  const elevated = hasRole(["owner", "admin"]);
+
+  return {
+    canViewFinance: elevated || hasRole(["finance", "management"]),
+    canEditFinance: elevated || hasRole(["finance"]),
+    canViewExpenses: elevated || hasRole(["finance", "management"]),
+    canViewBilling: elevated || hasRole(["finance", "management"]),
+    canViewPlatformBilling: isPlatformOwner,
+    canViewOps: elevated || hasRole(["ops", "management"]),
+    canViewFuel: elevated || hasRole(["ops", "finance", "management"]),
+    canViewJourneys: elevated || hasRole(["ops", "management", "finance"]),
+    canViewSpares: elevated || hasRole(["ops", "finance", "management"]),
+    isPlatformOwner,
+    canReviewAssets: elevated,
+  };
+}
+
 export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<OverviewData | null>(null);
   const [errorDetail, setErrorDetail] = useState<string | null>(null);
   const [companies, setCompanies] = useState<CompanyOption[]>([]);
   const [isPlatformOwner, setIsPlatformOwner] = useState(false);
-  const [userRoles, setUserRoles] = useState<string[]>([]);
+  const [memberships, setMemberships] = useState<MembershipOption[]>([]);
   const [selectedCompanyId, setSelectedCompanyId] = useState("");
   const [companySwitcherOpen, setCompanySwitcherOpen] = useState(false);
   const [companySearch, setCompanySearch] = useState("");
@@ -286,10 +343,26 @@ export default function DashboardPage() {
   function buildDashboardCopilotContext() {
     const fleetHealth = data?.fleet_health || {};
     const activeCompanyId = selectedCompanyId || data?.company?.id || null;
+    const capabilities = data?.capabilities ||
+      buildDashboardRoleCapabilities(
+        rolesForDashboardCompany(memberships, activeCompanyId),
+        isPlatformOwner
+      );
 
     return {
       page: "dashboard",
       active_company_id: activeCompanyId,
+      capabilities: {
+        canViewFinance: capabilities.canViewFinance,
+        canViewExpenses: capabilities.canViewExpenses,
+        canViewBilling: capabilities.canViewBilling,
+        canViewPlatformBilling: capabilities.canViewPlatformBilling,
+        canViewOps: capabilities.canViewOps,
+        canViewFuel: capabilities.canViewFuel,
+        canViewJourneys: capabilities.canViewJourneys,
+        canViewSpares: capabilities.canViewSpares,
+        isPlatformOwner: capabilities.isPlatformOwner,
+      },
       highest_idle_trucks: (fleetHealth.highest_idle_trucks || [])
         .slice(0, 5)
         .map((truck: any) => ({
@@ -354,13 +427,17 @@ export default function DashboardPage() {
           const nextCompanies = companiesJson.companies || [];
           const nextIsPlatformOwner = Boolean(companiesJson.is_platform_owner);
           const nextSelectedCompanyId = nextCompanies[0]?.id || "";
-          const nextRoles = (companiesJson.roles || []).map((role: any) =>
-            String(role || "").trim().toLowerCase()
+          const nextMemberships = (companiesJson.memberships || []).map(
+            (membership: any) => ({
+              company_id: String(membership.company_id || ""),
+              role: String(membership.role || "").trim().toLowerCase(),
+              is_active: membership.is_active !== false,
+            })
           );
 
           setCompanies(nextCompanies);
           setIsPlatformOwner(nextIsPlatformOwner);
-          setUserRoles(nextRoles);
+          setMemberships(nextMemberships);
           setSelectedCompanyId(nextSelectedCompanyId);
 
           await loadOverview(token, nextSelectedCompanyId, nextIsPlatformOwner);
@@ -451,10 +528,14 @@ export default function DashboardPage() {
   const selectedCompany =
     companies.find((companyOption) => companyOption.id === selectedCompanyId) ||
     company;
-  const canReviewAssets =
-    isPlatformOwner || userRoles.some((role) => ["owner", "admin"].includes(role));
+  const roleCapabilities =
+    data.capabilities ||
+    buildDashboardRoleCapabilities(
+      rolesForDashboardCompany(memberships, selectedCompanyId || company.id),
+      isPlatformOwner
+    );
   const adminCompanyId = isPlatformOwner ? selectedCompanyId || company.id : "";
-  const watchItems = buildWatchItems(data, canReviewAssets, adminCompanyId);
+  const watchItems = buildWatchItems(data, roleCapabilities, adminCompanyId);
   const normalizedCompanySearch = companySearch.toLowerCase();
   const filteredCompanies = companies.filter(
     (companyOption) =>

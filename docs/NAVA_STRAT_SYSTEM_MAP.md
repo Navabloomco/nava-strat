@@ -116,7 +116,7 @@ The main product principle is convenience. Every user-facing page should make th
 | API Route | Purpose |
 | --- | --- |
 | `GET /api/companies` | Returns active company memberships, normalized roles, platform-owner status, and visible companies. |
-| `GET /api/dashboard/overview` | Authenticated company dashboard overview. Returns safe fleet health, asset-review counts, fuel telemetry/risk usability summary, active memory summaries, and visible dashboard context. |
+| `GET /api/dashboard/overview` | Authenticated company dashboard overview. Returns role-aware safe fleet health, permitted asset-review counts, permitted fuel telemetry/risk usability summary, active memory summaries, and visible dashboard context. |
 | `POST /api/onboarding/company` | Creates/updates company onboarding data, operating context, and provider setup requests. |
 | `GET/PATCH /api/company-settings` | Reads and updates safe company operating context. Supports platform-owner `companyId` context. No billing/provider secrets. |
 | `GET /api/admin/pilot-readiness` | Platform-owner-only pilot readiness checklist list across companies. Returns pass/warning/fail counts and safe tenant summaries. |
@@ -310,6 +310,8 @@ Current shared helper behavior:
 | Platform Health | `platform_owner` only |
 | Pilot Readiness Checklist | `platform_owner` only |
 | Tenant billing/readiness preview | `platform_owner` only |
+
+Nava Eye and Nava Eye Watch use explicit safe capability flags derived from the resolved same-company role. These include finance, expenses, billing, platform billing, ops, fuel, journeys, spares, and platform-owner capabilities. Nava Eye should answer broadly inside those permissions and return a clear permission-boundary message instead of exposing restricted finance, billing, invoice, expense, provider-secret, raw-payload, or cross-tenant data.
 
 ## 6. Multi-Tenancy Rules
 
@@ -575,6 +577,7 @@ Review later should:
 - Do not let provider sync overwrite reviewed asset category, billing status, intelligence enablement, or billing timestamps.
 - Do not expose driver phone, license, notes, or employee code in Nava Eye or public/client routes.
 - Do not expose financial values to plain ops users.
+- Do not let Nava Eye or Nava Eye Watch expose data outside the current user role's same-company capability boundary.
 - Do not suppress, delete, or mutate telemetry alerts unless the route explicitly does so. Shared disruption context annotation only adds context fields.
 - Do not remove geofencing. Geofencing is core Nava Strat functionality.
 - Do not require inventory, serial numbers, or catalog parts before recording spare usage.
