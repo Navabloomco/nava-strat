@@ -2,6 +2,9 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { headers } from "next/headers";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 const productUrl = "https://navastrat.co";
 const companyUrl = "https://www.navabloomco.com";
 const contactEmail = "contact@navabloomco.com";
@@ -14,6 +17,17 @@ const navControlClass =
 
 type LandingMode = "company" | "product";
 
+const productHosts = new Set([
+  "navastrat.co",
+  "www.navastrat.co",
+  "nava-strat.vercel.app",
+]);
+
+const companyHosts = new Set([
+  "navabloomco.com",
+  "www.navabloomco.com",
+]);
+
 function normalizeHost(host: string | null) {
   return String(host || "")
     .split(",")[0]
@@ -25,11 +39,7 @@ function normalizeHost(host: string | null) {
 function resolveLandingMode(host: string | null): LandingMode {
   const normalizedHost = normalizeHost(host);
 
-  if (
-    normalizedHost === "navastrat.co" ||
-    normalizedHost === "www.navastrat.co" ||
-    normalizedHost === "nava-strat.vercel.app"
-  ) {
+  if (productHosts.has(normalizedHost)) {
     return "product";
   }
 
@@ -38,9 +48,20 @@ function resolveLandingMode(host: string | null): LandingMode {
 
 function getLandingModeFromHeaders(): LandingMode {
   const headerList = headers();
-  const forwardedHost = headerList.get("x-forwarded-host");
-  const host = forwardedHost || headerList.get("host");
-  return resolveLandingMode(host);
+  const hostCandidates = [
+    headerList.get("host"),
+    headerList.get("x-forwarded-host"),
+    headerList.get("x-original-host"),
+    headerList.get("x-vercel-forwarded-host"),
+  ];
+
+  for (const host of hostCandidates) {
+    const normalizedHost = normalizeHost(host);
+    if (productHosts.has(normalizedHost)) return "product";
+    if (companyHosts.has(normalizedHost)) return "company";
+  }
+
+  return resolveLandingMode(hostCandidates.find(Boolean) || null);
 }
 
 export function generateMetadata(): Metadata {
