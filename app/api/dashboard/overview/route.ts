@@ -20,6 +20,7 @@ import {
   summarizeAssets,
 } from "../../admin/tenants/tenantBilling";
 import { buildPilotReadinessList } from "../../admin/pilot-readiness/readiness";
+import { isPendingAssetReview } from "../../../../lib/assetReview";
 
 export const dynamic = "force-dynamic";
 
@@ -83,9 +84,7 @@ async function getAssetReviewSummary(companyId: string) {
   return {
     imported_assets: assets.length,
     enabled_assets: enabledAssets.length,
-    unreviewed_assets: assets.filter(
-      (asset) => asset.billing_status === "unreviewed"
-    ).length,
+    unreviewed_assets: assets.filter(isPendingAssetReview).length,
     disabled_or_excluded_assets: assets.filter((asset) =>
       ["disabled", "excluded"].includes(String(asset.billing_status || ""))
     ).length,

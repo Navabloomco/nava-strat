@@ -6,6 +6,7 @@ import {
   normalizeRole,
   rolesForCompany,
 } from "../../../lib/api/roleAccess";
+import { isPendingAssetReview } from "../../../lib/assetReview";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -70,8 +71,8 @@ function sanitizeAsset(asset: any) {
 
 function sortAssetsForReview(assets: any[]) {
   return [...assets].sort((a, b) => {
-    const aUnreviewed = a.billing_status === "unreviewed" ? 0 : 1;
-    const bUnreviewed = b.billing_status === "unreviewed" ? 0 : 1;
+    const aUnreviewed = isPendingAssetReview(a) ? 0 : 1;
+    const bUnreviewed = isPendingAssetReview(b) ? 0 : 1;
     if (aUnreviewed !== bUnreviewed) return aUnreviewed - bUnreviewed;
 
     const aTime = new Date(a.last_seen_at || a.first_seen_at || 0).getTime();
@@ -93,7 +94,7 @@ function buildSummary(assets: any[]) {
 
   return {
     imported_count: assets.length,
-    unreviewed_count: assets.filter((asset) => asset.billing_status === "unreviewed").length,
+    unreviewed_count: assets.filter(isPendingAssetReview).length,
     enabled_count: enabledIntelligenceAssets.length,
     enabled_intelligence_count: enabledIntelligenceAssets.length,
     billable_enabled_count: billableAssets.length,

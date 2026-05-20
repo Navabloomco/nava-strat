@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabase } from "../../../../lib/supabase";
 import { supabaseAdmin } from "../../../../lib/supabaseAdmin";
+import { isPendingAssetReview } from "../../../../lib/assetReview";
 import { isMissingCompanyTypeColumn } from "../../../../lib/companyType";
 
 const COMPANY_FIELDS =
@@ -83,8 +84,7 @@ export function isStrictBillableAsset(asset: any) {
 export function summarizeAssets(assets: any[]) {
   return {
     imported_asset_count: assets.length,
-    unreviewed_asset_count: assets.filter((asset) => asset.billing_status === "unreviewed")
-      .length,
+    unreviewed_asset_count: assets.filter(isPendingAssetReview).length,
     enabled_intelligence_count: assets.filter(
       (asset) =>
         asset.status === "active" &&

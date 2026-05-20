@@ -465,6 +465,8 @@ An asset is billable-ready only when all are true:
 
 Do not count assets as billable merely because one of `billing_status = enabled` or `intelligence_enabled = true` is true.
 
+Unreviewed/pending-review counts should only include active imported assets with `billing_status = unreviewed` and `intelligence_enabled = false`. Excluded, disabled, inactive, or already-enabled assets must not be treated as still needing review.
+
 ### Platform Tenant Billing Preview
 
 `/admin/tenants` and `/admin/tenants/[companyId]` are internal platform-owner-only previews. They estimate pilot billing from strict billable assets but do not create invoices, billing events, Stripe records, or customer-facing billing artifacts.

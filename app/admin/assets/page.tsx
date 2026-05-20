@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { isPendingAssetReview } from "../../../lib/assetReview";
 import { supabase } from "../../../lib/supabase";
 import {
   EmptyState,
@@ -364,7 +365,7 @@ export default function AssetReviewPage() {
                 asset_category: asset.asset_category || "unknown",
                 excluded_reason: asset.excluded_reason || "",
               };
-              const isUnreviewed = asset.billing_status === "unreviewed";
+              const isUnreviewed = isPendingAssetReview(asset);
 
               return (
                 <Panel

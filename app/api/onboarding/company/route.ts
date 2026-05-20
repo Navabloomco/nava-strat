@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { isPendingAssetReview } from "../../../../lib/assetReview";
 import { supabase } from "../../../../lib/supabase";
 import { supabaseAdmin } from "../../../../lib/supabaseAdmin";
 
@@ -232,9 +233,7 @@ async function buildStatus(company: any) {
   const enabledIntelligenceAssets = fleetAssets.filter((asset) =>
     Boolean(asset.intelligence_enabled)
   );
-  const unreviewedAssets = fleetAssets.filter(
-    (asset) => String(asset.billing_status || "unreviewed") === "unreviewed"
-  );
+  const unreviewedAssets = fleetAssets.filter(isPendingAssetReview);
   const enabledTruckIds = new Set(
     enabledIntelligenceAssets.map((asset) => asset.truck_id).filter(Boolean)
   );
