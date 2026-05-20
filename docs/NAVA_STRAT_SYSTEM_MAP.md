@@ -41,7 +41,7 @@ The main product principle is convenience. Every user-facing page should make th
 
 | Route | Purpose |
 | --- | --- |
-| `/dashboard` | Customer-facing app dashboard and navigation hub. |
+| `/dashboard` | Customer-facing app dashboard and navigation hub. Embedded Nava Eye widget may pass safe page context for visible dashboard follow-ups. |
 | `/nava-eye` | Nava Eye assistant UI. |
 | `/tracking/live` | Live tracking view for enabled intelligence assets. |
 | `/tracking/link` | Tracking link helper page. |
@@ -199,7 +199,7 @@ The main product principle is convenience. Every user-facing page should make th
 
 | API Route | Purpose |
 | --- | --- |
-| `POST /api/nava-eye/copilot` | Main Nava Eye assistant route. Uses context router, entity resolver, role-aware context, deterministic fallbacks, and AI provider when configured. |
+| `POST /api/nava-eye/copilot` | Main Nava Eye assistant route. Uses context router, entity resolver, role-aware context, safe dashboard page context, deterministic fallbacks, and AI provider when configured. |
 | `POST /api/nava-eye/ask` | Older Nava Eye ask route. |
 | `GET /api/nava-eye/fleet-summary` | Fleet summary helper. |
 | `POST /api/nava-eye/fuel-risk` | Fuel risk helper. |

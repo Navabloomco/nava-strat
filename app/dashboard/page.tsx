@@ -41,6 +41,38 @@ export default function DashboardPage() {
   const [copilotLoading, setCopilotLoading] = useState(false);
   const router = useRouter();
 
+  function buildDashboardCopilotContext() {
+    const fleetHealth = data?.fleet_health || {};
+    const activeCompanyId = selectedCompanyId || data?.company?.id || null;
+
+    return {
+      page: "dashboard",
+      active_company_id: activeCompanyId,
+      highest_idle_trucks: (fleetHealth.highest_idle_trucks || [])
+        .slice(0, 5)
+        .map((truck: any) => ({
+          truck_id: truck.truck_id,
+          idle_minutes: truck.idle_minutes ?? null,
+          idle_hours: truck.idle_hours ?? null,
+        })),
+      highest_risk_trucks: (fleetHealth.highest_risk_trucks || [])
+        .slice(0, 5)
+        .map((truck: any) => ({
+          truck_id: truck.truck_id,
+          event_count: truck.event_count ?? null,
+        })),
+      recent_critical_events: (fleetHealth.recent_critical_events || [])
+        .slice(0, 5)
+        .map((event: any) => ({
+          truck_id: event.truck_id,
+          event_type: event.event_type,
+          severity: event.severity,
+          location_name: event.location_name || null,
+          created_at: event.created_at || null,
+        })),
+    };
+  }
+
   async function loadOverview(token: string, companyId: string, platformOwner: boolean) {
     const overviewUrl =
       platformOwner && companyId
@@ -53,7 +85,6 @@ export default function DashboardPage() {
       },
     });
     const json = await res.json();
-    console.log("Dashboard overview response:", json);
     if (json.success) {
       setData(json);
       setErrorDetail(null);
@@ -139,6 +170,7 @@ export default function DashboardPage() {
         },
         body: JSON.stringify({
           question: copilotQuery,
+          dashboard_context: buildDashboardCopilotContext(),
           ...(isPlatformOwner && selectedCompanyId
             ? { companyId: selectedCompanyId }
             : {}),
@@ -185,7 +217,7 @@ export default function DashboardPage() {
       <header className="border-b border-slate-800 px-8 py-5 flex justify-between items-center sticky top-0 bg-slate-950/95 backdrop-blur-sm z-10">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 bg-blue-600 rounded-full animate-pulse" />
-          <h1 className="text-2xl font-bold tracking-tight">Nava Eye</h1>
+          <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
           {showCompanySelector ? (
             <div className="relative ml-2">
               <button

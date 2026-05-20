@@ -29,10 +29,12 @@ export type ContextIntent =
   | "profitability"
   | "investigation_context"
   | "spares_context"
+  | "dashboard_followup"
   | "general";
 
 type RouteContextOptions = {
   roles?: string[];
+  dashboardContext?: any;
 };
 
 export async function getCompanyBySlug(slug: string) {
@@ -57,6 +59,14 @@ export async function routeContext(
   const lower = question.toLowerCase();
   const detectedCountryName = detectSupportedCountryName(question);
   let intent = detectIntent(lower, detectedCountryName);
+  const dashboardReference = resolveDashboardReference(
+    lower,
+    options.dashboardContext,
+    companyId
+  );
+  if (dashboardReference) {
+    intent = "dashboard_followup";
+  }
   const vehicleMatch = await matchVehicleInFleet(question, companyId);
   if (intent === "general" && vehicleMatch.input) {
     intent = "truck_status";
@@ -95,6 +105,14 @@ export async function routeContext(
 
   if (intent === "fleet_health") {
     context.fleet_health = await fetchFleetHealth(companyId);
+  }
+  if (intent === "dashboard_followup" && dashboardReference) {
+    context.dashboard_followup = await fetchDashboardFollowupContext(
+      companyId,
+      dashboardReference,
+      geofences
+    );
+    return context;
   }
   if (intent === "offline_trucks") {
     context.offline_trucks = await fetchOfflineTrucks(
@@ -223,6 +241,7 @@ function usesLocationContext(intent: ContextIntent) {
     "truck_status",
     "journey_context",
     "offline_trucks",
+    "dashboard_followup",
     "general",
   ].includes(intent);
 }
@@ -237,6 +256,156 @@ function usesDriverAssignmentContext(intent: ContextIntent) {
     "offline_trucks",
     "general",
   ].includes(intent);
+}
+
+function resolveDashboardReference(
+  lower: string,
+  rawDashboardContext: any,
+  companyId: string
+) {
+  const dashboardContext = sanitizeDashboardContext(rawDashboardContext, companyId);
+  if (!dashboardContext) return null;
+
+  const referencesVisibleDashboard =
+    /\b(those|these|them|shown|show me|that list|the list|card|dashboard|top|highest)\b/.test(
+      lower
+    ) ||
+    lower.includes("highest idle") ||
+    lower.includes("highest risk") ||
+    lower.includes("top idle") ||
+    lower.includes("top risk");
+
+  if (!referencesVisibleDashboard) return null;
+
+  const requestedCount = extractRequestedCount(lower);
+  const idleRequested =
+    /\b(idle|idling|stopping|stopped|parked|waiting)\b/.test(lower) ||
+    lower.includes("highest idle") ||
+    lower.includes("top idle");
+  const riskRequested =
+    /\b(risk|risky|critical|event|events)\b/.test(lower) ||
+    lower.includes("highest risk") ||
+    lower.includes("top risk");
+
+  if (idleRequested && dashboardContext.highest_idle_trucks.length) {
+    return {
+      source: "highest_idle_trucks",
+      label: "highest idle trucks",
+      trucks: dashboardContext.highest_idle_trucks.slice(
+        0,
+        requestedCount || dashboardContext.highest_idle_trucks.length
+      ),
+    };
+  }
+
+  if (riskRequested && dashboardContext.highest_risk_trucks.length) {
+    return {
+      source: "highest_risk_trucks",
+      label: "highest risk trucks",
+      trucks: dashboardContext.highest_risk_trucks.slice(
+        0,
+        requestedCount || dashboardContext.highest_risk_trucks.length
+      ),
+    };
+  }
+
+  const visibleTrucks = uniqueDashboardTrucks([
+    ...dashboardContext.highest_idle_trucks,
+    ...dashboardContext.highest_risk_trucks,
+    ...dashboardContext.recent_critical_events,
+  ]);
+
+  if (!visibleTrucks.length) return null;
+
+  return {
+    source: "visible_dashboard_trucks",
+    label: "trucks shown on the dashboard",
+    trucks: visibleTrucks.slice(0, requestedCount || 8),
+  };
+}
+
+function sanitizeDashboardContext(rawDashboardContext: any, companyId: string) {
+  if (!rawDashboardContext || typeof rawDashboardContext !== "object") return null;
+  const contextCompanyId = String(rawDashboardContext.active_company_id || "");
+  if (contextCompanyId && contextCompanyId !== companyId) return null;
+
+  return {
+    highest_idle_trucks: sanitizeDashboardTruckList(
+      rawDashboardContext.highest_idle_trucks,
+      "idle"
+    ),
+    highest_risk_trucks: sanitizeDashboardTruckList(
+      rawDashboardContext.highest_risk_trucks,
+      "risk"
+    ),
+    recent_critical_events: sanitizeDashboardTruckList(
+      rawDashboardContext.recent_critical_events,
+      "critical_event"
+    ),
+  };
+}
+
+function sanitizeDashboardTruckList(rawList: any, source: string) {
+  if (!Array.isArray(rawList)) return [];
+
+  return rawList
+    .slice(0, 10)
+    .map((item: any) => {
+      const truckId = String(item?.truck_id || "").trim();
+      if (!truckId || truckId.length > 40) return null;
+
+      return {
+        truck_id: truckId,
+        source,
+        idle_minutes: finiteOrNull(item?.idle_minutes),
+        idle_hours: item?.idle_hours === undefined ? null : String(item.idle_hours),
+        event_count: finiteOrNull(item?.event_count),
+        event_type: item?.event_type ? String(item.event_type).slice(0, 80) : null,
+        severity: item?.severity ? String(item.severity).slice(0, 40) : null,
+        location_name: item?.location_name
+          ? String(item.location_name).slice(0, 120)
+          : null,
+        created_at: item?.created_at ? String(item.created_at).slice(0, 40) : null,
+      };
+    })
+    .filter(Boolean);
+}
+
+function uniqueDashboardTrucks(trucks: any[]) {
+  const seen = new Set<string>();
+  const unique: any[] = [];
+
+  for (const truck of trucks) {
+    const key = normalizeTruckKey(truck?.truck_id);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    unique.push(truck);
+  }
+
+  return unique;
+}
+
+function extractRequestedCount(lower: string) {
+  const wordCounts: Record<string, number> = {
+    one: 1,
+    two: 2,
+    three: 3,
+    four: 4,
+    five: 5,
+  };
+  const digitMatch = lower.match(/\b([1-9]|10)\b/);
+  if (digitMatch) return Number(digitMatch[1]);
+
+  for (const [word, count] of Object.entries(wordCounts)) {
+    if (new RegExp(`\\b${word}\\b`).test(lower)) return count;
+  }
+
+  return null;
+}
+
+function finiteOrNull(value: any) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
 }
 
 function canViewSparesCost(roles: string[]) {
@@ -389,6 +558,213 @@ async function fetchFleetAssetCounts(companyId: string) {
   return {
     imported_assets: assets.length,
     enabled_assets: assets.filter((asset) => asset.intelligence_enabled).length,
+  };
+}
+
+async function fetchDashboardFollowupContext(
+  companyId: string,
+  reference: any,
+  geofences: any[] = []
+) {
+  const requestedTrucks = uniqueDashboardTrucks(reference.trucks || []).slice(0, 10);
+  if (!requestedTrucks.length) {
+    return {
+      source: reference.source,
+      label: reference.label,
+      checked_at: new Date().toISOString(),
+      trucks: [],
+      unmatched_trucks: [],
+    };
+  }
+
+  const { data: assets, error: assetError } = await supabaseAdmin
+    .from("fleet_assets")
+    .select(
+      "id, truck_id, registration, latitude, longitude, last_seen_at, provider_location_label, asset_category"
+    )
+    .eq("company_id", companyId)
+    .eq("status", "active")
+    .eq("intelligence_enabled", true)
+    .limit(1000);
+
+  if (assetError) throw assetError;
+
+  const enabledAssets = assets || [];
+  const checkedTrucks = await Promise.all(
+    requestedTrucks.map(async (requestedTruck: any) => {
+      const requestedKey = normalizeTruckKey(requestedTruck.truck_id);
+      const asset = enabledAssets.find((item) =>
+        getVehicleMatchKeys(item).includes(requestedKey)
+      );
+
+      if (!asset) {
+        return {
+          truck_id: requestedTruck.truck_id,
+          dashboard_context: requestedTruck,
+          enabled_for_intelligence: false,
+          current_status: "unknown",
+          confidence: "low",
+          reason:
+            "I could not safely match this dashboard truck to an enabled intelligence asset.",
+        };
+      }
+
+      const [latestTelemetry, idleEvents] = await Promise.all([
+        fetchLatestDashboardTelemetry(companyId, asset.truck_id),
+        fetchRecentDashboardIdleEvents(companyId, asset.truck_id),
+      ]);
+      const assessment = assessDashboardTruckStatus(asset, latestTelemetry, idleEvents);
+      const locationPoint =
+        Number.isFinite(Number(latestTelemetry?.latitude)) &&
+        Number.isFinite(Number(latestTelemetry?.longitude))
+          ? latestTelemetry
+          : asset;
+
+      return {
+        truck_id: asset.truck_id,
+        registration: asset.registration || null,
+        dashboard_context: requestedTruck,
+        enabled_for_intelligence: true,
+        last_seen_at: latestTelemetry?.recorded_at || asset.last_seen_at || null,
+        latest_recorded_at: latestTelemetry?.recorded_at || null,
+        latest_speed: latestTelemetry?.speed ?? null,
+        provider_location_label: asset.provider_location_label || null,
+        geofence_match: matchPointToGeofence(locationPoint, geofences),
+        recent_idle_events_count: idleEvents.length,
+        latest_idle_event: idleEvents[0]
+          ? {
+              event_type: idleEvents[0].event_type,
+              created_at: idleEvents[0].created_at,
+              started_at: idleEvents[0].started_at,
+              duration_minutes: idleEvents[0].duration_minutes ?? null,
+              location_name: idleEvents[0].location_name || null,
+              context_label: idleEvents[0].context_label || null,
+            }
+          : null,
+        current_status: assessment.status,
+        confidence: assessment.confidence,
+        freshness_minutes: assessment.freshness_minutes,
+        reason: assessment.reason,
+      };
+    })
+  );
+
+  return {
+    source: reference.source,
+    label: reference.label,
+    requested_truck_ids: requestedTrucks.map((truck: any) => truck.truck_id),
+    checked_at: new Date().toISOString(),
+    trucks: checkedTrucks,
+    unmatched_trucks: checkedTrucks.filter(
+      (truck: any) => !truck.enabled_for_intelligence
+    ),
+  };
+}
+
+async function fetchLatestDashboardTelemetry(companyId: string, truckId: string) {
+  const { data, error } = await supabaseAdmin
+    .from("telemetry_logs")
+    .select("truck_id, recorded_at, latitude, longitude, speed")
+    .eq("company_id", companyId)
+    .eq("truck_id", truckId)
+    .order("recorded_at", { ascending: false })
+    .limit(1);
+
+  if (error) throw error;
+  return data?.[0] || null;
+}
+
+async function fetchRecentDashboardIdleEvents(companyId: string, truckId: string) {
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const { data, error } = await supabaseAdmin
+    .from("telemetry_events")
+    .select(
+      "truck_id, event_type, severity, location_name, created_at, started_at, duration_minutes, context_label, context_type"
+    )
+    .eq("company_id", companyId)
+    .eq("truck_id", truckId)
+    .in("event_type", ["excessive_idle", "idle", "stopped", "long_stop"])
+    .gte("created_at", since)
+    .order("created_at", { ascending: false })
+    .limit(5);
+
+  if (error) throw error;
+  return data || [];
+}
+
+function assessDashboardTruckStatus(asset: any, latestTelemetry: any, idleEvents: any[]) {
+  const latestAt = latestTelemetry?.recorded_at || asset?.last_seen_at || null;
+  if (!latestAt) {
+    return {
+      status: "unknown",
+      confidence: "low",
+      freshness_minutes: null,
+      reason: "No recent telemetry timestamp is available.",
+    };
+  }
+
+  const freshnessMinutes = Math.floor((Date.now() - new Date(latestAt).getTime()) / 60000);
+  const speed =
+    latestTelemetry?.speed === null || latestTelemetry?.speed === undefined
+      ? null
+      : Number(latestTelemetry.speed);
+  const latestIdleAt = idleEvents[0]?.created_at || idleEvents[0]?.started_at || null;
+  const idleAgeMinutes = latestIdleAt
+    ? Math.floor((Date.now() - new Date(latestIdleAt).getTime()) / 60000)
+    : null;
+
+  if (!Number.isFinite(freshnessMinutes) || freshnessMinutes > 60) {
+    return {
+      status: "stale",
+      confidence: "low",
+      freshness_minutes: Number.isFinite(freshnessMinutes)
+        ? freshnessMinutes
+        : null,
+      reason:
+        "The latest telemetry is stale, so I cannot say what it is doing right now.",
+    };
+  }
+
+  if (Number.isFinite(speed) && Number(speed) > 5) {
+    return {
+      status: "moving",
+      confidence: "high",
+      freshness_minutes: freshnessMinutes,
+      reason: "Fresh telemetry shows movement speed above idle range.",
+    };
+  }
+
+  if (
+    Number.isFinite(speed) &&
+    Number(speed) <= 2 &&
+    idleAgeMinutes !== null &&
+    idleAgeMinutes <= 120
+  ) {
+    return {
+      status: "still_idling",
+      confidence: "high",
+      freshness_minutes: freshnessMinutes,
+      reason:
+        "Fresh low-speed telemetry plus a recent idle event suggests it is still idling or stopped.",
+    };
+  }
+
+  if (Number.isFinite(speed) && Number(speed) <= 2) {
+    return {
+      status: "stopped_or_idle",
+      confidence: "medium",
+      freshness_minutes: freshnessMinutes,
+      reason:
+        "Fresh low-speed telemetry suggests it is stopped or idling, but the latest idle event is not fresh enough for certainty.",
+    };
+  }
+
+  return {
+    status: "active_unknown",
+    confidence: "medium",
+    freshness_minutes: freshnessMinutes,
+    reason:
+      "Telemetry is fresh, but speed/status are not enough to classify it confidently.",
   };
 }
 

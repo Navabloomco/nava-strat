@@ -25,7 +25,11 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const { question, companyId: requestedCompanyId } = await req.json();
+    const {
+      question,
+      companyId: requestedCompanyId,
+      dashboard_context: dashboardContext,
+    } = await req.json();
     if (!question || typeof question !== "string" || question.length > 500) {
       return NextResponse.json(
         { error: "Valid question string required (max 500 chars)" },
@@ -113,6 +117,7 @@ export async function POST(req: Request) {
     // 2. Get deterministic context from router
     const context = await routeContext(question, company.slug, {
       roles: companyRoles,
+      dashboardContext,
     });
 
     // 3. Fetch active memories for this company (up to 5 most recent)
@@ -157,6 +162,7 @@ export async function POST(req: Request) {
       !context.spares &&
       !context.investigation_case_file &&
       !context.fuel_investigation &&
+      !context.dashboard_followup &&
       !context.asset_access_restricted &&
       !context.no_enabled_intelligence_assets
     ) {
@@ -333,6 +339,9 @@ function buildFallbackAnswer(context: any): string {
   }
   if (context.no_enabled_intelligence_assets && !context.spares) {
     return "Fleet data has been imported, but no assets are enabled for Nava intelligence yet. Review assets before I use them in answers.";
+  }
+  if (context.dashboard_followup) {
+    return buildDashboardFollowupAnswer(context);
   }
   if (context.investigation_case_file) {
     return buildInvestigationFallbackAnswer(context);
@@ -623,6 +632,105 @@ function buildAssetRestrictedAnswer(vehicleMatch: any) {
     "this asset";
 
   return `I found ${label}, but I can only answer using assets enabled for Nava intelligence. This asset may be waiting for review.`;
+}
+
+function buildDashboardFollowupAnswer(context: any) {
+  const followup = context.dashboard_followup || {};
+  const trucks = followup.trucks || [];
+  const visibleTrucks = trucks.filter((truck: any) => truck.enabled_for_intelligence);
+  const unmatched = trucks.filter((truck: any) => !truck.enabled_for_intelligence);
+  const label = followup.label || "trucks shown on the dashboard";
+  const parts: string[] = [];
+
+  if (!trucks.length) {
+    return "I could not safely resolve the dashboard trucks for that follow-up. Try asking with the truck registrations shown in the dashboard card.";
+  }
+
+  parts.push(`I used the ${label} currently shown on this dashboard, not unrelated recent events.`);
+  parts.push("I checked latest telemetry and recent idle events for those exact trucks.");
+  parts.push("");
+
+  if (visibleTrucks.length) {
+    parts.push("Current read");
+    parts.push(...visibleTrucks.map(formatDashboardTruckLine));
+  }
+
+  if (unmatched.length) {
+    parts.push("");
+    parts.push(
+      `I could not safely match ${unmatched
+        .map((truck: any) => truck.truck_id)
+        .join(", ")} to enabled intelligence assets, so I am not exposing telemetry for them.`
+    );
+  }
+
+  parts.push("");
+  parts.push(
+    "If a truck is stale or only showing low speed, treat the answer as a prompt to verify on Live Tracking before calling the situation closed."
+  );
+
+  return parts.join("\n");
+}
+
+function formatDashboardTruckLine(truck: any) {
+  const label = [truck.registration, truck.truck_id]
+    .filter(Boolean)
+    .filter((value, index, list) => list.indexOf(value) === index)
+    .join(" / ");
+  const status = formatDashboardTruckStatus(truck);
+  const freshness =
+    truck.freshness_minutes === null || truck.freshness_minutes === undefined
+      ? "freshness unknown"
+      : `${truck.freshness_minutes} min old`;
+  const speed =
+    truck.latest_speed === null || truck.latest_speed === undefined
+      ? "speed unknown"
+      : `${Number(truck.latest_speed).toLocaleString()} speed`;
+  const location = formatOperationalLocation(truck);
+  const locationText = location ? `, ${location}` : "";
+  const latestIdle = truck.latest_idle_event
+    ? ` Latest idle event: ${formatReadableDate(
+        truck.latest_idle_event.created_at || truck.latest_idle_event.started_at
+      )}.`
+    : " No recent idle event found in the last 24 hours.";
+  const dashboardMetric = formatDashboardMetric(truck.dashboard_context);
+
+  return `- ${label || truck.truck_id}: ${status} Last seen ${formatReadableDate(
+    truck.last_seen_at
+  )} (${freshness}), ${speed}${locationText}. Confidence: ${
+    truck.confidence || "unknown"
+  }.${dashboardMetric}${latestIdle} ${truck.reason || ""}`;
+}
+
+function formatDashboardTruckStatus(truck: any) {
+  switch (truck.current_status) {
+    case "still_idling":
+      return "still looks idle or stopped.";
+    case "stopped_or_idle":
+      return "looks stopped or idle, but I would not call it certain.";
+    case "moving":
+      return "does not look idle now; fresh telemetry shows movement.";
+    case "stale":
+      return "is stale, so I cannot confirm whether it is still idling.";
+    case "active_unknown":
+      return "is active, but the current status is not clear enough to classify.";
+    default:
+      return "status is unknown.";
+  }
+}
+
+function formatDashboardMetric(dashboardContext: any) {
+  if (!dashboardContext) return "";
+  if (dashboardContext.idle_hours) {
+    return ` Dashboard idle total: ${dashboardContext.idle_hours} hours.`;
+  }
+  if (dashboardContext.event_count !== null && dashboardContext.event_count !== undefined) {
+    return ` Dashboard event count: ${dashboardContext.event_count}.`;
+  }
+  if (dashboardContext.event_type) {
+    return ` Dashboard event: ${formatSpareEventType(dashboardContext.event_type)}.`;
+  }
+  return "";
 }
 
 function buildInvestigationFallbackAnswer(context: any) {
