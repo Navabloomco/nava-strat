@@ -41,7 +41,7 @@ The main product principle is convenience. Every user-facing page should make th
 
 | Route | Purpose |
 | --- | --- |
-| `/dashboard` | Customer-facing app dashboard and navigation hub. Includes Nava Eye Watch items built from safe dashboard summaries, and an embedded Nava Eye widget that may pass safe page context for visible dashboard follow-ups. |
+| `/dashboard` | Customer-facing app dashboard and navigation hub for fleet tenants. For the platform/operator workspace, platform owners see a platform operations overview instead of empty fleet metrics. Includes Nava Eye Watch items built from safe dashboard summaries, and an embedded Nava Eye widget for customer fleet tenants that may pass safe page context for visible dashboard follow-ups. |
 | `/nava-eye` | Nava Eye assistant UI. |
 | `/tracking/live` | Live tracking view for enabled intelligence assets. |
 | `/tracking/link` | Tracking link helper page. |
@@ -116,7 +116,7 @@ The main product principle is convenience. Every user-facing page should make th
 | API Route | Purpose |
 | --- | --- |
 | `GET /api/companies` | Returns active company memberships, normalized roles, platform-owner status, and visible companies. |
-| `GET /api/dashboard/overview` | Authenticated company dashboard overview. Returns role-aware safe fleet health, permitted asset-review counts, permitted fuel telemetry/risk usability summary, active memory summaries, and visible dashboard context. |
+| `GET /api/dashboard/overview` | Authenticated company dashboard overview. Returns `dashboard_mode = fleet` with role-aware safe fleet health for customer tenants, or `dashboard_mode = platform_operator` with safe aggregate platform stats for the operator workspace when viewed by a platform owner. |
 | `POST /api/onboarding/company` | Creates/updates company onboarding data, operating context, and provider setup requests. |
 | `GET/PATCH /api/company-settings` | Reads and updates safe company operating context. Supports platform-owner `companyId` context. No billing/provider secrets. |
 | `GET /api/admin/pilot-readiness` | Platform-owner-only pilot readiness checklist list across companies. Returns pass/warning/fail counts and safe tenant summaries. |
@@ -321,6 +321,8 @@ Nava Eye and Nava Eye Watch use explicit safe capability flags derived from the 
 - APIs must resolve a company before querying tenant data.
 - Same-company role checks matter: a role in one company must not authorize mutation in another company.
 - `platform_owner` can pass `companyId` on supported internal/admin APIs.
+- The Navabloomco company is the platform/operator workspace, not a customer fleet tenant. Platform owners using `/dashboard` in that workspace should see platform operations guidance and safe aggregate tenant stats, not an empty fleet dashboard.
+- Until a durable `companies` field exists for platform/operator identity, dashboard mode uses a small temporary heuristic: normalized company `slug` or `name` equals `navabloomco`, and the current user is `platform_owner`.
 - Admin pages that currently support platform-owner `?companyId=` tenant context include Asset Review, Provider Vault, and Company Settings.
 - Non-platform users may only access companies where they have an active membership.
 - Tenant data should be scoped by `company_id` before returning or mutating.
@@ -589,6 +591,7 @@ Review later should:
 - Do not hard delete operational records in MVP workflows where archive/disable/end is available.
 - Do not add schema migrations silently from app code.
 - Do not treat platform tenant billing preview as invoicing. It is internal readiness/math only until a real billing engine exists.
+- Do not show the platform/operator workspace as an empty customer fleet dashboard. Platform-owner operator context should guide users toward platform operations, tenant billing, readiness, health, provider requests, and provider diagnostics.
 - Do not treat manual invoice records as external billing. They are internal lifecycle records only until a real billing engine is designed.
 - Do not let invoice record pages crash when the additive `billing_invoices` SQL has not been applied; show setup-required guidance instead.
 - Do not let pilot readiness mutate tenant setup or expose secrets; it is a platform-owner-only checklist built from safe counts and summaries.
@@ -680,6 +683,20 @@ Platform Health checks `billing_invoices` columns, expected invoice indexes, and
 Platform owners now have `/admin/pilot-readiness`, `/admin/pilot-readiness/[companyId]`, `GET /api/admin/pilot-readiness`, and `GET /api/admin/pilot-readiness/[companyId]`.
 
 The checklist returns pass/warning/fail checks grouped by company setup, provider setup, asset review, billing readiness, role/security readiness, operations readiness, and Nava Eye readiness. It is read-only and uses safe counts/summaries only.
+
+### Platform Workspace Dashboard Mode
+
+When a platform owner selects the Navabloomco platform/operator workspace and opens `/dashboard`, the dashboard returns `dashboard_mode = platform_operator` and shows a platform operations overview instead of fleet metrics.
+
+The platform workspace dashboard shows:
+
+- customer tenant count
+- strict billable assets across customer tenants
+- estimated monthly revenue by currency where pricing exists
+- pilot readiness blocked / needs-attention counts
+- action cards for Tenant Billing, Pilot Readiness, Platform Health, Provider Requests, and Provider Vault
+
+It must not aggregate or expose raw cross-tenant telemetry, provider secrets, auth configs, raw payloads, or private driver data. Customer tenant selection keeps the normal fleet dashboard behavior.
 
 ### Analytics Events Phase 1
 

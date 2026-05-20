@@ -9,11 +9,18 @@ import {
   normalizeRole,
   rolesForCompany,
 } from "../../../../lib/api/roleAccess";
+import {
+  buildPricingPreview,
+  fetchCompanies,
+  summarizeAssets,
+} from "../../admin/tenants/tenantBilling";
+import { buildPilotReadinessList } from "../../admin/pilot-readiness/readiness";
 
 export const dynamic = "force-dynamic";
 
 const SAFE_MEMORY_FIELDS =
   "id, memory_type, severity, title, summary, recommendation, last_seen_at";
+const PLATFORM_OPERATOR_COMPANY_KEYS = new Set(["navabloomco"]);
 
 function sanitizeDashboardMemories(
   memories: any[],
@@ -76,6 +83,139 @@ async function getAssetReviewSummary(companyId: string) {
     disabled_or_excluded_assets: assets.filter((asset) =>
       ["disabled", "excluded"].includes(String(asset.billing_status || ""))
     ).length,
+  };
+}
+
+function normalizeCompanyKey(value: any) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "");
+}
+
+function isPlatformOperatorCompany(company: any) {
+  const slugKey = normalizeCompanyKey(company?.slug);
+  const nameKey = normalizeCompanyKey(company?.name);
+
+  return (
+    PLATFORM_OPERATOR_COMPANY_KEYS.has(slugKey) ||
+    PLATFORM_OPERATOR_COMPANY_KEYS.has(nameKey)
+  );
+}
+
+async function getPlatformOperatorSummary(operatorCompanyId: string) {
+  const [companiesResult, assetsResult, readinessResult] = await Promise.all([
+    fetchCompanies(),
+    supabaseAdmin
+      .from("fleet_assets")
+      .select(
+        "company_id, status, billing_status, intelligence_enabled, billing_enabled_at"
+      ),
+    buildPilotReadinessList().catch((error) => ({
+      error: error?.message || "Pilot readiness summary unavailable",
+    })),
+  ]);
+
+  if (companiesResult.error) throw companiesResult.error;
+  if (assetsResult.error) throw assetsResult.error;
+
+  const companies = companiesResult.data || [];
+  const operatorCompanyIds = new Set(
+    companies
+      .filter((company: any) => isPlatformOperatorCompany(company))
+      .map((company: any) => company.id)
+      .filter(Boolean)
+  );
+  operatorCompanyIds.add(operatorCompanyId);
+
+  const tenantCompanies = companies.filter(
+    (company: any) => !operatorCompanyIds.has(company.id)
+  );
+  const assetsByCompany = new Map<string, any[]>();
+
+  for (const asset of assetsResult.data || []) {
+    if (!asset.company_id || operatorCompanyIds.has(asset.company_id)) continue;
+    assetsByCompany.set(asset.company_id, [
+      ...(assetsByCompany.get(asset.company_id) || []),
+      asset,
+    ]);
+  }
+
+  const tenantSummaries = tenantCompanies.map((company: any) => {
+    const assetSummary = summarizeAssets(assetsByCompany.get(company.id) || []);
+    const pricing = buildPricingPreview(
+      company,
+      assetSummary.strict_billable_asset_count
+    );
+
+    return {
+      strict_billable_asset_count: assetSummary.strict_billable_asset_count,
+      estimated_monthly_revenue: pricing.estimated_monthly_revenue,
+      billing_currency: pricing.billing_currency,
+      pricing_set: pricing.pricing_set,
+    };
+  });
+
+  const revenueByCurrency = tenantSummaries.reduce(
+    (totals: Record<string, number>, tenant) => {
+      if (tenant.estimated_monthly_revenue === null) return totals;
+      const currency = tenant.billing_currency || "KES";
+      return {
+        ...totals,
+        [currency]:
+          Number(totals[currency] || 0) +
+          Number(tenant.estimated_monthly_revenue || 0),
+      };
+    },
+    {}
+  );
+
+  const readinessTenants =
+    "tenants" in readinessResult
+      ? readinessResult.tenants.filter(
+          (tenant: any) => !operatorCompanyIds.has(tenant.company?.id)
+        )
+      : null;
+  const readinessTotals = readinessTenants
+    ? readinessTenants.reduce(
+        (totals: any, tenant: any) => ({
+          ready:
+            totals.ready +
+            (tenant.overall_readiness?.status === "ready" ? 1 : 0),
+          needs_attention:
+            totals.needs_attention +
+            (tenant.overall_readiness?.status === "needs_attention" ? 1 : 0),
+          blocked:
+            totals.blocked +
+            (tenant.overall_readiness?.status === "blocked" ? 1 : 0),
+        }),
+        { ready: 0, needs_attention: 0, blocked: 0 }
+      )
+    : null;
+
+  return {
+    tenant_count: tenantCompanies.length,
+    strict_billable_asset_count: tenantSummaries.reduce(
+      (total, tenant) => total + tenant.strict_billable_asset_count,
+      0
+    ),
+    estimated_monthly_revenue_by_currency: revenueByCurrency,
+    tenants_missing_pricing: tenantSummaries.filter(
+      (tenant) => !tenant.pricing_set
+    ).length,
+    readiness: readinessTotals
+      ? {
+          ready: readinessTotals.ready,
+          needs_attention: readinessTotals.needs_attention,
+          blocked: readinessTotals.blocked,
+        }
+      : null,
+    readiness_unavailable_reason:
+      "error" in readinessResult ? readinessResult.error : null,
+    operator_company_detection: {
+      method: "temporary_slug_or_name_heuristic",
+      matched_key: "navabloomco",
+    },
   };
 }
 
@@ -183,6 +323,25 @@ export async function GET(req: Request) {
 
     const companyRoles = rolesForCompany(activeMemberships, company.id, isPlatformOwner);
     const capabilities = getRoleCapabilities(companyRoles);
+    const isPlatformOperatorDashboard =
+      isPlatformOwner && isPlatformOperatorCompany(company);
+
+    if (isPlatformOperatorDashboard) {
+      const platformSummary = await getPlatformOperatorSummary(company.id);
+
+      return NextResponse.json({
+        success: true,
+        dashboard_mode: "platform_operator",
+        company: {
+          id: company.id,
+          name: company.name,
+          slug: company.slug,
+        },
+        capabilities,
+        platform_operator_summary: platformSummary,
+      });
+    }
+
     const [fleetHealth, assetReviewSummary] = await Promise.all([
       getFleetHealth(company.id),
       capabilities.canReviewAssets
@@ -208,6 +367,7 @@ export async function GET(req: Request) {
 
     return NextResponse.json({
       success: true,
+      dashboard_mode: "fleet",
       company: {
         id: company.id,
         name: company.name,

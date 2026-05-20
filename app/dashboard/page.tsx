@@ -7,9 +7,11 @@ import { useRouter } from "next/navigation";
 interface OverviewData {
   success: boolean;
   error?: string;
+  dashboard_mode?: "fleet" | "platform_operator";
   company?: any;
   fleet_health?: any;
   asset_review_summary?: any;
+  platform_operator_summary?: PlatformOperatorSummary;
   capabilities?: DashboardRoleCapabilities;
   active_memories?: any[];
   trucks_in_uganda?: any[];
@@ -35,6 +37,15 @@ const dashboardLinks = [
   { label: "Settings", href: "/admin/company" },
 ];
 
+const platformDashboardLinks = [
+  { label: "Admin Hub", href: "/admin" },
+  { label: "Tenant Billing", href: "/admin/tenants" },
+  { label: "Pilot Readiness", href: "/admin/pilot-readiness" },
+  { label: "Platform Health", href: "/admin/health" },
+  { label: "Provider Requests", href: "/admin/provider-requests" },
+  { label: "Provider Vault", href: "/admin/providers" },
+];
+
 interface WatchItem {
   id: string;
   severity: "info" | "warning" | "critical";
@@ -58,6 +69,23 @@ type DashboardRoleCapabilities = {
   canViewSpares: boolean;
   isPlatformOwner: boolean;
   canReviewAssets: boolean;
+};
+
+type PlatformOperatorSummary = {
+  tenant_count: number;
+  strict_billable_asset_count: number;
+  estimated_monthly_revenue_by_currency: Record<string, number>;
+  tenants_missing_pricing: number;
+  readiness: {
+    ready: number;
+    needs_attention: number;
+    blocked: number;
+  } | null;
+  readiness_unavailable_reason?: string | null;
+  operator_company_detection?: {
+    method: string;
+    matched_key: string;
+  };
 };
 
 function buildWatchItems(
@@ -288,6 +316,27 @@ function severityClasses(severity: WatchItem["severity"]) {
   if (severity === "critical") return "border-red-500/40 bg-red-500/10 text-red-200";
   if (severity === "warning") return "border-yellow-500/40 bg-yellow-500/10 text-yellow-200";
   return "border-blue-500/40 bg-blue-500/10 text-blue-200";
+}
+
+function formatMoney(value: number, currency: string) {
+  return new Intl.NumberFormat("en-KE", {
+    style: "currency",
+    currency: currency || "KES",
+    maximumFractionDigits: 0,
+  }).format(Number(value || 0));
+}
+
+function formatRevenueTotals(totals: Record<string, number> | undefined) {
+  const entries = Object.entries(totals || {}).filter(([, value]) => {
+    const numericValue = Number(value || 0);
+    return Number.isFinite(numericValue) && numericValue > 0;
+  });
+
+  if (!entries.length) return "Pricing not set";
+
+  return entries
+    .map(([currency, value]) => formatMoney(Number(value || 0), currency))
+    .join(", ");
 }
 
 function withCompanyContext(path: string, companyId: string) {
@@ -535,8 +584,13 @@ export default function DashboardPage() {
       rolesForDashboardCompany(memberships, selectedCompanyId || company.id),
       isPlatformOwner
     );
+  const isPlatformWorkspace =
+    data.dashboard_mode === "platform_operator" && roleCapabilities.isPlatformOwner;
   const adminCompanyId = isPlatformOwner ? selectedCompanyId || company.id : "";
-  const watchItems = buildWatchItems(data, roleCapabilities, adminCompanyId);
+  const watchItems = isPlatformWorkspace
+    ? []
+    : buildWatchItems(data, roleCapabilities, adminCompanyId);
+  const platformSummary = data.platform_operator_summary;
   const normalizedCompanySearch = companySearch.toLowerCase();
   const filteredCompanies = companies.filter(
     (companyOption) =>
@@ -638,7 +692,7 @@ export default function DashboardPage() {
         <aside className="w-64 border-r border-slate-800 p-6 space-y-6">
           <nav className="space-y-2">
             <div className="text-slate-400 text-sm font-semibold uppercase tracking-wider">Quick links</div>
-            {dashboardLinks.map((item) => (
+            {(isPlatformWorkspace ? platformDashboardLinks : dashboardLinks).map((item) => (
               <Link
                 key={`${item.label}-${item.href}`}
                 href={item.href}
@@ -651,190 +705,320 @@ export default function DashboardPage() {
         </aside>
 
         <main className="flex-1 p-8">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-5 mb-10">
-            <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-5">
-              <div className="text-4xl font-bold">{fh.total_trucks}</div>
-              <div className="text-slate-500 text-sm">Active Trucks</div>
-            </div>
-            <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-5">
-              <div className="text-4xl font-bold text-green-500">{fh.online_trucks}</div>
-              <div className="text-slate-500 text-sm">Online</div>
-            </div>
-            <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-5">
-              <div className="text-4xl font-bold text-yellow-500">{fh.critical_events_24h}</div>
-              <div className="text-slate-500 text-sm">Critical Events (24h)</div>
-            </div>
-            <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-5">
-              <div className="text-4xl font-bold text-purple-500">{ugandaTrucks.length}</div>
-              <div className="text-slate-500 text-sm">Trucks in Uganda</div>
-            </div>
-          </div>
-
-          <div className="grid lg:grid-cols-2 gap-8">
-            <div className="space-y-6">
-              <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-5">
-                <h2 className="text-lg font-semibold mb-4">⚠️ Highest Risk Trucks</h2>
-                {fh.highest_risk_trucks.map((t: any) => (
-                  <div key={t.truck_id} className="flex justify-between border-b border-slate-800 py-2">
-                    <span className="font-mono">{t.truck_id}</span>
-                    <span className="text-red-400">{t.event_count} events</span>
-                  </div>
-                ))}
-              </div>
-              <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-5">
-                <h2 className="text-lg font-semibold mb-4">🛑 Highest Idle Trucks</h2>
-                {fh.highest_idle_trucks.map((t: any) => (
-                  <div key={t.truck_id} className="flex justify-between border-b border-slate-800 py-2">
-                    <span className="font-mono">{t.truck_id}</span>
-                    <span className="text-yellow-400">{t.idle_hours} hours idle</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="space-y-6">
-              <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-5">
-                <h2 className="text-lg font-semibold mb-4">🔥 Recent Critical Events</h2>
-                <div className="space-y-3 max-h-64 overflow-y-auto">
-                  {fh.recent_critical_events.map((e: any, idx: number) => (
-                    <div key={idx} className="border-l-2 border-red-500 pl-3">
-                      <div className="flex justify-between text-sm">
-                        <span className="font-mono">{e.truck_id}</span>
-                        <span className="text-slate-500 text-xs">{new Date(e.created_at).toLocaleString()}</span>
-                      </div>
-                      <div className="text-sm my-1">{e.event_type.replace(/_/g, " ").toUpperCase()}</div>
-                      <div className="text-xs text-slate-500">{e.location_name || "Unknown"}</div>
+          {isPlatformWorkspace ? (
+            <div className="space-y-8">
+              <section className="rounded-2xl border border-blue-500/20 bg-blue-500/10 p-6">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div className="max-w-3xl">
+                    <div className="text-xs font-semibold uppercase tracking-[0.24em] text-blue-300">
+                      Platform workspace
                     </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-5">
-                <div className="flex items-start justify-between gap-4 mb-4">
-                  <div>
-                    <h2 className="text-lg font-semibold">Nava Eye Watch</h2>
-                    <p className="text-xs text-slate-500 mt-1">
-                      Evidence-led items from the current dashboard data.
+                    <h2 className="mt-2 text-2xl font-semibold text-white">
+                      {company.name} is your platform workspace.
+                    </h2>
+                    <p className="mt-3 text-sm leading-6 text-slate-300">
+                      Fleet dashboards live under customer tenants. Select a
+                      customer fleet tenant from the company switcher to see live
+                      vehicles, idle events, Nava Eye Watch, and fleet alerts.
                     </p>
                   </div>
-                  <span className="rounded-full border border-blue-500/30 bg-blue-500/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-blue-300">
-                    Live read
-                  </span>
+                  <Link
+                    href="/admin"
+                    className="rounded-xl border border-blue-400/40 px-4 py-2 text-sm font-semibold text-blue-100 hover:bg-blue-500/10"
+                  >
+                    Open Admin Hub
+                  </Link>
                 </div>
+              </section>
 
-                {watchItems.length ? (
-                  <div className="space-y-3">
-                    {watchItems.map((item) => (
-                      <div
-                        key={item.id}
-                        className={`rounded-xl border p-3 ${severityClasses(item.severity)}`}
+              <section className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-4">
+                <div className="rounded-2xl border border-slate-800 bg-slate-900/50 p-5">
+                  <div className="text-3xl font-bold text-white">
+                    {platformSummary?.tenant_count ?? 0}
+                  </div>
+                  <div className="mt-1 text-sm text-slate-500">Customer tenants</div>
+                </div>
+                <div className="rounded-2xl border border-slate-800 bg-slate-900/50 p-5">
+                  <div className="text-3xl font-bold text-emerald-300">
+                    {platformSummary?.strict_billable_asset_count ?? 0}
+                  </div>
+                  <div className="mt-1 text-sm text-slate-500">Strict billable assets</div>
+                </div>
+                <div className="rounded-2xl border border-slate-800 bg-slate-900/50 p-5">
+                  <div className="text-2xl font-bold text-blue-200">
+                    {formatRevenueTotals(
+                      platformSummary?.estimated_monthly_revenue_by_currency
+                    )}
+                  </div>
+                  <div className="mt-1 text-sm text-slate-500">Estimated monthly</div>
+                  {Number(platformSummary?.tenants_missing_pricing || 0) > 0 && (
+                    <div className="mt-2 text-xs text-yellow-300">
+                      {platformSummary?.tenants_missing_pricing} tenant(s) missing pricing
+                    </div>
+                  )}
+                </div>
+                <div className="rounded-2xl border border-slate-800 bg-slate-900/50 p-5">
+                  <div className="text-3xl font-bold text-yellow-300">
+                    {platformSummary?.readiness
+                      ? `${platformSummary.readiness.blocked}/${platformSummary.readiness.needs_attention}`
+                      : "Review"}
+                  </div>
+                  <div className="mt-1 text-sm text-slate-500">
+                    Blocked / needs attention
+                  </div>
+                  {platformSummary?.readiness_unavailable_reason && (
+                    <div className="mt-2 text-xs text-slate-400">
+                      Readiness summary unavailable
+                    </div>
+                  )}
+                </div>
+              </section>
+
+              <section>
+                <div className="mb-4 flex items-center justify-between gap-4">
+                  <div>
+                    <h2 className="text-lg font-semibold text-white">
+                      Platform operations
+                    </h2>
+                    <p className="mt-1 text-sm text-slate-500">
+                      Work from safe platform summaries and tenant-scoped admin tools.
+                    </p>
+                  </div>
+                </div>
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                  {platformDashboardLinks
+                    .filter((item) => item.label !== "Admin Hub")
+                    .map((item) => (
+                      <Link
+                        key={item.href}
+                        href={item.href}
+                        className="group rounded-2xl border border-slate-800 bg-slate-900/50 p-5 transition hover:border-blue-500/50 hover:bg-slate-900"
                       >
-                        <div className="flex flex-wrap items-start justify-between gap-2">
-                          <div className="min-w-0">
-                            <div className="text-sm font-semibold text-slate-100">
-                              {item.title}
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <div className="text-base font-semibold text-slate-100 group-hover:text-blue-200">
+                              {item.label}
                             </div>
-                            <div className="mt-1 text-xs leading-5 text-slate-300">
-                              {item.summary}
+                            <div className="mt-2 text-sm leading-5 text-slate-500">
+                              {platformActionDescription(item.label)}
                             </div>
                           </div>
-                          <span className="shrink-0 rounded-full border border-current/30 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide">
-                            {item.severity}
+                          <span className="text-slate-500 group-hover:text-blue-300">
+                            →
                           </span>
                         </div>
+                      </Link>
+                    ))}
+                </div>
+              </section>
+            </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-5 mb-10">
+                <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-5">
+                  <div className="text-4xl font-bold">{fh.total_trucks}</div>
+                  <div className="text-slate-500 text-sm">Active Trucks</div>
+                </div>
+                <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-5">
+                  <div className="text-4xl font-bold text-green-500">{fh.online_trucks}</div>
+                  <div className="text-slate-500 text-sm">Online</div>
+                </div>
+                <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-5">
+                  <div className="text-4xl font-bold text-yellow-500">{fh.critical_events_24h}</div>
+                  <div className="text-slate-500 text-sm">Critical Events (24h)</div>
+                </div>
+                <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-5">
+                  <div className="text-4xl font-bold text-purple-500">{ugandaTrucks.length}</div>
+                  <div className="text-slate-500 text-sm">Trucks in Uganda</div>
+                </div>
+              </div>
 
-                        {item.evidence.length > 0 && (
-                          <ul className="mt-3 space-y-1 text-xs text-slate-300">
-                            {item.evidence.slice(0, 4).map((evidence) => (
-                              <li key={evidence} className="break-words">
-                                • {evidence}
-                              </li>
-                            ))}
-                          </ul>
-                        )}
-
-                        <div className="mt-3 rounded-lg bg-slate-950/40 p-2 text-xs text-slate-300">
-                          {item.suggested_next_check}
-                        </div>
-
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          {item.suggested_question && (
-                            <button
-                              type="button"
-                              onClick={() => setCopilotQuery(item.suggested_question || "")}
-                              className="rounded-lg border border-blue-500/40 px-3 py-1.5 text-xs font-medium text-blue-200 hover:bg-blue-500/10"
-                            >
-                              Ask Nava Eye
-                            </button>
-                          )}
-                          {item.href && (
-                            <Link
-                              href={item.href}
-                              className="rounded-lg border border-slate-600 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-800"
-                            >
-                              Open related view
-                            </Link>
-                          )}
-                        </div>
+              <div className="grid lg:grid-cols-2 gap-8">
+                <div className="space-y-6">
+                  <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-5">
+                    <h2 className="text-lg font-semibold mb-4">⚠️ Highest Risk Trucks</h2>
+                    {fh.highest_risk_trucks.map((t: any) => (
+                      <div key={t.truck_id} className="flex justify-between border-b border-slate-800 py-2">
+                        <span className="font-mono">{t.truck_id}</span>
+                        <span className="text-red-400">{t.event_count} events</span>
                       </div>
                     ))}
                   </div>
-                ) : (
-                  <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-4 text-sm text-slate-400">
-                    No urgent watch items from the current dashboard data.
-                  </div>
-                )}
-              </div>
-
-              <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-5">
-                <h2 className="text-lg font-semibold mb-4">🧠 Nava Eye fleet answers</h2>
-                <textarea
-                  value={copilotQuery}
-                  onChange={(e) => setCopilotQuery(e.target.value)}
-                  placeholder="Ask about fleet health, fuel risk, specific trucks..."
-                  className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-600"
-                  rows={3}
-                />
-                <button
-                  onClick={askCopilot}
-                  disabled={copilotLoading || !copilotQuery.trim()}
-                  className="mt-3 w-full bg-blue-600 hover:bg-blue-500 disabled:bg-blue-800 text-white font-medium py-2 rounded-xl transition"
-                >
-                  {copilotLoading ? "Checking your fleet data..." : "Ask Nava Eye"}
-                </button>
-                {copilotAnswer && (
-                  <div className="mt-4 bg-slate-800/50 rounded-xl p-4 border border-slate-700">
-                    <div className="text-sm text-slate-300 whitespace-pre-wrap">{copilotAnswer}</div>
-                  </div>
-                )}
-              </div>
-
-              <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-5">
-                <h2 className="text-lg font-semibold mb-4">💡 Active Insights</h2>
-                <div className="space-y-3">
-                  {memories.map((m) => (
-                    <div key={m.id} className="border border-slate-700 rounded-xl p-3">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className={`px-2 py-0.5 text-xs rounded-full font-medium ${
-                          m.severity === "critical" ? "bg-red-900/50 text-red-300" :
-                          m.severity === "warning" ? "bg-yellow-900/50 text-yellow-300" :
-                          "bg-blue-900/50 text-blue-300"
-                        }`}>
-                          {m.severity}
-                        </span>
-                        <span className="text-xs text-slate-500 font-mono">{m.memory_type}</span>
+                  <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-5">
+                    <h2 className="text-lg font-semibold mb-4">🛑 Highest Idle Trucks</h2>
+                    {fh.highest_idle_trucks.map((t: any) => (
+                      <div key={t.truck_id} className="flex justify-between border-b border-slate-800 py-2">
+                        <span className="font-mono">{t.truck_id}</span>
+                        <span className="text-yellow-400">{t.idle_hours} hours idle</span>
                       </div>
-                      <div className="font-medium text-sm">{m.title}</div>
-                      <div className="text-xs text-slate-400 mt-1">{m.summary}</div>
-                      {m.recommendation && <div className="text-xs text-blue-400 mt-2">🔧 {m.recommendation}</div>}
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-6">
+                  <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-5">
+                    <h2 className="text-lg font-semibold mb-4">🔥 Recent Critical Events</h2>
+                    <div className="space-y-3 max-h-64 overflow-y-auto">
+                      {fh.recent_critical_events.map((e: any, idx: number) => (
+                        <div key={idx} className="border-l-2 border-red-500 pl-3">
+                          <div className="flex justify-between text-sm">
+                            <span className="font-mono">{e.truck_id}</span>
+                            <span className="text-slate-500 text-xs">{new Date(e.created_at).toLocaleString()}</span>
+                          </div>
+                          <div className="text-sm my-1">{e.event_type.replace(/_/g, " ").toUpperCase()}</div>
+                          <div className="text-xs text-slate-500">{e.location_name || "Unknown"}</div>
+                        </div>
+                      ))}
                     </div>
-                  ))}
+                  </div>
+
+                  <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-5">
+                    <div className="flex items-start justify-between gap-4 mb-4">
+                      <div>
+                        <h2 className="text-lg font-semibold">Nava Eye Watch</h2>
+                        <p className="text-xs text-slate-500 mt-1">
+                          Evidence-led items from the current dashboard data.
+                        </p>
+                      </div>
+                      <span className="rounded-full border border-blue-500/30 bg-blue-500/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-blue-300">
+                        Live read
+                      </span>
+                    </div>
+
+                    {watchItems.length ? (
+                      <div className="space-y-3">
+                        {watchItems.map((item) => (
+                          <div
+                            key={item.id}
+                            className={`rounded-xl border p-3 ${severityClasses(item.severity)}`}
+                          >
+                            <div className="flex flex-wrap items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <div className="text-sm font-semibold text-slate-100">
+                                  {item.title}
+                                </div>
+                                <div className="mt-1 text-xs leading-5 text-slate-300">
+                                  {item.summary}
+                                </div>
+                              </div>
+                              <span className="shrink-0 rounded-full border border-current/30 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide">
+                                {item.severity}
+                              </span>
+                            </div>
+
+                            {item.evidence.length > 0 && (
+                              <ul className="mt-3 space-y-1 text-xs text-slate-300">
+                                {item.evidence.slice(0, 4).map((evidence) => (
+                                  <li key={evidence} className="break-words">
+                                    • {evidence}
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+
+                            <div className="mt-3 rounded-lg bg-slate-950/40 p-2 text-xs text-slate-300">
+                              {item.suggested_next_check}
+                            </div>
+
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              {item.suggested_question && (
+                                <button
+                                  type="button"
+                                  onClick={() => setCopilotQuery(item.suggested_question || "")}
+                                  className="rounded-lg border border-blue-500/40 px-3 py-1.5 text-xs font-medium text-blue-200 hover:bg-blue-500/10"
+                                >
+                                  Ask Nava Eye
+                                </button>
+                              )}
+                              {item.href && (
+                                <Link
+                                  href={item.href}
+                                  className="rounded-lg border border-slate-600 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-800"
+                                >
+                                  Open related view
+                                </Link>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-4 text-sm text-slate-400">
+                        No urgent watch items from the current dashboard data.
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-5">
+                    <h2 className="text-lg font-semibold mb-4">🧠 Nava Eye fleet answers</h2>
+                    <textarea
+                      value={copilotQuery}
+                      onChange={(e) => setCopilotQuery(e.target.value)}
+                      placeholder="Ask about fleet health, fuel risk, specific trucks..."
+                      className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                      rows={3}
+                    />
+                    <button
+                      onClick={askCopilot}
+                      disabled={copilotLoading || !copilotQuery.trim()}
+                      className="mt-3 w-full bg-blue-600 hover:bg-blue-500 disabled:bg-blue-800 text-white font-medium py-2 rounded-xl transition"
+                    >
+                      {copilotLoading ? "Checking your fleet data..." : "Ask Nava Eye"}
+                    </button>
+                    {copilotAnswer && (
+                      <div className="mt-4 bg-slate-800/50 rounded-xl p-4 border border-slate-700">
+                        <div className="text-sm text-slate-300 whitespace-pre-wrap">{copilotAnswer}</div>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-5">
+                    <h2 className="text-lg font-semibold mb-4">💡 Active Insights</h2>
+                    <div className="space-y-3">
+                      {memories.map((m) => (
+                        <div key={m.id} className="border border-slate-700 rounded-xl p-3">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className={`px-2 py-0.5 text-xs rounded-full font-medium ${
+                              m.severity === "critical" ? "bg-red-900/50 text-red-300" :
+                              m.severity === "warning" ? "bg-yellow-900/50 text-yellow-300" :
+                              "bg-blue-900/50 text-blue-300"
+                            }`}>
+                              {m.severity}
+                            </span>
+                            <span className="text-xs text-slate-500 font-mono">{m.memory_type}</span>
+                          </div>
+                          <div className="font-medium text-sm">{m.title}</div>
+                          <div className="text-xs text-slate-400 mt-1">{m.summary}</div>
+                          {m.recommendation && <div className="text-xs text-blue-400 mt-2">🔧 {m.recommendation}</div>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               </div>
-            </div>
-          </div>
+            </>
+          )}
         </main>
       </div>
     </div>
   );
+}
+
+function platformActionDescription(label: string) {
+  if (label === "Tenant Billing") {
+    return "Review strict billable assets, pricing setup, and tenant billing previews.";
+  }
+  if (label === "Pilot Readiness") {
+    return "See which tenants are ready, blocked, or need setup attention.";
+  }
+  if (label === "Platform Health") {
+    return "Check environment, schema, billing, provider, and pilot readiness foundations.";
+  }
+  if (label === "Provider Requests") {
+    return "Triage assisted onboarding requests and provider setup work.";
+  }
+  if (label === "Provider Vault") {
+    return "Inspect provider connections, tests, and enrichment diagnostics safely.";
+  }
+  return "Open the platform admin tool.";
 }
