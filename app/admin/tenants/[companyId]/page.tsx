@@ -52,6 +52,9 @@ export default function PlatformTenantDetailPage() {
     : params.companyId;
 
   const [tenant, setTenant] = useState<any>(null);
+  const [invoices, setInvoices] = useState<any[]>([]);
+  const [invoiceSetupMessage, setInvoiceSetupMessage] = useState("");
+  const [invoiceActionId, setInvoiceActionId] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -80,23 +83,79 @@ export default function PlatformTenantDetailPage() {
     if (!token) return;
 
     try {
-      const res = await fetch(`/api/admin/tenants/${id}`, {
-        cache: "no-store",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-      const json = await res.json();
+      const [tenantRes, invoicesRes] = await Promise.all([
+        fetch(`/api/admin/tenants/${id}`, {
+          cache: "no-store",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }),
+        fetch(`/api/admin/tenants/${id}/invoices`, {
+          cache: "no-store",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }),
+      ]);
+      const json = await tenantRes.json();
 
-      if (!res.ok || !json.success) {
+      if (!tenantRes.ok || !json.success) {
         throw new Error(json.error || "Failed to load tenant.");
       }
 
       setTenant(json);
+
+      const invoiceJson = await invoicesRes.json();
+      if (invoicesRes.ok && invoiceJson.success) {
+        setInvoices(invoiceJson.invoices || []);
+        setInvoiceSetupMessage(invoiceJson.setup_message || "");
+      } else {
+        setInvoices([]);
+        setInvoiceSetupMessage(invoiceJson.error || "Unable to load invoices.");
+      }
     } catch (err: any) {
       setError(err.message || "Failed to load tenant.");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function updateInvoiceStatus(invoiceId: string, status: string) {
+    if (!companyId) return;
+
+    setInvoiceActionId(invoiceId);
+    setError("");
+
+    const token = await getToken();
+    if (!token) {
+      setInvoiceActionId("");
+      return;
+    }
+
+    try {
+      const res = await fetch(
+        `/api/admin/tenants/${companyId}/invoices/${invoiceId}`,
+        {
+          method: "PATCH",
+          cache: "no-store",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ status }),
+        }
+      );
+      const json = await res.json();
+
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || "Failed to update invoice.");
+      }
+
+      await loadTenant(companyId);
+    } catch (err: any) {
+      setError(err.message || "Failed to update invoice.");
+    } finally {
+      setInvoiceActionId("");
     }
   }
 
@@ -301,6 +360,99 @@ export default function PlatformTenantDetailPage() {
 
         <section className="mt-8 grid gap-6">
           <Panel dark className="overflow-hidden">
+            <div className="flex flex-col gap-3 border-b border-white/10 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="text-lg font-semibold text-white">
+                  Recent invoices
+                </h2>
+                <p className="mt-1 text-sm text-slate-400">
+                  Draft, sent, paid, and void tracking for this tenant. No PDF,
+                  Stripe, or email sending is attached.
+                </p>
+              </div>
+              <Link href={`/admin/tenants/${companyId || ""}/invoice-preview`}>
+                <PrimaryButton type="button" className="w-full sm:w-auto">
+                  Create from Preview
+                </PrimaryButton>
+              </Link>
+            </div>
+
+            {invoiceSetupMessage ? (
+              <div className="border-b border-amber-300/20 bg-amber-300/10 px-5 py-4 text-sm leading-6 text-amber-100">
+                {invoiceSetupMessage}
+              </div>
+            ) : null}
+
+            {invoices.length > 0 ? (
+              <div className="divide-y divide-white/10">
+                {invoices.slice(0, 8).map((invoice) => (
+                  <div
+                    key={invoice.id}
+                    className="grid gap-4 px-5 py-4 xl:grid-cols-[1.2fr_1fr_1fr_auto] xl:items-center"
+                  >
+                    <div>
+                      <div className="font-semibold text-white">
+                        {invoice.invoice_number || "Draft invoice"}
+                      </div>
+                      <div className="mt-1 text-xs text-slate-500">
+                        {formatDate(invoice.period_start)} to{" "}
+                        {formatDate(invoice.period_end)}
+                      </div>
+                    </div>
+                    <div>
+                      <StatusPill tone={invoiceStatusTone(invoice.status)}>
+                        {String(invoice.status || "draft").toUpperCase()}
+                      </StatusPill>
+                    </div>
+                    <div>
+                      <div className="text-sm font-semibold text-cyan-100">
+                        {formatMoney(invoice.total || 0, invoice.currency || "KES")}
+                      </div>
+                      <div className="mt-1 text-xs text-slate-500">
+                        {invoice.extra_billable_assets || 0} extra vehicles
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2 xl:justify-end">
+                      {invoice.status === "draft" && (
+                        <SecondaryButton
+                          type="button"
+                          disabled={invoiceActionId === invoice.id}
+                          onClick={() => updateInvoiceStatus(invoice.id, "sent")}
+                        >
+                          Mark Sent
+                        </SecondaryButton>
+                      )}
+                      {invoice.status === "sent" && (
+                        <SecondaryButton
+                          type="button"
+                          disabled={invoiceActionId === invoice.id}
+                          onClick={() => updateInvoiceStatus(invoice.id, "paid")}
+                        >
+                          Mark Paid
+                        </SecondaryButton>
+                      )}
+                      {(invoice.status === "draft" || invoice.status === "sent") && (
+                        <SecondaryButton
+                          type="button"
+                          disabled={invoiceActionId === invoice.id}
+                          onClick={() => updateInvoiceStatus(invoice.id, "void")}
+                        >
+                          Void
+                        </SecondaryButton>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="p-5 text-sm text-slate-400">
+                No invoice records yet. Create the first draft from invoice
+                preview when the tenant is ready.
+              </div>
+            )}
+          </Panel>
+
+          <Panel dark className="overflow-hidden">
             <div className="border-b border-white/10 px-5 py-4">
               <h2 className="text-lg font-semibold text-white">
                 Provider summary
@@ -393,4 +545,11 @@ function ActionNote({ title, body }: { title: string; body: string }) {
       <p className="mt-2 text-sm leading-6 text-slate-400">{body}</p>
     </Panel>
   );
+}
+
+function invoiceStatusTone(status: string) {
+  if (status === "paid") return "success";
+  if (status === "sent") return "info";
+  if (status === "void") return "danger";
+  return "warning";
 }

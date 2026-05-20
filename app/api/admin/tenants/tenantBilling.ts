@@ -4,6 +4,8 @@ import { supabaseAdmin } from "../../../../lib/supabaseAdmin";
 
 const COMPANY_FIELDS =
   "id, name, slug, subscription_plan, business_type, primary_asset_types, main_billing_unit, operating_regions, primary_use_case, asset_unit_price, billing_currency, included_assets";
+export const BILLING_INVOICE_FIELDS =
+  "id, company_id, invoice_number, period_start, period_end, currency, strict_billable_assets, included_assets, extra_billable_assets, asset_unit_price, subtotal, total, status, notes, created_at, updated_at, sent_at, paid_at, voided_at";
 
 type ReadinessStatus =
   | "ready"
@@ -171,6 +173,92 @@ export function buildInvoicePreview(input: {
     readiness_warnings: readinessWarnings,
     note: "Preview only. No invoice has been created.",
   };
+}
+
+export function buildDraftInvoicePayload(input: {
+  company: any;
+  invoicePreview: any;
+  userId: string;
+  notes?: string | null;
+}) {
+  const preview = input.invoicePreview;
+  const subtotal = Number(preview.estimated_monthly_total || 0);
+
+  return {
+    company_id: input.company.id,
+    invoice_number: generateInvoiceNumber(
+      input.company,
+      preview.selected_billing_period
+    ),
+    period_start: String(preview.period_start || "").slice(0, 10),
+    period_end: String(preview.period_end || "").slice(0, 10),
+    currency: preview.billing_currency || "KES",
+    strict_billable_assets: Number(preview.strict_billable_asset_count || 0),
+    included_assets: Number(preview.included_assets || 0),
+    extra_billable_assets: Number(preview.extra_billable_assets || 0),
+    asset_unit_price: Number(preview.asset_unit_price || 0),
+    subtotal,
+    total: subtotal,
+    status: "draft",
+    notes: input.notes ? String(input.notes).trim() : null,
+    created_by: input.userId,
+  };
+}
+
+export function sanitizeInvoice(invoice: any) {
+  return {
+    id: invoice.id,
+    company_id: invoice.company_id,
+    invoice_number: invoice.invoice_number || null,
+    period_start: invoice.period_start || null,
+    period_end: invoice.period_end || null,
+    currency: invoice.currency || "KES",
+    strict_billable_assets: Number(invoice.strict_billable_assets || 0),
+    included_assets: Number(invoice.included_assets || 0),
+    extra_billable_assets: Number(invoice.extra_billable_assets || 0),
+    asset_unit_price: Number(invoice.asset_unit_price || 0),
+    subtotal: Number(invoice.subtotal || 0),
+    total: Number(invoice.total || 0),
+    status: invoice.status || "draft",
+    notes: invoice.notes || null,
+    created_at: invoice.created_at || null,
+    updated_at: invoice.updated_at || null,
+    sent_at: invoice.sent_at || null,
+    paid_at: invoice.paid_at || null,
+    voided_at: invoice.voided_at || null,
+  };
+}
+
+export function isMissingBillingInvoicesTable(error: any) {
+  const message = String(error?.message || error?.details || "");
+  return (
+    error?.code === "42P01" ||
+    message.includes("billing_invoices") ||
+    message.toLowerCase().includes("could not find the table")
+  );
+}
+
+export function billingInvoicesSetupResponse() {
+  return {
+    setup_required: true,
+    setup_message:
+      "The billing_invoices table is not available yet. Apply the additive SQL migration before creating invoice records.",
+  };
+}
+
+function generateInvoiceNumber(company: any, period: string) {
+  const safeSlug = String(company?.slug || company?.name || "tenant")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 18) || "TENANT";
+  const compactPeriod = String(period || "")
+    .replace(/[^0-9]/g, "")
+    .slice(0, 6);
+  const suffix = Date.now().toString(36).toUpperCase();
+
+  return `NAVA-${compactPeriod || "PERIOD"}-${safeSlug}-${suffix}`;
 }
 
 export function resolveBillingPeriod(period?: string | null) {

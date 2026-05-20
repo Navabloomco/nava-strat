@@ -119,6 +119,8 @@ The main product principle is convenience. Every user-facing page should make th
 | `GET /api/admin/tenants` | Platform-owner-only tenant billing/readiness list using strict billable asset counts. |
 | `GET /api/admin/tenants/[companyId]` | Platform-owner-only tenant detail with safe company, member, provider, asset, pricing, and telemetry summaries. |
 | `GET /api/admin/tenants/[companyId]/invoice-preview` | Platform-owner-only manual invoice preview using strict billable assets, included allowance, and company asset pricing. No mutation. |
+| `GET/POST /api/admin/tenants/[companyId]/invoices` | Platform-owner-only tenant invoice records list/create. POST creates a draft from server-side invoice preview calculation. |
+| `PATCH /api/admin/tenants/[companyId]/invoices/[invoiceId]` | Platform-owner-only invoice status transitions: draft to sent, sent to paid, draft/sent to void. |
 | `GET /api/platform/health` | Platform-owner-only environment, schema, constraint, and RPC health check. |
 
 ### Provider and Tracking
@@ -218,6 +220,7 @@ The main product principle is convenience. Every user-facing page should make th
 | `company_users` | Active user memberships and roles. This is the source of tenant access. |
 | `company_ai_settings` | Nava Eye provider/model settings. |
 | `nava_eye_memory` | Nava Eye memory and recurring operational facts. |
+| `billing_invoices` | Platform-owner-created manual invoice records for tenant billing lifecycle tracking. Draft/sent/paid/void only; no Stripe/PDF/email. |
 
 ### Provider and Telemetry
 
@@ -462,7 +465,35 @@ The estimated invoice total is:
 
 If pricing is missing or zero, the preview must show a readiness warning and no monetary total. If strict billable count is zero, it must show a readiness warning. The preview must include the note: "Preview only. No invoice has been created."
 
-Manual invoice preview must not create invoice rows, billing events, PDFs, exports, emails, Stripe records, payment statuses, or customer-facing billing artifacts.
+The invoice preview GET endpoint must not create invoice rows, billing events, PDFs, exports, emails, Stripe records, payment statuses, or customer-facing billing artifacts. The UI's "Create Draft Invoice" action must use the invoice records API below, which recalculates totals server-side before inserting a draft record.
+
+### Manual Invoice Records
+
+`billing_invoices` stores the first internal invoice lifecycle records. These records are platform-owner-only and are created from server-side invoice preview math. The client must never send trusted totals.
+
+Invoice record lifecycle:
+
+- `draft`
+- `sent`
+- `paid`
+- `void`
+
+Allowed transitions:
+
+- `draft -> sent`
+- `sent -> paid`
+- `draft -> void`
+- `sent -> void`
+
+Creating a draft invoice:
+
+- recalculates strict billable assets on the server
+- uses `companies.included_assets`
+- uses `companies.asset_unit_price`
+- uses `companies.billing_currency`
+- prevents duplicate non-void invoices for the same company and billing period
+
+Invoice records are still MVP internal records. They must not create Stripe charges, PDFs, emails, customer-facing billing artifacts, or payment collection behavior.
 
 ### Enable Asset
 
@@ -523,7 +554,7 @@ Review later should:
 - Do not hard delete operational records in MVP workflows where archive/disable/end is available.
 - Do not add schema migrations silently from app code.
 - Do not treat platform tenant billing preview as invoicing. It is internal readiness/math only until a real billing engine exists.
-- Do not treat manual invoice preview as an invoice record. It must stay read-only until a real billing engine is designed.
+- Do not treat manual invoice records as external billing. They are internal lifecycle records only until a real billing engine is designed.
 
 ## 11. Recent Important Commits/Features
 
@@ -597,3 +628,9 @@ The preview is platform-only and deliberately excludes provider secrets, raw pay
 Platform owners now have `/admin/tenants/[companyId]/invoice-preview` and `GET /api/admin/tenants/[companyId]/invoice-preview` to preview a tenant's monthly invoice math from strict billable assets, included asset allowance, and company pricing fields.
 
 The preview is read-only and deliberately excludes invoice creation, PDFs, email sending, Stripe/payment status, provider secrets, raw payloads, and private driver data.
+
+### Manual Invoice Records
+
+Platform owners now have `GET/POST /api/admin/tenants/[companyId]/invoices` and `PATCH /api/admin/tenants/[companyId]/invoices/[invoiceId]` for simple invoice record lifecycle tracking.
+
+Draft invoices are created from server-side preview calculations only. The lifecycle is `draft -> sent -> paid` or `draft/sent -> void`. The tenant detail page lists recent invoices and can update status. No Stripe, PDF, email, payment collection, amount editing, or customer-facing invoice portal exists yet.

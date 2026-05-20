@@ -42,9 +42,14 @@ export default function TenantInvoicePreviewPage() {
     : params.companyId;
 
   const [period, setPeriod] = useState(currentMonth());
+  const [notes, setNotes] = useState("");
   const [preview, setPreview] = useState<any>(null);
+  const [createdInvoice, setCreatedInvoice] = useState<any>(null);
+  const [creating, setCreating] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [actionError, setActionError] = useState("");
+  const [message, setMessage] = useState("");
 
   useEffect(() => {
     if (companyId) loadPreview(companyId, period);
@@ -66,6 +71,7 @@ export default function TenantInvoicePreviewPage() {
   async function loadPreview(id: string, billingPeriod: string) {
     setLoading(true);
     setError("");
+    setActionError("");
 
     const token = await getToken();
     if (!token) return;
@@ -89,10 +95,55 @@ export default function TenantInvoicePreviewPage() {
       }
 
       setPreview(json.invoice_preview || null);
+      setCreatedInvoice(null);
     } catch (err: any) {
       setError(err.message || "Failed to load invoice preview.");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function createDraftInvoice() {
+    if (!companyId) return;
+
+    setCreating(true);
+    setActionError("");
+    setMessage("");
+
+    const token = await getToken();
+    if (!token) {
+      setCreating(false);
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/admin/tenants/${companyId}/invoices`, {
+        method: "POST",
+        cache: "no-store",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          period,
+          notes,
+        }),
+      });
+      const json = await res.json();
+
+      if (!res.ok || !json.success) {
+        throw new Error(
+          json.setup_message || json.error || "Failed to create draft invoice."
+        );
+      }
+
+      setCreatedInvoice(json.invoice || null);
+      setMessage("Draft invoice created from server-side invoice calculation.");
+      setNotes("");
+    } catch (err: any) {
+      setActionError(err.message || "Failed to create draft invoice.");
+    } finally {
+      setCreating(false);
     }
   }
 
@@ -156,6 +207,25 @@ export default function TenantInvoicePreviewPage() {
           }
         />
 
+        {message && (
+          <Panel dark className="mt-6 border-cyan-200/20 bg-cyan-300/10 p-4">
+            <div className="text-sm text-cyan-50">{message}</div>
+            {createdInvoice && (
+              <div className="mt-2 text-sm text-slate-300">
+                {createdInvoice.invoice_number} ·{" "}
+                {String(createdInvoice.status || "draft").toUpperCase()} ·{" "}
+                {formatMoney(createdInvoice.total || 0, createdInvoice.currency || currency)}
+              </div>
+            )}
+          </Panel>
+        )}
+
+        {actionError && (
+          <Panel dark className="mt-6 border-amber-300/30 bg-amber-300/10 p-4">
+            <div className="text-sm leading-6 text-amber-100">{actionError}</div>
+          </Panel>
+        )}
+
         <section className="mt-6 grid gap-4 lg:grid-cols-[1fr_1.5fr]">
           <Panel dark className="p-5">
             <div className="flex flex-wrap items-center gap-3">
@@ -192,6 +262,19 @@ export default function TenantInvoicePreviewPage() {
                 className={`${inputClass} mt-2`}
               />
             </label>
+
+            <label className="mt-5 block">
+              <span className="text-xs font-bold uppercase tracking-[0.12em] text-slate-400">
+                Draft notes
+              </span>
+              <textarea
+                value={notes}
+                onChange={(event) => setNotes(event.target.value)}
+                rows={4}
+                className={`${inputClass} mt-2 resize-none`}
+                placeholder="Optional internal invoice note"
+              />
+            </label>
           </Panel>
 
           <Panel dark className="p-5">
@@ -203,6 +286,10 @@ export default function TenantInvoicePreviewPage() {
             </div>
             <p className="mt-3 text-sm leading-6 text-slate-400">
               {preview?.note || "Preview only. No invoice has been created."}
+            </p>
+            <p className="mt-2 text-sm leading-6 text-slate-400">
+              Creating a draft invoice recalculates totals on the server. Client
+              totals from this screen are not trusted.
             </p>
 
             {preview?.readiness_warnings?.length > 0 && (
@@ -217,6 +304,17 @@ export default function TenantInvoicePreviewPage() {
                 </ul>
               </div>
             )}
+
+            <div className="mt-5">
+              <PrimaryButton
+                type="button"
+                disabled={creating}
+                onClick={createDraftInvoice}
+                className="w-full sm:w-auto"
+              >
+                {creating ? "Creating..." : "Create Draft Invoice"}
+              </PrimaryButton>
+            </div>
           </Panel>
         </section>
 
