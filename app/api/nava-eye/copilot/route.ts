@@ -286,7 +286,7 @@ export async function POST(req: Request) {
             {
               role: "system",
               content:
-                "You are Nava Eye, a company operations intelligence analyst for logistics. Use only the provided data. If evidence is missing, say so. Answer concisely and recommend the next operational action. Include relevant active memories if they help answer the question. For fleet status answers, describe user-facing times in the provided operational timezone, normally EAT/Kenya time, and do not present UTC unless the user explicitly asks for UTC. Translate locations into operational place context and do not show raw coordinates unless the user explicitly asks for GPS/coordinates or no readable place label exists.",
+                "You are Nava Eye, a company operations intelligence analyst for logistics. Use only the provided data. Analyze deeply, then present clean operator-ready answers. Use direct operational statements, not database/log-viewer language. Avoid phrases like \"Nava reads\", \"Nava treats\", \"based on the data provided\", \"available data does not prove\", or \"I cannot treat\". Keep uncertainty as an operational boundary: say what is established, what is suggested, and what remains unverified. Do not accuse drivers or recommend discipline/contacting drivers by default. Include relevant active memories if they help answer the question. For fleet status answers, describe user-facing times in the provided operational timezone, normally EAT, and state the timezone once instead of repeating it after every timestamp. Translate locations into operational place context and do not show raw coordinates unless the user explicitly asks for GPS/coordinates or no readable place label exists.",
             },
             {
               role: "user",
@@ -313,7 +313,7 @@ export async function POST(req: Request) {
 
         if (res.ok) {
           const aiData = await res.json();
-          answer = aiData.choices?.[0]?.message?.content || "Nava Eye could not generate an answer.";
+          answer = aiData.choices?.[0]?.message?.content || "No assistant answer was generated.";
           aiUsed = true;
         } else {
           const errorText = await res.text();
@@ -516,7 +516,7 @@ function buildFallbackAnswer(context: any): string {
     return buildInvestigationFallbackAnswer(context);
   }
   if (context.financial_access_restricted) {
-    return "I can help with the operational side, but I cannot show financial values for this role. Ask an owner, admin, finance, management, or platform owner user to review profitability.";
+    return "Operational context is available for this role, but financial values are restricted. Ask an owner, admin, finance, management, or platform owner user to review profitability.";
   }
   if (context.profit_simulation) {
     const simulation = context.profit_simulation;
@@ -1097,7 +1097,7 @@ function buildVehicleCandidateAnswer(vehicleMatch: any) {
   const candidates = vehicleMatch?.candidates || [];
   const input = vehicleMatch?.input || "that vehicle";
   const parts = [
-    `I found a few possible matches for ${input}. Which one do you mean?`,
+    `A few possible matches came up for ${input}. Which one do you mean?`,
     "",
     ...candidates.map(formatVehicleCandidateLine),
     "",
@@ -1114,7 +1114,7 @@ function buildAssetRestrictedAnswer(vehicleMatch: any) {
     vehicleMatch?.input ||
     "this asset";
 
-  return `I found ${label}, but I can only answer using assets enabled for Nava intelligence. This asset may be waiting for review.`;
+  return `${label} is present, but answers are limited to assets enabled for intelligence. This asset may be waiting for review.`;
 }
 
 function buildDashboardFollowupAnswer(context: any) {
@@ -1130,19 +1130,19 @@ function buildDashboardFollowupAnswer(context: any) {
   const parts: string[] = [];
 
   if (!trucks.length) {
-    return "I could not safely resolve the dashboard trucks for that follow-up. Try asking with the truck registrations shown in the dashboard card.";
+    return "The dashboard trucks for that follow-up could not be safely resolved. Try asking with the truck registrations shown in the dashboard card.";
   }
 
-  parts.push(`I used the ${label} currently shown on this dashboard, not unrelated recent events.`);
+  parts.push(`Using the ${label} currently shown on this dashboard, not unrelated recent events.`);
   parts.push(
-    "I am comparing actual telemetry timestamps internally, then showing the timeline in EAT/Kenya time. Earlier idle events are historical markers, not proof of one continuous idle period if later movement appears."
+    "Telemetry timestamps are compared internally, then presented in local operational time. Earlier idle events are historical markers, not proof of one continuous idle period if later movement appears."
   );
   if (strongIdleCount) {
     parts.push(
-      `${strongIdleCount} of them have fresh low-speed telemetry and a recent idle event, so the current idle/stationary read is strong. I cannot prove engine-on idling without ignition or engine-status data.`
+      `${strongIdleCount} of them have fresh low-speed telemetry and a recent idle event, so the current idle/stationary read is strong. Engine-on idling is not confirmed without ignition or engine-status data.`
     );
   } else {
-    parts.push("I checked latest telemetry and recent idle events for those exact trucks.");
+    parts.push("Latest telemetry and recent idle events were checked for those exact trucks.");
   }
 
   if (suspiciousDurationCount) {
@@ -1160,9 +1160,9 @@ function buildDashboardFollowupAnswer(context: any) {
   if (unmatched.length) {
     parts.push("");
     parts.push(
-      `I could not safely match ${unmatched
+      `${unmatched
         .map((truck: any) => truck.truck_id)
-        .join(", ")} to enabled intelligence assets, so I am not exposing telemetry for them.`
+        .join(", ")} could not be safely matched to enabled intelligence assets, so telemetry is hidden for them.`
     );
   }
 
@@ -2146,7 +2146,7 @@ function formatDashboardTruckStatus(truck: any) {
     case "moving":
       return "does not look idle now; fresh telemetry shows movement.";
     case "stale":
-      return "is stale, so I cannot confirm whether it is still idling.";
+      return "is stale; current idling is not confirmed.";
     case "active_unknown":
       return "is active, but the current status is not clear enough to classify.";
     default:
@@ -2261,7 +2261,7 @@ function buildInvestigationFallbackAnswer(context: any) {
   parts.push(buildInvestigationOpening(focus));
   parts.push("");
 
-  parts.push("What I found");
+  parts.push("Findings");
   parts.push(...formatInvestigationFindings(caseFile, focus, label));
   parts.push("");
 
@@ -2269,7 +2269,7 @@ function buildInvestigationFallbackAnswer(context: any) {
   parts.push(...formatInvestigationMeanings(caseFile, focus));
   parts.push("");
 
-  parts.push("What I cannot prove yet");
+  parts.push("Operational boundaries");
   parts.push(...formatInvestigationLimits(caseFile, focus));
   parts.push("");
 
@@ -2297,7 +2297,7 @@ function buildFuelSuspicionFallbackAnswer(context: any) {
 
   if (vehicleMatch?.input && !vehicleMatch?.matched) {
     parts.push(
-      `I could not find a matching enabled vehicle for ${vehicleMatch.input}. It may be unreviewed or not imported yet.`
+      `No matching enabled vehicle was found for ${vehicleMatch.input}. It may be unreviewed or not imported yet.`
     );
     parts.push("");
     parts.push("What to verify next");
@@ -2313,12 +2313,12 @@ function buildFuelSuspicionFallbackAnswer(context: any) {
     "the vehicle";
 
   parts.push(formatVehicleMatchIntro(vehicleMatch, matchedLabel));
-  parts.push("I can't confirm siphoning yet, but here's the useful trail.");
+  parts.push("Siphoning is not confirmed yet. The useful trail:");
   parts.push("");
 
   if (truck) {
     const location = formatOperationalLocation(truck);
-    const status = truck.status ? `${matchedLabel} is currently ${truck.status}` : `I found ${matchedLabel} in the enabled fleet`;
+    const status = truck.status ? `${matchedLabel} is currently ${truck.status}` : `${matchedLabel} is present in the enabled fleet`;
     const lastSeen = truck.last_seen_at
       ? `last seen ${formatReadableDate(truck.last_seen_at)}`
       : "last seen time is not available";
@@ -2332,7 +2332,7 @@ function buildFuelSuspicionFallbackAnswer(context: any) {
   const telemetryExplanation = formatFuelTelemetryExplanation(telemetry);
   parts.push(telemetryExplanation.text);
   if (!telemetryExplanation.usable) {
-    parts.push("That means I should rely more on stops, locations, driver assignment, journeys, and manual fuel entries for now.");
+    parts.push("For now, stops, locations, driver assignment, journeys, and manual fuel entries carry more weight than fuel telemetry.");
     parts.push(formatFleetFuelAvailability(fleetFuelAvailability));
   }
 
@@ -2343,10 +2343,10 @@ function buildFuelSuspicionFallbackAnswer(context: any) {
 
   parts.push("");
   if (fuelLogs.length) {
-    parts.push(`I found ${fuelLogs.length} recent manual fuel entr${fuelLogs.length === 1 ? "y" : "ies"} for this vehicle:`);
+    parts.push(`${fuelLogs.length} recent manual fuel entr${fuelLogs.length === 1 ? "y" : "ies"} found for this vehicle:`);
     parts.push(...fuelLogs.slice(0, 4).map(formatFuelLogLine));
   } else {
-    parts.push("I do not see recent manual fuel entries for this vehicle.");
+    parts.push("No recent manual fuel entries appear for this vehicle.");
   }
 
   if (fuelEvents.length || idleEvents.length) {
@@ -2360,21 +2360,21 @@ function buildFuelSuspicionFallbackAnswer(context: any) {
     }
     if (idleEvents.length) {
       parts.push(
-        `I also found recent idle/stop activity: ${idleEvents
+        `Recent idle/stop activity also appears: ${idleEvents
           .slice(0, 3)
           .map(formatEventBrief)
           .join("; ")}.`
       );
     }
   } else {
-    parts.push("I did not find recent fuel-drop or excessive-idle events for this vehicle.");
+    parts.push("No recent fuel-drop or excessive-idle events appear for this vehicle.");
   }
 
   if (journeys.length) {
-    parts.push("Recent journey context I can use:");
+    parts.push("Recent journey context:");
     parts.push(...journeys.slice(0, 3).map(formatJourneyBrief));
   } else {
-    parts.push("I do not see a recent journey record for this vehicle.");
+    parts.push("No recent journey record appears for this vehicle.");
   }
 
   parts.push("");
@@ -2646,7 +2646,7 @@ function formatVehicleMatchIntro(vehicleMatch: any, matchedLabel: string) {
   ) {
     return `I matched ${vehicleMatch.input} to ${matchedLabel} - tell me if that is the wrong truck.`;
   }
-  return `I found ${matchedLabel}.`;
+  return `${matchedLabel} is the matched vehicle.`;
 }
 
 function formatVehicleCandidateLine(candidate: any) {
@@ -2664,18 +2664,18 @@ function formatVehicleCandidateLine(candidate: any) {
 
 function buildInvestigationOpening(focus: any) {
   if (focus?.fuel_focus) {
-    return "I can't confirm fuel siphoning from one question, so I checked the wider operational trail around this vehicle.";
+    return "Fuel siphoning is not confirmed from one question, so the wider operational trail around this vehicle matters.";
   }
   if (focus?.stops_focus) {
-    return "I checked the recent stop/idle trail instead of treating this as just a location question.";
+    return "The recent stop/idle trail matters more than a single location snapshot here.";
   }
   if (focus?.profitability_focus) {
-    return "I checked the operating context and the finance trail I am allowed to see.";
+    return "Operating context and the permitted finance trail were checked together.";
   }
   if (focus?.repair_focus) {
-    return "I checked recent repair and spare history alongside operations data.";
+    return "Recent repair and spare history were checked alongside operations data.";
   }
-  return "I checked this like a small operations investigation, not a single data lookup.";
+  return "This is treated as a small operations investigation, not a single data lookup.";
 }
 
 function formatInvestigationFindings(caseFile: any, focus: any, label: string) {
@@ -2694,7 +2694,7 @@ function formatInvestigationFindings(caseFile: any, focus: any, label: string) {
       ? `last seen ${formatReadableDate(asset.last_seen_at)}`
       : "last seen time is not available";
     lines.push(
-      `- ${label} is enabled for Nava intelligence${location ? ` and is ${location}` : ""}; ${lastSeen}.`
+      `- ${label} is enabled for intelligence${location ? ` and is ${location}` : ""}; ${lastSeen}.`
     );
     if (asset.assigned_driver?.driver_name) {
       lines.push(`- Assigned driver: ${asset.assigned_driver.driver_name}.`);
@@ -2703,10 +2703,10 @@ function formatInvestigationFindings(caseFile: any, focus: any, label: string) {
 
   if (telemetry.telemetry_points > 0) {
     lines.push(
-      `- In the last ${telemetry.window_days || 7} days I found ${telemetry.telemetry_points} telemetry point(s), with ${telemetry.stationary_points || 0} stationary/near-idle point(s).`
+      `- The last ${telemetry.window_days || 7} days show ${telemetry.telemetry_points} telemetry point(s), with ${telemetry.stationary_points || 0} stationary/near-idle point(s).`
     );
   } else {
-    lines.push("- I do not see recent telemetry points for this vehicle.");
+    lines.push("- No recent telemetry points appear for this vehicle.");
   }
 
   const fuelTelemetry = fuel.telemetry || {};
@@ -2717,7 +2717,7 @@ function formatInvestigationFindings(caseFile: any, focus: any, label: string) {
         `- Manual fuel entries found: ${fuel.manual_entries.length}. Latest: ${formatFuelLogLine(fuel.manual_entries[0]).replace(/^- /, "")}`
       );
     } else {
-      lines.push("- I do not see recent manual fuel entries for this vehicle.");
+      lines.push("- No recent manual fuel entries appear for this vehicle.");
     }
   }
 
@@ -2738,14 +2738,14 @@ function formatInvestigationFindings(caseFile: any, focus: any, label: string) {
   if (journeys.recent_journeys?.length) {
     lines.push(`- Recent journey context: ${formatJourneyBrief(journeys.recent_journeys[0]).replace(/^- /, "")}`);
   } else {
-    lines.push("- I do not see a recent journey record for this vehicle.");
+    lines.push("- No recent journey record appears for this vehicle.");
   }
 
   if (focus?.repair_focus || spares.recent_events?.length) {
     if (spares.recent_events?.length) {
       lines.push(`- Recent repair/spares events found: ${spares.recent_events.length}. Latest: ${formatSpareEventLine(spares.recent_events[0]).replace(/^- /, "")}`);
     } else {
-      lines.push("- I do not see recent repair/spares history for this vehicle.");
+      lines.push("- No recent repair/spares history appears for this vehicle.");
     }
   }
 
@@ -2754,10 +2754,10 @@ function formatInvestigationFindings(caseFile: any, focus: any, label: string) {
       `- Finance trail: ${financials.journey_count || 0} journey(s), ${formatMoney(financials.revenue_kes)} revenue, ${formatMoney(financials.fuel_cost_kes)} fuel, ${formatMoney(financials.expense_cost_kes)} expenses, estimated profit ${formatMoney(financials.estimated_profit_kes)}.`
     );
   } else if (focus?.profitability_focus) {
-    lines.push("- I am not exposing financial values for this role.");
+    lines.push("- Financial values are hidden for this role.");
   }
 
-  return lines.length ? lines : ["- I found limited recent evidence for this vehicle."];
+  return lines.length ? lines : ["- Limited recent evidence appears for this vehicle."];
 }
 
 function formatInvestigationMeanings(caseFile: any, focus: any) {
@@ -2788,7 +2788,7 @@ function formatInvestigationMeanings(caseFile: any, focus: any) {
     if (Number(financials.estimated_profit_kes || 0) < 0) {
       lines.push("- The visible finance trail suggests this vehicle is loss-making in the sampled records.");
     } else if (financials.journey_count > 0) {
-      lines.push("- The sampled finance trail does not by itself prove this vehicle is too expensive, but it gives a baseline for comparison.");
+      lines.push("- The sampled finance trail does not establish this vehicle as too expensive by itself, but it gives a baseline for comparison.");
     }
   }
 
@@ -2796,7 +2796,7 @@ function formatInvestigationMeanings(caseFile: any, focus: any) {
     if (spares.recent_events?.length) {
       lines.push("- Recent repair/spares events can explain downtime or repeat issues, but lifespan needs install/removal or replacement history.");
     } else {
-      lines.push("- I do not have enough repair history to say a repair failed.");
+      lines.push("- Repair history is too thin to say a repair failed.");
     }
   }
 
@@ -2816,16 +2816,16 @@ function formatInvestigationLimits(caseFile: any, focus: any) {
   }
 
   if (focus?.fuel_focus) {
-    lines.push("- I will not call this siphoning without usable fuel readings, tank dips, receipts, or clear fuel-drop events.");
+    lines.push("- Siphoning stays unconfirmed without usable fuel readings, tank dips, receipts, or clear fuel-drop events.");
   }
   if (focus?.repair_focus) {
-    lines.push("- I will not claim repair lifespan or mechanic/vendor quality without enough install/removal/replacement history.");
+    lines.push("- Repair lifespan or mechanic/vendor quality is not established without enough install/removal/replacement history.");
   }
   if (focus?.profitability_focus && !caseFile.financial_summary?.visible) {
     lines.push("- Financial values are hidden for this role.");
   }
 
-  return lines.length ? lines : ["- I cannot prove the root cause from the available data alone."];
+  return lines.length ? lines : ["- Root cause is not established from the current operational trail alone."];
 }
 
 function formatInvestigationNextChecks(caseFile: any, focus: any, label: string) {
@@ -2911,7 +2911,7 @@ function formatFuelTelemetryExplanation(telemetry: any) {
     return {
       usable: false,
       text:
-        "The provider is sending fuel fields, but they are not useful for this truck yet. The recent values are all 0/unknown, so I will not treat them as real tank readings.",
+        "The provider is sending fuel fields, but they are not useful for this truck yet. The recent values are all 0/unknown, so they are not treated as real tank readings.",
     };
   }
 
@@ -2919,13 +2919,13 @@ function formatFuelTelemetryExplanation(telemetry: any) {
     return {
       usable: false,
       text:
-        "The truck has recent telemetry, but I do not see usable fuel-level readings in that feed.",
+        "The truck has recent telemetry, but no usable fuel-level readings appear in that feed.",
     };
   }
 
   return {
     usable: false,
-    text: "I do not see recent telemetry fuel-level data for this truck.",
+    text: "No recent telemetry fuel-level data appears for this truck.",
   };
 }
 
@@ -2933,7 +2933,7 @@ function formatFleetFuelAvailability(availability: any) {
   if (availability?.other_usable_fuel_data_available) {
     return "Some other vehicles do appear to have usable fuel/fuel-risk data. I can list them if you want.";
   }
-  return "I do not currently see usable fuel-level telemetry across the enabled fleet.";
+  return "No usable fuel-level telemetry currently appears across the enabled fleet.";
 }
 
 function formatFuelLevel(value: any, unit: any) {
@@ -2963,7 +2963,7 @@ function formatFuelRiskNarrative(risk: any) {
     return `The existing fuel-risk check is ${score}${level}, with ${smallDrops} small drop(s) and ${largeDrops} large drop(s) in its analysis window. Treat that as an investigation cue, not a conclusion.`;
   }
 
-  return `The existing fuel-risk check is ${score}${level}. I do not see fuel-drop evidence strong enough to call this confirmed.`;
+  return `The existing fuel-risk check is ${score}${level}. Fuel-drop evidence is not strong enough to call this confirmed.`;
 }
 
 function formatFuelLogLine(log: any) {

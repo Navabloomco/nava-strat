@@ -528,7 +528,7 @@ function getPermissionBoundary(
     return {
       category: "provider_secrets",
       message:
-        "I can help with provider status and safe diagnostics, but I cannot expose provider credentials, tokens, auth configs, cookies, or raw payloads.",
+        "Provider status and safe diagnostics are available, but provider credentials, tokens, auth configs, cookies, and raw payloads are restricted.",
     };
   }
 
@@ -853,7 +853,7 @@ async function fetchDashboardFollowupContext(
           current_status: "unknown",
           confidence: "low",
           reason:
-            "I could not safely match this dashboard truck to an enabled intelligence asset.",
+            "This dashboard truck could not be safely matched to an enabled intelligence asset.",
         };
       }
 
@@ -979,7 +979,7 @@ function assessDashboardTruckStatus(asset: any, latestTelemetry: any, idleEvents
         ? freshnessMinutes
         : null,
       reason:
-        "The latest telemetry is stale, so I cannot say what it is doing right now.",
+        "The latest telemetry is stale, so the current live state is unknown.",
     };
   }
 
