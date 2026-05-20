@@ -4,8 +4,20 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { supabase } from "../../../lib/supabase";
 
+function companyIdFromLocation() {
+  if (typeof window === "undefined") return "";
+  return new URLSearchParams(window.location.search).get("companyId") || "";
+}
+
+function companyQuery(companyId: string) {
+  return companyId ? `?companyId=${encodeURIComponent(companyId)}` : "";
+}
+
 export default function ProviderVault() {
   const [providers, setProviders] = useState<any[]>([]);
+  const [company, setCompany] = useState<any>(null);
+  const [selectedCompanyId, setSelectedCompanyId] = useState("");
+  const [isPlatformOwner, setIsPlatformOwner] = useState(false);
   const [capabilities, setCapabilities] = useState<any>({
     can_view_provider_status: false,
     can_add_provider: false,
@@ -17,7 +29,13 @@ export default function ProviderVault() {
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
-    async function loadVault() {
+    const companyId = companyIdFromLocation();
+    setSelectedCompanyId(companyId);
+    loadVault(companyId);
+  }, []);
+
+  async function loadVault(companyId = selectedCompanyId) {
+    try {
       const {
         data: { session },
       } = await supabase.auth.getSession();
@@ -27,7 +45,7 @@ export default function ProviderVault() {
         return;
       }
 
-      const res = await fetch("/api/providers", {
+      const res = await fetch(`/api/providers${companyQuery(companyId)}`, {
         cache: "no-store",
         headers: {
           Authorization: `Bearer ${session.access_token}`,
@@ -37,11 +55,15 @@ export default function ProviderVault() {
       if (data.success) {
         setProviders(data.providers || []);
         setCapabilities(data.capabilities || {});
+        setCompany(data.company || null);
+        setIsPlatformOwner(Boolean(data.is_platform_owner));
       } else alert(data.error || "Failed to load providers");
+    } catch (err: any) {
+      alert(err.message || "Failed to load providers");
+    } finally {
       setLoading(false);
     }
-    loadVault();
-  }, []);
+  }
 
   const handleSave = async (updatedProvider: any) => {
     setIsSaving(true);
@@ -77,9 +99,11 @@ export default function ProviderVault() {
             login_url: finalProvider.login_url || null,
             fleet_url: finalProvider.fleet_url || null,
             is_active: finalProvider.is_active,
+            ...(selectedCompanyId ? { companyId: selectedCompanyId } : {}),
           }
         : {
             username: finalProvider.username || null,
+            ...(selectedCompanyId ? { companyId: selectedCompanyId } : {}),
           };
 
       if (finalProvider.api_key) payload.api_key = finalProvider.api_key;
@@ -135,6 +159,18 @@ export default function ProviderVault() {
         )}
       </div>
 
+      {selectedCompanyId && isPlatformOwner && company && (
+        <div style={tenantBannerStyle}>
+          <div>
+            <div style={tenantEyebrowStyle}>Platform tenant context</div>
+            <div style={tenantTitleStyle}>
+              Viewing tenant: <strong>{company.name}</strong>
+            </div>
+          </div>
+          <div style={tenantSlugStyle}>{company.slug || "tenant"}</div>
+        </div>
+      )}
+
       {providers.length === 0 ? (
         <EmptyProviderState capabilities={capabilities} />
       ) : (
@@ -145,6 +181,7 @@ export default function ProviderVault() {
             onSave={handleSave} 
             isSaving={isSaving} 
             capabilities={capabilities}
+            selectedCompanyId={selectedCompanyId}
           />
         ))
       )}
@@ -224,11 +261,13 @@ function ProviderCard({
   onSave,
   isSaving,
   capabilities,
+  selectedCompanyId,
 }: {
   provider: any;
   onSave: (updatedProvider: any) => void;
   isSaving: boolean;
   capabilities: any;
+  selectedCompanyId: string;
 }) {
   const [form, setForm] = useState({ ...provider });
   const [isTesting, setIsTesting] = useState(false);
@@ -252,7 +291,7 @@ function ProviderCard({
           Authorization: `Bearer ${session.access_token}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({}),
+        body: JSON.stringify(selectedCompanyId ? { companyId: selectedCompanyId } : {}),
       });
 
       const result = await res.json();
@@ -1048,6 +1087,10 @@ const pageHeaderStyle = { display: "flex", justifyContent: "space-between", gap:
 const eyebrowStyle = { fontSize: 12, fontWeight: 800, color: "#0891b2", textTransform: "uppercase" as const, letterSpacing: "0.14em", marginBottom: 8 };
 const pageTitleStyle = { margin: 0, fontSize: 34, fontWeight: 850, color: "#0f172a", letterSpacing: 0 };
 const pageSubtitleStyle = { margin: "10px 0 0 0", maxWidth: 620, color: "#64748b", fontSize: 14, lineHeight: 1.7 };
+const tenantBannerStyle = { display: "flex", justifyContent: "space-between", gap: 16, alignItems: "center", border: "1px solid #bae6fd", backgroundColor: "#ecfeff", borderRadius: 12, padding: 16, marginBottom: 20 };
+const tenantEyebrowStyle = { fontSize: 11, fontWeight: 900, color: "#0891b2", textTransform: "uppercase" as const, letterSpacing: "0.12em", marginBottom: 4 };
+const tenantTitleStyle = { color: "#0f172a", fontSize: 14, lineHeight: 1.5 };
+const tenantSlugStyle = { border: "1px solid #bae6fd", backgroundColor: "#fff", color: "#0e7490", borderRadius: 999, padding: "6px 10px", fontSize: 12, fontWeight: 850, whiteSpace: "nowrap" as const };
 const primaryLinkStyle = { display: "inline-flex", alignItems: "center", justifyContent: "center", backgroundColor: "#0f172a", color: "#fff", borderRadius: 8, padding: "12px 18px", fontSize: 14, fontWeight: 800, textDecoration: "none", whiteSpace: "nowrap" as const };
 const secondaryLinkStyle = { display: "inline-flex", alignItems: "center", justifyContent: "center", border: "1px solid #cbd5e1", color: "#0f172a", backgroundColor: "#fff", borderRadius: 8, padding: "12px 18px", fontSize: 14, fontWeight: 800, textDecoration: "none", whiteSpace: "nowrap" as const };
 const emptyStateStyle = { display: "grid", gridTemplateColumns: "1.1fr 0.9fr", gap: 24, background: "linear-gradient(135deg, #08111f 0%, #0f172a 55%, #123047 100%)", borderRadius: 16, padding: 28, border: "1px solid #0f2742", boxShadow: "0 24px 70px rgba(15, 23, 42, 0.22)" };

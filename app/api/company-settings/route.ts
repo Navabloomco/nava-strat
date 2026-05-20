@@ -225,6 +225,7 @@ export async function GET(req: Request) {
     return noStoreJson({
       success: true,
       company: safeCompany(resolved.company),
+      is_platform_owner: resolved.isPlatformOwner,
       operating_context: operatingContext(resolved.company),
       capabilities: {
         can_edit_operating_context: resolved.canEditOperatingContext,
@@ -284,6 +285,7 @@ export async function PATCH(req: Request) {
     return noStoreJson({
       success: true,
       company: safeCompany(company),
+      is_platform_owner: resolved.isPlatformOwner,
       operating_context: operatingContext(company),
       capabilities: {
         can_edit_operating_context: true,

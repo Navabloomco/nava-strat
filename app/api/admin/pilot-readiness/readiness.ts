@@ -640,15 +640,15 @@ function actionLabel(check: ReadinessCheck) {
 
 function fallbackRouteNote(check: ReadinessCheck) {
   if (check.category === "Asset review" && check.route?.startsWith("/admin/assets")) {
-    return "If Asset Review does not honor companyId filtering in this environment, open Asset Review and select the tenant manually.";
+    return "Opens Asset Review in this tenant context for platform owners.";
   }
 
   if (check.category === "Provider setup" && check.route?.startsWith("/admin/providers")) {
-    return "If Provider Vault does not honor companyId filtering in this environment, open Provider Vault and select the tenant manually.";
+    return "Opens Provider Vault in this tenant context for platform owners.";
   }
 
   if (check.category === "Company setup" && check.route?.startsWith("/admin/company")) {
-    return "If Company Settings does not honor companyId filtering in this environment, open Company Settings and select the tenant manually.";
+    return "Opens Company Settings in this tenant context for platform owners.";
   }
 
   if (check.category === "Role/security readiness") {

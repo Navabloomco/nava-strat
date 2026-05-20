@@ -86,8 +86,8 @@ The main product principle is convenience. Every user-facing page should make th
 | Route | Purpose |
 | --- | --- |
 | `/admin` | Role-aware Admin Hub. Platform owners see platform tools; company owners/admins see company tools. |
-| `/admin/assets` | Asset Review for imported provider assets and intelligence/billing readiness. |
-| `/admin/providers` | Provider Vault for tracking provider configuration, testing, sync diagnostics, and enrichment diagnostics. |
+| `/admin/assets` | Asset Review for imported provider assets and intelligence/billing readiness. Supports platform-owner `?companyId=` tenant context. |
+| `/admin/providers` | Provider Vault for tracking provider configuration, testing, sync diagnostics, and enrichment diagnostics. Supports platform-owner `?companyId=` tenant context. |
 | `/admin/providers/new` | Add provider page. |
 | `/admin/provider-requests` | Platform-owner provider setup requests. |
 | `/admin/provider-playbook` | Platform-owner internal provider onboarding playbook. |
@@ -97,7 +97,7 @@ The main product principle is convenience. Every user-facing page should make th
 | `/admin/tenants/[companyId]` | Platform-owner tenant detail view with provider, member, telemetry, and strict billable asset summaries. |
 | `/admin/tenants/[companyId]/invoice-preview` | Platform-owner manual invoice preview for one tenant and billing period. Preview only; no invoice is created. |
 | `/admin/client-visibility` | Client visibility link management. |
-| `/admin/company` | Company operating context settings. |
+| `/admin/company` | Company operating context settings. Supports platform-owner `?companyId=` tenant context. |
 | `/admin/health` | Platform-owner pilot readiness health check. |
 
 ### Shared Components
@@ -117,7 +117,7 @@ The main product principle is convenience. Every user-facing page should make th
 | --- | --- |
 | `GET /api/companies` | Returns active company memberships, normalized roles, platform-owner status, and visible companies. |
 | `POST /api/onboarding/company` | Creates/updates company onboarding data, operating context, and provider setup requests. |
-| `GET/PATCH /api/company-settings` | Reads and updates safe company operating context. No billing/provider secrets. |
+| `GET/PATCH /api/company-settings` | Reads and updates safe company operating context. Supports platform-owner `companyId` context. No billing/provider secrets. |
 | `GET /api/admin/pilot-readiness` | Platform-owner-only pilot readiness checklist list across companies. Returns pass/warning/fail counts and safe tenant summaries. |
 | `GET /api/admin/pilot-readiness/[companyId]` | Platform-owner-only tenant pilot readiness detail grouped by readiness category. No mutation. |
 | `GET /api/admin/tenants` | Platform-owner-only tenant billing/readiness list using strict billable asset counts. |
@@ -131,9 +131,9 @@ The main product principle is convenience. Every user-facing page should make th
 
 | API Route | Purpose |
 | --- | --- |
-| `GET/POST /api/providers` | Provider Vault list/create. Sanitizes provider credentials in responses. |
-| `GET/PATCH /api/providers/[id]` | Provider detail/update. Platform-owner-only advanced fleet config including supplemental feeds and auth profiles. |
-| `POST /api/providers/[id]/test` | Tests provider sync and returns sanitized diagnostics. |
+| `GET/POST /api/providers` | Provider Vault list/create. Supports platform-owner `companyId` context. Sanitizes provider credentials in responses. |
+| `GET/PATCH /api/providers/[id]` | Provider detail/update. Supports platform-owner `companyId` context for safe tenant-scoped updates. Platform-owner-only advanced fleet config including supplemental feeds and auth profiles. |
+| `POST /api/providers/[id]/test` | Tests provider sync in the resolved tenant context and returns sanitized diagnostics. |
 | `GET /api/providers/templates` | Provider templates. |
 | `GET/POST /api/providers/setup-requests` | Provider setup request list/create. |
 | `PATCH /api/providers/setup-requests/[id]` | Provider setup request status management. |
@@ -150,9 +150,9 @@ The main product principle is convenience. Every user-facing page should make th
 
 | API Route | Purpose |
 | --- | --- |
-| `GET /api/fleet-assets` | Asset Review list, operating context, billing preview data, and strict billable counts. |
-| `PATCH /api/fleet-assets/[id]` | Enable, exclude, disable, or review-later an imported asset. |
-| `POST /api/fleet-assets/suggest-classification` | Asset classification suggestion endpoint using company operating context as weak signal. |
+| `GET /api/fleet-assets` | Asset Review list, operating context, billing preview data, and strict billable counts. Supports platform-owner `companyId` context. |
+| `PATCH /api/fleet-assets/[id]` | Enable, exclude, disable, or review-later an imported asset in the resolved tenant context. |
+| `POST /api/fleet-assets/suggest-classification` | Asset classification suggestion endpoint using resolved company operating context as weak signal. |
 
 ### Operations
 
@@ -317,6 +317,7 @@ Current shared helper behavior:
 - APIs must resolve a company before querying tenant data.
 - Same-company role checks matter: a role in one company must not authorize mutation in another company.
 - `platform_owner` can pass `companyId` on supported internal/admin APIs.
+- Admin pages that currently support platform-owner `?companyId=` tenant context include Asset Review, Provider Vault, and Company Settings.
 - Non-platform users may only access companies where they have an active membership.
 - Tenant data should be scoped by `company_id` before returning or mutating.
 - Public client portal routes must remain token-scoped and must not expose internal company dashboards, provider payloads, driver private data, or unreviewed assets.

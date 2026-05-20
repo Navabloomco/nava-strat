@@ -46,6 +46,8 @@ type AssetFormState = {
 export default function AssetReviewPage() {
   const [assets, setAssets] = useState<any[]>([]);
   const [company, setCompany] = useState<any>(null);
+  const [selectedCompanyId, setSelectedCompanyId] = useState("");
+  const [isPlatformOwner, setIsPlatformOwner] = useState(false);
   const [billing, setBilling] = useState<any>(null);
   const [operatingContext, setOperatingContext] = useState<any>(null);
   const [summary, setSummary] = useState({
@@ -65,7 +67,9 @@ export default function AssetReviewPage() {
   const [message, setMessage] = useState("");
 
   useEffect(() => {
-    loadAssets();
+    const companyId = companyIdFromLocation();
+    setSelectedCompanyId(companyId);
+    loadAssets(companyId);
   }, []);
 
   async function getAccessToken() {
@@ -92,7 +96,7 @@ export default function AssetReviewPage() {
     setForms(nextForms);
   }
 
-  async function loadAssets() {
+  async function loadAssets(companyId = selectedCompanyId) {
     setError("");
     setLoading(true);
 
@@ -100,7 +104,7 @@ export default function AssetReviewPage() {
     if (!token) return;
 
     try {
-      const res = await fetch("/api/fleet-assets", {
+      const res = await fetch(`/api/fleet-assets${companyQuery(companyId)}`, {
         cache: "no-store",
         headers: {
           Authorization: `Bearer ${token}`,
@@ -114,6 +118,7 @@ export default function AssetReviewPage() {
 
       setAssets(json.assets || []);
       setCompany(json.company || null);
+      setIsPlatformOwner(Boolean(json.is_platform_owner));
       setBilling(json.billing || null);
       setOperatingContext(json.operating_context || null);
       setSummary(json.summary || summary);
@@ -161,6 +166,7 @@ export default function AssetReviewPage() {
           action,
           asset_category: form.asset_category,
           excluded_reason: form.excluded_reason,
+          ...(selectedCompanyId ? { companyId: selectedCompanyId } : {}),
         }),
       });
       const json = await res.json();
@@ -170,7 +176,7 @@ export default function AssetReviewPage() {
       }
 
       setMessage("Asset review updated.");
-      await loadAssets();
+      await loadAssets(selectedCompanyId);
     } catch (err: any) {
       setError(err.message || "Failed to update asset.");
     } finally {
@@ -194,7 +200,7 @@ export default function AssetReviewPage() {
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({}),
+        body: JSON.stringify(selectedCompanyId ? { companyId: selectedCompanyId } : {}),
       });
       const json = await res.json();
 
@@ -207,7 +213,7 @@ export default function AssetReviewPage() {
           json.suggestions?.length || 0
         } asset${json.suggestions?.length === 1 ? "" : "s"}.`
       );
-      await loadAssets();
+      await loadAssets(selectedCompanyId);
     } catch (err: any) {
       setError(err.message || "Failed to suggest classifications.");
     } finally {
@@ -265,6 +271,22 @@ export default function AssetReviewPage() {
             </SecondaryButton>
           }
         />
+
+        {selectedCompanyId && isPlatformOwner && company && (
+          <Panel dark className="mt-6 border-cyan-200/20 bg-cyan-300/10 p-4">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <div className="text-xs font-bold uppercase tracking-[0.14em] text-cyan-100">
+                  Platform tenant context
+                </div>
+                <div className="mt-1 text-sm text-cyan-50">
+                  Viewing tenant: <span className="font-semibold">{company.name}</span>
+                </div>
+              </div>
+              <StatusPill tone="info">{company.slug || "tenant"}</StatusPill>
+            </div>
+          </Panel>
+        )}
 
         {operatingContext?.business_type && (
           <Panel dark className="mt-6 border-cyan-200/20 bg-cyan-300/10 p-4">
@@ -487,6 +509,15 @@ export default function AssetReviewPage() {
       </div>
     </main>
   );
+}
+
+function companyIdFromLocation() {
+  if (typeof window === "undefined") return "";
+  return new URLSearchParams(window.location.search).get("companyId") || "";
+}
+
+function companyQuery(companyId: string) {
+  return companyId ? `?companyId=${encodeURIComponent(companyId)}` : "";
 }
 
 function Metric({

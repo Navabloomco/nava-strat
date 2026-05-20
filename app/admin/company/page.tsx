@@ -49,6 +49,8 @@ const inputClass =
 
 export default function CompanySettingsPage() {
   const [company, setCompany] = useState<any>(null);
+  const [selectedCompanyId, setSelectedCompanyId] = useState("");
+  const [isPlatformOwner, setIsPlatformOwner] = useState(false);
   const [businessType, setBusinessType] = useState("long_haul_transport");
   const [primaryAssetTypes, setPrimaryAssetTypes] = useState<string[]>([]);
   const [mainBillingUnit, setMainBillingUnit] = useState("trip");
@@ -60,7 +62,9 @@ export default function CompanySettingsPage() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    loadSettings();
+    const companyId = companyIdFromLocation();
+    setSelectedCompanyId(companyId);
+    loadSettings(companyId);
   }, []);
 
   async function getAccessToken() {
@@ -79,6 +83,7 @@ export default function CompanySettingsPage() {
   function applyContext(json: any) {
     const context = json.operating_context || {};
     setCompany(json.company || null);
+    setIsPlatformOwner(Boolean(json.is_platform_owner));
     setBusinessType(context.business_type || "long_haul_transport");
     setPrimaryAssetTypes(context.primary_asset_types || []);
     setMainBillingUnit(context.main_billing_unit || "trip");
@@ -86,7 +91,7 @@ export default function CompanySettingsPage() {
     setPrimaryUseCase(context.primary_use_case || "");
   }
 
-  async function loadSettings() {
+  async function loadSettings(companyId = selectedCompanyId) {
     setLoading(true);
     setError("");
     setMessage("");
@@ -95,7 +100,7 @@ export default function CompanySettingsPage() {
     if (!token) return;
 
     try {
-      const res = await fetch("/api/company-settings", {
+      const res = await fetch(`/api/company-settings${companyQuery(companyId)}`, {
         cache: "no-store",
         headers: {
           Authorization: `Bearer ${token}`,
@@ -138,6 +143,7 @@ export default function CompanySettingsPage() {
           main_billing_unit: mainBillingUnit,
           operating_regions: operatingRegions,
           primary_use_case: primaryUseCase,
+          ...(selectedCompanyId ? { companyId: selectedCompanyId } : {}),
         }),
       });
       const json = await res.json();
@@ -183,11 +189,27 @@ export default function CompanySettingsPage() {
           title="Company Settings"
           body="Keep Nava aligned with how your operation actually works. This helps review suggestions, trip defaults, and fleet answers stay relevant."
           actions={
-            <SecondaryButton type="button" onClick={loadSettings}>
+            <SecondaryButton type="button" onClick={() => loadSettings()}>
               Refresh
             </SecondaryButton>
           }
         />
+
+        {selectedCompanyId && isPlatformOwner && company && (
+          <Panel dark className="mt-6 border-cyan-200/20 bg-cyan-300/10 p-4">
+            <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <div className="text-xs font-bold uppercase tracking-[0.14em] text-cyan-100">
+                  Platform tenant context
+                </div>
+                <div className="mt-1 text-sm text-cyan-50">
+                  Viewing tenant: <span className="font-semibold">{company.name}</span>
+                </div>
+              </div>
+              <div className="text-sm font-semibold text-cyan-100">{company.slug}</div>
+            </div>
+          </Panel>
+        )}
 
         {company && (
           <Panel dark className="mt-8 p-5">
@@ -294,7 +316,7 @@ export default function CompanySettingsPage() {
               <PrimaryButton type="submit" disabled={saving}>
                 {saving ? "Saving..." : "Save settings"}
               </PrimaryButton>
-              <SecondaryButton type="button" onClick={loadSettings}>
+              <SecondaryButton type="button" onClick={() => loadSettings()}>
                 Cancel changes
               </SecondaryButton>
             </div>
@@ -303,4 +325,13 @@ export default function CompanySettingsPage() {
       </div>
     </main>
   );
+}
+
+function companyIdFromLocation() {
+  if (typeof window === "undefined") return "";
+  return new URLSearchParams(window.location.search).get("companyId") || "";
+}
+
+function companyQuery(companyId: string) {
+  return companyId ? `?companyId=${encodeURIComponent(companyId)}` : "";
 }
