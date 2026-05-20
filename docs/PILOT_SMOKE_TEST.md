@@ -150,13 +150,17 @@ Confirm workflow behavior:
 
 Open `/nava-eye` and ask:
 
+- [ ] Create a new Nava Eye conversation.
 - [ ] "Which trucks are live?"
 - [ ] "Which assets have stale location?"
 - [ ] "Is KDQ265 siphoning fuel?"
 - [ ] "Why is KDQ265 always stopping?"
+- [ ] Ask "Where is KCW 103Z?", then reply "yes" and confirm the follow-up stays on KCW 103Z.
+- [ ] Close the conversation and confirm the thread becomes read-only.
 
 Expected result:
 
+- [ ] Nava Eye conversation setup either works or shows clear setup-required SQL guidance.
 - [ ] Nava Eye uses fuzzy vehicle matching where appropriate.
 - [ ] Nava Eye does not expose disabled or unreviewed vehicle telemetry.
 - [ ] Nava Eye does not expose private driver phone, license, notes, or employee code.
@@ -164,6 +168,7 @@ Expected result:
 - [ ] Fuel suspicion answers distinguish usable fuel telemetry from unavailable or all-zero readings.
 - [ ] If BlueTrax current fuel is not yet ingesting, Nava Eye explains the provider data limitation carefully.
 - [ ] Investigation answers include practical next checks instead of stopping at "no data."
+- [ ] Current role permissions still apply on every message inside a conversation.
 
 ## 9. Client Visibility Smoke Test
 

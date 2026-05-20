@@ -1,129 +1,181 @@
 // app/api/nava-eye/copilot/route.ts
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "../../../../lib/supabaseAdmin";
-import { supabase } from "../../../../lib/supabase";
 import { routeContext } from "../../../../lib/intelligence/contextRouter";
 import {
   getActiveMemories,
   storeMemory,
 } from "../../../../lib/intelligence/memoryEngine";
-import {
-  getRoleCapabilities,
-  normalizeRole,
-  rolesForCompany,
-} from "../../../../lib/api/roleAccess";
+import { getRoleCapabilities } from "../../../../lib/api/roleAccess";
 import { recordAnalyticsEvent } from "../../../../lib/api/analyticsEvents";
 import {
   DEFAULT_OPERATIONAL_TIME_ZONE,
   formatOperationalDateTime,
   hasAmbiguousTimestampWarning,
 } from "../../../../lib/timeFormatting";
+import {
+  authenticateNavaEyeRequest,
+  fetchAccessibleConversation,
+  isMissingConversationSchemaError,
+  jsonResponse,
+  resolveNavaEyeCompanyAccess,
+  safeConversationContent,
+  sanitizeConversationMetadata,
+  sanitizeId,
+  NAVA_EYE_CONVERSATION_SETUP_MESSAGE,
+} from "../../../../lib/api/navaEyeConversations";
 
 export async function POST(req: Request) {
   try {
-    const authHeader = req.headers.get("authorization");
-    if (!authHeader?.startsWith("Bearer ")) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const auth = await authenticateNavaEyeRequest(req);
+    if ("response" in auth) return auth.response;
 
-    const token = authHeader.replace("Bearer ", "");
-    const {
-      data: { user },
-      error: userError,
-    } = await supabase.auth.getUser(token);
+    const body = await req.json().catch(() => ({}));
+    const question = body?.question;
+    const requestedCompanyId = body?.companyId;
+    const dashboardContext = body?.dashboard_context;
+    const conversationId = sanitizeId(body?.conversation_id);
 
-    if (userError || !user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const {
-      question,
-      companyId: requestedCompanyId,
-      dashboard_context: dashboardContext,
-    } = await req.json();
     if (!question || typeof question !== "string" || question.length > 500) {
-      return NextResponse.json(
-        { error: "Valid question string required (max 500 chars)" },
+      return jsonResponse(
+        { success: false, error: "Valid question string required (max 500 chars)" },
         { status: 400 }
       );
     }
 
-    const { data: memberships, error: membershipError } = await supabaseAdmin
-      .from("company_users")
-      .select("company_id, role, is_active")
-      .eq("user_id", user.id)
-      .eq("is_active", true);
+    let conversation: any = null;
+    let recentConversationMessages: any[] = [];
+    if (conversationId) {
+      const { data, error } = await fetchAccessibleConversation(
+        conversationId,
+        auth.user.id
+      );
 
-    if (membershipError) throw membershipError;
-
-    const activeMemberships = (memberships || []).map((membership) => ({
-      ...membership,
-      role: normalizeRole(membership.role),
-    }));
-    const isPlatformOwner = activeMemberships.some(
-      (membership) => membership.role === "platform_owner"
-    );
-
-    let company;
-
-    if (isPlatformOwner) {
-      if (!requestedCompanyId) {
-        return NextResponse.json(
-          { error: "companyId is required for platform owner Copilot requests" },
-          { status: 400 }
-        );
+      if (error) {
+        if (isMissingConversationSchemaError(error)) {
+          return jsonResponse(
+            {
+              success: false,
+              setup_required: true,
+              error: NAVA_EYE_CONVERSATION_SETUP_MESSAGE,
+            },
+            { status: 503 }
+          );
+        }
+        throw error;
       }
 
-      const { data: requestedCompany, error: companyError } =
-        await supabaseAdmin
-          .from("companies")
-          .select("id, name, slug")
-          .eq("id", requestedCompanyId)
-          .maybeSingle();
-
-      if (companyError) throw companyError;
-      if (!requestedCompany) {
-        return NextResponse.json(
-          { error: "Company not found" },
+      if (!data) {
+        return jsonResponse(
+          { success: false, error: "Conversation not found" },
           { status: 404 }
         );
       }
 
-      company = requestedCompany;
-    } else {
-      const companyId = activeMemberships
-        .map((membership) => membership.company_id)
-        .filter(Boolean)[0];
-
-      if (!companyId) {
-        return NextResponse.json(
-          { error: "Unable to resolve company access" },
-          { status: 403 }
+      if (data.status === "closed") {
+        return jsonResponse(
+          {
+            success: false,
+            error: "This Nava Eye conversation is closed. Start a new conversation for follow-ups.",
+          },
+          { status: 409 }
         );
       }
 
-      const { data: assignedCompany, error: companyError } = await supabaseAdmin
-        .from("companies")
-        .select("id, name, slug")
-        .eq("id", companyId)
-        .maybeSingle();
-
-      if (companyError) throw companyError;
-      if (!assignedCompany) {
-        return NextResponse.json(
-          { error: "Unable to resolve company access" },
-          { status: 403 }
-        );
-      }
-
-      company = assignedCompany;
+      conversation = data;
     }
 
-    const companyRoles = rolesForCompany(activeMemberships, company.id, isPlatformOwner);
-    const roleCapabilities = getRoleCapabilities(companyRoles);
+    const resolved = await resolveNavaEyeCompanyAccess(auth, {
+      requestedCompanyId,
+      conversationCompanyId: conversation?.company_id,
+    });
+    if ("response" in resolved) return resolved.response;
+
+    const company = resolved.company;
+    const companyRoles = resolved.roles;
+    const roleCapabilities = resolved.roleCapabilities;
+
+    if (conversation) {
+      recentConversationMessages = await fetchRecentConversationMessages(
+        conversation.id,
+        company.id
+      );
+    }
+
+    const pendingFollowupResolution = resolvePendingFollowupQuestion(
+      question,
+      conversation?.pending_followup
+    );
+    const effectiveQuestion = pendingFollowupResolution.question;
+
+    if (
+      conversation &&
+      isShortFollowupCommand(question) &&
+      !pendingFollowupResolution.usedPendingFollowup
+    ) {
+      await appendConversationMessage({
+        conversationId: conversation.id,
+        companyId: company.id,
+        userId: auth.user.id,
+        sender: "user",
+        role: roleCategory(companyRoles, roleCapabilities),
+        content: question,
+        intent: null,
+        metadata: { used_pending_followup: false },
+      });
+
+      const clarification =
+        "I can continue, but I need the specific check you want me to run. Ask me to compare a truck timeline, check active journeys, review fuel evidence, or name the vehicle again.";
+
+      await appendConversationMessage({
+        conversationId: conversation.id,
+        companyId: company.id,
+        userId: auth.user.id,
+        sender: "assistant",
+        role: "assistant",
+        content: clarification,
+        intent: "clarification",
+        metadata: { reason: "missing_pending_followup" },
+      });
+
+      await updateConversationAfterAnswer({
+        conversation,
+        companyId: company.id,
+        userId: auth.user.id,
+        intent: "clarification",
+        pendingFollowup: {},
+        titleQuestion: question,
+      });
+
+      return jsonResponse({
+        success: true,
+        tenant: company.slug,
+        company,
+        answer: clarification,
+        intent: "clarification",
+        conversation_id: conversation.id,
+        ai_used: false,
+      });
+    }
+
+    if (conversation) {
+      await appendConversationMessage({
+        conversationId: conversation.id,
+        companyId: company.id,
+        userId: auth.user.id,
+        sender: "user",
+        role: roleCategory(companyRoles, roleCapabilities),
+        content: question,
+        intent: null,
+        metadata: {
+          used_pending_followup: pendingFollowupResolution.usedPendingFollowup,
+          pending_followup_type: pendingFollowupResolution.pendingType || null,
+        },
+      });
+    }
 
     // 2. Get deterministic context from router
-    const context = await routeContext(question, company.slug, {
+    const context = await routeContext(effectiveQuestion, company.slug, {
       roles: companyRoles,
       roleCapabilities,
       dashboardContext,
@@ -131,7 +183,7 @@ export async function POST(req: Request) {
 
     await recordAnalyticsEvent({
       companyId: company.id,
-      userId: user.id,
+      userId: auth.user.id,
       eventName: "nava_eye_question_asked",
       eventCategory: "nava_eye",
       source: "api/nava-eye/copilot",
@@ -142,13 +194,15 @@ export async function POST(req: Request) {
         role_category: roleCategory(companyRoles, roleCapabilities),
         role_capabilities: context.capabilities || {},
         had_dashboard_context: Boolean(dashboardContext),
+        has_conversation: Boolean(conversation),
+        used_pending_followup: pendingFollowupResolution.usedPendingFollowup,
       },
     });
 
     if (context.permission_boundary && !context.investigation_case_file) {
       await recordAnalyticsEvent({
         companyId: company.id,
-        userId: user.id,
+        userId: auth.user.id,
         eventName: "nava_eye_permission_boundary_shown",
         eventCategory: "nava_eye",
         source: "api/nava-eye/copilot",
@@ -193,6 +247,16 @@ export async function POST(req: Request) {
         recommendation: m.recommendation,
       })),
     };
+    const aiContext = conversation
+      ? {
+          ...enhancedContext,
+          conversation_thread: buildConversationContextForAi(
+            recentConversationMessages,
+            conversation.pending_followup,
+            pendingFollowupResolution
+          ),
+        }
+      : enhancedContext;
 
     let aiUsed = false;
     let answer = "";
@@ -225,7 +289,11 @@ export async function POST(req: Request) {
             },
             {
               role: "user",
-              content: `Question: ${question}\nCompany: ${company.name}\nActive memories:\n${memoryContext || "None"}\n\nCurrent context:\n${JSON.stringify(enhancedContext, null, 2)}`,
+              content: `Question: ${effectiveQuestion}\n${
+                effectiveQuestion !== question
+                  ? `Original follow-up reply: ${question}\n`
+                  : ""
+              }Company: ${company.name}\nActive memories:\n${memoryContext || "None"}\n\nCurrent context:\n${JSON.stringify(aiContext, null, 2)}`,
             },
           ],
           temperature: 0.2,
@@ -352,11 +420,37 @@ export async function POST(req: Request) {
       }
     }
 
+    const nextPendingFollowup = buildPendingFollowup(context, answer);
+    if (conversation) {
+      await appendConversationMessage({
+        conversationId: conversation.id,
+        companyId: company.id,
+        userId: auth.user.id,
+        sender: "assistant",
+        role: "assistant",
+        content: answer,
+        intent: context.intent || "general",
+        metadata: {
+          ai_used: aiUsed,
+          pending_followup_offered: Object.keys(nextPendingFollowup).length > 0,
+        },
+      });
+
+      await updateConversationAfterAnswer({
+        conversation,
+        companyId: company.id,
+        userId: auth.user.id,
+        intent: context.intent || "general",
+        pendingFollowup: nextPendingFollowup,
+        titleQuestion: question,
+      });
+    }
+
     // Wait for memory storage to complete (fire-and-forget, but we log)
     Promise.all(storePromises).catch(err => console.error("Memory storage error:", err));
 
     // 9. Return response
-    return NextResponse.json({
+    return jsonResponse({
       success: true,
       tenant: company.slug,
       company,
@@ -366,11 +460,26 @@ export async function POST(req: Request) {
       active_memories: activeMemories,
       capabilities: context.capabilities,
       ai_used: aiUsed,
+      conversation_id: conversation?.id || null,
     });
   } catch (err: any) {
     console.error("Copilot error:", err);
+    if (
+      String(err?.message || "").includes("Nava Eye conversation tables") ||
+      isMissingConversationSchemaError(err)
+    ) {
+      return jsonResponse(
+        {
+          success: false,
+          setup_required: true,
+          error: NAVA_EYE_CONVERSATION_SETUP_MESSAGE,
+        },
+        { status: 503 }
+      );
+    }
+
     return NextResponse.json(
-      { error: "Internal server error. Please try again later." },
+      { success: false, error: "Internal server error. Please try again later." },
       { status: 500 }
     );
   }
@@ -712,6 +821,198 @@ function roleCategory(
   if (roles.includes("management")) return "management";
   if (roles.includes("ops")) return "ops";
   return "member";
+}
+
+async function fetchRecentConversationMessages(conversationId: string, companyId: string) {
+  const { data, error } = await supabaseAdmin
+    .from("nava_eye_conversation_messages")
+    .select("id, sender, role, content, intent, metadata, created_at")
+    .eq("conversation_id", conversationId)
+    .eq("company_id", companyId)
+    .order("created_at", { ascending: false })
+    .limit(8);
+
+  if (error) {
+    if (isMissingConversationSchemaError(error)) {
+      throw new Error(NAVA_EYE_CONVERSATION_SETUP_MESSAGE);
+    }
+    throw error;
+  }
+
+  return (data || []).reverse();
+}
+
+async function appendConversationMessage(input: {
+  conversationId: string;
+  companyId: string;
+  userId: string;
+  sender: "user" | "assistant" | "system";
+  role: string;
+  content: string;
+  intent?: string | null;
+  metadata?: Record<string, any>;
+}) {
+  const { error } = await supabaseAdmin
+    .from("nava_eye_conversation_messages")
+    .insert({
+      conversation_id: input.conversationId,
+      company_id: input.companyId,
+      user_id: input.sender === "assistant" ? null : input.userId,
+      role: input.role,
+      sender: input.sender,
+      content: safeConversationContent(input.content),
+      intent: input.intent || null,
+      metadata: sanitizeConversationMetadata(input.metadata || {}),
+    });
+
+  if (error) throw error;
+}
+
+async function updateConversationAfterAnswer(input: {
+  conversation: any;
+  companyId: string;
+  userId: string;
+  intent: string;
+  pendingFollowup: Record<string, any>;
+  titleQuestion: string;
+}) {
+  const updates: Record<string, any> = {
+    last_intent: input.intent,
+    pending_followup: sanitizeConversationMetadata(input.pendingFollowup || {}),
+    updated_at: new Date().toISOString(),
+  };
+
+  if (isDefaultConversationTitle(input.conversation?.title)) {
+    updates.title = buildConversationTitle(input.titleQuestion);
+  }
+
+  const { error } = await supabaseAdmin
+    .from("nava_eye_conversations")
+    .update(updates)
+    .eq("id", input.conversation.id)
+    .eq("company_id", input.companyId)
+    .eq("created_by", input.userId)
+    .eq("status", "open");
+
+  if (error) throw error;
+}
+
+function buildConversationContextForAi(
+  messages: any[],
+  pendingFollowup: any,
+  followupResolution: { usedPendingFollowup: boolean; pendingType?: string | null }
+) {
+  return {
+    recent_messages: (messages || []).map((message) => ({
+      sender: message.sender,
+      intent: message.intent || null,
+      content: safeConversationContent(message.content).slice(0, 800),
+    })),
+    pending_followup: sanitizeConversationMetadata(pendingFollowup || {}),
+    used_pending_followup: followupResolution.usedPendingFollowup,
+    pending_followup_type: followupResolution.pendingType || null,
+  };
+}
+
+function resolvePendingFollowupQuestion(question: string, pendingFollowup: any) {
+  const pending = sanitizeConversationMetadata(pendingFollowup || {});
+  const prompt = typeof pending.prompt === "string" ? pending.prompt.trim() : "";
+
+  if (!isShortFollowupCommand(question) || !prompt) {
+    return {
+      question,
+      usedPendingFollowup: false,
+      pendingType: null,
+    };
+  }
+
+  return {
+    question: prompt.slice(0, 500),
+    usedPendingFollowup: true,
+    pendingType: typeof pending.type === "string" ? pending.type : null,
+  };
+}
+
+function isShortFollowupCommand(question: string) {
+  const normalized = String(question || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[.!?]+$/g, "");
+
+  return [
+    "yes",
+    "y",
+    "yeah",
+    "yep",
+    "please",
+    "please do",
+    "do it",
+    "go ahead",
+    "continue",
+    "compare",
+    "show me",
+    "check it",
+    "check",
+    "that one",
+    "those",
+  ].includes(normalized);
+}
+
+function buildPendingFollowup(context: any, answer: string) {
+  const truckLabel =
+    context.truck?.registration ||
+    context.truck?.truck_id ||
+    context.vehicle_match?.matched_registration ||
+    context.vehicle_match?.matched_truck_id ||
+    context.detected_truck_id ||
+    null;
+
+  if (
+    context.intent === "truck_status" &&
+    truckLabel &&
+    /compare today'?s stop\/motion timeline/i.test(answer)
+  ) {
+    return {
+      type: "truck_stop_motion_timeline",
+      truck_id: truckLabel,
+      prompt: `Compare today's stop/motion timeline for ${truckLabel} against Nava idle events. Keep the timeline in EAT/Kenya time and do not infer continuous idling unless movement data supports it.`,
+    };
+  }
+
+  if (context.fuel_investigation && truckLabel) {
+    return {
+      type: "fuel_investigation_next_checks",
+      truck_id: truckLabel,
+      prompt: `Continue the fuel investigation for ${truckLabel}. Check stops, journeys, manual fuel entries, and usable provider fuel telemetry without accusing anyone.`,
+    };
+  }
+
+  if (context.dashboard_followup?.trucks?.length) {
+    const trucks = context.dashboard_followup.trucks
+      .map((truck: any) => truck.registration || truck.truck_id)
+      .filter(Boolean)
+      .slice(0, 5);
+    if (trucks.length) {
+      return {
+        type: "dashboard_truck_followup",
+        truck_ids: trucks,
+        prompt: `Continue investigating these same dashboard trucks: ${trucks.join(", ")}. Check active journeys, geofence/location context, spares/mechanical history, provider freshness, and idle-event data quality within the user's role permissions.`,
+      };
+    }
+  }
+
+  return {};
+}
+
+function isDefaultConversationTitle(title: any) {
+  const normalized = String(title || "").trim().toLowerCase();
+  return !normalized || normalized === "new nava eye conversation" || normalized === "nava eye conversation";
+}
+
+function buildConversationTitle(question: string) {
+  const title = String(question || "").trim().replace(/\s+/g, " ");
+  if (!title) return "Nava Eye conversation";
+  return title.length > 80 ? `${title.slice(0, 77).trim()}...` : title;
 }
 
 function buildPermissionBoundaryAnswer(permissionBoundary: any) {

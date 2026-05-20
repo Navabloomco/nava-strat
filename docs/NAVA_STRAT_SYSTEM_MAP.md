@@ -54,7 +54,7 @@ The main product principle is convenience. Every user-facing page should make th
 | Route | Purpose |
 | --- | --- |
 | `/dashboard` | Customer-facing app dashboard and navigation hub for fleet tenants. Platform owners default to the Nava Bloom Co./Navabloomco platform operator workspace on first load. Durable detection uses `companies.company_type = platform_operator`, with the older Navabloomco slug/name heuristic only as a transition fallback when `company_type` is missing. For the platform/operator workspace, platform owners see a platform workspace home with safe aggregate KPIs, grouped platform/tenant/product actions, customer workspace cards, and a presentation-only sensitive metric toggle instead of empty fleet metrics. Customer tenants remain selectable from the company switcher. Includes Nava Eye Watch items built from safe dashboard summaries, and an embedded Nava Eye widget for customer fleet tenants that may pass safe page context for visible dashboard follow-ups. |
-| `/nava-eye` | Nava Eye assistant UI. |
+| `/nava-eye` | Nava Eye assistant UI with company-scoped investigation conversation threads. Threads are separate from durable Nava Eye memory and can be closed when the investigation is handled. |
 | `/tracking/live` | Live tracking view for enabled intelligence assets. |
 | `/tracking/link` | Tracking link helper page. |
 | `/tracking/processor` | Tracking processing/admin helper page. |
@@ -212,7 +212,9 @@ The main product principle is convenience. Every user-facing page should make th
 
 | API Route | Purpose |
 | --- | --- |
-| `POST /api/nava-eye/copilot` | Main Nava Eye assistant route. Uses context router, entity resolver, role-aware context, safe dashboard page context, deterministic fallbacks, and AI provider when configured. |
+| `POST /api/nava-eye/copilot` | Main Nava Eye assistant route. Uses context router, entity resolver, role-aware context, safe dashboard page context, deterministic fallbacks, and AI provider when configured. Accepts optional `conversation_id` for threaded follow-ups and rechecks current role permissions on every message. |
+| `GET/POST /api/nava-eye/conversations` | Lists or creates current-user Nava Eye investigation threads for the resolved company. |
+| `GET/PATCH /api/nava-eye/conversations/[id]` | Reads one current-user conversation with messages or closes an open conversation. Closed conversations are read-only in the MVP. |
 | `POST /api/nava-eye/ask` | Older Nava Eye ask route. |
 | `GET /api/nava-eye/fleet-summary` | Fleet summary helper. |
 | `GET /api/nava-eye/fuel-risk` | Role-gated fuel risk helper. Requires fuel visibility. |
@@ -237,6 +239,8 @@ The main product principle is convenience. Every user-facing page should make th
 | `company_users` | Active user memberships and roles. This is the source of tenant access. |
 | `company_ai_settings` | Nava Eye provider/model settings. |
 | `nava_eye_memory` | Nava Eye memory and recurring operational facts. |
+| `nava_eye_conversations` | Company-scoped, user-started Nava Eye investigation threads. Open/closed status, last intent, and short pending follow-up context only. |
+| `nava_eye_conversation_messages` | Messages inside Nava Eye investigation threads. Stores user/assistant conversation text, but not provider secrets, raw payloads, auth configs, hidden prompts, or private driver fields in metadata. |
 | `billing_invoices` | Platform-owner-created manual invoice records for tenant billing lifecycle tracking. Draft/sent/paid/void only; no Stripe/PDF/email. |
 | `analytics_events` | Privacy-safe internal product/activation analytics events. Best-effort only; no third-party analytics, no raw prompts/answers, and no secrets/raw provider payloads. |
 
@@ -330,6 +334,8 @@ Nava Eye and Nava Eye Watch use explicit safe capability flags derived from the 
 
 Nava Eye should compare telemetry and event timestamps as actual instants, but user-facing fleet timelines should be displayed in the company/operator timezone where available. Until a durable company timezone field exists, Kenyan fleet answers default to `Africa/Nairobi` and label times as EAT/Kenya time. Do not present UTC in normal fleet answers unless the user explicitly asks for UTC.
 
+Nava Eye conversations are short investigation threads, not durable operational memory. A user can access their own conversations in companies where they have active access; platform owners can create/use conversations in an explicitly resolved company context. Role/capability checks must run on every copilot message, so old conversation context must not unlock finance, billing, provider, or tenant data that the current role cannot see. Closed conversations are read-only in the MVP and there is no admin transcript browser.
+
 ## 6. Multi-Tenancy Rules
 
 - `company_users` is the access-control source.
@@ -337,6 +343,7 @@ Nava Eye should compare telemetry and event timestamps as actual instants, but u
 - APIs must resolve a company before querying tenant data.
 - Same-company role checks matter: a role in one company must not authorize mutation in another company.
 - `platform_owner` can pass `companyId` on supported internal/admin APIs.
+- Nava Eye conversations are company-scoped and user-owned by default. Do not expose one user's conversation transcript to other users or across tenants in the MVP.
 - The Navabloomco company is the platform/operator workspace, not a customer fleet tenant. Platform owners using `/dashboard` in that workspace should see platform operations guidance and safe aggregate tenant stats, not an empty fleet dashboard.
 - Durable platform/operator workspace identity should use `companies.company_type = platform_operator`. Normal customer tenants should use `company_type = customer`; test/demo companies may use `company_type = demo`.
 - During transition, if `companies.company_type` is missing or absent on a row, dashboard/company selection falls back to the older normalized `slug` or `name` equals `navabloomco` heuristic for platform owners only. Do not remove this fallback until production data has been migrated.
@@ -743,6 +750,8 @@ Phase 1 instruments only high-value server-side events:
 - `invoice_marked_sent`
 - `invoice_marked_paid`
 - `invoice_voided`
+- `nava_eye_conversation_created`
+- `nava_eye_conversation_closed`
 - `nava_eye_question_asked`
 - `nava_eye_permission_boundary_shown`
 
