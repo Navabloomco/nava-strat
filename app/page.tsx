@@ -3,6 +3,12 @@ import type { Metadata } from "next";
 
 const productUrl = "https://navastrat.co";
 const contactEmail = "contact@navabloomco.com";
+const primaryControlClass =
+  "inline-flex items-center justify-center rounded-full bg-cyan-300 px-6 py-3 text-sm font-bold text-slate-950 shadow-[0_14px_40px_rgba(34,211,238,0.18)] ring-1 ring-cyan-100/50 transition hover:bg-cyan-200 hover:shadow-[0_18px_48px_rgba(34,211,238,0.24)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950";
+const secondaryControlClass =
+  "inline-flex items-center justify-center rounded-full border border-white/20 bg-white/[0.04] px-5 py-2.5 text-sm font-semibold text-white shadow-[0_10px_30px_rgba(0,0,0,0.18)] transition hover:border-white/35 hover:bg-white/[0.08] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200/70 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950";
+const navControlClass =
+  "inline-flex items-center justify-center rounded-full px-4 py-2 text-sm font-medium text-slate-200 transition hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200/70 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://www.navabloomco.com"),
@@ -57,13 +63,13 @@ export default function Home() {
                 href={productUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="rounded-md px-4 py-2 text-sm font-medium text-slate-200 hover:bg-white/10"
+                className={navControlClass}
               >
                 Nava Strat
               </a>
               <a
                 href={`mailto:${contactEmail}`}
-                className="rounded-md border border-white/20 px-4 py-2 text-sm font-semibold text-white hover:bg-white/10"
+                className={secondaryControlClass}
               >
                 Contact
               </a>
@@ -88,13 +94,13 @@ export default function Home() {
                   href={productUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="rounded-md bg-cyan-300 px-5 py-3 text-center text-sm font-bold text-slate-950 shadow-lg shadow-cyan-950/30 hover:bg-cyan-200"
+                  className={`${primaryControlClass} text-center`}
                 >
                   Explore Nava Strat
                 </a>
                 <a
                   href={`mailto:${contactEmail}`}
-                  className="rounded-md border border-white/20 px-5 py-3 text-center text-sm font-semibold text-white hover:bg-white/10"
+                  className={`${secondaryControlClass} text-center`}
                 >
                   Contact
                 </a>
@@ -201,7 +207,7 @@ export default function Home() {
               href={productUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="mt-7 inline-flex rounded-md bg-cyan-300 px-5 py-3 text-sm font-bold text-slate-950 shadow-lg shadow-cyan-950/30 hover:bg-cyan-200"
+              className={`mt-7 ${primaryControlClass}`}
             >
               Visit Nava Strat
             </a>
