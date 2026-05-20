@@ -505,6 +505,9 @@ function buildFallbackAnswer(context: any): string {
   if (context.dashboard_followup) {
     return buildDashboardFollowupAnswer(context);
   }
+  if (context.truck_timeline_comparison) {
+    return buildTruckTimelineComparisonAnswer(context);
+  }
   if (context.intent === "truck_status" && context.truck) {
     return buildTruckStatusFallbackAnswer(context);
   }
@@ -973,7 +976,7 @@ function buildPendingFollowup(context: any, answer: string) {
     /compare today'?s stop\/motion timeline/i.test(answer)
   ) {
     return {
-      type: "truck_stop_motion_timeline",
+      type: "compare_stop_motion_timeline",
       truck_id: truckLabel,
       prompt: `Compare today's stop/motion timeline for ${truckLabel} against Nava idle events. Keep the timeline in EAT/Kenya time and do not infer continuous idling unless movement data supports it.`,
     };
@@ -1188,6 +1191,109 @@ function buildTruckStatusFallbackAnswer(context: any) {
 
   parts.push(
     "Would you like me to compare today's stop/motion timeline against Nava idle events?"
+  );
+
+  return parts.join("\n");
+}
+
+function buildTruckTimelineComparisonAnswer(context: any) {
+  const timeline = context.truck_timeline_comparison || {};
+  const truck = context.truck || context.investigation_case_file?.asset_status || {};
+  const label =
+    timeline.registration ||
+    timeline.truck_id ||
+    truck.registration ||
+    truck.truck_id ||
+    context.detected_truck_id ||
+    "the truck";
+  const timeZone = timeline.timezone?.time_zone || DEFAULT_OPERATIONAL_TIME_ZONE;
+  const timeLabel = timeline.timezone?.label || "EAT (Kenya time)";
+  const summary = timeline.telemetry_summary || {};
+  const latest = timeline.latest_snapshot || null;
+  const blocks = Array.isArray(timeline.motion_blocks) ? timeline.motion_blocks : [];
+  const idleEvents = Array.isArray(timeline.idle_events) ? timeline.idle_events : [];
+  const continuity = timeline.continuity || {};
+  const parts: string[] = [];
+
+  parts.push(
+    `I reconstructed today's stop/motion trail for ${label} from Nava telemetry logs and idle events, displayed in ${timeLabel}.`
+  );
+
+  if (summary.data_density === "low") {
+    parts.push(
+      "Nava has limited history for this truck today, so I can compare only the latest snapshot and idle markers."
+    );
+  }
+
+  if (latest) {
+    const speed = finiteNumberOrNull(latest.speed);
+    const location = formatOperationalLocation(latest);
+    const speedText = speed === null ? "speed unknown" : `speed ${formatNumber(speed)}`;
+    const state =
+      speed === null
+        ? "current motion state is unclear"
+        : speed > 5
+          ? "it appears to be moving"
+          : "it appears stationary or stopped";
+    parts.push(
+      `Latest snapshot: ${formatTimelineTime(latest.recorded_at, timeZone)}; ${speedText}${
+        location ? `, ${location}` : ""
+      }. On that latest point, ${state}.`
+    );
+    if (hasAmbiguousTimestampWarning(latest.timestamp_warnings)) {
+      parts.push(
+        "Provider time appears local/ambiguous, so treat this timeline as approximate."
+      );
+    }
+  } else {
+    parts.push("I do not have a latest telemetry snapshot for this truck today.");
+  }
+
+  parts.push("");
+  parts.push("Stop/motion blocks");
+  if (blocks.length) {
+    parts.push(...blocks.slice(0, 10).map((block: any) => formatTimelineBlock(block, timeZone)));
+    if (blocks.length > 10) {
+      parts.push(`- ${blocks.length - 10} additional block(s) omitted from this concise view.`);
+    }
+  } else {
+    parts.push("- No same-day movement/stationary blocks were found in telemetry_logs.");
+  }
+
+  parts.push("");
+  parts.push("Idle marker comparison");
+  if (idleEvents.length) {
+    parts.push(...idleEvents.slice(0, 8).map((event: any) => formatIdleComparison(event, timeZone)));
+  } else {
+    parts.push("- No same-day idle or excessive-idle telemetry events were found for this truck.");
+  }
+
+  parts.push("");
+  parts.push("Continuity read");
+  if (continuity.continuous_all_day_idle_supported) {
+    parts.push(
+      "- The current speed is 0, the latest location closely matches the earliest idle marker, and I do not see intervening movement after that idle marker. That supports a continuous current idle/stationary interpretation."
+    );
+  } else if (continuity.historical_idle_markers_broken_by_movement) {
+    parts.push(
+      "- The idle markers should be treated as historical or separate events because later telemetry shows movement after at least one idle marker."
+    );
+  } else if (summary.data_density === "low") {
+    parts.push(
+      "- The available history is too thin to prove a continuous unbroken delay."
+    );
+  } else {
+    parts.push(
+      "- I do not have enough continuity evidence to call this a continuous all-day idle period."
+    );
+  }
+
+  parts.push("");
+  parts.push(
+    "This means I would not merge older idle markers into one continuous delay unless the same location, zero-speed current state, and absence of later movement all line up."
+  );
+  parts.push(
+    "Next, I can compare this timeline against active journeys, driver assignment, geofence/place context, or spares history for the same truck."
   );
 
   return parts.join("\n");
@@ -2111,6 +2217,76 @@ function formatEventBrief(event: any) {
   return `${formatSpareEventType(event.event_type)} at ${formatReadableDate(
     event.created_at || event.started_at
   )}${location ? ` ${location}` : ""}${driver}`;
+}
+
+function formatTimelineBlock(block: any, timeZone: string) {
+  const state =
+    block.state === "moving"
+      ? "Moving"
+      : block.state === "stationary"
+        ? "Stationary"
+        : "Unknown motion";
+  const speedRange =
+    block.min_speed === null || block.max_speed === null
+      ? "speed unknown"
+      : block.min_speed === block.max_speed
+        ? `speed ${formatNumber(block.max_speed)}`
+        : `speed ${formatNumber(block.min_speed)}-${formatNumber(block.max_speed)}`;
+  const location = formatOperationalLocation({
+    latitude: block.end_latitude,
+    longitude: block.end_longitude,
+    geofence_match: block.geofence_match,
+  });
+
+  return `- ${state}: ${formatTimelineTime(block.start_at, timeZone)} to ${formatTimelineTime(
+    block.end_at,
+    timeZone
+  )}; ${speedRange}; ${block.sample_count || 0} point(s)${
+    location ? `; last position ${location}` : ""
+  }.`;
+}
+
+function formatIdleComparison(event: any, timeZone: string) {
+  const eventTime = event.started_at || event.created_at;
+  const base = `${formatSpareEventType(event.event_type)} at ${formatTimelineTime(
+    eventTime,
+    timeZone
+  )}`;
+  const location = formatOperationalLocation(event);
+  const duration =
+    event.duration_minutes === null || event.duration_minutes === undefined
+      ? ""
+      : `, duration ${formatNumber(event.duration_minutes)} min`;
+
+  if (event.classification === "historical_broken_by_movement") {
+    const movementAt = event.movement_after_event_at
+      ? ` Movement later appears at ${formatTimelineTime(event.movement_after_event_at, timeZone)}.`
+      : "";
+    return `- ${base}${location ? ` ${location}` : ""}${duration}: historical marker, broken by later movement.${movementAt}`;
+  }
+
+  if (event.classification === "possibly_current_same_location") {
+    const distance =
+      event.location_distance_km === null
+        ? ""
+        : ` Latest location is about ${formatNumber(event.location_distance_km)} km from the event marker.`;
+    return `- ${base}${location ? ` ${location}` : ""}${duration}: possibly connected to the current stop.${distance}`;
+  }
+
+  return `- ${base}${location ? ` ${location}` : ""}${duration}: continuity not proven from the available movement blocks.`;
+}
+
+function formatTimelineTime(value: any, timeZone: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "unknown time";
+  const formatted = new Intl.DateTimeFormat("en-KE", {
+    timeZone,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(date);
+  const label = timeZone === DEFAULT_OPERATIONAL_TIME_ZONE ? "EAT" : timeZone;
+  return `${formatted} ${label}`;
 }
 
 function formatJourneyBrief(journey: any) {

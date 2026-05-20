@@ -178,6 +178,14 @@ export async function routeContext(
           financialsVisible,
         }
       );
+      if (detectStopMotionTimelineComparison(lower)) {
+        context.truck_timeline_comparison = await fetchTruckStopMotionTimelineComparison(
+          companyId,
+          truckId,
+          geofences,
+          company
+        );
+      }
     } else {
       context.fleet_health = await fetchFleetHealth(companyId);
       context.recent_events = await fetchRecentEvents(
@@ -204,6 +212,14 @@ export async function routeContext(
       assignmentLookup
     );
     context.recent_telemetry = await fetchTruckTelemetry(companyId, truckId);
+    if (detectStopMotionTimelineComparison(lower)) {
+      context.truck_timeline_comparison = await fetchTruckStopMotionTimelineComparison(
+        companyId,
+        truckId,
+        geofences,
+        company
+      );
+    }
   }
   if (intent === "driver_activity") {
     context.driver_assignments = fetchRecentDriverAssignments(assignmentLookup);
@@ -663,6 +679,20 @@ function detectInvestigationFocus(lower: string) {
     route_focus:
       /\b(route|trip|journey|client|mombasa|nairobi|kampala|port|yard)\b/.test(lower),
   };
+}
+
+function detectStopMotionTimelineComparison(lower: string) {
+  return (
+    (/\b(compare|timeline|motion|movement|moved|moving|stop|stops|stopped|idle|idling)\b/.test(lower) &&
+      (lower.includes("stop/motion") ||
+        lower.includes("stop motion") ||
+        lower.includes("idle events") ||
+        lower.includes("continuous") ||
+        lower.includes("all-day") ||
+        lower.includes("all day") ||
+        lower.includes("against nava idle"))) ||
+    lower.includes("compare today's stop/motion timeline")
+  );
 }
 
 async function fetchFleetAssetCounts(companyId: string) {
@@ -1234,6 +1264,348 @@ async function fetchTruckTelemetry(companyId: string, truckId: string) {
     .order("recorded_at", { ascending: false })
     .limit(20);
   return data || [];
+}
+
+async function fetchTruckStopMotionTimelineComparison(
+  companyId: string,
+  truckId: string,
+  geofences: any[] = [],
+  company: any = {}
+) {
+  const operationalTimeZone = resolveOperationalTimeZone(company);
+  const localDayRange = getOperationalLocalDayUtcRange(operationalTimeZone);
+  const targetKey = normalizeTruckKey(truckId);
+
+  const { data: assetRows, error: assetError } = await supabaseAdmin
+    .from("fleet_assets")
+    .select("id, truck_id, registration, latitude, longitude, last_seen_at, provider_location_label, status, asset_category")
+    .eq("company_id", companyId)
+    .eq("status", "active")
+    .eq("intelligence_enabled", true)
+    .limit(1000);
+
+  if (assetError) throw assetError;
+
+  const asset = (assetRows || []).find((item) =>
+    getVehicleMatchKeys(item).some((key) => key === targetKey)
+  );
+  const canonicalTruckId = asset?.truck_id || truckId;
+
+  const [telemetryResult, eventsResult] = await Promise.all([
+    supabaseAdmin
+      .from("telemetry_logs")
+      .select("truck_id, recorded_at, latitude, longitude, speed, validation")
+      .eq("company_id", companyId)
+      .eq("truck_id", canonicalTruckId)
+      .gte("recorded_at", localDayRange.startUtc)
+      .lt("recorded_at", localDayRange.endUtc)
+      .order("recorded_at", { ascending: true })
+      .limit(2000),
+    supabaseAdmin
+      .from("telemetry_events")
+      .select(
+        "truck_id, event_type, severity, location_name, latitude, longitude, created_at, started_at, duration_minutes, context_label, context_type"
+      )
+      .eq("company_id", companyId)
+      .eq("truck_id", canonicalTruckId)
+      .in("event_type", ["idle", "excessive_idle"])
+      .gte("created_at", localDayRange.startUtc)
+      .lt("created_at", localDayRange.endUtc)
+      .order("created_at", { ascending: true })
+      .limit(100),
+  ]);
+
+  if (telemetryResult.error) throw telemetryResult.error;
+  if (eventsResult.error) throw eventsResult.error;
+
+  const telemetryRows = (telemetryResult.data || []).map((row) => ({
+    ...row,
+    geofence_match: matchPointToGeofence(row, geofences),
+  }));
+  const idleEvents = (eventsResult.data || []).map((event) => ({
+    ...event,
+    geofence_match: matchPointToGeofence(event, geofences),
+  }));
+  const blocks = aggregateTelemetryIntoMotionBlocks(telemetryRows);
+  const latestTelemetry = telemetryRows[telemetryRows.length - 1] || null;
+  const latestPoint = latestTelemetry || asset || null;
+  const movementBlocks = blocks.filter((block) => block.state === "moving");
+  const stationaryBlocks = blocks.filter((block) => block.state === "stationary");
+  const idleEventComparisons = idleEvents.map((event) =>
+    compareIdleEventToMotionBlocks(event, blocks, latestPoint)
+  );
+  const firstIdleComparison = idleEventComparisons[0] || null;
+  const continuousIdleSupported = Boolean(
+    latestTelemetry &&
+      finiteOrNull(latestTelemetry.speed) !== null &&
+      Number(latestTelemetry.speed) <= 0 &&
+      firstIdleComparison &&
+      firstIdleComparison.location_distance_km !== null &&
+      firstIdleComparison.location_distance_km <= 0.5 &&
+      !firstIdleComparison.movement_after_event
+  );
+  const hasBrokenIdleMarkers = idleEventComparisons.some(
+    (comparison) => comparison.classification === "historical_broken_by_movement"
+  );
+
+  return {
+    type: "truck_stop_motion_timeline",
+    truck_id: canonicalTruckId,
+    registration: asset?.registration || null,
+    timezone: {
+      time_zone: operationalTimeZone,
+      label: operationalTimeZoneLabel(operationalTimeZone),
+    },
+    local_day: localDayRange.localDate,
+    query_window_utc: {
+      start: localDayRange.startUtc,
+      end: localDayRange.endUtc,
+      filter_strategy:
+        "local_day_utc_range_equivalent_to_timezone_recorded_at_date_filter",
+    },
+    latest_snapshot: latestPoint
+      ? {
+          recorded_at: latestTelemetry?.recorded_at || asset?.last_seen_at || null,
+          speed: latestTelemetry?.speed ?? null,
+          latitude: latestPoint.latitude ?? null,
+          longitude: latestPoint.longitude ?? null,
+          provider_location_label: asset?.provider_location_label || null,
+          geofence_match: matchPointToGeofence(latestPoint, geofences),
+          timestamp_warnings: latestTelemetry?.validation?.warnings || [],
+        }
+      : null,
+    telemetry_summary: {
+      points_found: telemetryRows.length,
+      blocks_found: blocks.length,
+      movement_blocks: movementBlocks.length,
+      stationary_blocks: stationaryBlocks.length,
+      data_density:
+        telemetryRows.length < 4
+          ? "low"
+          : telemetryRows.length < 12
+            ? "medium"
+            : "high",
+      truncated: telemetryRows.length >= 2000,
+    },
+    motion_blocks: blocks.slice(0, 24),
+    idle_events: idleEventComparisons.slice(0, 20),
+    continuity: {
+      continuous_all_day_idle_supported: continuousIdleSupported,
+      historical_idle_markers_broken_by_movement: hasBrokenIdleMarkers,
+      movement_after_first_idle: Boolean(firstIdleComparison?.movement_after_event),
+      conclusion: continuousIdleSupported
+        ? "continuous_current_idle_supported"
+        : hasBrokenIdleMarkers
+          ? "historical_idle_markers_are_distinct"
+          : telemetryRows.length < 4
+            ? "limited_history"
+            : "continuous_idle_not_proven",
+    },
+  };
+}
+
+function aggregateTelemetryIntoMotionBlocks(rows: any[]) {
+  const blocks: any[] = [];
+
+  for (const row of rows || []) {
+    const state = classifyTelemetryMotionState(row);
+    const speed = finiteOrNull(row?.speed);
+    const last = blocks[blocks.length - 1];
+
+    if (!last || last.state !== state) {
+      blocks.push({
+        state,
+        start_at: row.recorded_at,
+        end_at: row.recorded_at,
+        sample_count: 1,
+        min_speed: speed,
+        max_speed: speed,
+        start_latitude: row.latitude ?? null,
+        start_longitude: row.longitude ?? null,
+        end_latitude: row.latitude ?? null,
+        end_longitude: row.longitude ?? null,
+        geofence_match: row.geofence_match || null,
+      });
+      continue;
+    }
+
+    last.end_at = row.recorded_at;
+    last.sample_count += 1;
+    last.end_latitude = row.latitude ?? last.end_latitude;
+    last.end_longitude = row.longitude ?? last.end_longitude;
+    if (speed !== null) {
+      last.min_speed = last.min_speed === null ? speed : Math.min(last.min_speed, speed);
+      last.max_speed = last.max_speed === null ? speed : Math.max(last.max_speed, speed);
+    }
+    if (!last.geofence_match && row.geofence_match) {
+      last.geofence_match = row.geofence_match;
+    }
+  }
+
+  return blocks;
+}
+
+function classifyTelemetryMotionState(row: any) {
+  const speed = finiteOrNull(row?.speed);
+  if (speed === null) return "unknown";
+  return speed > 5 ? "moving" : "stationary";
+}
+
+function compareIdleEventToMotionBlocks(event: any, blocks: any[], latestPoint: any) {
+  const eventTime = new Date(event?.started_at || event?.created_at || 0).getTime();
+  const movementAfterEvent = blocks.find((block) => {
+    if (block.state !== "moving") return false;
+    const blockEnd = new Date(block.end_at || 0).getTime();
+    return Number.isFinite(blockEnd) && Number.isFinite(eventTime) && blockEnd > eventTime;
+  });
+  const locationDistanceKm = distanceBetweenPointsKm(event, latestPoint);
+
+  let classification = "continuity_unknown";
+  if (movementAfterEvent) {
+    classification = "historical_broken_by_movement";
+  } else if (
+    locationDistanceKm !== null &&
+    locationDistanceKm <= 0.5 &&
+    latestPoint &&
+    finiteOrNull(latestPoint.speed) !== null &&
+    Number(latestPoint.speed) <= 0
+  ) {
+    classification = "possibly_current_same_location";
+  } else if (blocks.length > 0) {
+    classification = "no_movement_after_event_but_not_confirmed_current";
+  }
+
+  return {
+    event_type: event.event_type,
+    severity: event.severity || null,
+    created_at: event.created_at || null,
+    started_at: event.started_at || null,
+    duration_minutes: event.duration_minutes ?? null,
+    location_name: event.location_name || null,
+    context_label: event.context_label || null,
+    geofence_match: event.geofence_match || null,
+    movement_after_event: Boolean(movementAfterEvent),
+    movement_after_event_at: movementAfterEvent?.start_at || null,
+    movement_after_event_block: movementAfterEvent
+      ? {
+          start_at: movementAfterEvent.start_at,
+          end_at: movementAfterEvent.end_at,
+          max_speed: movementAfterEvent.max_speed,
+        }
+      : null,
+    location_distance_km: locationDistanceKm,
+    classification,
+  };
+}
+
+function getOperationalLocalDayUtcRange(timeZone: string) {
+  const now = new Date();
+  const localParts = getZonedDateParts(now, timeZone);
+  const start = zonedDateTimeToUtc(
+    localParts.year,
+    localParts.month,
+    localParts.day,
+    0,
+    0,
+    0,
+    timeZone
+  );
+  const nextLocalDay = new Date(Date.UTC(localParts.year, localParts.month - 1, localParts.day + 1));
+  const nextParts = getZonedDateParts(nextLocalDay, "UTC");
+  const end = zonedDateTimeToUtc(
+    nextParts.year,
+    nextParts.month,
+    nextParts.day,
+    0,
+    0,
+    0,
+    timeZone
+  );
+
+  return {
+    localDate: `${localParts.year}-${String(localParts.month).padStart(2, "0")}-${String(
+      localParts.day
+    ).padStart(2, "0")}`,
+    startUtc: start.toISOString(),
+    endUtc: end.toISOString(),
+  };
+}
+
+function getZonedDateParts(date: Date, timeZone: string) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+  const lookup: Record<string, number> = {};
+  for (const part of parts) {
+    if (part.type !== "literal") lookup[part.type] = Number(part.value);
+  }
+  return {
+    year: lookup.year,
+    month: lookup.month,
+    day: lookup.day,
+    hour: lookup.hour || 0,
+    minute: lookup.minute || 0,
+    second: lookup.second || 0,
+  };
+}
+
+function zonedDateTimeToUtc(
+  year: number,
+  month: number,
+  day: number,
+  hour: number,
+  minute: number,
+  second: number,
+  timeZone: string
+) {
+  const utcGuess = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+  const offset = getTimeZoneOffsetMillis(utcGuess, timeZone);
+  const firstPass = new Date(utcGuess.getTime() - offset);
+  const adjustedOffset = getTimeZoneOffsetMillis(firstPass, timeZone);
+  return new Date(utcGuess.getTime() - adjustedOffset);
+}
+
+function getTimeZoneOffsetMillis(date: Date, timeZone: string) {
+  const parts = getZonedDateParts(date, timeZone);
+  const zonedAsUtc = Date.UTC(
+    parts.year,
+    parts.month - 1,
+    parts.day,
+    parts.hour,
+    parts.minute,
+    parts.second
+  );
+  return zonedAsUtc - date.getTime();
+}
+
+function distanceBetweenPointsKm(first: any, second: any) {
+  const lat1 = finiteOrNull(first?.latitude);
+  const lon1 = finiteOrNull(first?.longitude);
+  const lat2 = finiteOrNull(second?.latitude);
+  const lon2 = finiteOrNull(second?.longitude);
+  if (lat1 === null || lon1 === null || lat2 === null || lon2 === null) return null;
+
+  const earthRadiusKm = 6371;
+  const deltaLat = toRadians(lat2 - lat1);
+  const deltaLon = toRadians(lon2 - lon1);
+  const a =
+    Math.sin(deltaLat / 2) * Math.sin(deltaLat / 2) +
+    Math.cos(toRadians(lat1)) *
+      Math.cos(toRadians(lat2)) *
+      Math.sin(deltaLon / 2) *
+      Math.sin(deltaLon / 2);
+  return earthRadiusKm * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function toRadians(value: number) {
+  return (value * Math.PI) / 180;
 }
 
 async function fetchFuelSuspicionInvestigation(
