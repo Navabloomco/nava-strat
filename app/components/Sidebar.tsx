@@ -14,6 +14,17 @@ const EMPTY_ROLES = {
   isPlatformOwner: false,
 };
 
+type NavItem = {
+  name: string;
+  href: string;
+  show: boolean;
+};
+
+type NavSection = {
+  label?: string;
+  items: NavItem[];
+};
+
 export default function Sidebar() {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -96,131 +107,171 @@ export default function Sidebar() {
     };
   }, []);
 
-  const navItems = [
+  const navSections: NavSection[] = [
     {
-      name: "Dashboard",
-      href: "/dashboard",
-      show: roles.hasCompanyAccess,
+      items: [
+        {
+          name: "Dashboard",
+          href: "/dashboard",
+          show: roles.hasCompanyAccess,
+        },
+        {
+          name: "Nava Eye",
+          href: "/nava-eye",
+          show: roles.hasCompanyAccess,
+        },
+        {
+          name: "Admin",
+          href: "/admin",
+          show: roles.isAdmin,
+        },
+      ],
     },
     {
-      name: "Nava Eye",
-      href: "/nava-eye",
-      show: roles.hasCompanyAccess,
+      label: "Platform",
+      items: [
+        {
+          name: "Platform Health",
+          href: "/admin/health",
+          show: roles.isPlatformOwner,
+        },
+        {
+          name: "Tenant Billing",
+          href: "/admin/tenants",
+          show: roles.isPlatformOwner,
+        },
+        {
+          name: "Pilot Readiness",
+          href: "/admin/pilot-readiness",
+          show: roles.isPlatformOwner,
+        },
+      ],
     },
     {
-      name: "Admin",
-      href: "/admin",
-      show: roles.isAdmin,
+      label: "Providers",
+      items: [
+        {
+          name: "Provider Requests",
+          href: "/admin/provider-requests",
+          show: roles.isPlatformOwner,
+        },
+        {
+          name: "Provider Onboarding",
+          href: "/admin/providers",
+          show: roles.isAdmin,
+        },
+        {
+          name: "Provider Playbook",
+          href: "/admin/provider-playbook",
+          show: roles.isPlatformOwner,
+        },
+      ],
     },
     {
-      name: "Platform Health",
-      href: "/admin/health",
-      show: roles.isPlatformOwner,
+      label: "Company Admin",
+      items: [
+        {
+          name: "Asset Review",
+          href: "/admin/assets",
+          show: roles.isAdmin,
+        },
+        {
+          name: "Company Settings",
+          href: "/admin/company",
+          show: roles.isAdmin,
+        },
+        {
+          name: "Client Visibility",
+          href: "/admin/client-visibility",
+          show: roles.isAdmin,
+        },
+      ],
     },
     {
-      name: "Tenant Billing",
-      href: "/admin/tenants",
-      show: roles.isPlatformOwner,
+      label: "Fleet",
+      items: [
+        {
+          name: "Operations",
+          href: "/ops/dashboard",
+          show: roles.isOps || roles.isAdmin,
+        },
+        {
+          name: "Journeys",
+          href: "/ops/journey",
+          show: roles.isOps || roles.isAdmin,
+        },
+        {
+          name: "Drivers",
+          href: "/ops/drivers",
+          show:
+            roles.isOps || roles.isFinance || roles.isManagement || roles.isAdmin,
+        },
+        {
+          name: "Live Tracking",
+          href: "/tracking/live",
+          show: roles.isOps || roles.isAdmin,
+        },
+        {
+          name: "Geofences",
+          href: "/geofences",
+          show: roles.isOps || roles.isManagement || roles.isAdmin,
+        },
+        {
+          name: "Spares",
+          href: "/spares",
+          show:
+            roles.isOps || roles.isFinance || roles.isManagement || roles.isAdmin,
+        },
+      ],
     },
     {
-      name: "Pilot Readiness",
-      href: "/admin/pilot-readiness",
-      show: roles.isPlatformOwner,
-    },
-    {
-      name: "Provider Requests",
-      href: "/admin/provider-requests",
-      show: roles.isPlatformOwner,
-    },
-    {
-      name: "Provider Onboarding",
-      href: "/admin/providers",
-      show: roles.isAdmin,
-    },
-    {
-      name: "Provider Playbook",
-      href: "/admin/provider-playbook",
-      show: roles.isPlatformOwner,
-    },
-    {
-      name: "Asset Review",
-      href: "/admin/assets",
-      show: roles.isAdmin,
-    },
-    {
-      name: "Company Settings",
-      href: "/admin/company",
-      show: roles.isAdmin,
-    },
-    {
-      name: "Client Visibility",
-      href: "/admin/client-visibility",
-      show: roles.isAdmin,
-    },
-    {
-      name: "Operations",
-      href: "/ops/dashboard",
-      show: roles.isOps || roles.isAdmin,
-    },
-    {
-      name: "Journeys",
-      href: "/ops/journey",
-      show: roles.isOps || roles.isAdmin,
-    },
-    {
-      name: "Drivers",
-      href: "/ops/drivers",
-      show:
-        roles.isOps || roles.isFinance || roles.isManagement || roles.isAdmin,
-    },
-    {
-      name: "Live Tracking",
-      href: "/tracking/live",
-      show: roles.isOps || roles.isAdmin,
-    },
-    {
-      name: "Geofences",
-      href: "/geofences",
-      show: roles.isOps || roles.isManagement || roles.isAdmin,
-    },
-    {
-      name: "Finance",
-      href: "/finance/dashboard",
-      show: roles.isFinance || roles.isAdmin,
-    },
-    {
-      name: "Fuel",
-      href: "/fuel",
-      show: roles.isFinance || roles.isAdmin,
-    },
-    {
-      name: "Expenses",
-      href: "/expenses",
-      show: roles.isFinance || roles.isAdmin,
-    },
-    {
-      name: "Spares",
-      href: "/spares",
-      show:
-        roles.isOps || roles.isFinance || roles.isManagement || roles.isAdmin,
-    },
-    {
-      name: "Revenue",
-      href: "/finance/revenue",
-      show: roles.isFinance || roles.isAdmin,
-    },
-    {
-      name: "Management",
-      href: "/management/dashboard",
-      show: roles.isManagement || roles.isAdmin,
+      label: "Business",
+      items: [
+        {
+          name: "Finance",
+          href: "/finance/dashboard",
+          show: roles.isFinance || roles.isAdmin,
+        },
+        {
+          name: "Fuel",
+          href: "/fuel",
+          show: roles.isFinance || roles.isAdmin,
+        },
+        {
+          name: "Expenses",
+          href: "/expenses",
+          show: roles.isFinance || roles.isAdmin,
+        },
+        {
+          name: "Revenue",
+          href: "/finance/revenue",
+          show: roles.isFinance || roles.isAdmin,
+        },
+        {
+          name: "Management",
+          href: "/management/dashboard",
+          show: roles.isManagement || roles.isAdmin,
+        },
+      ],
     },
   ];
-  const visibleNavItems = navItems.filter((item) => item.show);
+  const visibleNavSections = navSections
+    .map((section) => ({
+      ...section,
+      items: section.items.filter((item) => item.show),
+    }))
+    .filter((section) => section.items.length > 0);
 
   function navLinkClass(active: boolean) {
     return active
-      ? "rounded-md border border-cyan-200/20 bg-cyan-300/10 px-3 py-2.5 text-sm font-bold text-cyan-100"
-      : "rounded-md px-3 py-2.5 text-sm font-medium text-slate-400 transition hover:bg-white/[0.05] hover:text-white";
+      ? "block rounded-md border border-cyan-200/20 bg-cyan-300/10 px-3 py-2.5 text-sm font-bold text-cyan-100"
+      : "block rounded-md px-3 py-2.5 text-sm font-medium text-slate-400 transition hover:bg-white/[0.05] hover:text-white";
+  }
+
+  function sectionLabelClass(first: boolean) {
+    return first
+      ? "px-3 pb-1 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500"
+      : "px-3 pb-1 pt-3 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500";
   }
 
   return (
@@ -252,20 +303,29 @@ export default function Sidebar() {
             id="mobile-nava-nav"
             className="mt-3 grid max-h-[70vh] gap-1.5 overflow-y-auto rounded-lg border border-white/10 bg-slate-900 p-2 shadow-2xl shadow-black/30"
           >
-            {visibleNavItems.map((item) => {
-              const active = pathname === item.href;
+            {visibleNavSections.map((section, sectionIndex) => (
+              <div key={section.label || "primary"} className="grid gap-1.5">
+                {section.label && (
+                  <div className={sectionLabelClass(sectionIndex === 0)}>
+                    {section.label}
+                  </div>
+                )}
+                {section.items.map((item) => {
+                  const active = pathname === item.href;
 
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  onClick={() => setMobileOpen(false)}
-                  className={`${navLinkClass(active)} whitespace-normal break-words`}
-                >
-                  {item.name}
-                </Link>
-              );
-            })}
+                  return (
+                    <Link
+                      key={item.href}
+                      href={item.href}
+                      onClick={() => setMobileOpen(false)}
+                      className={`${navLinkClass(active)} whitespace-normal break-words`}
+                    >
+                      {item.name}
+                    </Link>
+                  );
+                })}
+              </div>
+            ))}
           </nav>
         )}
       </div>
@@ -281,19 +341,28 @@ export default function Sidebar() {
         </div>
 
         <nav className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto pr-1">
-          {visibleNavItems.map((item) => {
-            const active = pathname === item.href;
+          {visibleNavSections.map((section, sectionIndex) => (
+            <div key={section.label || "primary"} className="grid gap-1.5">
+              {section.label && (
+                <div className={sectionLabelClass(sectionIndex === 0)}>
+                  {section.label}
+                </div>
+              )}
+              {section.items.map((item) => {
+                const active = pathname === item.href;
 
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={navLinkClass(active)}
-              >
-                {item.name}
-              </Link>
-            );
-          })}
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    className={navLinkClass(active)}
+                  >
+                    {item.name}
+                  </Link>
+                );
+              })}
+            </div>
+          ))}
         </nav>
       </aside>
     </>
