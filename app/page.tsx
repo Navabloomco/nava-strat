@@ -49,7 +49,7 @@ export default function Home() {
                 Nava Bloom Co.
               </div>
               <div className="truncate text-xs uppercase tracking-[0.18em] text-cyan-200/70 sm:tracking-[0.24em]">
-                Builder of Nava Strat
+                Operational Intelligence Infrastructure
               </div>
             </div>
             <div className="flex shrink-0 items-center gap-2 sm:gap-3">
@@ -113,9 +113,9 @@ export default function Home() {
                 </div>
                 <div className="mt-5 space-y-3">
                   {[
-                    ["Built for operators", "Software for companies that move, maintain, and manage physical assets."],
-                    ["Built for clarity", "Cleaner operating signals for teams that need fewer blind spots."],
-                    ["Built for decisions", "Practical intelligence that supports action, not theatre."],
+                    ["Built for operators", "Software for teams moving physical assets across trade corridors."],
+                    ["Built for clarity", "Consolidating fragmented data into a trusted operations layer."],
+                    ["Built for decisions", "Turn chaotic telemetry into clearer operational decisions."],
                   ].map(([title, body]) => (
                     <div
                       key={title}
