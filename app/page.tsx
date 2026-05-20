@@ -136,16 +136,16 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="bg-slate-50 px-4 py-16 text-slate-950 sm:px-8 sm:py-20">
+      <section className="border-b border-white/10 bg-[#08111f] px-4 py-16 text-white sm:px-8 sm:py-20">
         <div className="mx-auto max-w-7xl">
           <div className="max-w-3xl">
-            <p className="text-sm font-bold uppercase tracking-[0.18em] text-cyan-700">
+            <p className="text-sm font-bold uppercase tracking-[0.18em] text-cyan-200">
               Problem
             </p>
             <h2 className="mt-3 text-3xl font-semibold tracking-normal md:text-4xl">
               The reality of modern operations
             </h2>
-            <p className="mt-5 text-base leading-8 text-slate-600">
+            <p className="mt-5 text-base leading-8 text-slate-300">
               Many operators still rely on disconnected tools, manual updates,
               and fragmented dashboards. Nava Bloom Co. builds systems that make
               operational data easier to trust, harder to lose, and faster to
@@ -155,10 +155,10 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="bg-white px-4 py-16 text-slate-950 sm:px-8 sm:py-20">
+      <section className="border-b border-white/10 bg-[#0b1424] px-4 py-16 text-white sm:px-8 sm:py-20">
         <div className="mx-auto max-w-7xl">
           <div className="mb-10 max-w-3xl">
-            <p className="text-sm font-bold uppercase tracking-[0.18em] text-cyan-700">
+            <p className="text-sm font-bold uppercase tracking-[0.18em] text-cyan-200">
               What we build
             </p>
             <h2 className="mt-3 text-3xl font-semibold tracking-normal md:text-4xl">
@@ -169,10 +169,12 @@ export default function Home() {
             {buildAreas.map((item) => (
               <div
                 key={item.title}
-                className="rounded-lg border border-slate-200 bg-slate-50 p-6"
+                className="rounded-lg border border-white/10 bg-white/[0.04] p-6"
               >
-                <h3 className="text-lg font-semibold">{item.title}</h3>
-                <p className="mt-3 text-sm leading-6 text-slate-600">
+                <h3 className="text-lg font-semibold text-slate-100">
+                  {item.title}
+                </h3>
+                <p className="mt-3 text-sm leading-6 text-slate-400">
                   {item.body}
                 </p>
               </div>
@@ -181,16 +183,16 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="bg-slate-50 px-4 py-16 text-slate-950 sm:px-8 sm:py-20">
+      <section className="border-b border-white/10 bg-[#08111f] px-4 py-16 text-white sm:px-8 sm:py-20">
         <div className="mx-auto max-w-7xl">
           <div className="max-w-3xl">
-            <p className="text-sm font-bold uppercase tracking-[0.18em] text-cyan-700">
+            <p className="text-sm font-bold uppercase tracking-[0.18em] text-cyan-200">
               Product spotlight
             </p>
             <h2 className="mt-3 text-3xl font-semibold tracking-normal md:text-4xl">
               Our first platform: Nava Strat
             </h2>
-            <p className="mt-5 text-base leading-8 text-slate-600">
+            <p className="mt-5 text-base leading-8 text-slate-300">
               Nava Strat helps fleet operators bring vehicle activity, journeys,
               fuel awareness, operating costs, maintenance signals, and
               management visibility into one secure workspace.
@@ -199,7 +201,7 @@ export default function Home() {
               href={productUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="mt-7 inline-flex rounded-md bg-slate-950 px-5 py-3 text-sm font-semibold text-white hover:bg-slate-800"
+              className="mt-7 inline-flex rounded-md bg-cyan-300 px-5 py-3 text-sm font-bold text-slate-950 shadow-lg shadow-cyan-950/30 hover:bg-cyan-200"
             >
               Visit Nava Strat
             </a>
@@ -228,7 +230,6 @@ export default function Home() {
         <div className="mx-auto flex max-w-7xl flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <div className="font-semibold text-slate-200">Nava Bloom Co.</div>
-            <div>Builder of Nava Strat.</div>
             <a href={`mailto:${contactEmail}`} className="hover:text-white">
               {contactEmail}
             </a>
