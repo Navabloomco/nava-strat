@@ -8,6 +8,9 @@ When this playbook discovers a bug, batch fixes into one Codex prompt. Do not pa
 
 - [ ] Confirm the repo is clean or that any local changes are intentional.
 - [ ] Confirm the latest expected commit is deployed.
+- [ ] Confirm `https://navastrat.co` is serving the Nava Strat product as the primary product domain.
+- [ ] Confirm `NEXT_PUBLIC_SITE_URL=https://navastrat.co` is set in Vercel after Supabase Auth redirect URLs include the product domain.
+- [ ] Confirm existing domains such as `https://www.navabloomco.com` and `https://nava-strat.vercel.app` still work during transition.
 - [ ] Confirm platform-owner login works.
 - [ ] Confirm the additive `billing_invoices` SQL has been applied.
 - [ ] Confirm a test tenant/company exists.
@@ -167,6 +170,7 @@ Expected result:
 Open `/admin/client-visibility`.
 
 - [ ] Generate or inspect a client visibility token link if the workflow already exists for the tenant.
+- [ ] Confirm links generated from `https://navastrat.co` use the product domain.
 - [ ] Open the public client portal link.
 - [ ] Confirm the portal is token-scoped.
 - [ ] Confirm it does not expose internal dashboards, provider diagnostics, provider raw payloads, auth config, private driver data, or unreviewed assets.

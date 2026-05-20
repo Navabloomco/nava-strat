@@ -12,11 +12,11 @@ Brand and domain architecture:
 
 - Legal/company/operator brand: Nava Bloom Co. / Navabloomco.
 - Product/SaaS brand: Nava Strat.
-- Product domain: `https://navastrat.co`.
+- Primary product domain: `https://navastrat.co`.
 - Existing company domain: `https://www.navabloomco.com`.
 - Existing Vercel production domain: `https://nava-strat.vercel.app`.
 
-Keep the existing company and Vercel domains working while adding Nava Strat product-domain support. Product URL generation should prefer request origin where appropriate and use `NEXT_PUBLIC_SITE_URL` as the canonical fallback instead of hardcoding production domains.
+Keep the existing company and Vercel domains working during the product-domain transition. Public metadata and canonical product URLs should resolve to `https://navastrat.co` through `NEXT_PUBLIC_SITE_URL`, while product URL generation should still prefer request origin where appropriate and use `NEXT_PUBLIC_SITE_URL` as the canonical fallback instead of hardcoding production domains throughout app logic.
 
 The product combines:
 
@@ -340,6 +340,7 @@ Nava Eye and Nava Eye Watch use explicit safe capability flags derived from the 
 - Raw provider payloads are server-side diagnostics/storage only and must not be returned to normal browser UI.
 - Production domains are part of deployment configuration, not tenant access control. `navastrat.co`, `www.navastrat.co`, `www.navabloomco.com`, `navabloomco.com`, and `nava-strat.vercel.app` may all serve the app during transition, but tenant authorization must still come from Supabase auth plus `company_users`.
 - Supabase Auth redirect URLs must include every production domain that may start or complete an auth flow. Do not remove existing allowed URLs when adding `navastrat.co`.
+- Production `NEXT_PUBLIC_SITE_URL` should be `https://navastrat.co` once Supabase Auth redirect URLs are configured for the product domain.
 - Client visibility links should remain origin-aware and fall back to `NEXT_PUBLIC_SITE_URL`; do not hardcode `navastrat.co` into token link generation.
 
 ## 7. Provider Integration Model
