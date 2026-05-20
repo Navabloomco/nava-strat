@@ -8,6 +8,16 @@ This document is the repo source of truth for the current Nava Strat product sur
 
 Nava Strat is a multi-tenant fleet intelligence SaaS platform for transport, logistics, field service, construction, and mixed fleet operators.
 
+Brand and domain architecture:
+
+- Legal/company/operator brand: Nava Bloom Co. / Navabloomco.
+- Product/SaaS brand: Nava Strat.
+- Product domain: `https://navastrat.co`.
+- Existing company domain: `https://www.navabloomco.com`.
+- Existing Vercel production domain: `https://nava-strat.vercel.app`.
+
+Keep the existing company and Vercel domains working while adding Nava Strat product-domain support. Product URL generation should prefer request origin where appropriate and use `NEXT_PUBLIC_SITE_URL` as the canonical fallback instead of hardcoding production domains.
+
 The product combines:
 
 - Company onboarding and operating context.
@@ -328,6 +338,9 @@ Nava Eye and Nava Eye Watch use explicit safe capability flags derived from the 
 - Tenant data should be scoped by `company_id` before returning or mutating.
 - Public client portal routes must remain token-scoped and must not expose internal company dashboards, provider payloads, driver private data, or unreviewed assets.
 - Raw provider payloads are server-side diagnostics/storage only and must not be returned to normal browser UI.
+- Production domains are part of deployment configuration, not tenant access control. `navastrat.co`, `www.navastrat.co`, `www.navabloomco.com`, `navabloomco.com`, and `nava-strat.vercel.app` may all serve the app during transition, but tenant authorization must still come from Supabase auth plus `company_users`.
+- Supabase Auth redirect URLs must include every production domain that may start or complete an auth flow. Do not remove existing allowed URLs when adding `navastrat.co`.
+- Client visibility links should remain origin-aware and fall back to `NEXT_PUBLIC_SITE_URL`; do not hardcode `navastrat.co` into token link generation.
 
 ## 7. Provider Integration Model
 
@@ -596,6 +609,9 @@ Review later should:
 - Do not let invoice record pages crash when the additive `billing_invoices` SQL has not been applied; show setup-required guidance instead.
 - Do not let pilot readiness mutate tenant setup or expose secrets; it is a platform-owner-only checklist built from safe counts and summaries.
 - Do not let analytics event recording break a primary user workflow. Analytics metadata must be sanitized and must not contain provider secrets, raw payloads, tokens, cookies, passwords, driver private data, or full Nava Eye prompt/answer text.
+- Do not remove `navabloomco.com` or `nava-strat.vercel.app` support when enabling `navastrat.co`.
+- Do not edit real environment files with domain changes that could affect production secrets. Configure product-domain values in Vercel/Supabase dashboards.
+- Do not use generic old Vercel DNS defaults for `navastrat.co`; use the exact Vercel Project Settings -> Domains DNS values shown for the domain.
 
 ## 11. Recent Important Commits/Features
 
