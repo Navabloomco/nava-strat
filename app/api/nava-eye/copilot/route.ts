@@ -285,7 +285,7 @@ export async function POST(req: Request) {
             {
               role: "system",
               content:
-                "You are Nava Eye, a company operations intelligence analyst for logistics. Use only the provided data. If evidence is missing, say so. Answer concisely and recommend the next operational action. Include relevant active memories if they help answer the question. For fleet status answers, describe user-facing times in the provided operational timezone, normally EAT/Kenya time, and do not present UTC unless the user explicitly asks for UTC.",
+                "You are Nava Eye, a company operations intelligence analyst for logistics. Use only the provided data. If evidence is missing, say so. Answer concisely and recommend the next operational action. Include relevant active memories if they help answer the question. For fleet status answers, describe user-facing times in the provided operational timezone, normally EAT/Kenya time, and do not present UTC unless the user explicitly asks for UTC. Translate locations into operational place context and do not show raw coordinates unless the user explicitly asks for GPS/coordinates or no readable place label exists.",
             },
             {
               role: "user",
@@ -711,10 +711,22 @@ function buildFallbackAnswer(context: any): string {
               t.freshness_minutes === null
                 ? "freshness unknown"
                 : `${t.freshness_minutes} minutes old`;
-            const location = t.location ? ` near ${t.location}` : "";
-            return `${t.registration || t.truck_id}${location}, last seen ${formatReadableDate(
+            const location = t.location
+              ? ` near ${t.location}`
+              : formatOperationalLocation(t, {
+                  includeCoordinates: Boolean(context.coordinate_request),
+                  gpsFallback: hasCoordinates(t)
+                    ? "at an unresolved GPS point"
+                    : null,
+                });
+            const locationText = location
+              ? String(location).startsWith(" near ")
+                ? location
+                : ` ${location}`
+              : "";
+            return `${t.registration || t.truck_id}${locationText}, last seen ${formatReadableDate(
               t.last_seen_at
-            )} at ${t.latitude}, ${t.longitude} (${freshness})`;
+            )} (${freshness})`;
           })
           .join("; ")}.`
       );
@@ -1124,30 +1136,72 @@ function buildTruckStatusFallbackAnswer(context: any) {
   const latestPoint = latestTelemetry || truck;
   const lastSeenAt = latestTelemetry?.recorded_at || truck.last_seen_at || null;
   const speed = finiteNumberOrNull(latestTelemetry?.speed);
-  const location = formatOperationalLocation({
+  const locationPoint = {
     ...truck,
     latitude: latestPoint?.latitude ?? truck.latitude,
     longitude: latestPoint?.longitude ?? truck.longitude,
+  };
+  const location = formatOperationalLocation(locationPoint, {
+    includeCoordinates: Boolean(context.coordinate_request),
+    gpsFallback: null,
   });
+  const hasGpsPoint = hasCoordinates(locationPoint);
+  const freshnessMinutes = freshnessMinutesFromNow(lastSeenAt);
+  const stale = freshnessMinutes !== null && freshnessMinutes > 60;
   const parts: string[] = [];
 
-  const locationText = location
-    ? `${matchedLabel} is currently ${location}`
-    : `${matchedLabel} is in the enabled fleet, but I do not have a clean location label`;
-  parts.push(`${locationText}. Latest telemetry was ${formatReadableDate(lastSeenAt)}.`);
+  if (location) {
+    parts.push(
+      stale
+        ? `${matchedLabel}'s last known location is ${location}.`
+        : `${matchedLabel} is ${location}.`
+    );
+    if (context.coordinate_request && hasGpsPoint) {
+      parts.push(
+        `Coordinates: ${formatCoordinate(locationPoint.latitude)}, ${formatCoordinate(
+          locationPoint.longitude
+        )}.`
+      );
+    }
+  } else if (hasGpsPoint) {
+    const coordinateText = context.coordinate_request
+      ? ` Coordinates: ${formatCoordinate(locationPoint.latitude)}, ${formatCoordinate(
+          locationPoint.longitude
+        )}.`
+      : "";
+    parts.push(
+      `I only have a GPS point for ${matchedLabel}, not a resolved place name yet.${coordinateText}`
+    );
+  } else {
+    parts.push(
+      `${matchedLabel} is in the enabled fleet, but I do not have a clean location label yet.`
+    );
+  }
+
+  parts.push(`Last update: ${formatReadableDate(lastSeenAt)}.`);
 
   if (speed !== null) {
-    if (speed <= 2) {
+    if (stale) {
+      const state =
+        speed > 5
+          ? "moving at the last update"
+          : speed <= 2
+            ? "stopped/stationary at the last update"
+            : "low-speed/unclear at the last update";
       parts.push(
-        `Latest speed is ${formatNumber(speed)}, so it currently appears stationary or stopped. I am not treating that as confirmed engine-on idling without ignition or engine-status data.`
+        `Last known read: ${state}, speed ${formatNumber(speed)}. Because the timestamp is stale, I would treat this as last-known status rather than live status.`
+      );
+    } else if (speed <= 2) {
+      parts.push(
+        `Current read: stopped/stationary, speed ${formatNumber(speed)}. I am not treating that as confirmed engine-on idling without ignition or engine-status data.`
       );
     } else if (speed > 5) {
       parts.push(
-        `Latest speed is ${formatNumber(speed)}, so it does not look stationary right now.`
+        `Current read: moving, speed ${formatNumber(speed)}.`
       );
     } else {
       parts.push(
-        `Latest speed is ${formatNumber(speed)}, so the current motion state is low/unclear rather than a confirmed idle.`
+        `Current read: low-speed/unclear, speed ${formatNumber(speed)}.`
       );
     }
   } else {
@@ -2236,7 +2290,7 @@ function formatTimelineBlock(block: any, timeZone: string) {
     latitude: block.end_latitude,
     longitude: block.end_longitude,
     geofence_match: block.geofence_match,
-  });
+  }, { gpsFallback: null });
 
   return `- ${state}: ${formatTimelineTime(block.start_at, timeZone)} to ${formatTimelineTime(
     block.end_at,
@@ -2299,24 +2353,59 @@ function formatJourneyBrief(journey: any) {
   return `- ${reference}${client}${route ? ` - ${route}` : ""}${status}${created}`;
 }
 
-function formatOperationalLocation(value: any) {
+type OperationalLocationOptions = {
+  includeCoordinates?: boolean;
+  gpsFallback?: string | null;
+};
+
+function formatOperationalLocation(value: any, options: OperationalLocationOptions = {}) {
   if (!value) return null;
+  if (value.provider_location_label) {
+    return formatProviderLocationLabel(value.provider_location_label);
+  }
+  if (value.location_label) {
+    return formatProviderLocationLabel(value.location_label);
+  }
+  if (value.location_name) {
+    return formatProviderLocationLabel(value.location_name);
+  }
   if (value.geofence_match?.name) {
     return `inside ${value.geofence_match.name}`;
   }
-  if (value.provider_location_label) {
-    return `at ${value.provider_location_label}`;
-  }
-  if (value.location_label) {
-    return `at ${value.location_label}`;
-  }
-  if (value.location_name) {
-    return `near ${value.location_name}`;
-  }
   if (hasCoordinates(value)) {
-    return `at ${formatCoordinate(value.latitude)}, ${formatCoordinate(value.longitude)}`;
+    if (options.includeCoordinates) {
+      return `at coordinates ${formatCoordinate(value.latitude)}, ${formatCoordinate(value.longitude)}`;
+    }
+    return options.gpsFallback === undefined ? "at an unresolved GPS point" : options.gpsFallback;
   }
   return null;
+}
+
+function formatProviderLocationLabel(value: any) {
+  const label = String(value || "").trim().replace(/\s+/g, " ");
+  if (!label) return null;
+
+  const distanceMatch = label.match(
+    /^([0-9]+(?:\.[0-9]+)?)\s*(km|kilometres|kilometers|kms?)\s+([a-z -]+?)\s+of\s+(.+)$/i
+  );
+  if (distanceMatch) {
+    const [, distance, , directionRaw, placeRaw] = distanceMatch;
+    const direction = directionRaw.trim().toLowerCase();
+    const place = toTitleCase(placeRaw.trim());
+    return `near ${place}, about ${Number(distance).toLocaleString()} km ${direction} of town`;
+  }
+
+  if (/^(at|near|inside)\b/i.test(label)) {
+    return label;
+  }
+
+  return `near ${label}`;
+}
+
+function toTitleCase(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/\b[a-z]/g, (letter) => letter.toUpperCase());
 }
 
 function formatEventLocation(event: any) {
@@ -2352,6 +2441,13 @@ function formatDriverAssignment(assignment: any) {
 
 function formatReadableDate(value: any) {
   return formatOperationalDateTime(value, DEFAULT_OPERATIONAL_TIME_ZONE);
+}
+
+function freshnessMinutesFromNow(value: any) {
+  const timestamp = new Date(value || 0).getTime();
+  if (!Number.isFinite(timestamp)) return null;
+  const minutes = Math.floor((Date.now() - timestamp) / 60000);
+  return Number.isFinite(minutes) ? minutes : null;
 }
 
 function hasCoordinates(value: any) {

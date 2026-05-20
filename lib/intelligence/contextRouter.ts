@@ -112,6 +112,7 @@ export async function routeContext(
       fleetAssetCounts.imported_assets > 0 && fleetAssetCounts.enabled_assets === 0,
     spares_cost_visible: sparesCostVisible,
     financials_visible: financialsVisible,
+    coordinate_request: detectCoordinateRequest(lower),
     capabilities: sanitizeCapabilities(roleCapabilities),
     permission_boundary: permissionBoundary,
     display_timezone: {
@@ -679,6 +680,12 @@ function detectInvestigationFocus(lower: string) {
     route_focus:
       /\b(route|trip|journey|client|mombasa|nairobi|kampala|port|yard)\b/.test(lower),
   };
+}
+
+function detectCoordinateRequest(lower: string) {
+  return /\b(coordinate|coordinates|gps|latitude|longitude|lat\/long|lat long|map pin|exact point|exact location|map link)\b/.test(
+    lower
+  );
 }
 
 function detectStopMotionTimelineComparison(lower: string) {
