@@ -63,6 +63,9 @@ Open `/admin/providers?companyId=<id>`.
 - [ ] Open `/admin/providers/new?companyId=<id>` as owner/admin/platform-owner.
 - [ ] As a customer owner/admin, confirm the guided Add Provider flow shows only public/supported providers, Custom API provider, and Request assisted setup.
 - [ ] Select Custom API provider and confirm the guided form collects provider identity, auth method, endpoint URL, row path, labeled field mappings, and business-language signal capability without exposing internal templates.
+- [ ] Use Test Endpoint & Detect on a safe provider login endpoint and confirm token path suggestions appear without raw secrets or full payloads.
+- [ ] Use Test Endpoint & Detect on a safe fleet/current-location endpoint and confirm row path and field mapping suggestions can be applied.
+- [ ] Confirm Test Endpoint & Detect rejects localhost/private/internal/metadata URLs.
 - [ ] Confirm Custom API provider creation stores the connection inactive and does not run sync automatically.
 - [ ] As a customer owner/admin, confirm internal templates such as Meitrack examples, Generic REST GPS, and Generic CSV Distance Report are hidden.
 - [ ] As a platform owner, confirm internal templates are visible only under internal/platform setup labeling.

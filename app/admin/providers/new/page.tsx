@@ -85,6 +85,8 @@ export default function NewProviderPage() {
     notes: "",
   });
   const [customForm, setCustomForm] = useState(INITIAL_CUSTOM_PROVIDER_FORM);
+  const [detectResults, setDetectResults] = useState<Record<string, any>>({});
+  const [testingEndpoint, setTestingEndpoint] = useState("");
 
   useEffect(() => {
     const companyId = companyIdFromLocation();
@@ -389,6 +391,101 @@ export default function NewProviderPage() {
     window.location.href = `/admin/providers${companyQuery(selectedCompanyId)}`;
   }
 
+  async function handleTestCustomEndpoint(target: "login" | "fleet") {
+    const url =
+      target === "login"
+        ? customForm.login_url.trim()
+        : customForm.endpoint_url.trim();
+    if (!url) {
+      alert(
+        target === "login"
+          ? "Login endpoint URL is required."
+          : "Fleet/current location endpoint URL is required."
+      );
+      return;
+    }
+
+    setTestingEndpoint(target);
+
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    if (!session?.access_token) {
+      alert("Session expired. Please log in again.");
+      setTestingEndpoint("");
+      window.location.href = "/login";
+      return;
+    }
+
+    try {
+      const res = await fetch("/api/providers/test-endpoint", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          ...(selectedCompanyId ? { companyId: selectedCompanyId } : {}),
+          mode: target,
+          url,
+          method: target === "login" ? "POST" : customForm.http_method,
+          auth_method: target === "login" ? "post_login" : customForm.auth_method,
+          api_key_header: customForm.api_key_header.trim() || "x-api-key",
+          api_key: customForm.api_key,
+          bearer_token: customForm.bearer_token,
+          username: customForm.username,
+          password: customForm.password,
+          login_username_field:
+            customForm.login_username_field.trim() || "username",
+          login_secret_field:
+            customForm.login_secret_field.trim() || "password",
+          request_body: target === "fleet" ? customForm.request_body.trim() : "",
+        }),
+      });
+      const data = await res.json();
+      setDetectResults((current) => ({
+        ...current,
+        [target]: res.ok && data.success ? data : { error: data.error || "Endpoint test failed" },
+      }));
+    } catch (err: any) {
+      setDetectResults((current) => ({
+        ...current,
+        [target]: { error: err.message || "Endpoint test failed" },
+      }));
+    } finally {
+      setTestingEndpoint("");
+    }
+  }
+
+  function applyEndpointDetection(target: "login" | "fleet") {
+    const result = detectResults[target];
+    if (!result || result.error) return;
+
+    if (target === "login") {
+      const tokenPath = result.token_like_paths?.[0];
+      if (tokenPath) updateCustomForm({ login_token_path: tokenPath });
+      return;
+    }
+
+    const suggestions = result.field_mapping_suggestions || {};
+    const patch: Record<string, string> = {};
+    if (result.row_path_suggestions?.[0]) {
+      patch.row_path = result.row_path_suggestions[0];
+    }
+    if (suggestions.vehicle) patch.vehicle_field = suggestions.vehicle;
+    if (suggestions.latitude) patch.latitude_field = suggestions.latitude;
+    if (suggestions.longitude) patch.longitude_field = suggestions.longitude;
+    if (suggestions.timestamp) patch.timestamp_field = suggestions.timestamp;
+    if (suggestions.speed) patch.speed_field = suggestions.speed;
+    if (suggestions.location_label) patch.location_label_field = suggestions.location_label;
+    if (suggestions.fuel_level) patch.fuel_level_field = suggestions.fuel_level;
+    if (suggestions.ignition) patch.ignition_field = suggestions.ignition;
+    if (suggestions.engine_rpm) patch.rpm_field = suggestions.engine_rpm;
+    if (suggestions.odometer) patch.odometer_field = suggestions.odometer;
+    updateCustomForm(patch);
+  }
+
   function handleProviderSelection(value: string) {
     setSelectedTemplateId(value);
     if (value === REQUEST_SETUP_OPTION) {
@@ -564,6 +661,13 @@ export default function NewProviderPage() {
                 updateForm={updateCustomForm}
                 saving={saving}
                 onCreate={handleCreateProvider}
+                detectResults={detectResults}
+                testingEndpoint={testingEndpoint}
+                onTestEndpoint={handleTestCustomEndpoint}
+                onApplyDetection={applyEndpointDetection}
+                canShowDebug={Boolean(
+                  capabilities.can_edit_advanced_provider_config
+                )}
               />
             )}
 
@@ -905,11 +1009,21 @@ function CustomApiProviderForm({
   updateForm,
   saving,
   onCreate,
+  detectResults,
+  testingEndpoint,
+  onTestEndpoint,
+  onApplyDetection,
+  canShowDebug,
 }: {
   form: typeof INITIAL_CUSTOM_PROVIDER_FORM;
   updateForm: (patch: Record<string, string>) => void;
   saving: boolean;
   onCreate: () => void;
+  detectResults: Record<string, any>;
+  testingEndpoint: string;
+  onTestEndpoint: (target: "login" | "fleet") => void;
+  onApplyDetection: (target: "login" | "fleet") => void;
+  canShowDebug: boolean;
 }) {
   const isPost = form.http_method === "POST";
 
@@ -1046,6 +1160,27 @@ function CustomApiProviderForm({
             </>
           )}
         </div>
+
+        {form.auth_method === "post_login" && (
+          <>
+            <button
+              type="button"
+              style={secondaryButtonStyle}
+              disabled={testingEndpoint === "login"}
+              onClick={() => onTestEndpoint("login")}
+            >
+              {testingEndpoint === "login"
+                ? "TESTING LOGIN ENDPOINT..."
+                : "TEST ENDPOINT & DETECT TOKEN"}
+            </button>
+            <EndpointDetectionResult
+              target="login"
+              result={detectResults.login}
+              canShowDebug={canShowDebug}
+              onApply={() => onApplyDetection("login")}
+            />
+          </>
+        )}
       </ProviderWizardSection>
 
       <ProviderWizardSection
@@ -1095,6 +1230,23 @@ function CustomApiProviderForm({
             </div>
           </div>
         )}
+
+        <button
+          type="button"
+          style={secondaryButtonStyle}
+          disabled={testingEndpoint === "fleet"}
+          onClick={() => onTestEndpoint("fleet")}
+        >
+          {testingEndpoint === "fleet"
+            ? "TESTING FLEET ENDPOINT..."
+            : "TEST ENDPOINT & DETECT FIELDS"}
+        </button>
+        <EndpointDetectionResult
+          target="fleet"
+          result={detectResults.fleet}
+          canShowDebug={canShowDebug}
+          onApply={() => onApplyDetection("fleet")}
+        />
       </ProviderWizardSection>
 
       <ProviderWizardSection
@@ -1206,6 +1358,139 @@ function CustomApiProviderForm({
       </button>
     </div>
   );
+}
+
+function EndpointDetectionResult({
+  target,
+  result,
+  canShowDebug,
+  onApply,
+}: {
+  target: "login" | "fleet";
+  result: any;
+  canShowDebug: boolean;
+  onApply: () => void;
+}) {
+  if (!result) return null;
+
+  if (result.error) {
+    return <div style={requestErrorStyle}>{result.error}</div>;
+  }
+
+  const blockers = Array.isArray(result.setup_blockers)
+    ? result.setup_blockers
+    : [];
+  const tokenPath = result.token_like_paths?.[0] || "";
+  const rowPath = result.row_path_suggestions?.[0] || "";
+  const suggestions = result.field_mapping_suggestions || {};
+  const suggestedFields = Object.entries(suggestions)
+    .filter(([, value]) => Boolean(value))
+    .slice(0, 10);
+  const canApply =
+    target === "login" ? Boolean(tokenPath) : Boolean(rowPath || suggestedFields.length);
+
+  return (
+    <div style={detectionResultStyle}>
+      <div style={detectionHeaderStyle}>
+        <div>
+          <div style={detectionTitleStyle}>
+            Endpoint response detected
+          </div>
+          <div style={detectionMetaStyle}>
+            HTTP {result.status_code} · {result.response_type || "unknown"} response
+            {result.content_type ? ` · ${result.content_type}` : ""}
+          </div>
+        </div>
+        {canApply && (
+          <button type="button" style={smallButtonStyle} onClick={onApply}>
+            Apply suggestions
+          </button>
+        )}
+      </div>
+
+      {blockers.length > 0 && (
+        <div style={detectionWarningStyle}>
+          {blockers.map((blocker: string) => (
+            <div key={blocker}>{blocker}</div>
+          ))}
+        </div>
+      )}
+
+      {target === "login" ? (
+        <div style={detectionGridStyle}>
+          <PreviewMetric
+            label="Token path suggestion"
+            value={tokenPath || "No token-like path found"}
+          />
+          <PreviewMetric
+            label="Top-level keys"
+            value={(result.top_level_keys || []).join(", ") || "none detected"}
+          />
+        </div>
+      ) : (
+        <>
+          <div style={detectionGridStyle}>
+            <PreviewMetric
+              label="Row path suggestion"
+              value={rowPath || "No row array detected"}
+            />
+            <PreviewMetric
+              label="Array paths"
+              value={(result.array_paths || []).slice(0, 3).join(", ") || "none detected"}
+            />
+          </div>
+          {suggestedFields.length > 0 && (
+            <div style={suggestionListStyle}>
+              {suggestedFields.map(([key, value]) => (
+                <div key={key} style={suggestionItemStyle}>
+                  <span>{fieldSuggestionLabel(key)}</span>
+                  <strong>{String(value)}</strong>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
+      {canShowDebug && (
+        <details style={templateAdvancedStyle}>
+          <summary style={templateAdvancedSummaryStyle}>
+            Sanitized debug structure
+          </summary>
+          <pre style={debugPreStyle}>
+            {JSON.stringify(
+              {
+                top_level_keys: result.top_level_keys,
+                array_paths: result.array_paths,
+                token_like_paths: result.token_like_paths,
+                sanitized_sample: result.sanitized_sample,
+              },
+              null,
+              2
+            )}
+          </pre>
+        </details>
+      )}
+    </div>
+  );
+}
+
+function fieldSuggestionLabel(value: string) {
+  const labels: Record<string, string> = {
+    vehicle: "Vehicle",
+    latitude: "Latitude",
+    longitude: "Longitude",
+    speed: "Speed",
+    timestamp: "Timestamp",
+    location_label: "Location label",
+    ignition: "Ignition",
+    engine_rpm: "RPM",
+    fuel_level: "Fuel/tank level",
+    odometer: "Odometer",
+    mileage: "Mileage",
+    violations: "Violations",
+  };
+  return labels[value] || value;
 }
 
 function ProviderWizardSection({
@@ -1638,6 +1923,95 @@ const warningStyle = {
   color: "#92400e",
   fontSize: 13,
   lineHeight: 1.6,
+};
+
+const detectionResultStyle = {
+  marginTop: 14,
+  border: "1px solid #bae6fd",
+  background: "#f0f9ff",
+  borderRadius: 12,
+  padding: 14,
+};
+
+const detectionHeaderStyle = {
+  display: "flex",
+  justifyContent: "space-between",
+  gap: 12,
+  alignItems: "flex-start",
+};
+
+const detectionTitleStyle = {
+  color: "#0f172a",
+  fontSize: 14,
+  fontWeight: 850,
+};
+
+const detectionMetaStyle = {
+  color: "#64748b",
+  fontSize: 12,
+  lineHeight: 1.5,
+  marginTop: 3,
+};
+
+const detectionGridStyle = {
+  display: "grid",
+  gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+  gap: 10,
+  marginTop: 12,
+};
+
+const detectionWarningStyle = {
+  marginTop: 12,
+  background: "#fff7ed",
+  border: "1px solid #fed7aa",
+  borderRadius: 10,
+  padding: 10,
+  color: "#9a3412",
+  fontSize: 12,
+  lineHeight: 1.6,
+};
+
+const suggestionListStyle = {
+  display: "grid",
+  gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+  gap: 8,
+  marginTop: 12,
+};
+
+const suggestionItemStyle = {
+  display: "flex",
+  flexDirection: "column" as const,
+  gap: 4,
+  border: "1px solid #dbeafe",
+  background: "#fff",
+  borderRadius: 10,
+  padding: 10,
+  color: "#334155",
+  fontSize: 12,
+};
+
+const smallButtonStyle = {
+  background: "#0f172a",
+  color: "#fff",
+  border: "none",
+  borderRadius: 8,
+  padding: "8px 10px",
+  fontSize: 12,
+  fontWeight: 850,
+  cursor: "pointer",
+  whiteSpace: "nowrap" as const,
+};
+
+const debugPreStyle = {
+  marginTop: 10,
+  background: "#0f172a",
+  color: "#e2e8f0",
+  borderRadius: 10,
+  padding: 12,
+  overflow: "auto",
+  fontSize: 12,
+  lineHeight: 1.5,
+  maxHeight: 320,
 };
 
 const noticeStyle = {
