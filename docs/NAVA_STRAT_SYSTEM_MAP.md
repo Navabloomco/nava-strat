@@ -146,7 +146,7 @@ The main product principle is convenience. Every user-facing page should make th
 | --- | --- |
 | `GET/POST /api/providers` | Provider Vault list/create. Supports platform-owner `companyId` context. Sanitizes provider credentials in responses. |
 | `GET/PATCH /api/providers/[id]` | Provider detail/update. Supports platform-owner `companyId` context for safe tenant-scoped updates. Platform-owner-only advanced fleet config including supplemental feeds and auth profiles. |
-| `POST /api/providers/[id]/test` | Tests provider sync in the resolved tenant context and returns sanitized diagnostics, including safe telemetry capability summary counts when available. |
+| `POST /api/providers/[id]/test` | Tests provider sync in the resolved tenant context and returns sanitized diagnostics, including safe telemetry capability and distance-evidence summary counts when available. |
 | `GET /api/providers/templates` | Provider templates, including verified connection templates and safe setup-only signal-mapping examples such as the Meitrack CAN Bus onboarding template. No live credentials. |
 | `GET/POST /api/providers/setup-requests` | Provider setup request list/create. |
 | `PATCH /api/providers/setup-requests/[id]` | Provider setup request status management. |
@@ -255,6 +255,7 @@ The main product principle is convenience. Every user-facing page should make th
 | `provider_templates` | Reusable provider setup templates. Internal setup-only templates may document signal mappings for future providers without live credentials or endpoints. |
 | `fleet_assets` | Imported provider assets, latest asset state, review status, intelligence enablement, billing readiness, and asset telemetry capability profile. |
 | `telemetry_logs` | Historical telemetry points from provider sync: location, speed, fuel level, normalized engine/ignition/fuel/tank signal placeholders where supported, provider location label, validation, capability flags, and raw payload server-side. |
+| `provider_trip_summaries` | Recommended additive table for provider report/trip-level distance evidence such as start/end odometer, provider-reported mileage, motion duration, start/end locations, violations, distance source, and distance quality. |
 | `telemetry_events` | Derived operational events and alert context annotations. |
 | `location_cache` | Reverse-geocoded location cache. |
 | `fuel_risk_scores` | Fuel risk scoring output from fuel risk engine. |
@@ -414,7 +415,7 @@ This is intentional. Imported provider assets must be reviewed before appearing 
 
 ### Supplemental Enrichment Feeds
 
-`tracking_providers.fleet_config.supplemental_feeds` supports provider-agnostic enrichment feeds for data that is not present in the primary feed, such as fuel, odometer, engine hours, temperature, battery voltage, or driver name.
+`tracking_providers.fleet_config.supplemental_feeds` supports provider-agnostic enrichment feeds for data that is not present in the primary feed, such as fuel, distance summaries, odometer health, engine hours, temperature, battery voltage, or driver name.
 
 Supported feed capabilities:
 
@@ -426,7 +427,32 @@ Supported feed capabilities:
 - Explicit field mappings.
 - Sanitized diagnostics.
 
-Currently persisted enrichment is intentionally conservative. `fuel_level` is the main end-to-end stored enrichment field. Other mapped fields may be diagnosed or merged internally only where code supports them.
+Currently persisted enrichment is intentionally conservative. `fuel_level` is the main end-to-end stored point enrichment field. Provider trip/report-level distance fields should flow into `provider_trip_summaries` when the additive distance schema exists, not into every `telemetry_logs` row unless a provider truly sends point-level odometer/distance signals.
+
+### Provider-Agnostic Distance Intelligence
+
+Distance is its own evidence layer. Nava must track the source and reliability of distance data instead of assuming physical odometer values are true.
+
+Separation rules:
+
+- `telemetry_logs` are point-in-time telemetry pings.
+- `provider_trip_summaries` are provider trip/report-level records such as start/end odometer, provider mileage, motion duration, start/end locations, and violations.
+- `fleet_assets` carries current odometer health, distance source preference, virtual/manual odometer baseline, last distance update time, and distance quality metadata when the additive columns exist.
+
+Distance detection rules:
+
+- `odometer_delta_km = end_odometer_km - start_odometer_km`.
+- If provider-reported mileage is meaningful while odometer delta is zero, mark odometer health as `static_zero` or `static_nonzero` depending on the odometer values.
+- If odometer delta is negative, mark `rollover_suspected`.
+- If odometer delta and provider-reported mileage disagree heavily, mark `mismatch`.
+- Provider `Mileage` is provider-reported mileage unless provider docs confirm it is GPS-calculated.
+- GPS-calculated distance from coordinate pings is a future fallback and should not be confused with provider-reported mileage.
+
+Nava Eye distance wording should follow the evidence:
+
+- Broken/static odometer: "The dashboard odometer is not reliable for this asset. Distance should use provider-reported mileage or GPS-derived movement until the odometer is inspected."
+- Valid odometer: "Physical odometer movement is consistent with provider mileage."
+- Mismatch: "Distance signals disagree: the provider reported X km, while the odometer changed by Y km. Treat the dashboard odometer as suspect until inspected."
 
 ### Provider-Agnostic Telemetry Capability Model
 
@@ -493,6 +519,7 @@ Current known BlueTrax state:
   - speed
   - unit_id
 - Primary feed does not include the Fleet Current Status `Current Fuel` column.
+- Fleet Current Status/report exports may include trip-level distance evidence such as `StartOdometer`, `EndOdometer`, `Mileage`, `MotionDuration`, `StartLocation`, `EndLocation`, and `Violations`. These are provider report summaries, not per-ping telemetry fields.
 - BlueTrax web UI Fleet Current Status uses:
   - `POST https://api.bluetrax.co.ke/rest/analytics/vehicle`
   - `reportType = FleetCurrentStatus`
@@ -511,6 +538,7 @@ Nava has generic support for the needed shape:
 Current limitation:
 
 - BlueTrax current fuel will not ingest until the configured supplemental auth profile successfully captures the correct web analytics token or BlueTrax provides official report/API access for that endpoint.
+- BlueTrax distance summaries should use provider-reported `Mileage` when odometer values are static or zero; do not treat `StartOdometer = 0` and `EndOdometer = 0` as proof that the truck did not move when `Mileage` is non-zero.
 - Do not paste browser cookies, session tokens, or Authorization values into config, chat, logs, or docs.
 - Do not scrape the visual UI unless explicitly approved as a separate product/security decision.
 

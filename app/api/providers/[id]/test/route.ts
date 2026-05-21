@@ -112,6 +112,25 @@ function sanitizeCapabilitySummary(summary: any) {
   };
 }
 
+function sanitizeDistanceDiagnostics(diagnostics: any) {
+  if (!diagnostics || typeof diagnostics !== "object") return null;
+  return {
+    summary_rows_found: Number(diagnostics.summary_rows_found || 0),
+    summaries_normalized: Number(diagnostics.summaries_normalized || 0),
+    summaries_written: Number(diagnostics.summaries_written || 0),
+    asset_distance_updates: Number(diagnostics.asset_distance_updates || 0),
+    rows_skipped_over_cap: Number(diagnostics.rows_skipped_over_cap || 0),
+    setup_required: Boolean(diagnostics.setup_required),
+    table_missing: Boolean(diagnostics.table_missing),
+    fleet_asset_columns_missing: Boolean(diagnostics.fleet_asset_columns_missing),
+    odometer_health_counts: sanitizeCountMap(diagnostics.odometer_health_counts),
+    distance_source_counts: sanitizeCountMap(diagnostics.distance_source_counts),
+    errors: Array.isArray(diagnostics.errors)
+      ? diagnostics.errors.map((error: any) => String(error).slice(0, 200)).slice(0, 5)
+      : [],
+  };
+}
+
 function isEngineOrTankSignal(signal: string) {
   return [
     "ignition_on",
@@ -583,6 +602,7 @@ export async function POST(
       telemetry_count: telemetryCount || 0,
       latest_telemetry_at: latestTelemetryAt,
       capability_summary: sanitizeCapabilitySummary(result.capability_summary),
+      distance_diagnostics: sanitizeDistanceDiagnostics(result.distance_diagnostics),
     };
 
     responseBody.supplemental_diagnostics = sanitizeSupplementalDiagnostics(
@@ -610,6 +630,10 @@ export async function POST(
         placeholder_zero_signal_count: Object.values(
           result.capability_summary?.placeholder_zero_signal_counts || {}
         ).reduce((sum: number, count: any) => sum + Number(count || 0), 0),
+        distance_summary_rows_found:
+          result.distance_diagnostics?.summary_rows_found || 0,
+        distance_summaries_normalized:
+          result.distance_diagnostics?.summaries_normalized || 0,
         ...analyticsSupplementalCounts(result.supplemental_diagnostics),
       },
     });

@@ -60,7 +60,7 @@ const dataTypes = [
   },
   {
     name: "Enrichment feed",
-    includes: "Fuel, odometer, engine hours, battery, temperature, driver",
+    includes: "Fuel, distance summaries, odometer health, engine hours, battery, temperature, driver",
     purpose: "Adds operational fields that the primary feed may not include.",
   },
   {
@@ -138,8 +138,15 @@ const blueTraxConfig = `{
       "match_keys": ["vehicle", "unitId", "registration", "truck_id"],
       "mapping": {
         "fuel_level": "currentFuelLevel",
-        "odometer": "endOdometer",
+        "start_odometer": "startOdometer",
+        "end_odometer": "endOdometer",
         "mileage": "mileage",
+        "motion_duration": "motionDuration",
+        "start_location": "startLocation",
+        "end_location": "endLocation",
+        "violations_count": "violations",
+        "report_start_time": "startTime",
+        "report_end_time": "endTime",
         "driver_name": "driver"
       },
       "payload": {

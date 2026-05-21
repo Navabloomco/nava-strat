@@ -3403,7 +3403,7 @@ function formatInvestigationMeanings(caseFile: any, focus: any) {
     if (fuelTelemetry.fuel_telemetry_usable) {
       lines.push("- Fuel-level data is usable, so repeated drops or mismatches would be worth investigating against stops and receipts.");
     } else {
-      lines.push("- Fuel telemetry is weak here, so any fuel concern needs receipts, tank dips, stops, and journey distance to support it.");
+      lines.push("- Fuel telemetry is weak here, so any fuel concern needs receipts, tank dips, stops, and provider-reported distance or GPS-derived movement to support it.");
       if (dataQuality.flags?.includes("all_zero_or_unusable_fuel_sensor_fields")) {
         lines.push("- The all-zero/unknown fuel fields may be a provider mapping, calibration, or sensor issue.");
       }
@@ -3463,7 +3463,7 @@ function formatInvestigationNextChecks(caseFile: any, focus: any, label: string)
   const financialsVisible = Boolean(caseFile.financial_summary?.visible);
 
   if (focus?.fuel_focus) {
-    checks.push("- Compare fuel receipts, tank dips, route distance, and expected consumption for this vehicle.");
+    checks.push("- Compare fuel receipts, tank dips, provider-reported distance or GPS-derived movement, and expected consumption for this vehicle.");
     checks.push("- Check stops around the latest idle/fuel-event times.");
   }
   if (focus?.stops_focus) {

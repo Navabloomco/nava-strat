@@ -49,6 +49,16 @@ const SUPPORTED_SUPPLEMENTAL_MAPPING_TARGETS = new Set([
   "battery_voltage",
   "temperature",
   "driver_name",
+  "provider_trip_key",
+  "report_date",
+  "report_start_time",
+  "report_end_time",
+  "start_location",
+  "end_location",
+  "start_odometer",
+  "end_odometer",
+  "motion_duration",
+  "violations_count",
 ]);
 
 const BLOCKED_SUPPLEMENTAL_HEADER_NAMES = new Set([

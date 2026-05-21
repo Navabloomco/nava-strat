@@ -368,6 +368,7 @@ function ProviderCard({
       )}
 
       <ProviderCapabilityDiagnostics summary={testResult?.capability_summary} />
+      <ProviderDistanceDiagnostics diagnostics={testResult?.distance_diagnostics} />
 
       <ProviderEnrichmentDiagnostics
         diagnostics={testResult?.supplemental_diagnostics}
@@ -441,6 +442,77 @@ function ProviderCapabilityDiagnostics({ summary }: { summary: any }) {
         value={summary.placeholder_zero_signal_counts}
         mutedEmpty="No unsupported zero engine/fuel placeholders detected."
         includeZeroCounts
+      />
+    </section>
+  );
+}
+
+function ProviderDistanceDiagnostics({ diagnostics }: { diagnostics: any }) {
+  if (!diagnostics) return null;
+
+  return (
+    <section style={diagnosticsStyle}>
+      <div style={diagnosticsHeaderStyle}>
+        <div>
+          <div style={diagnosticsEyebrowStyle}>Distance intelligence</div>
+          <h4 style={diagnosticsTitleStyle}>Distance Evidence Summary</h4>
+        </div>
+        <div style={diagnosticsMetaStyle}>
+          {Number(diagnostics.summaries_normalized || 0).toLocaleString()} staged
+        </div>
+      </div>
+
+      <div style={diagnosticsSummaryGridStyle}>
+        <DiagnosticMetric
+          label="Report rows"
+          value={diagnostics.summary_rows_found}
+        />
+        <DiagnosticMetric
+          label="Summaries"
+          value={diagnostics.summaries_normalized}
+        />
+        <DiagnosticMetric
+          label="Written"
+          value={diagnostics.summaries_written}
+        />
+        <DiagnosticMetric
+          label="Asset updates"
+          value={diagnostics.asset_distance_updates}
+        />
+      </div>
+
+      {diagnostics.setup_required && (
+        <div style={diagnosticsErrorStyle}>
+          Distance schema setup is required before provider trip summaries or
+          asset odometer health can be stored.
+        </div>
+      )}
+
+      <DiagnosticFieldBlock
+        title="Odometer health"
+        value={diagnostics.odometer_health_counts}
+        mutedEmpty="No odometer health evidence found."
+        includeZeroCounts
+      />
+      <DiagnosticFieldBlock
+        title="Distance source"
+        value={diagnostics.distance_source_counts}
+        mutedEmpty="No distance source evidence found."
+        includeZeroCounts
+      />
+      <DiagnosticFieldBlock
+        title="Distance notes"
+        value={[
+          diagnostics.table_missing ? "provider_trip_summaries table missing" : "",
+          diagnostics.fleet_asset_columns_missing
+            ? "fleet_assets distance columns missing"
+            : "",
+          diagnostics.rows_skipped_over_cap
+            ? `${diagnostics.rows_skipped_over_cap} rows skipped over processing cap`
+            : "",
+          ...(diagnostics.errors || []),
+        ]}
+        mutedEmpty="No distance setup issues detected."
       />
     </section>
   );

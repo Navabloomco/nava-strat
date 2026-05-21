@@ -66,6 +66,8 @@ Open `/admin/providers?companyId=<id>`.
 - [ ] Confirm observed BlueTrax/JLCL rows show `GPS Intelligence` unless ignition/CAN/tank signals have been explicitly verified.
 - [ ] Confirm supported engine/tank signals show `none declared` for GPS-only providers.
 - [ ] Confirm placeholder zero signals are shown as safe counts only and do not upgrade capability.
+- [ ] Confirm distance diagnostics, if provider report rows exist, separate provider-reported mileage from physical odometer values.
+- [ ] Confirm static zero odometer values with non-zero mileage are treated as odometer-health issues, not as zero movement.
 - [ ] Confirm no secrets, tokens, cookies, Authorization values, raw provider payloads, or auth configs are visible.
 - [ ] Confirm enrichment diagnostics show safe counts/key names only.
 - [ ] Confirm BlueTrax current fuel limitation is treated as a provider-pending integration item, not a product failure.

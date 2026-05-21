@@ -8,6 +8,14 @@ import {
   telemetryCapabilityLabel,
   type ProviderCapabilityProfile,
 } from "../telemetry/capabilities";
+import {
+  DISTANCE_SUMMARY_FIELDS,
+  createDistanceDiagnostics,
+  getDistanceFieldFallbackKeys,
+  normalizeProviderTripSummary,
+  type DistanceDiagnostics,
+  type ProviderTripSummary,
+} from "../telemetry/distance";
 
 export type ProviderRecord = {
   id: string;
@@ -41,6 +49,7 @@ export type SyncResult = {
   sample_normalized?: any;
   supplemental_diagnostics?: SupplementalDiagnostics;
   capability_summary?: any;
+  distance_diagnostics?: DistanceDiagnostics;
   debug?: any;
 };
 
@@ -232,7 +241,6 @@ type TemplateCredentialOverrides = {
 const SUPPLEMENTAL_FIELDS = [
   "fuel_level",
   "odometer",
-  "mileage",
   "engine_hours",
   "engine_rpm",
   "engine_on",
@@ -244,6 +252,7 @@ const SUPPLEMENTAL_FIELDS = [
   "driver_name",
   "battery_voltage",
   "temperature",
+  ...DISTANCE_SUMMARY_FIELDS,
 ];
 
 const PERSISTED_SUPPLEMENTAL_FIELDS = new Set([
@@ -258,6 +267,7 @@ const PERSISTED_SUPPLEMENTAL_FIELDS = new Set([
   "fuel_volume_liters",
 ]);
 const MAX_UNMAPPED_AVAILABLE_KEYS = 50;
+const MAX_DISTANCE_SUMMARY_ROWS = 500;
 
 const DEFAULT_SUPPLEMENTAL_MATCH_KEYS = [
   "reg_no",
@@ -512,6 +522,12 @@ export async function runProviderSync(
       }
     }
 
+    const distanceDiagnostics = await processProviderTripSummaries(
+      provider,
+      supplemental.feeds,
+      providerCapabilityProfile
+    );
+
     return {
       success: errors.length === 0,
       message:
@@ -531,6 +547,7 @@ export async function runProviderSync(
         placeholder_zero_signal_counts: placeholderZeroSignalCounts,
         providerProfile: providerCapabilityProfile,
       }),
+      distance_diagnostics: distanceDiagnostics,
       debug: {
         errors,
         skipped_missing_identifier: skippedMissingIdentifier,
@@ -542,6 +559,7 @@ export async function runProviderSync(
           placeholder_zero_signal_counts: placeholderZeroSignalCounts,
           providerProfile: providerCapabilityProfile,
         }),
+        distance_diagnostics: distanceDiagnostics,
       },
     };
   } catch (err: any) {
@@ -656,6 +674,194 @@ async function insertTelemetryLogWithCapabilityFallback(payload: Record<string, 
     .insert(stripCapabilityTelemetryColumns(payload));
 
   return retryError;
+}
+
+async function processProviderTripSummaries(
+  provider: ProviderRecord,
+  feeds: SupplementalFeedRows[],
+  providerCapabilityProfile: ProviderCapabilityProfile
+) {
+  const diagnostics = createDistanceDiagnostics();
+  if (!provider.company_id || feeds.length === 0) return diagnostics;
+
+  const summaries: ProviderTripSummary[] = [];
+
+  for (const feed of feeds) {
+    for (const row of feed.rows) {
+      const summary = normalizeProviderTripSummary(row, feed.config.mapping || {}, {
+        companyId: provider.company_id,
+        providerId: provider.id,
+        providerTimezone: providerCapabilityProfile.provider_timezone,
+      });
+      if (!summary) continue;
+
+      diagnostics.summary_rows_found++;
+      if (summaries.length >= MAX_DISTANCE_SUMMARY_ROWS) {
+        diagnostics.rows_skipped_over_cap++;
+        continue;
+      }
+
+      summaries.push(summary);
+    }
+  }
+
+  diagnostics.summaries_normalized = summaries.length;
+  if (summaries.length === 0) return diagnostics;
+
+  const truckIds = Array.from(new Set(summaries.map((summary) => summary.truck_id)));
+  const { data: assets, error: assetError } = await supabaseAdmin
+    .from("fleet_assets")
+    .select("id, truck_id")
+    .eq("company_id", provider.company_id)
+    .eq("provider_id", provider.id)
+    .in("truck_id", truckIds);
+
+  if (assetError) {
+    diagnostics.errors.push(`Asset lookup failed: ${assetError.message}`);
+  }
+
+  const assetsByTruck = new Map(
+    (assets || []).map((asset: any) => [String(asset.truck_id || "").toUpperCase(), asset.id])
+  );
+
+  for (const summary of summaries) {
+    summary.asset_id = assetsByTruck.get(summary.truck_id.toUpperCase()) || null;
+    incrementFieldCount(diagnostics.odometer_health_counts, summary.odometer_health);
+    incrementFieldCount(diagnostics.distance_source_counts, summary.distance_source);
+
+    if (!diagnostics.table_missing) {
+      const writeResult = await writeProviderTripSummary(summary);
+      if (writeResult.tableMissing) {
+        diagnostics.table_missing = true;
+        diagnostics.setup_required = true;
+      } else if (writeResult.error) {
+        diagnostics.errors.push(writeResult.error);
+      } else {
+        diagnostics.summaries_written++;
+      }
+    }
+
+    if (summary.asset_id && !diagnostics.fleet_asset_columns_missing) {
+      const assetResult = await updateFleetAssetDistanceState(summary);
+      if (assetResult.columnsMissing) {
+        diagnostics.fleet_asset_columns_missing = true;
+        diagnostics.setup_required = true;
+      } else if (assetResult.error) {
+        diagnostics.errors.push(assetResult.error);
+      } else {
+        diagnostics.asset_distance_updates++;
+      }
+    }
+  }
+
+  diagnostics.errors = diagnostics.errors.slice(0, 10);
+  return diagnostics;
+}
+
+async function writeProviderTripSummary(summary: ProviderTripSummary) {
+  const payload = {
+    company_id: summary.company_id,
+    asset_id: summary.asset_id,
+    provider_id: summary.provider_id,
+    truck_id: summary.truck_id,
+    provider_trip_key: summary.provider_trip_key,
+    report_date: summary.report_date,
+    start_time: summary.start_time,
+    end_time: summary.end_time,
+    start_location: summary.start_location,
+    end_location: summary.end_location,
+    start_odometer_km: summary.start_odometer_km,
+    end_odometer_km: summary.end_odometer_km,
+    odometer_delta_km: summary.odometer_delta_km,
+    provider_mileage_km: summary.provider_mileage_km,
+    motion_duration_minutes: summary.motion_duration_minutes,
+    violations_count: summary.violations_count,
+    distance_source: summary.distance_source,
+    distance_quality: summary.distance_quality,
+    metadata: summary.metadata,
+    updated_at: new Date().toISOString(),
+  };
+
+  try {
+    if (summary.provider_trip_key) {
+      const { data: existing, error: lookupError } = await supabaseAdmin
+        .from("provider_trip_summaries")
+        .select("id")
+        .eq("provider_id", summary.provider_id)
+        .eq("provider_trip_key", summary.provider_trip_key)
+        .maybeSingle();
+
+      if (isMissingDistanceTableError(lookupError)) return { tableMissing: true };
+      if (lookupError) return { error: lookupError.message };
+
+      if (existing?.id) {
+        const { error } = await supabaseAdmin
+          .from("provider_trip_summaries")
+          .update(payload)
+          .eq("id", existing.id);
+        if (isMissingDistanceTableError(error)) return { tableMissing: true };
+        return { error: error?.message || null };
+      }
+    }
+
+    const { error } = await supabaseAdmin
+      .from("provider_trip_summaries")
+      .insert(payload);
+    if (isMissingDistanceTableError(error)) return { tableMissing: true };
+    return { error: error?.message || null };
+  } catch (err: any) {
+    return { error: err.message || "Distance summary write failed" };
+  }
+}
+
+async function updateFleetAssetDistanceState(summary: ProviderTripSummary) {
+  if (!summary.asset_id) return { error: null };
+
+  const payload = {
+    odometer_health: summary.odometer_health,
+    last_distance_update_at: new Date().toISOString(),
+    distance_quality: {
+      ...(summary.asset_distance_quality || {}),
+      latest_provider_trip_key: summary.provider_trip_key,
+      latest_report_date: summary.report_date,
+    },
+  };
+
+  const { error } = await supabaseAdmin
+    .from("fleet_assets")
+    .update(payload)
+    .eq("id", summary.asset_id)
+    .eq("company_id", summary.company_id);
+
+  if (isMissingDistanceColumnError(error)) return { columnsMissing: true };
+  return { error: error?.message || null };
+}
+
+function isMissingDistanceTableError(error: any) {
+  if (!error) return false;
+  const message = String(error.message || error.details || error.hint || "").toLowerCase();
+  const code = String(error.code || "").toUpperCase();
+  return (
+    code === "42P01" ||
+    code === "PGRST205" ||
+    message.includes("provider_trip_summaries") ||
+    message.includes("could not find the table") ||
+    message.includes("schema cache")
+  );
+}
+
+function isMissingDistanceColumnError(error: any) {
+  if (!error) return false;
+  const message = String(error.message || error.details || error.hint || "").toLowerCase();
+  const code = String(error.code || "").toUpperCase();
+  return (
+    code === "PGRST204" ||
+    message.includes("odometer_health") ||
+    message.includes("distance_quality") ||
+    message.includes("last_distance_update_at") ||
+    message.includes("schema cache") ||
+    message.includes("column")
+  );
 }
 
 function stripCapabilityAssetColumns(payload: Record<string, any>) {
@@ -2293,6 +2499,12 @@ function extractSupplementalFields(row: any, mapping: Record<string, string>) {
       continue;
     }
 
+    if (DISTANCE_SUMMARY_FIELDS.includes(field)) {
+      const text = String(value).trim();
+      if (text) output[field] = text.slice(0, 240);
+      continue;
+    }
+
     if (field === "engine_on" || field === "ignition_on") {
       const parsedBoolean = parseProviderBoolean(value);
       if (parsedBoolean !== null) output[field] = parsedBoolean;
@@ -2410,6 +2622,10 @@ function getFieldFallbackKeys(field: string) {
 
   if (field === "driver_name") {
     return ["driver_name", "driverName", "driver", "Driver"];
+  }
+
+  if (DISTANCE_SUMMARY_FIELDS.includes(field)) {
+    return getDistanceFieldFallbackKeys(field);
   }
 
   if (field === "battery_voltage") {
