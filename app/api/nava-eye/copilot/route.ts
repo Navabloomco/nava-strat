@@ -1249,19 +1249,6 @@ function buildPendingFollowup(context: any, answer: string) {
     };
   };
 
-  if (context.intent === "truck_status" && truckLabel) {
-    const prompt = context.live_status_idle_focus
-      ? `Compare today's idle markers against movement for ${truckLabel}. Keep the timeline in EAT/Kenya time and do not infer continuous idling unless movement data supports it.`
-      : `Review today's movement timeline for ${truckLabel}. Summarize the corridor route, stop/rest pattern, and idle marker interpretation without raw coordinates or provider payloads.`;
-
-    return attachActiveTopic({
-      type: "compare_stop_motion_timeline",
-      truck_id: truckLabel,
-      timeframe: "today",
-      prompt,
-    }, { requested: "today", dayOffset: 0 });
-  }
-
   if (
     context.truck_timeline_comparison &&
     truckLabel &&
@@ -1287,6 +1274,19 @@ function buildPendingFollowup(context: any, answer: string) {
         requestedTimeframe === "yesterday" ? " for yesterday" : ""
       }. Include movement/stationary blocks and idle marker evidence, but do not show raw coordinates or provider payloads.`,
     }, topicTimeframe);
+  }
+
+  if (context.intent === "truck_status" && truckLabel) {
+    const prompt = context.live_status_idle_focus
+      ? `Compare today's idle markers against movement for ${truckLabel}. Keep the timeline in EAT/Kenya time and do not infer continuous idling unless movement data supports it.`
+      : `Review today's movement timeline for ${truckLabel}. Summarize the corridor route, stop/rest pattern, and idle marker interpretation without raw coordinates or provider payloads.`;
+
+    return attachActiveTopic({
+      type: "compare_stop_motion_timeline",
+      truck_id: truckLabel,
+      timeframe: "today",
+      prompt,
+    }, { requested: "today", dayOffset: 0 });
   }
 
   if (context.fuel_investigation && truckLabel) {
