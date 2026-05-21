@@ -1,7 +1,9 @@
 import { supabaseAdmin } from "../supabaseAdmin";
 import {
   DEFAULT_OPERATIONAL_TIME_ZONE,
+  getOperationalZonedDateParts,
   operationalTimeZoneLabel,
+  resolveOperationalDayRange,
 } from "../timeFormatting";
 import {
   resolveOperationalLocation,
@@ -64,8 +66,8 @@ export async function buildTruckTimelineIntelligence(input: TimelineInput) {
           startUtc: input.startTimeUtc as string,
           endUtc: input.endTimeUtc as string,
         }
-      : getOperationalLocalDayUtcRange(timeZone, dayOffset);
-  const localNowParts = getZonedDateParts(new Date(), timeZone);
+      : resolveOperationalDayRange(timeZone, dayOffset);
+  const localNowParts = getOperationalZonedDateParts(new Date(), timeZone);
   const elapsedLocalDayMinutes =
     timeframe === "today" ? localNowParts.hour * 60 + localNowParts.minute : null;
   const maxRows = clampInteger(input.maxRows, 50, 5000, DEFAULT_MAX_ROWS);
@@ -719,99 +721,6 @@ function findBlockForTimestamp(blocks: TimelineBlock[], timestamp: number) {
       return Number.isFinite(start) && Number.isFinite(end) && start <= timestamp && end >= timestamp;
     }) || null
   );
-}
-
-function getOperationalLocalDayUtcRange(timeZone: string, dayOffset = 0) {
-  const now = new Date();
-  const localParts = getZonedDateParts(now, timeZone);
-  const targetLocalDate = new Date(
-    Date.UTC(localParts.year, localParts.month - 1, localParts.day + dayOffset)
-  );
-  const targetParts = getZonedDateParts(targetLocalDate, "UTC");
-  const start = zonedDateTimeToUtc(
-    targetParts.year,
-    targetParts.month,
-    targetParts.day,
-    0,
-    0,
-    0,
-    timeZone
-  );
-  const nextLocalDay = new Date(
-    Date.UTC(targetParts.year, targetParts.month - 1, targetParts.day + 1)
-  );
-  const nextParts = getZonedDateParts(nextLocalDay, "UTC");
-  const end = zonedDateTimeToUtc(
-    nextParts.year,
-    nextParts.month,
-    nextParts.day,
-    0,
-    0,
-    0,
-    timeZone
-  );
-
-  return {
-    localDate: `${targetParts.year}-${String(targetParts.month).padStart(2, "0")}-${String(
-      targetParts.day
-    ).padStart(2, "0")}`,
-    startUtc: start.toISOString(),
-    endUtc: end.toISOString(),
-  };
-}
-
-function getZonedDateParts(date: Date, timeZone: string) {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  }).formatToParts(date);
-  const lookup: Record<string, number> = {};
-  for (const part of parts) {
-    if (part.type !== "literal") lookup[part.type] = Number(part.value);
-  }
-  return {
-    year: lookup.year,
-    month: lookup.month,
-    day: lookup.day,
-    hour: lookup.hour === 24 ? 0 : lookup.hour || 0,
-    minute: lookup.minute || 0,
-    second: lookup.second || 0,
-  };
-}
-
-function zonedDateTimeToUtc(
-  year: number,
-  month: number,
-  day: number,
-  hour: number,
-  minute: number,
-  second: number,
-  timeZone: string
-) {
-  const utcGuess = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
-  const offset = getTimeZoneOffsetMillis(utcGuess, timeZone);
-  const firstPass = new Date(utcGuess.getTime() - offset);
-  const adjustedOffset = getTimeZoneOffsetMillis(firstPass, timeZone);
-  return new Date(utcGuess.getTime() - adjustedOffset);
-}
-
-function getTimeZoneOffsetMillis(date: Date, timeZone: string) {
-  const parts = getZonedDateParts(date, timeZone);
-  const zonedAsUtc = Date.UTC(
-    parts.year,
-    parts.month - 1,
-    parts.day,
-    parts.hour,
-    parts.minute,
-    parts.second
-  );
-  return zonedAsUtc - date.getTime();
 }
 
 function eventTimestampMillis(event: any) {

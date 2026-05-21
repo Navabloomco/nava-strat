@@ -287,6 +287,7 @@ export async function POST(req: Request) {
       !context.dashboard_followup &&
       context.intent !== "truck_status" &&
       context.intent !== "truck_compound" &&
+      context.intent !== "fleet_movement" &&
       !context.asset_access_restricted &&
       !context.no_enabled_intelligence_assets &&
       !context.permission_boundary
@@ -522,6 +523,9 @@ function buildFallbackAnswer(context: any): string {
   }
   if (context.compound_truck_request && context.truck) {
     return buildCompoundTruckAnswer(context);
+  }
+  if (context.fleet_movement_summary) {
+    return buildFleetMovementSummaryAnswer(context);
   }
   if (context.truck_timeline_comparison) {
     return buildTruckTimelineComparisonAnswer(context);
@@ -957,9 +961,16 @@ function resolvePendingFollowupQuestion(
   const prompt = typeof pending.prompt === "string" ? pending.prompt.trim() : "";
   const detailedTimelineRequest = isDetailedTimelineRequest(question);
   const explicitFleetScope = asksForExplicitFleetScope(question);
+  const explicitVehicleInput = containsVehicleLikeInput(question);
   const ellipticalTruckQuestion = isEllipticalTruckQuestion(question);
 
-  if (detailedTimelineRequest && prompt && isTimelinePendingFollowup(pending)) {
+  if (
+    detailedTimelineRequest &&
+    prompt &&
+    isTimelinePendingFollowup(pending) &&
+    !explicitVehicleInput &&
+    !explicitFleetScope
+  ) {
     return {
       question: `${prompt} Show the detailed timeline evidence with movement and stationary blocks.`.slice(0, 500),
       usedPendingFollowup: true,
@@ -968,7 +979,7 @@ function resolvePendingFollowupQuestion(
     };
   }
 
-  if (ellipticalTruckQuestion && activeTopic && !explicitFleetScope) {
+  if (ellipticalTruckQuestion && activeTopic && !explicitFleetScope && !explicitVehicleInput) {
     return {
       question: buildTruckScopedFollowupQuestion(question, activeTopic),
       usedPendingFollowup: false,
@@ -977,7 +988,12 @@ function resolvePendingFollowupQuestion(
     };
   }
 
-  if (ellipticalTruckQuestion && !activeTopic && !explicitFleetScope) {
+  if (
+    ellipticalTruckQuestion &&
+    !activeTopic &&
+    !explicitFleetScope &&
+    !explicitVehicleInput
+  ) {
     return {
       question,
       usedPendingFollowup: false,
@@ -1114,6 +1130,10 @@ function asksForExplicitFleetScope(question: string) {
   return /\b(fleet|all trucks|all vehicles|whole fleet|every truck|every vehicle|all assets|company-wide)\b/.test(
     lower
   );
+}
+
+function containsVehicleLikeInput(question: string) {
+  return /[a-z]{2,4}[\s\-/.]*\d{2,4}\s*[a-z]?/i.test(String(question || ""));
 }
 
 function isShortFollowupCommand(question: string) {
@@ -1390,6 +1410,85 @@ function buildDashboardFollowupAnswer(context: any) {
   parts.push(
     buildDashboardFollowupQuestion(visibleTrucks)
   );
+
+  return parts.join("\n");
+}
+
+function buildFleetMovementSummaryAnswer(context: any) {
+  const summary = context.fleet_movement_summary || {};
+  const timeframe = summary.timeframe || {};
+  const timeZone = summary.timezone?.time_zone || DEFAULT_OPERATIONAL_TIME_ZONE;
+  const localDay = timeframe.local_day || "the selected day";
+  const label = summary.timezone?.label || "local time";
+  const parts: string[] = [];
+
+  parts.push(`Fleet movement summary for ${localDay} (${label}).`);
+
+  if (Number(summary.enabled_asset_count || 0) === 0) {
+    parts.push("No enabled intelligence assets are available for this company, so fleet movement cannot be summarized yet.");
+    return parts.join("\n");
+  }
+
+  if (Number(summary.telemetry_points || 0) === 0) {
+    parts.push(
+      `No enabled-asset telemetry was found for ${localDay}. I will not fall back to another date unless you ask for a different operating day.`
+    );
+    return parts.join("\n");
+  }
+
+  parts.push(
+    `${Number(summary.trucks_with_telemetry || 0).toLocaleString()} of ${Number(
+      summary.enabled_asset_count || 0
+    ).toLocaleString()} enabled truck(s) reported telemetry. ${Number(
+      summary.moving_truck_count || 0
+    ).toLocaleString()} showed movement during the operating day; ${Number(
+      summary.stationary_truck_count || 0
+    ).toLocaleString()} ended the window stationary or low-speed.`
+  );
+
+  if (summary.truncated) {
+    parts.push(
+      "The fleet sample hit the query cap, so this is a safe high-level summary rather than a full truck-by-truck route reconstruction."
+    );
+  }
+
+  const sampleTrucks = Array.isArray(summary.sample_trucks)
+    ? summary.sample_trucks.slice(0, 6)
+    : [];
+  if (sampleTrucks.length) {
+    parts.push("");
+    parts.push("Sample truck reads");
+    parts.push(
+      ...sampleTrucks.map((truck: any) => {
+        const labelText = truck.registration || truck.truck_id || "truck";
+        const state =
+          truck.latest_state === "moving"
+            ? "moving at latest read"
+            : truck.latest_state === "stationary"
+              ? "stationary at latest read"
+              : "latest state unknown";
+        const speed =
+          truck.latest_speed === null || truck.latest_speed === undefined
+            ? ""
+            : `, speed ${formatNumber(truck.latest_speed)}`;
+        const latest = truck.latest_recorded_at
+          ? `, latest ${formatTimelineClock(truck.latest_recorded_at, timeZone)}`
+          : "";
+        return `- ${labelText}: ${state}${speed}${latest}; ${Number(
+          truck.points_found || 0
+        ).toLocaleString()} point(s).`;
+      })
+    );
+  }
+
+  if (Number(summary.no_telemetry_truck_count || 0) > 0) {
+    parts.push(
+      `${Number(summary.no_telemetry_truck_count).toLocaleString()} enabled truck(s) had no telemetry in this resolved window.`
+    );
+  }
+
+  parts.push("");
+  parts.push("Ask about a specific truck for a corridor route narrative or detailed timeline.");
 
   return parts.join("\n");
 }

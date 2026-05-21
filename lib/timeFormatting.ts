@@ -44,6 +44,70 @@ export function formatOperationalDateTime(
   return `${formatted} ${operationalTimeZoneLabel(timeZone)}`;
 }
 
+export function resolveOperationalDayRange(timeZone: string, dayOffset = 0) {
+  const now = new Date();
+  const localParts = getOperationalZonedDateParts(now, timeZone);
+  const targetLocalDate = new Date(
+    Date.UTC(localParts.year, localParts.month - 1, localParts.day + dayOffset)
+  );
+  const targetParts = getOperationalZonedDateParts(targetLocalDate, "UTC");
+  const start = zonedDateTimeToUtc(
+    targetParts.year,
+    targetParts.month,
+    targetParts.day,
+    0,
+    0,
+    0,
+    timeZone
+  );
+  const nextLocalDay = new Date(
+    Date.UTC(targetParts.year, targetParts.month - 1, targetParts.day + 1)
+  );
+  const nextParts = getOperationalZonedDateParts(nextLocalDay, "UTC");
+  const end = zonedDateTimeToUtc(
+    nextParts.year,
+    nextParts.month,
+    nextParts.day,
+    0,
+    0,
+    0,
+    timeZone
+  );
+
+  return {
+    localDate: `${targetParts.year}-${String(targetParts.month).padStart(2, "0")}-${String(
+      targetParts.day
+    ).padStart(2, "0")}`,
+    startUtc: start.toISOString(),
+    endUtc: end.toISOString(),
+  };
+}
+
+export function getOperationalZonedDateParts(date: Date, timeZone: string) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+  const lookup: Record<string, number> = {};
+  for (const part of parts) {
+    if (part.type !== "literal") lookup[part.type] = Number(part.value);
+  }
+  return {
+    year: lookup.year,
+    month: lookup.month,
+    day: lookup.day,
+    hour: lookup.hour === 24 ? 0 : lookup.hour || 0,
+    minute: lookup.minute || 0,
+    second: lookup.second || 0,
+  };
+}
+
 export function isAmbiguousProviderTimestampValue(value: any) {
   if (typeof value !== "string") return false;
   const text = value.trim();
@@ -106,6 +170,35 @@ function parseNaiveKenyaTimestamp(value: string) {
   );
 
   return new Date(utcMillis - KENYA_TIME_ZONE_OFFSET_MINUTES * 60 * 1000);
+}
+
+function zonedDateTimeToUtc(
+  year: number,
+  month: number,
+  day: number,
+  hour: number,
+  minute: number,
+  second: number,
+  timeZone: string
+) {
+  const utcGuess = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+  const offset = getTimeZoneOffsetMillis(utcGuess, timeZone);
+  const firstPass = new Date(utcGuess.getTime() - offset);
+  const adjustedOffset = getTimeZoneOffsetMillis(firstPass, timeZone);
+  return new Date(utcGuess.getTime() - adjustedOffset);
+}
+
+function getTimeZoneOffsetMillis(date: Date, timeZone: string) {
+  const parts = getOperationalZonedDateParts(date, timeZone);
+  const zonedAsUtc = Date.UTC(
+    parts.year,
+    parts.month - 1,
+    parts.day,
+    parts.hour,
+    parts.minute,
+    parts.second
+  );
+  return zonedAsUtc - date.getTime();
 }
 
 function isValidTimeZone(timeZone: string) {

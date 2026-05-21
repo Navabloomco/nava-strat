@@ -19,6 +19,7 @@ import {
 import { getRoleCapabilities } from "../api/roleAccess";
 import {
   operationalTimeZoneLabel,
+  resolveOperationalDayRange,
   resolveOperationalTimeZone,
 } from "../timeFormatting";
 import { resolveOperationalLocation } from "../location/resolveOperationalLocation";
@@ -26,6 +27,7 @@ import { buildTruckTimelineIntelligence } from "./truckTimelineService";
 
 export type ContextIntent =
   | "fleet_health"
+  | "fleet_movement"
   | "offline_trucks"
   | "fuel_risk"
   | "truck_status"
@@ -88,7 +90,7 @@ export async function routeContext(
   if (
     vehicleMatch.input &&
     timelineHistoryRequest &&
-    ["general", "truck_status", "driver_activity", "journey_context"].includes(intent)
+    ["general", "truck_status", "driver_activity", "journey_context", "fleet_movement"].includes(intent)
   ) {
     intent = "truck_status";
   }
@@ -157,6 +159,14 @@ export async function routeContext(
 
   if (intent === "fleet_health") {
     context.fleet_health = await fetchFleetHealth(companyId);
+  }
+  if (intent === "fleet_movement") {
+    context.fleet_movement_summary = await fetchFleetMovementSummary(
+      companyId,
+      company,
+      context.timeline_timeframe
+    );
+    return context;
   }
   if (intent === "dashboard_followup" && dashboardReference) {
     context.dashboard_followup = await fetchDashboardFollowupContext(
@@ -656,6 +666,9 @@ function detectIntent(
   if (detectProfitSimulation(lower)) {
     return "profit_simulation";
   }
+  if (asksForFleetMovement(lower)) {
+    return "fleet_movement";
+  }
   if (detectInvestigationIntent(lower)) {
     return "investigation_context";
   }
@@ -719,6 +732,19 @@ function detectIntent(
     return "journey_context";
   }
   return "general";
+}
+
+function asksForFleetMovement(lower: string) {
+  const explicitFleet =
+    /\b(fleet|all trucks|all vehicles|whole fleet|every truck|every vehicle|all assets|company-wide)\b/.test(
+      lower
+    );
+  if (!explicitFleet) return false;
+
+  return (
+    /\b(movements?|moved|moving|route|timeline|history|stops?|stopped)\b/.test(lower) ||
+    lower.includes("where did")
+  );
 }
 
 function detectSparesIntent(lower: string) {
@@ -1409,6 +1435,138 @@ async function fetchFleetHealth(companyId: string) {
     fuel_events_24h: fuelEvents.length,
     idle_events_24h: idleEvents.length,
     offline_truck_ids: offline.map((t) => t.truck_id),
+  };
+}
+
+async function fetchFleetMovementSummary(
+  companyId: string,
+  company: any = {},
+  timeframe: any = { requested: "today", dayOffset: 0 }
+) {
+  const operationalTimeZone = resolveOperationalTimeZone(company);
+  const resolvedTimeframe = resolveTruckTimelineTimeframe(
+    String(timeframe?.requested || ""),
+    timeframe
+  );
+  const dayOffset = Number.isFinite(Number(resolvedTimeframe?.dayOffset))
+    ? Number(resolvedTimeframe.dayOffset)
+    : resolvedTimeframe?.requested === "yesterday"
+      ? -1
+      : 0;
+  const dayRange = resolveOperationalDayRange(operationalTimeZone, dayOffset);
+
+  const { data: assets, error: assetError } = await supabaseAdmin
+    .from("fleet_assets")
+    .select("truck_id, registration")
+    .eq("company_id", companyId)
+    .eq("status", "active")
+    .eq("intelligence_enabled", true)
+    .limit(1000);
+
+  if (assetError) throw assetError;
+
+  const enabledAssets = assets || [];
+  const enabledTruckIds = enabledAssets.map((asset) => asset.truck_id).filter(Boolean);
+
+  if (enabledTruckIds.length === 0) {
+    return {
+      type: "fleet_movement_summary",
+      timeframe: {
+        requested: resolvedTimeframe.requested || "today",
+        dayOffset,
+        local_day: dayRange.localDate,
+        day_start_utc: dayRange.startUtc,
+        day_end_utc: dayRange.endUtc,
+      },
+      timezone: {
+        time_zone: operationalTimeZone,
+        label: operationalTimeZoneLabel(operationalTimeZone),
+      },
+      enabled_asset_count: 0,
+      telemetry_points: 0,
+      trucks_with_telemetry: 0,
+      moving_truck_count: 0,
+      stationary_truck_count: 0,
+      no_telemetry_truck_count: 0,
+      sample_trucks: [],
+    };
+  }
+
+  const { data: telemetryRows, error: telemetryError } = await supabaseAdmin
+    .from("telemetry_logs")
+    .select("truck_id, recorded_at, speed")
+    .eq("company_id", companyId)
+    .in("truck_id", enabledTruckIds)
+    .gte("recorded_at", dayRange.startUtc)
+    .lt("recorded_at", dayRange.endUtc)
+    .order("recorded_at", { ascending: true })
+    .limit(5000);
+
+  if (telemetryError) throw telemetryError;
+
+  const assetsByTruck = new Map(enabledAssets.map((asset) => [asset.truck_id, asset]));
+  const rowsByTruck = new Map<string, any[]>();
+  for (const row of telemetryRows || []) {
+    if (!row.truck_id) continue;
+    const list = rowsByTruck.get(row.truck_id) || [];
+    list.push(row);
+    rowsByTruck.set(row.truck_id, list);
+  }
+
+  const truckSummaries = Array.from(rowsByTruck.entries()).map(([truckId, rows]) => {
+    const movingPoints = rows.filter((row) => Number(row.speed || 0) > 5).length;
+    const latest = rows[rows.length - 1] || null;
+    const asset: any = assetsByTruck.get(truckId) || {};
+    const latestSpeed = finiteOrNull(latest?.speed);
+    return {
+      truck_id: truckId,
+      registration: asset.registration || null,
+      points_found: rows.length,
+      first_recorded_at: rows[0]?.recorded_at || null,
+      latest_recorded_at: latest?.recorded_at || null,
+      latest_speed: latestSpeed,
+      movement_points: movingPoints,
+      showed_movement: movingPoints > 0,
+      latest_state:
+        latestSpeed === null
+          ? "unknown"
+          : latestSpeed > 5
+            ? "moving"
+            : "stationary",
+    };
+  });
+
+  const movingTruckCount = truckSummaries.filter((truck) => truck.showed_movement).length;
+  const stationaryTruckCount = truckSummaries.filter(
+    (truck) => truck.latest_state === "stationary"
+  ).length;
+
+  return {
+    type: "fleet_movement_summary",
+    timeframe: {
+      requested: resolvedTimeframe.requested || "today",
+      dayOffset,
+      local_day: dayRange.localDate,
+      day_start_utc: dayRange.startUtc,
+      day_end_utc: dayRange.endUtc,
+    },
+    timezone: {
+      time_zone: operationalTimeZone,
+      label: operationalTimeZoneLabel(operationalTimeZone),
+    },
+    enabled_asset_count: enabledAssets.length,
+    telemetry_points: (telemetryRows || []).length,
+    trucks_with_telemetry: truckSummaries.length,
+    moving_truck_count: movingTruckCount,
+    stationary_truck_count: stationaryTruckCount,
+    no_telemetry_truck_count: Math.max(enabledAssets.length - truckSummaries.length, 0),
+    sample_trucks: truckSummaries
+      .sort((a, b) => {
+        if (a.showed_movement !== b.showed_movement) return a.showed_movement ? -1 : 1;
+        return Number(b.points_found || 0) - Number(a.points_found || 0);
+      })
+      .slice(0, 8),
+    truncated: (telemetryRows || []).length >= 5000,
   };
 }
 
