@@ -180,6 +180,58 @@ function validateSupplementalUsernameOverrides(
   return null;
 }
 
+async function loadProviderTemplateForCreate(
+  templateId: string,
+  canUseInternalTemplates: boolean
+) {
+  const { data: template, error } = await supabaseAdmin
+    .from("provider_templates")
+    .select(
+      [
+        "id",
+        "display_name",
+        "slug",
+        "auth_type",
+        "auth_config",
+        "fleet_config",
+        "field_mapping",
+        "default_login_url",
+        "default_fleet_url",
+      ].join(", ")
+    )
+    .eq("id", templateId)
+    .eq("is_public", true)
+    .eq("is_verified", true)
+    .maybeSingle();
+
+  if (error) throw error;
+  if (!template) return null;
+  if (!canUseInternalTemplates && !isCustomerFacingTemplate(template)) {
+    return null;
+  }
+  return template;
+}
+
+function isCustomerFacingTemplate(template: any) {
+  const setupOnly = Boolean(template.setup_only || template.fleet_config?.setup_only);
+  const internalTemplate = Boolean(
+    template.internal_template || template.fleet_config?.internal_template
+  );
+  const customerFacing =
+    template.customer_facing !== false &&
+    template.fleet_config?.customer_facing !== false;
+  return customerFacing && !setupOnly && !internalTemplate;
+}
+
+function originFromUrl(url: string | null) {
+  if (!url) return "";
+  try {
+    return new URL(url).origin;
+  } catch {
+    return "";
+  }
+}
+
 async function resolveCompany(
   req: Request,
   requestedCompanyId?: string | null
@@ -339,12 +391,98 @@ export async function POST(req: Request) {
       );
     }
 
-    const providerName = String(body.provider_name || body.name || "").trim();
-    const providerType = String(
-      body.provider_type || body.provider_slug || ""
+    const providerTemplate: any = body.template_id
+      ? await loadProviderTemplateForCreate(
+          body.template_id,
+          resolved.capabilities.can_edit_advanced_provider_config
+        )
+      : null;
+
+    if (
+      body.template_id &&
+      !providerTemplate &&
+      !resolved.capabilities.can_edit_advanced_provider_config
+    ) {
+      return noStoreJson(
+        {
+          success: false,
+          error: "Choose a supported provider or request provider setup.",
+        },
+        { status: 400 }
+      );
+    }
+
+    if (
+      !providerTemplate &&
+      !resolved.capabilities.can_edit_advanced_provider_config
+    ) {
+      return noStoreJson(
+        {
+          success: false,
+          error: "Provider template is required for self-serve setup.",
+        },
+        { status: 400 }
+      );
+    }
+
+    const effectiveAuthConfig =
+      resolved.capabilities.can_edit_advanced_provider_config
+        ? body.auth_config ?? providerTemplate?.auth_config ?? null
+        : providerTemplate?.auth_config ?? null;
+    const effectiveFleetConfig =
+      resolved.capabilities.can_edit_advanced_provider_config
+        ? body.fleet_config ?? providerTemplate?.fleet_config ?? null
+        : providerTemplate?.fleet_config ?? null;
+    const effectiveFieldMapping =
+      resolved.capabilities.can_edit_advanced_provider_config
+        ? body.field_mapping ?? providerTemplate?.field_mapping ?? {}
+        : providerTemplate?.field_mapping ?? {};
+    const effectiveCapabilityProfile =
+      resolved.capabilities.can_edit_advanced_provider_config
+        ? body.capability_profile ?? providerTemplate?.capability_profile ?? effectiveFleetConfig?.capability_profile ?? {}
+        : providerTemplate?.capability_profile ?? effectiveFleetConfig?.capability_profile ?? {};
+    const effectiveSupportedSignals =
+      resolved.capabilities.can_edit_advanced_provider_config
+        ? body.supported_signals ?? providerTemplate?.supported_signals ?? effectiveFleetConfig?.supported_signals ?? {}
+        : providerTemplate?.supported_signals ?? effectiveFleetConfig?.supported_signals ?? {};
+    const effectiveSourceSignalNotes =
+      resolved.capabilities.can_edit_advanced_provider_config
+        ? body.source_signal_notes ?? providerTemplate?.source_signal_notes ?? {}
+        : providerTemplate?.source_signal_notes ?? {};
+    const loginUrl = String(
+      (resolved.capabilities.can_edit_advanced_provider_config
+        ? body.login_url
+        : null) ||
+        providerTemplate?.default_login_url ||
+        effectiveAuthConfig?.login_url ||
+        ""
+    ).trim() || null;
+    const fleetUrl = String(
+      (resolved.capabilities.can_edit_advanced_provider_config
+        ? body.fleet_url
+        : null) ||
+        providerTemplate?.default_fleet_url ||
+        effectiveFleetConfig?.fleet_url ||
+        ""
+    ).trim() || null;
+    const baseUrl = String(
+      (resolved.capabilities.can_edit_advanced_provider_config
+        ? body.base_url
+        : null) ||
+        providerTemplate?.base_url ||
+        providerTemplate?.default_base_url ||
+        effectiveAuthConfig?.base_url ||
+        effectiveFleetConfig?.base_url ||
+        originFromUrl(fleetUrl)
     ).trim();
-    const authType = String(body.auth_type || "").trim();
-    const baseUrl = String(body.base_url || "").trim();
+
+    const providerName = String(
+      body.provider_name || body.name || providerTemplate?.display_name || ""
+    ).trim();
+    const providerType = String(
+      body.provider_type || body.provider_slug || providerTemplate?.slug || ""
+    ).trim();
+    const authType = String(body.auth_type || providerTemplate?.auth_type || "").trim();
 
     if (!providerName || !providerType || !baseUrl || !authType) {
       return noStoreJson(
@@ -357,7 +495,7 @@ export async function POST(req: Request) {
     }
 
     const usernameOverrideError = validateSupplementalUsernameOverrides(
-      body.fleet_config,
+      effectiveFleetConfig,
       resolved.isPlatformOwner
     );
     if (usernameOverrideError) {
@@ -372,22 +510,26 @@ export async function POST(req: Request) {
       provider_name: providerName,
       provider_slug: providerType,
       auth_type: authType,
-      auth_config: body.auth_config || null,
-      fleet_config: body.fleet_config || null,
-      field_mapping: body.field_mapping || {},
+      auth_config: effectiveAuthConfig || null,
+      fleet_config: effectiveFleetConfig || null,
+      field_mapping: effectiveFieldMapping || {},
       username: body.username || null,
       api_key: body.api_key || null,
       password: body.password || null,
       bearer_token: body.bearer_token || null,
       base_url: baseUrl,
-      login_url: body.login_url || null,
-      fleet_url: body.fleet_url || null,
+      login_url: loginUrl,
+      fleet_url: fleetUrl,
       is_active: false,
       last_test_status: "not_tested",
-      capability_profile: sanitizeOptionalObject(body.capability_profile),
-      supported_signals: sanitizeOptionalObject(body.supported_signals),
-      provider_timezone: sanitizeProviderTimezone(body.provider_timezone),
-      source_signal_notes: sanitizeOptionalObject(body.source_signal_notes),
+      capability_profile: sanitizeOptionalObject(effectiveCapabilityProfile),
+      supported_signals: sanitizeOptionalObject(effectiveSupportedSignals),
+      provider_timezone: sanitizeProviderTimezone(
+        body.provider_timezone ||
+          providerTemplate?.provider_timezone ||
+          effectiveFleetConfig?.provider_timezone
+      ),
+      source_signal_notes: sanitizeOptionalObject(effectiveSourceSignalNotes),
     };
 
     let { data: provider, error } = await supabaseAdmin

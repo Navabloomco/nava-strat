@@ -19,6 +19,8 @@ type CredentialField = {
   secret: boolean;
 };
 
+const REQUEST_SETUP_OPTION = "__request_provider_setup__";
+
 export default function NewProviderPage() {
   const [templates, setTemplates] = useState<any[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
@@ -114,6 +116,9 @@ export default function NewProviderPage() {
   }
 
   const selectedTemplate = templates.find((t) => t.id === selectedTemplateId);
+  const requestSetupSelected = selectedTemplateId === REQUEST_SETUP_OPTION;
+  const publicTemplates = templates.filter((template) => !template.internal_template);
+  const internalTemplates = templates.filter((template) => template.internal_template);
   const selectedTemplateIsSetupOnly = Boolean(
     selectedTemplate?.setup_only || selectedTemplate?.fleet_config?.setup_only
   );
@@ -147,30 +152,85 @@ export default function NewProviderPage() {
       return;
     }
 
-    const loginUrl =
-      selectedTemplate.default_login_url ||
-      selectedTemplate.auth_config?.login_url ||
-      null;
+    const canUseAdvancedTemplateConfig = Boolean(
+      capabilities.can_edit_advanced_provider_config
+    );
+    let createPayload: Record<string, any>;
 
-    const fleetUrl =
-      selectedTemplate.default_fleet_url ||
-      selectedTemplate.fleet_config?.fleet_url ||
-      null;
-    const baseUrl =
-      selectedTemplate.base_url ||
-      selectedTemplate.default_base_url ||
-      selectedTemplate.auth_config?.base_url ||
-      selectedTemplate.fleet_config?.base_url ||
-      originFromUrl(fleetUrl);
+    if (canUseAdvancedTemplateConfig) {
+      const loginUrl =
+        selectedTemplate.default_login_url ||
+        selectedTemplate.auth_config?.login_url ||
+        null;
 
-    if (!loginUrl) {
-      alert("Provider setup is incomplete. Please request support.");
-      return;
-    }
+      const fleetUrl =
+        selectedTemplate.default_fleet_url ||
+        selectedTemplate.fleet_config?.fleet_url ||
+        null;
+      const baseUrl =
+        selectedTemplate.base_url ||
+        selectedTemplate.default_base_url ||
+        selectedTemplate.auth_config?.base_url ||
+        selectedTemplate.fleet_config?.base_url ||
+        originFromUrl(fleetUrl);
 
-    if (!fleetUrl) {
-      alert("Provider setup is incomplete. Please request support.");
-      return;
+      if (!loginUrl) {
+        alert("Provider setup is incomplete. Please request support.");
+        return;
+      }
+
+      if (!fleetUrl) {
+        alert("Provider setup is incomplete. Please request support.");
+        return;
+      }
+
+      createPayload = {
+        template_id: selectedTemplate.id,
+        provider_name: selectedTemplate.display_name,
+        name: selectedTemplate.display_name,
+        provider_slug: selectedTemplate.slug,
+        provider_type: selectedTemplate.slug,
+
+        auth_type: selectedTemplate.auth_type,
+        auth_config: selectedTemplate.auth_config,
+        fleet_config: selectedTemplate.fleet_config,
+        field_mapping: selectedTemplate.field_mapping,
+        capability_profile:
+          selectedTemplate.capability_profile ||
+          selectedTemplate.fleet_config?.capability_profile ||
+          {},
+        supported_signals:
+          selectedTemplate.supported_signals ||
+          selectedTemplate.fleet_config?.supported_signals ||
+          {},
+        provider_timezone:
+          selectedTemplate.provider_timezone ||
+          selectedTemplate.fleet_config?.provider_timezone ||
+          "Africa/Nairobi",
+        source_signal_notes: selectedTemplate.source_signal_notes || {},
+
+        username: form.username,
+        api_key: form.api_key,
+        password: form.password || null,
+        bearer_token: form.bearer_token || null,
+
+        base_url: baseUrl,
+        login_url: loginUrl,
+        fleet_url: fleetUrl,
+
+        is_active: false,
+        ...(selectedCompanyId ? { companyId: selectedCompanyId } : {}),
+      };
+    } else {
+      createPayload = {
+        template_id: selectedTemplate.id,
+        username: form.username,
+        api_key: form.api_key,
+        password: form.password || null,
+        bearer_token: form.bearer_token || null,
+        is_active: false,
+        ...(selectedCompanyId ? { companyId: selectedCompanyId } : {}),
+      };
     }
 
     setSaving(true);
@@ -192,33 +252,7 @@ export default function NewProviderPage() {
         Authorization: `Bearer ${session.access_token}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-      provider_name: selectedTemplate.display_name,
-      name: selectedTemplate.display_name,
-      provider_slug: selectedTemplate.slug,
-      provider_type: selectedTemplate.slug,
-
-      auth_type: selectedTemplate.auth_type,
-      auth_config: selectedTemplate.auth_config,
-      fleet_config: selectedTemplate.fleet_config,
-      field_mapping: selectedTemplate.field_mapping,
-      capability_profile: selectedTemplate.capability_profile || selectedTemplate.fleet_config?.capability_profile || {},
-      supported_signals: selectedTemplate.supported_signals || selectedTemplate.fleet_config?.supported_signals || {},
-      provider_timezone: selectedTemplate.provider_timezone || selectedTemplate.fleet_config?.provider_timezone || "Africa/Nairobi",
-      source_signal_notes: selectedTemplate.source_signal_notes || {},
-
-      username: form.username,
-      api_key: form.api_key,
-      password: form.password || null,
-      bearer_token: form.bearer_token || null,
-
-      base_url: baseUrl,
-      login_url: loginUrl,
-      fleet_url: fleetUrl,
-
-      is_active: false,
-      ...(selectedCompanyId ? { companyId: selectedCompanyId } : {}),
-      }),
+      body: JSON.stringify(createPayload),
     });
     const data = await res.json();
 
@@ -231,6 +265,13 @@ export default function NewProviderPage() {
 
     alert("Provider added inactive. Test the connection before activating sync.");
     window.location.href = `/admin/providers${companyQuery(selectedCompanyId)}`;
+  }
+
+  function handleProviderSelection(value: string) {
+    setSelectedTemplateId(value);
+    if (value === REQUEST_SETUP_OPTION) {
+      setRequestOpen(true);
+    }
   }
 
   async function handleSubmitSetupRequest() {
@@ -353,14 +394,27 @@ export default function NewProviderPage() {
               <select
                 style={inputStyle}
                 value={selectedTemplateId}
-                onChange={(e) => setSelectedTemplateId(e.target.value)}
+                onChange={(e) => handleProviderSelection(e.target.value)}
               >
                 <option value="">Choose provider...</option>
-                {templates.map((template) => (
+                {publicTemplates.map((template) => (
                   <option key={template.id} value={template.id}>
                     {template.display_name}
                   </option>
                 ))}
+                <option value={REQUEST_SETUP_OPTION}>
+                  Other provider / Request setup
+                </option>
+                {capabilities.can_edit_advanced_provider_config &&
+                  internalTemplates.length > 0 && (
+                    <optgroup label="Internal templates - platform setup only">
+                      {internalTemplates.map((template) => (
+                        <option key={template.id} value={template.id}>
+                          {template.display_name} - Internal template
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
               </select>
             </div>
 
@@ -375,12 +429,20 @@ export default function NewProviderPage() {
               onSubmit={handleSubmitSetupRequest}
             />
 
+            {requestSetupSelected && (
+              <div style={noticeStyle}>
+                Tell us which tracking system you use. Nava will review the
+                provider and prepare a verified setup path before collecting
+                sensitive credentials.
+              </div>
+            )}
+
             {selectedTemplate && (
               <>
                 <div style={noticeStyle}>
                   <strong>{selectedTemplate.display_name}</strong> selected.{" "}
                   {selectedTemplateIsSetupOnly
-                    ? "This is a setup example for signal planning; request support before adding live credentials."
+                    ? "Internal template - platform setup only. Not customer-facing."
                     : "The provider will be created inactive, then tested and activated from Provider Vault."}
                 </div>
 
@@ -411,9 +473,9 @@ export default function NewProviderPage() {
 
                 {selectedTemplateIsSetupOnly ? (
                   <div style={noticeStyle}>
-                    This template is an onboarding example only. Request provider
-                    setup after confirming exact API endpoints and available
-                    hardware signals.
+                    This internal template is for platform setup only. Do not
+                    use it as customer-facing provider onboarding or collect
+                    live credentials until the provider path is verified.
                   </div>
                 ) : (
                   <button
@@ -493,8 +555,39 @@ function TemplateCapabilityPreview({
     ? template.setup_notes
     : [];
 
+  if (!canShowAdvanced) {
+    return (
+      <div style={templatePreviewStyle}>
+        <div style={previewGridStyle}>
+          <PreviewMetric
+            label="Connection test"
+            value="Vehicles and live location"
+          />
+          <PreviewMetric
+            label="Data review"
+            value="Engine and fuel signals checked after testing"
+          />
+          <PreviewMetric
+            label="Sync"
+            value="Inactive until you activate it"
+          />
+        </div>
+        <div style={previewNoteStyle}>
+          The connection test will show which vehicles are detected, which
+          existing assets match, and whether location, engine, or fuel signals
+          are verified. Technical signal tiers and mappings stay internal.
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={templatePreviewStyle}>
+      {template.internal_template && (
+        <div style={internalTemplateBadgeStyle}>
+          Internal template - platform setup only - not customer-facing
+        </div>
+      )}
       <div style={previewGridStyle}>
         <PreviewMetric
           label="Signal capability"
@@ -505,10 +598,12 @@ function TemplateCapabilityPreview({
           value={template.auth_method_label || template.auth_type || "Provider credentials"}
         />
         <PreviewMetric
-          label="Self-serve status"
+          label="Template status"
           value={
-            template.setup_only || template.fleet_config?.setup_only
-              ? "Requires provider support"
+            template.internal_template
+              ? "Internal platform setup"
+              : template.setup_only || template.fleet_config?.setup_only
+                ? "Requires provider support"
               : "Self-serve template"
           }
         />
@@ -525,21 +620,19 @@ function TemplateCapabilityPreview({
         </div>
       )}
 
-      {canShowAdvanced && (
-        <details style={templateAdvancedStyle}>
-          <summary style={templateAdvancedSummaryStyle}>Advanced template details</summary>
-          <div style={previewNoteStyle}>
-            <strong>Endpoint labels:</strong>{" "}
-            {endpointLabels.length > 0 ? endpointLabels.join(", ") : "none declared"}
-          </div>
-          <div style={previewNoteStyle}>
-            <strong>Field mapping:</strong>{" "}
-            {Object.keys(template.field_mapping || {}).length > 0
-              ? Object.keys(template.field_mapping).join(", ")
-              : "none declared"}
-          </div>
-        </details>
-      )}
+      <details style={templateAdvancedStyle}>
+        <summary style={templateAdvancedSummaryStyle}>Advanced template details</summary>
+        <div style={previewNoteStyle}>
+          <strong>Endpoint labels:</strong>{" "}
+          {endpointLabels.length > 0 ? endpointLabels.join(", ") : "none declared"}
+        </div>
+        <div style={previewNoteStyle}>
+          <strong>Field mapping:</strong>{" "}
+          {Object.keys(template.field_mapping || {}).length > 0
+            ? Object.keys(template.field_mapping).join(", ")
+            : "none declared"}
+        </div>
+      </details>
     </div>
   );
 }
@@ -711,7 +804,7 @@ function ProviderSetupRequestForm({
     <div style={requestFormStyle}>
       <div style={gridStyle}>
         <div style={fieldGroup}>
-          <label style={labelStyle}>Provider Name</label>
+          <label style={labelStyle}>Current Tracking System / Provider Name</label>
           <input
             style={inputStyle}
             value={requestForm.provider_name}
@@ -736,7 +829,7 @@ function ProviderSetupRequestForm({
         </div>
 
         <div style={fieldGroup}>
-          <label style={labelStyle}>Provider Contact Optional</label>
+          <label style={labelStyle}>Provider Support Contact Optional</label>
           <input
             style={inputStyle}
             value={requestForm.provider_contact}
@@ -770,7 +863,7 @@ function ProviderSetupRequestForm({
       </div>
 
       <div style={fieldGroup}>
-        <label style={labelStyle}>Notes Optional</label>
+        <label style={labelStyle}>Notes / Current Workflow Optional</label>
         <textarea
           style={textareaStyle}
           value={requestForm.notes}
@@ -997,6 +1090,21 @@ const previewNoteStyle = {
   color: "#334155",
   fontSize: 13,
   lineHeight: 1.6,
+};
+
+const internalTemplateBadgeStyle = {
+  display: "inline-flex",
+  alignItems: "center",
+  border: "1px solid #fed7aa",
+  background: "#fff7ed",
+  color: "#9a3412",
+  borderRadius: 8,
+  padding: "7px 10px",
+  fontSize: 11,
+  fontWeight: 900,
+  textTransform: "uppercase" as const,
+  letterSpacing: "0.08em",
+  marginBottom: 12,
 };
 
 const templateAdvancedStyle = {

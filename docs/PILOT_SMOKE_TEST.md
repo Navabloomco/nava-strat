@@ -61,7 +61,11 @@ Open `/admin/providers?companyId=<id>`.
 
 - [ ] Confirm provider list loads.
 - [ ] Open `/admin/providers/new?companyId=<id>` as owner/admin/platform-owner.
-- [ ] Confirm the guided Add Provider flow shows provider selection, credential fields, signal capability summary, and setup notes without raw JSON by default.
+- [ ] As a customer owner/admin, confirm the guided Add Provider flow shows only public/supported providers and "Other provider / Request setup."
+- [ ] As a customer owner/admin, confirm internal templates such as Meitrack examples, Generic REST GPS, and Generic CSV Distance Report are hidden.
+- [ ] As a platform owner, confirm internal templates are visible only under internal/platform setup labeling.
+- [ ] Confirm customer-facing setup copy uses business language such as location tracking, engine data not verified, and fuel/tank sensor not verified instead of raw capability tier names.
+- [ ] Confirm the guided Add Provider flow shows provider selection, credential fields, safe verification summary, and setup notes without raw JSON by default.
 - [ ] Confirm new provider connections are created inactive and redirect back to Provider Vault for testing.
 - [ ] Confirm Activate Sync is disabled until Test Connection succeeds.
 - [ ] Confirm platform-owner advanced settings remain available but collapsed by default.
@@ -82,7 +86,6 @@ Open `/admin/providers?companyId=<id>`.
 - [ ] Confirm no secrets, tokens, cookies, Authorization values, raw provider payloads, or auth configs are visible.
 - [ ] Confirm enrichment diagnostics show safe counts/key names only.
 - [ ] Confirm BlueTrax current fuel limitation is treated as a provider-pending integration item, not a product failure.
-- [ ] Confirm the Meitrack CAN Bus template, if visible, is setup-only/example mapping and does not ask for live credentials until a verified connection path exists.
 - [ ] If testing a second provider on an existing fleet, confirm Provider Vault reports cross-provider asset matches instead of creating duplicate billable-review assets.
 - [ ] Confirm second-provider telemetry logs preserve the incoming `provider_id` and signal quality.
 - [ ] Confirm verified richer capability declarations can improve asset capability, while placeholder/auto-observed values do not silently upgrade GPS-only assets.

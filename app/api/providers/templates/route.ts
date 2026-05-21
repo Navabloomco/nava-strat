@@ -8,6 +8,8 @@ export const revalidate = 0;
 const MEITRACK_CAN_BUS_TEMPLATE = {
   id: "internal-meitrack-can-bus-template",
   display_name: "Meitrack CAN Bus Example",
+  internal_template: true,
+  customer_facing: false,
   slug: "meitrack",
   auth_type: "API_KEY",
   auth_method_label: "API key / provider credentials",
@@ -84,6 +86,8 @@ const MEITRACK_CAN_BUS_TEMPLATE = {
 const GENERIC_REST_GPS_TEMPLATE = {
   id: "internal-generic-rest-gps-template",
   display_name: "Generic REST GPS",
+  internal_template: true,
+  customer_facing: false,
   slug: "generic-rest-gps",
   auth_type: "API_KEY",
   auth_method_label: "API key / token",
@@ -144,6 +148,8 @@ const GENERIC_REST_GPS_TEMPLATE = {
 const GENERIC_CSV_DISTANCE_TEMPLATE = {
   id: "internal-generic-csv-distance-template",
   display_name: "Generic CSV Distance Report",
+  internal_template: true,
+  customer_facing: false,
   slug: "generic-csv-distance-report",
   auth_type: "NONE",
   auth_method_label: "CSV fallback/backfill",
@@ -236,6 +242,11 @@ export async function GET(req: Request) {
       );
     }
 
+    const isPlatformOwner = memberships.some(
+      (membership) =>
+        String(membership.role || "").toLowerCase() === "platform_owner"
+    );
+
     const { data: templates, error: templatesError } = await supabaseAdmin
       .from("provider_templates")
       .select(
@@ -256,13 +267,19 @@ export async function GET(req: Request) {
       .order("display_name", { ascending: true });
 
     if (templatesError) throw templatesError;
-    const safeTemplates = appendInternalTemplates(templates || []).map(
-      decorateTemplate
-    );
+    const visibleTemplates = isPlatformOwner
+      ? appendInternalTemplates(templates || [])
+      : (templates || []).filter(isCustomerFacingTemplate);
+    const safeTemplates = visibleTemplates
+      .map(decorateTemplate)
+      .map((template) =>
+        isPlatformOwner ? template : sanitizeCustomerTemplate(template)
+      );
 
     return noStoreJson({
       success: true,
       templates: safeTemplates,
+      can_view_internal_templates: isPlatformOwner,
     });
   } catch (err: any) {
     console.error("Provider templates error:", err);
@@ -291,8 +308,15 @@ function appendInternalTemplates(templates: any[]) {
 
 function decorateTemplate(template: any) {
   const setupOnly = Boolean(template.setup_only || template.fleet_config?.setup_only);
+  const internalTemplate = Boolean(
+    template.internal_template ||
+      template.fleet_config?.internal_template ||
+      setupOnly
+  );
   return {
     ...template,
+    internal_template: internalTemplate,
+    customer_facing: template.customer_facing !== false && !internalTemplate,
     auth_method_label:
       template.auth_method_label || authMethodLabel(template.auth_type),
     required_fields:
@@ -322,6 +346,35 @@ function decorateTemplate(template: any) {
         : setupOnly
           ? ["Template requires provider setup verification before live sync."]
           : ["Create inactive, test connection, review detected vehicles, then activate sync."],
+    audience_label: internalTemplate
+      ? "Internal template - platform setup only"
+      : "Customer-facing provider",
+  };
+}
+
+function isCustomerFacingTemplate(template: any) {
+  const setupOnly = Boolean(template.setup_only || template.fleet_config?.setup_only);
+  const internalTemplate = Boolean(
+    template.internal_template || template.fleet_config?.internal_template
+  );
+  const customerFacing = template.customer_facing !== false &&
+    template.fleet_config?.customer_facing !== false;
+  return customerFacing && !setupOnly && !internalTemplate;
+}
+
+function sanitizeCustomerTemplate(template: any) {
+  return {
+    id: template.id,
+    display_name: template.display_name,
+    slug: template.slug,
+    auth_method_label: template.auth_method_label,
+    required_fields: template.required_fields,
+    self_serve: template.self_serve,
+    requires_provider_support: template.requires_provider_support,
+    setup_notes: template.setup_notes,
+    audience_label: "Customer-facing provider",
+    customer_facing: true,
+    internal_template: false,
   };
 }
 
