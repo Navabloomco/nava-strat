@@ -56,6 +56,37 @@ export type ProviderTripSummary = {
   metadata: Record<string, any>;
 };
 
+export function parseDistanceCsv(
+  csvText: string,
+  options: { maxRows?: number } = {}
+) {
+  const maxRows = options.maxRows || 2000;
+  const rows = parseCsvRows(csvText);
+  if (rows.length === 0) {
+    return { headers: [] as string[], rows: [] as Record<string, string>[] };
+  }
+
+  const headers = rows[0].map((header, index) => {
+    const clean = String(header || "")
+      .replace(/^\uFEFF/, "")
+      .trim();
+    return clean || `column_${index + 1}`;
+  });
+
+  const parsedRows = rows
+    .slice(1, maxRows + 1)
+    .map((row) => {
+      const output: Record<string, string> = {};
+      headers.forEach((header, index) => {
+        output[header] = String(row[index] || "").trim();
+      });
+      return output;
+    })
+    .filter((row) => Object.values(row).some((value) => String(value || "").trim()));
+
+  return { headers, rows: parsedRows };
+}
+
 export function createDistanceDiagnostics(): DistanceDiagnostics {
   return {
     summary_rows_found: 0,
@@ -83,7 +114,7 @@ export function normalizeProviderTripSummary(
 ): ProviderTripSummary | null {
   if (!row || typeof row !== "object") return null;
 
-  const truckId = normalizeTruckId(
+  const truckId = normalizeDistanceTruckId(
     getMappedValue(row, "truck", mapping) ||
       getFirstAvailable(row, getDistanceFieldFallbackKeys("truck"))
   );
@@ -108,9 +139,13 @@ export function normalizeProviderTripSummary(
     getMappedValue(row, "report_end_time", mapping),
     providerTimezone
   );
+  const currentTime = parseDistanceTimestamp(
+    getMappedValue(row, "current_time", mapping),
+    providerTimezone
+  );
   const reportDate =
     parseReportDate(getMappedValue(row, "report_date", mapping), providerTimezone) ||
-    localDateFromIso(startTime || endTime, providerTimezone);
+    localDateFromIso(startTime || endTime || currentTime, providerTimezone);
   const startLocation = safeShortText(
     getMappedValue(row, "start_location", mapping)
   );
@@ -287,9 +322,11 @@ export function getDistanceFieldFallbackKeys(field: string) {
     case "report_date":
       return ["report_date", "reportDate", "date", "Date"];
     case "report_start_time":
-      return ["report_start_time", "start_time", "startTime", "startDate", "StartTime", "StartTimeStamp"];
+      return ["report_start_time", "start_time", "startTime", "startDate", "StartTime", "StartTimeStamp", "StartLocationTime"];
     case "report_end_time":
-      return ["report_end_time", "end_time", "endTime", "endDate", "EndTime", "EndTimeStamp"];
+      return ["report_end_time", "end_time", "endTime", "endDate", "EndTime", "EndTimeStamp", "EndLocationTime"];
+    case "current_time":
+      return ["current_time", "currentTime", "CurrentTime", "fixtime", "fixTime", "recorded_at"];
     case "start_location":
       return ["start_location", "startLocation", "StartLocation", "origin", "from"];
     case "end_location":
@@ -416,7 +453,14 @@ function localDateFromIso(value: any, timeZone: string) {
   return `${parts.year}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
 }
 
-function normalizeTruckId(value: any) {
+export function normalizeDistanceTruckKey(value: any) {
+  return String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "");
+}
+
+function normalizeDistanceTruckId(value: any) {
   const text = String(value || "").trim();
   return text && text.toUpperCase() !== "UNKNOWN" ? text.toUpperCase() : "";
 }
@@ -446,7 +490,7 @@ function buildFallbackTripKey(input: {
   startLocation: string | null;
   endLocation: string | null;
 }) {
-  return [
+  const source = [
     input.truckId,
     input.reportDate || "",
     input.startTime || "",
@@ -454,11 +498,64 @@ function buildFallbackTripKey(input: {
     input.providerMileageKm ?? "",
     input.startLocation || "",
     input.endLocation || "",
-  ]
-    .join("|")
-    .slice(0, 300);
+  ].join("|");
+
+  return `distance_${stableHash(source)}`;
 }
 
 function roundKm(value: number) {
   return Math.round(value * 100) / 100;
+}
+
+function parseCsvRows(text: string) {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = "";
+  let inQuotes = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    const next = text[index + 1];
+
+    if (char === '"') {
+      if (inQuotes && next === '"') {
+        field += '"';
+        index += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if (char === "," && !inQuotes) {
+      row.push(field);
+      field = "";
+      continue;
+    }
+
+    if ((char === "\n" || char === "\r") && !inQuotes) {
+      if (char === "\r" && next === "\n") index += 1;
+      row.push(field);
+      if (row.some((value) => String(value || "").trim())) rows.push(row);
+      row = [];
+      field = "";
+      continue;
+    }
+
+    field += char;
+  }
+
+  row.push(field);
+  if (row.some((value) => String(value || "").trim())) rows.push(row);
+
+  return rows;
+}
+
+function stableHash(value: string) {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
 }

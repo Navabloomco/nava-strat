@@ -147,6 +147,7 @@ The main product principle is convenience. Every user-facing page should make th
 | `GET/POST /api/providers` | Provider Vault list/create. Supports platform-owner `companyId` context. Sanitizes provider credentials in responses. |
 | `GET/PATCH /api/providers/[id]` | Provider detail/update. Supports platform-owner `companyId` context for safe tenant-scoped updates. Platform-owner-only advanced fleet config including supplemental feeds and auth profiles. |
 | `POST /api/providers/[id]/test` | Tests provider sync in the resolved tenant context and returns sanitized diagnostics, including safe telemetry capability and distance-evidence summary counts when available. |
+| `POST /api/providers/[id]/distance-import` | Provider-scoped admin CSV distance report import. Dry-run previews BlueTrax-style report rows, asset matches, odometer health, and rows that would write; commit writes matched rows to `provider_trip_summaries` only. |
 | `GET /api/providers/templates` | Provider templates, including verified connection templates and safe setup-only signal-mapping examples such as the Meitrack CAN Bus onboarding template. No live credentials. |
 | `GET/POST /api/providers/setup-requests` | Provider setup request list/create. |
 | `PATCH /api/providers/setup-requests/[id]` | Provider setup request status management. |
@@ -438,6 +439,7 @@ Separation rules:
 - `telemetry_logs` are point-in-time telemetry pings.
 - `provider_trip_summaries` are provider trip/report-level records such as start/end odometer, provider mileage, motion duration, start/end locations, and violations.
 - `fleet_assets` carries current odometer health, distance source preference, virtual/manual odometer baseline, last distance update time, and distance quality metadata when the additive columns exist.
+- Provider Vault can import provider distance report CSVs through a dry-run first workflow. Import writes matched rows into `provider_trip_summaries` only, never into `telemetry_logs`.
 
 Distance detection rules:
 
@@ -447,6 +449,14 @@ Distance detection rules:
 - If odometer delta and provider-reported mileage disagree heavily, mark `mismatch`.
 - Provider `Mileage` is provider-reported mileage unless provider docs confirm it is GPS-calculated.
 - GPS-calculated distance from coordinate pings is a future fallback and should not be confused with provider-reported mileage.
+
+Provider distance CSV import rules:
+
+- CSV imports are company/provider scoped and require provider administration access.
+- Rows match `fleet_assets` by normalized `Vehicle`, `truck_id`, or registration.
+- Dry-run must show rows parsed, matched assets, unmatched rows, static odometer counts, mismatch counts, and rows that would write.
+- Commit/import must use server-side normalization and upsert by `provider_id + provider_trip_key` when available, with a stable generated key when the provider file has no trip key.
+- CSV report fields such as `StartOdometer`, `EndOdometer`, `Mileage`, `MotionDuration`, `StartLocation`, `EndLocation`, and `Violations` are report summary evidence and must not be mixed into point telemetry.
 
 Nava Eye distance wording should follow the evidence:
 

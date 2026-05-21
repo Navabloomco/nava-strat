@@ -67,6 +67,8 @@ Open `/admin/providers?companyId=<id>`.
 - [ ] Confirm supported engine/tank signals show `none declared` for GPS-only providers.
 - [ ] Confirm placeholder zero signals are shown as safe counts only and do not upgrade capability.
 - [ ] Confirm distance diagnostics, if provider report rows exist, separate provider-reported mileage from physical odometer values.
+- [ ] Upload a provider distance report CSV in dry-run mode and confirm parsed rows, matched assets, unmatched rows, static-zero count, mismatch count, and rows-would-write are shown before import.
+- [ ] Import only after dry-run preview, then confirm matched rows are written to provider trip summaries and not to point telemetry logs.
 - [ ] Confirm static zero odometer values with non-zero mileage are treated as odometer-health issues, not as zero movement.
 - [ ] Confirm no secrets, tokens, cookies, Authorization values, raw provider payloads, or auth configs are visible.
 - [ ] Confirm enrichment diagnostics show safe counts/key names only.

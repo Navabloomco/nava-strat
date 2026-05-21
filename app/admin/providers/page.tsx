@@ -369,6 +369,14 @@ function ProviderCard({
 
       <ProviderCapabilityDiagnostics summary={testResult?.capability_summary} />
       <ProviderDistanceDiagnostics diagnostics={testResult?.distance_diagnostics} />
+      <DistanceReportImport
+        providerId={form.id}
+        selectedCompanyId={selectedCompanyId}
+        canImport={
+          capabilities.can_update_provider_credentials ||
+          capabilities.can_edit_advanced_provider_config
+        }
+      />
 
       <ProviderEnrichmentDiagnostics
         diagnostics={testResult?.supplemental_diagnostics}
@@ -514,6 +522,205 @@ function ProviderDistanceDiagnostics({ diagnostics }: { diagnostics: any }) {
         ]}
         mutedEmpty="No distance setup issues detected."
       />
+    </section>
+  );
+}
+
+function DistanceReportImport({
+  providerId,
+  selectedCompanyId,
+  canImport,
+}: {
+  providerId: string;
+  selectedCompanyId: string;
+  canImport: boolean;
+}) {
+  const [csvText, setCsvText] = useState("");
+  const [fileName, setFileName] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [result, setResult] = useState<any>(null);
+
+  if (!canImport) return null;
+
+  async function handleFileChange(event: any) {
+    const file = event.target.files?.[0];
+    setResult(null);
+    if (!file) {
+      setCsvText("");
+      setFileName("");
+      return;
+    }
+
+    setFileName(file.name || "distance-report.csv");
+    setCsvText(await file.text());
+  }
+
+  async function submitDistanceImport(dryRun: boolean) {
+    if (!csvText.trim()) {
+      alert("Choose a distance report CSV first.");
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        throw new Error("Session expired. Please log in again.");
+      }
+
+      const res = await fetch(`/api/providers/${providerId}/distance-import`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          dryRun,
+          csvText,
+          fileName,
+          ...(selectedCompanyId ? { companyId: selectedCompanyId } : {}),
+        }),
+      });
+      const data = await res.json();
+      setResult(data);
+
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || data.error || "Distance import failed");
+      }
+
+      if (!dryRun) {
+        alert("✅ Distance report imported");
+      }
+    } catch (err: any) {
+      alert(err.message || "Distance import failed");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  const preview = result?.preview;
+  const canCommit =
+    preview?.dry_run &&
+    Number(preview.rows_would_write || 0) > 0 &&
+    !preview.setup_required;
+
+  return (
+    <section style={diagnosticsStyle}>
+      <div style={diagnosticsHeaderStyle}>
+        <div>
+          <div style={diagnosticsEyebrowStyle}>Distance report import</div>
+          <h4 style={diagnosticsTitleStyle}>Provider CSV Distance Report</h4>
+          <div style={diagnosticsSmallTextStyle}>
+            Upload provider report exports such as BlueTrax Fleet Current Status.
+            Dry-run first, then import matched report rows into trip summaries.
+          </div>
+        </div>
+        <div style={diagnosticsMetaStyle}>
+          CSV only
+        </div>
+      </div>
+
+      <div style={distanceImportPanelStyle}>
+        <div>
+          <label style={labelStyle}>Distance report CSV</label>
+          <input
+            type="file"
+            accept=".csv,text/csv"
+            onChange={handleFileChange}
+            style={fileInputStyle}
+          />
+          {fileName && (
+            <div style={diagnosticsSmallTextStyle}>
+              Selected: <strong>{fileName}</strong>
+            </div>
+          )}
+        </div>
+
+        <div style={distanceImportActionRowStyle}>
+          <button
+            type="button"
+            onClick={() => submitDistanceImport(true)}
+            disabled={isSubmitting || !csvText.trim()}
+            style={testBtn}
+          >
+            {isSubmitting ? "CHECKING..." : "DRY-RUN PREVIEW"}
+          </button>
+          <button
+            type="button"
+            onClick={() => submitDistanceImport(false)}
+            disabled={isSubmitting || !canCommit}
+            style={{
+              ...saveBtn,
+              opacity: isSubmitting || !canCommit ? 0.55 : 1,
+              cursor: isSubmitting || !canCommit ? "not-allowed" : "pointer",
+            }}
+          >
+            IMPORT MATCHED ROWS
+          </button>
+        </div>
+      </div>
+
+      {preview && (
+        <div style={distanceImportPreviewStyle}>
+          <div style={diagnosticsSummaryGridStyle}>
+            <DiagnosticMetric label="Rows parsed" value={preview.rows_parsed} />
+            <DiagnosticMetric label="Matched assets" value={preview.matched_assets} />
+            <DiagnosticMetric label="Unmatched rows" value={preview.unmatched_rows} />
+            <DiagnosticMetric label="Would write" value={preview.rows_would_write} />
+          </div>
+
+          {preview.setup_required && (
+            <div style={diagnosticsErrorStyle}>
+              Distance schema setup is required before this report can be fully stored.
+            </div>
+          )}
+
+          <DiagnosticFieldBlock
+            title="Odometer health from CSV"
+            value={preview.odometer_health_counts}
+            mutedEmpty="No odometer health evidence found."
+            includeZeroCounts
+          />
+          <DiagnosticFieldBlock
+            title="Distance source from CSV"
+            value={preview.distance_source_counts}
+            mutedEmpty="No distance source evidence found."
+            includeZeroCounts
+          />
+          <DiagnosticFieldBlock
+            title="Import notes"
+            value={[
+              preview.static_zero_count
+                ? `${preview.static_zero_count} static-zero odometer row(s)`
+                : "",
+              preview.static_nonzero_count
+                ? `${preview.static_nonzero_count} static odometer row(s)`
+                : "",
+              preview.mismatch_count
+                ? `${preview.mismatch_count} odometer/mileage mismatch row(s)`
+                : "",
+              preview.rollover_suspected_count
+                ? `${preview.rollover_suspected_count} rollover-suspected row(s)`
+                : "",
+              preview.fleet_asset_columns_missing
+                ? "fleet_assets distance columns missing"
+                : "",
+              ...(preview.errors || []),
+            ]}
+            mutedEmpty="No import warnings."
+          />
+          <DiagnosticFieldBlock
+            title="Unmatched vehicle samples"
+            value={(preview.unmatched_samples || []).map(
+              (row: any) => row.truck_id || "unknown vehicle"
+            )}
+            mutedEmpty="All parsed report rows matched provider assets."
+          />
+        </div>
+      )}
     </section>
   );
 }
@@ -1255,6 +1462,37 @@ const diagnosticsErrorStyle = {
   fontSize: 12,
   lineHeight: 1.5,
   marginBottom: 12,
+};
+const distanceImportPanelStyle = {
+  display: "grid",
+  gridTemplateColumns: "minmax(240px, 1fr) auto",
+  gap: 14,
+  alignItems: "end",
+  border: "1px solid #e2e8f0",
+  backgroundColor: "#fff",
+  borderRadius: 10,
+  padding: 14,
+  marginBottom: 14,
+};
+const distanceImportActionRowStyle = {
+  display: "flex",
+  flexWrap: "wrap" as const,
+  gap: 10,
+  justifyContent: "flex-end",
+};
+const distanceImportPreviewStyle = {
+  borderTop: "1px solid #f1f5f9",
+  paddingTop: 14,
+  marginTop: 12,
+};
+const fileInputStyle = {
+  width: "100%",
+  border: "1px dashed #cbd5e1",
+  backgroundColor: "#f8fafc",
+  borderRadius: 8,
+  color: "#334155",
+  padding: "10px",
+  fontSize: 13,
 };
 const diagnosticsFieldBlockStyle = {
   borderTop: "1px solid #f1f5f9",
