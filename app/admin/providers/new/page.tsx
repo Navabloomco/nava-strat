@@ -29,6 +29,32 @@ const KNOWN_FLEET_ENDPOINTS = [
   "/fleet",
   "/get_reports",
 ] as const;
+const CONNECT_PROGRESS_DEFINITIONS = [
+  { id: "prepare", label: "Preparing secure test" },
+  { id: "login", label: "Checking login endpoint" },
+  { id: "token", label: "Finding access token/hash" },
+  { id: "fleet", label: "Testing vehicle endpoint" },
+  { id: "rows", label: "Detecting vehicle rows" },
+  { id: "mapping", label: "Mapping fields" },
+  { id: "capability", label: "Reviewing signal capability" },
+  { id: "create", label: "Creating inactive provider" },
+  { id: "ready", label: "Ready for Provider Vault review" },
+] as const;
+
+type ProgressStepState =
+  | "waiting"
+  | "running"
+  | "success"
+  | "warning"
+  | "failed"
+  | "skipped";
+
+type ProgressStep = {
+  id: string;
+  label: string;
+  state: ProgressStepState;
+  detail: string;
+};
 
 const INITIAL_CUSTOM_PROVIDER_FORM = {
   provider_name: "",
@@ -99,6 +125,11 @@ export default function NewProviderPage() {
   const [customForm, setCustomForm] = useState(INITIAL_CUSTOM_PROVIDER_FORM);
   const [detectResults, setDetectResults] = useState<Record<string, any>>({});
   const [testingEndpoint, setTestingEndpoint] = useState("");
+  const [connectSteps, setConnectSteps] = useState<ProgressStep[]>(
+    createInitialConnectSteps
+  );
+  const [connectRunning, setConnectRunning] = useState(false);
+  const [connectedProviderId, setConnectedProviderId] = useState("");
 
   useEffect(() => {
     const companyId = companyIdFromLocation();
@@ -324,6 +355,36 @@ export default function NewProviderPage() {
     setCustomForm((current) => ({ ...current, ...patch }));
   }
 
+  function resetConnectProgress() {
+    setConnectedProviderId("");
+    setConnectSteps(createInitialConnectSteps());
+  }
+
+  function updateConnectStep(
+    id: string,
+    state: ProgressStepState,
+    detail = ""
+  ) {
+    setConnectSteps((steps) =>
+      steps.map((step) =>
+        step.id === id ? { ...step, state, detail } : step
+      )
+    );
+  }
+
+  function applyProgressUpdates(
+    updates: Record<string, { state: ProgressStepState; detail?: string }>
+  ) {
+    setConnectSteps((steps) =>
+      steps.map((step) => {
+        const update = updates[step.id];
+        return update
+          ? { ...step, state: update.state, detail: update.detail || "" }
+          : step;
+      })
+    );
+  }
+
   function handleBaseUrlBlur() {
     const split = normalizeProviderBaseInput(customForm.base_url);
     const patch: Record<string, string> = { base_url: split.baseUrl };
@@ -341,11 +402,62 @@ export default function NewProviderPage() {
     updateCustomForm(patch);
   }
 
-  async function handleCreateCustomProvider() {
-    const validationError = validateCustomProviderForm(customForm);
+  function buildCustomProviderCreateBody(
+    formInput: typeof INITIAL_CUSTOM_PROVIDER_FORM
+  ) {
+    return {
+      provider_mode: "custom_api",
+      custom_provider: {
+        provider_name: formInput.provider_name.trim(),
+        provider_website: formInput.provider_website.trim() || null,
+        base_url: normalizeBaseUrl(formInput.base_url),
+        provider_notes: formInput.provider_notes.trim() || null,
+        provider_timezone:
+          formInput.provider_timezone.trim() || "Africa/Nairobi",
+        auth_method: formInput.auth_method,
+        login_credential_placement: formInput.login_credential_placement,
+        api_key_header: formInput.api_key_header.trim() || "x-api-key",
+        api_key: formInput.api_key,
+        bearer_token: formInput.bearer_token,
+        username: formInput.username,
+        password: formInput.password,
+        login_url: formInput.login_url.trim(),
+        login_token_path: formInput.login_token_path.trim(),
+        login_username_field:
+          formInput.login_username_field.trim() || "username",
+        login_secret_field:
+          formInput.login_secret_field.trim() || "password",
+        endpoint_url: formInput.endpoint_url.trim(),
+        fleet_token_placement: formInput.fleet_token_placement,
+        http_method: formInput.http_method,
+        row_path: formInput.row_path.trim(),
+        request_body: formInput.request_body.trim(),
+        field_mapping: {
+          truck: formInput.vehicle_field.trim(),
+          latitude: formInput.latitude_field.trim(),
+          longitude: formInput.longitude_field.trim(),
+          recorded_at: formInput.timestamp_field.trim(),
+          speed: formInput.speed_field.trim(),
+          location_label: formInput.location_label_field.trim(),
+          fuel_level: formInput.fuel_level_field.trim(),
+          ignition_on: formInput.ignition_field.trim(),
+          engine_rpm: formInput.rpm_field.trim(),
+          odometer: formInput.odometer_field.trim(),
+        },
+        capability_declaration: formInput.capability_declaration,
+      },
+      is_active: false,
+      ...(selectedCompanyId ? { companyId: selectedCompanyId } : {}),
+    };
+  }
+
+  async function createCustomProviderRecord(
+    formInput: typeof INITIAL_CUSTOM_PROVIDER_FORM,
+    redirectAfterCreate: boolean
+  ) {
+    const validationError = validateCustomProviderForm(formInput);
     if (validationError) {
-      alert(validationError);
-      return;
+      throw new Error(validationError);
     }
 
     setSaving(true);
@@ -355,73 +467,43 @@ export default function NewProviderPage() {
     } = await supabase.auth.getSession();
 
     if (!session?.access_token) {
-      alert("Session expired. Please log in again.");
       setSaving(false);
       window.location.href = "/login";
-      return;
+      throw new Error("Session expired. Please log in again.");
     }
 
-    const res = await fetch("/api/providers", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${session.access_token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        provider_mode: "custom_api",
-        custom_provider: {
-          provider_name: customForm.provider_name.trim(),
-          provider_website: customForm.provider_website.trim() || null,
-          base_url: normalizeBaseUrl(customForm.base_url),
-          provider_notes: customForm.provider_notes.trim() || null,
-          provider_timezone: customForm.provider_timezone.trim() || "Africa/Nairobi",
-          auth_method: customForm.auth_method,
-          login_credential_placement: customForm.login_credential_placement,
-          api_key_header: customForm.api_key_header.trim() || "x-api-key",
-          api_key: customForm.api_key,
-          bearer_token: customForm.bearer_token,
-          username: customForm.username,
-          password: customForm.password,
-          login_url: customForm.login_url.trim(),
-          login_token_path: customForm.login_token_path.trim(),
-          login_username_field:
-            customForm.login_username_field.trim() || "username",
-          login_secret_field:
-            customForm.login_secret_field.trim() || "password",
-          endpoint_url: customForm.endpoint_url.trim(),
-          fleet_token_placement: customForm.fleet_token_placement,
-          http_method: customForm.http_method,
-          row_path: customForm.row_path.trim(),
-          request_body: customForm.request_body.trim(),
-          field_mapping: {
-            truck: customForm.vehicle_field.trim(),
-            latitude: customForm.latitude_field.trim(),
-            longitude: customForm.longitude_field.trim(),
-            recorded_at: customForm.timestamp_field.trim(),
-            speed: customForm.speed_field.trim(),
-            location_label: customForm.location_label_field.trim(),
-            fuel_level: customForm.fuel_level_field.trim(),
-            ignition_on: customForm.ignition_field.trim(),
-            engine_rpm: customForm.rpm_field.trim(),
-            odometer: customForm.odometer_field.trim(),
-          },
-          capability_declaration: customForm.capability_declaration,
+    try {
+      const res = await fetch("/api/providers", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          "Content-Type": "application/json",
         },
-        is_active: false,
-        ...(selectedCompanyId ? { companyId: selectedCompanyId } : {}),
-      }),
-    });
-    const data = await res.json();
+        body: JSON.stringify(buildCustomProviderCreateBody(formInput)),
+      });
+      const data = await res.json();
 
-    setSaving(false);
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Provider creation failed");
+      }
 
-    if (!res.ok || !data.success) {
-      alert(`Provider creation failed: ${data.error || "Unknown error"}`);
-      return;
+      if (redirectAfterCreate) {
+        alert("Custom provider added inactive. Test the connection before activating sync.");
+        window.location.href = `/admin/providers${companyQuery(selectedCompanyId)}`;
+      }
+
+      return data;
+    } finally {
+      setSaving(false);
     }
+  }
 
-    alert("Custom provider added inactive. Test the connection before activating sync.");
-    window.location.href = `/admin/providers${companyQuery(selectedCompanyId)}`;
+  async function handleCreateCustomProvider() {
+    try {
+      await createCustomProviderRecord(customForm, true);
+    } catch (err: any) {
+      alert(`Provider creation failed: ${err.message || "Unknown error"}`);
+    }
   }
 
   async function handleTestCustomEndpoint(target: "login" | "fleet") {
@@ -584,11 +666,41 @@ export default function NewProviderPage() {
   }
 
   async function handleAutoTestCustomProvider() {
-    const split = normalizeProviderBaseInput(customForm.base_url);
+    try {
+      await runCustomAutoTest(customForm, true);
+    } catch {
+      // The progress runner and result panel already show the actionable error.
+    }
+  }
+
+  async function runCustomAutoTest(
+    formInput: typeof INITIAL_CUSTOM_PROVIDER_FORM,
+    showProgress: boolean
+  ) {
+    const split = normalizeProviderBaseInput(formInput.base_url);
     const baseUrl = split.baseUrl;
     if (!baseUrl) {
-      alert("Enter a provider base URL first.");
-      return;
+      if (showProgress) {
+        resetConnectProgress();
+        updateConnectStep("prepare", "failed", "Enter the provider API link first.");
+      } else {
+        alert("Enter a provider base URL first.");
+      }
+      throw new Error("Enter the provider API link first.");
+    }
+
+    if (showProgress) {
+      resetConnectProgress();
+      updateConnectStep("prepare", "running", "Preparing a secure endpoint test.");
+      updateConnectStep("prepare", "success", "Secure test prepared.");
+      if (formInput.auth_method === "post_login") {
+        updateConnectStep("login", "running", "Trying common login patterns.");
+        updateConnectStep("token", "running", "Looking for a token/hash path.");
+      } else {
+        updateConnectStep("login", "skipped", "Static credential auth selected.");
+        updateConnectStep("token", "skipped", "No login token needed yet.");
+      }
+      updateConnectStep("fleet", "running", "Testing likely vehicle endpoints.");
     }
 
     setTestingEndpoint("auto");
@@ -598,10 +710,9 @@ export default function NewProviderPage() {
     } = await supabase.auth.getSession();
 
     if (!session?.access_token) {
-      alert("Session expired. Please log in again.");
       setTestingEndpoint("");
       window.location.href = "/login";
-      return;
+      throw new Error("Session expired. Please log in again.");
     }
 
     try {
@@ -615,31 +726,46 @@ export default function NewProviderPage() {
           ...(selectedCompanyId ? { companyId: selectedCompanyId } : {}),
           mode: "auto_setup",
           base_url: baseUrl,
-          provider_name: customForm.provider_name.trim(),
-          provider_website: customForm.provider_website.trim(),
+          provider_name: formInput.provider_name.trim(),
+          provider_website: formInput.provider_website.trim(),
           provider_notes: [
-            customForm.provider_notes.trim(),
-            customForm.login_url.trim(),
-            customForm.endpoint_url.trim(),
+            formInput.provider_notes.trim(),
+            formInput.login_url.trim(),
+            formInput.endpoint_url.trim(),
           ].filter(Boolean).join("\n"),
-          auth_method: customForm.auth_method,
-          api_key_header: customForm.api_key_header.trim() || "x-api-key",
-          api_key: customForm.api_key,
-          bearer_token: customForm.bearer_token,
-          username: customForm.username,
-          password: customForm.password,
+          auth_method: formInput.auth_method,
+          api_key_header: formInput.api_key_header.trim() || "x-api-key",
+          api_key: formInput.api_key,
+          bearer_token: formInput.bearer_token,
+          username: formInput.username,
+          password: formInput.password,
         }),
       });
       const data = await res.json();
+      const result = res.ok && data.success
+        ? data
+        : { error: data.error || "Auto-test failed" };
       setDetectResults((current) => ({
         ...current,
-        auto: res.ok && data.success ? data : { error: data.error || "Auto-test failed" },
+        auto: result,
       }));
+      if (showProgress) {
+        applyAutoTestProgress(result, formInput);
+      }
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Auto-test failed");
+      }
+      return data;
     } catch (err: any) {
+      const result = { error: err.message || "Auto-test failed" };
       setDetectResults((current) => ({
         ...current,
-        auto: { error: err.message || "Auto-test failed" },
+        auto: result,
       }));
+      if (showProgress) {
+        applyAutoTestProgress(result, formInput);
+      }
+      throw err;
     } finally {
       setTestingEndpoint("");
     }
@@ -649,42 +775,170 @@ export default function NewProviderPage() {
     const result = detectResults.auto;
     if (!result || result.error) return;
 
-    const patch: Record<string, string> = {
-      base_url: result.base_url || normalizeBaseUrl(customForm.base_url),
-    };
+    updateCustomForm(buildAutoDetectionPatch(result, customForm));
+  }
 
-    if (result.login) {
-      patch.auth_method = "post_login";
-      patch.login_url = result.login.login_url || customForm.login_url;
-      patch.login_token_path = result.login.token_path || customForm.login_token_path;
-      patch.login_username_field =
-        result.login.username_field || customForm.login_username_field;
-      patch.login_secret_field =
-        result.login.password_field || customForm.login_secret_field;
-      patch.login_credential_placement =
-        result.login.credential_placement ||
-        customForm.login_credential_placement;
+  function applyAutoTestProgress(
+    result: any,
+    formInput: typeof INITIAL_CUSTOM_PROVIDER_FORM
+  ) {
+    if (result?.error) {
+      applyProgressUpdates({
+        fleet: {
+          state: "failed",
+          detail: setupFixMessage(result),
+        },
+      });
+      return;
     }
 
-    if (result.fleet) {
-      patch.endpoint_url = result.fleet.endpoint_url || customForm.endpoint_url;
-      patch.row_path = result.fleet.row_path || customForm.row_path;
-      patch.fleet_token_placement =
-        result.fleet.token_placement || customForm.fleet_token_placement;
-      const suggestions = result.fleet.field_mapping_suggestions || {};
-      if (suggestions.vehicle) patch.vehicle_field = suggestions.vehicle;
-      if (suggestions.latitude) patch.latitude_field = suggestions.latitude;
-      if (suggestions.longitude) patch.longitude_field = suggestions.longitude;
-      if (suggestions.timestamp) patch.timestamp_field = suggestions.timestamp;
-      if (suggestions.speed) patch.speed_field = suggestions.speed;
-      if (suggestions.location_label) patch.location_label_field = suggestions.location_label;
-      if (suggestions.fuel_level) patch.fuel_level_field = suggestions.fuel_level;
-      if (suggestions.ignition) patch.ignition_field = suggestions.ignition;
-      if (suggestions.engine_rpm) patch.rpm_field = suggestions.engine_rpm;
-      if (suggestions.odometer) patch.odometer_field = suggestions.odometer;
-    }
+    const suggestions = result?.fleet?.field_mapping_suggestions || {};
+    const coreFields = ["vehicle", "latitude", "longitude", "timestamp"].filter(
+      (field) => Boolean(suggestions[field])
+    );
+    const blockers = result?.setup_blockers || [];
+    const authIsLogin = formInput.auth_method === "post_login";
+    const loginState = authIsLogin
+      ? result.login
+        ? "success"
+        : "failed"
+      : result.suggested_auth_method === "post_login"
+        ? "warning"
+        : "skipped";
+    const tokenState = authIsLogin
+      ? result.login
+        ? "success"
+        : "failed"
+      : result.suggested_auth_method === "post_login"
+        ? "warning"
+        : "skipped";
 
-    updateCustomForm(patch);
+    applyProgressUpdates({
+      login: {
+        state: loginState,
+        detail: result.login
+          ? "Login endpoint accepted."
+          : result.suggested_auth_method === "post_login"
+            ? "This provider appears to use a login-token/hash flow."
+            : "Static credential auth selected.",
+      },
+      token: {
+        state: tokenState,
+        detail: result.login
+          ? "Access token found."
+          : result.suggested_auth_method === "post_login"
+            ? "Switch to POST login token setup."
+            : "No login token needed for this auth method.",
+      },
+      fleet: {
+        state: result.fleet ? "success" : "failed",
+        detail: result.fleet
+          ? "Vehicle endpoint responded."
+          : setupFixMessage({ setup_blockers: blockers }),
+      },
+      rows: {
+        state: result.fleet?.detected_vehicle_count ? "success" : "failed",
+        detail: result.fleet?.detected_vehicle_count
+          ? `Vehicles detected: ${result.fleet.detected_vehicle_count}.`
+          : "No vehicle rows found. Ask provider for get_devices response sample.",
+      },
+      mapping: {
+        state: coreFields.length === 4 ? "success" : "warning",
+        detail:
+          coreFields.length === 4
+            ? "Core fields mapped: vehicle, latitude, longitude, timestamp."
+            : `Core fields need review: ${coreFields.join(", ") || "none"} detected.`,
+      },
+      capability: {
+        state: result.fleet ? "success" : "waiting",
+        detail: result.fleet
+          ? "Signal capability ready for Provider Vault review."
+          : "",
+      },
+      create: {
+        state: "waiting",
+        detail: "",
+      },
+      ready: {
+        state: "waiting",
+        detail: "",
+      },
+    });
+  }
+
+  async function handleConnectCustomProvider() {
+    resetConnectProgress();
+    setConnectRunning(true);
+
+    try {
+      updateConnectStep("prepare", "running", "Normalizing provider setup.");
+      const prepared = prepareSimpleConnectForm(customForm);
+      setCustomForm(prepared);
+      updateConnectStep("prepare", "success", "Secure test prepared.");
+
+      const autoResult = await runCustomAutoTest(prepared, true);
+      if (!autoResult?.fleet) {
+        throw new Error(setupFixMessage(autoResult));
+      }
+
+      const patch = buildAutoDetectionPatch(autoResult, prepared);
+      const effectiveForm = { ...prepared, ...patch };
+      setCustomForm(effectiveForm);
+
+      const coreMissing = missingCoreMappingFields(effectiveForm);
+      if (coreMissing.length > 0) {
+        updateConnectStep(
+          "mapping",
+          "failed",
+          `Core fields missing: ${coreMissing.join(", ")}. Ask provider for a get_devices response sample.`
+        );
+        throw new Error("Core field mapping is incomplete.");
+      }
+
+      updateConnectStep(
+        "create",
+        "running",
+        "Creating provider record as inactive."
+      );
+      let created: any;
+      try {
+        created = await createCustomProviderRecord(effectiveForm, false);
+      } catch (err: any) {
+        updateConnectStep(
+          "create",
+          "failed",
+          err.message || "Provider creation failed."
+        );
+        throw err;
+      }
+      setConnectedProviderId(created?.provider?.id || "");
+      updateConnectStep(
+        "create",
+        "success",
+        "Provider created inactive. Review and activate sync in Provider Vault."
+      );
+      updateConnectStep(
+        "ready",
+        "success",
+        "Ready for Provider Vault review."
+      );
+    } catch (err: any) {
+      setConnectSteps((steps) =>
+        steps.some((step) => step.state === "failed")
+          ? steps
+          : steps.map((step) =>
+              step.id === "prepare"
+                ? {
+                    ...step,
+                    state: "failed",
+                    detail: err.message || "Setup failed.",
+                  }
+                : step
+            )
+      );
+    } finally {
+      setConnectRunning(false);
+    }
   }
 
   function handleProviderSelection(value: string) {
@@ -871,6 +1125,11 @@ export default function NewProviderPage() {
                 onApplyAutoDetection={applyAutoDetection}
                 onBaseUrlBlur={handleBaseUrlBlur}
                 onUseLoginTokenSetup={handleUseLoginTokenSetup}
+                onConnect={handleConnectCustomProvider}
+                connectSteps={connectSteps}
+                connectRunning={connectRunning}
+                connectedProviderId={connectedProviderId}
+                providerVaultHref={`/admin/providers${companyQuery(selectedCompanyId)}`}
                 canShowDebug={Boolean(
                   capabilities.can_edit_advanced_provider_config
                 )}
@@ -1144,6 +1403,111 @@ function validateCustomProviderForm(form: typeof INITIAL_CUSTOM_PROVIDER_FORM) {
   return "";
 }
 
+function createInitialConnectSteps(): ProgressStep[] {
+  return CONNECT_PROGRESS_DEFINITIONS.map((step) => ({
+    id: step.id,
+    label: step.label,
+    state: "waiting",
+    detail: "",
+  }));
+}
+
+function buildAutoDetectionPatch(
+  result: any,
+  sourceForm: typeof INITIAL_CUSTOM_PROVIDER_FORM
+) {
+  const patch: Record<string, string> = {
+    base_url: result.base_url || normalizeBaseUrl(sourceForm.base_url),
+  };
+
+  if (result.login) {
+    patch.auth_method = "post_login";
+    patch.login_url = result.login.login_url || sourceForm.login_url;
+    patch.login_token_path = result.login.token_path || sourceForm.login_token_path;
+    patch.login_username_field =
+      result.login.username_field || sourceForm.login_username_field;
+    patch.login_secret_field =
+      result.login.password_field || sourceForm.login_secret_field;
+    patch.login_credential_placement =
+      result.login.credential_placement ||
+      sourceForm.login_credential_placement;
+  }
+
+  if (result.fleet) {
+    patch.endpoint_url = result.fleet.endpoint_url || sourceForm.endpoint_url;
+    patch.row_path = result.fleet.row_path || sourceForm.row_path;
+    patch.fleet_token_placement =
+      result.fleet.token_placement || sourceForm.fleet_token_placement;
+    const suggestions = result.fleet.field_mapping_suggestions || {};
+    if (suggestions.vehicle) patch.vehicle_field = suggestions.vehicle;
+    if (suggestions.latitude) patch.latitude_field = suggestions.latitude;
+    if (suggestions.longitude) patch.longitude_field = suggestions.longitude;
+    if (suggestions.timestamp) patch.timestamp_field = suggestions.timestamp;
+    if (suggestions.speed) patch.speed_field = suggestions.speed;
+    if (suggestions.location_label) patch.location_label_field = suggestions.location_label;
+    if (suggestions.fuel_level) patch.fuel_level_field = suggestions.fuel_level;
+    if (suggestions.ignition) patch.ignition_field = suggestions.ignition;
+    if (suggestions.engine_rpm) patch.rpm_field = suggestions.engine_rpm;
+    if (suggestions.odometer) patch.odometer_field = suggestions.odometer;
+  }
+
+  return patch;
+}
+
+function prepareSimpleConnectForm(form: typeof INITIAL_CUSTOM_PROVIDER_FORM) {
+  const split = normalizeProviderBaseInput(form.base_url);
+  const baseUrl = split.baseUrl;
+  const prepared = {
+    ...form,
+    base_url: baseUrl,
+    provider_timezone: form.provider_timezone || "Africa/Nairobi",
+  };
+  const fleetTrackLike = split.fleetTrackLike || isFleetTrackLike(prepared, baseUrl);
+
+  if (split.endpointKind === "login" && split.endpointUrl && !prepared.login_url.trim()) {
+    prepared.login_url = split.endpointUrl;
+  }
+  if (split.endpointKind === "fleet" && split.endpointUrl && !prepared.endpoint_url.trim()) {
+    prepared.endpoint_url = split.endpointUrl;
+  }
+  if (fleetTrackLike) {
+    Object.assign(prepared, buildLoginTokenSetupPatch(baseUrl, prepared, true));
+  } else if (!prepared.endpoint_url.trim()) {
+    prepared.endpoint_url = `${baseUrl}/get_devices`;
+  }
+  if (!prepared.row_path.trim()) prepared.row_path = "data";
+
+  return prepared;
+}
+
+function missingCoreMappingFields(form: typeof INITIAL_CUSTOM_PROVIDER_FORM) {
+  return [
+    ["vehicle", form.vehicle_field],
+    ["latitude", form.latitude_field],
+    ["longitude", form.longitude_field],
+    ["timestamp", form.timestamp_field],
+  ]
+    .filter(([, value]) => !String(value || "").trim())
+    .map(([label]) => label);
+}
+
+function setupFixMessage(result: any) {
+  const blockers = Array.isArray(result?.setup_blockers)
+    ? result.setup_blockers
+    : [];
+  const text = String(result?.error || blockers[0] || "").toLowerCase();
+  if (text.includes("422") || text.includes("login request shape")) {
+    return "Login rejected. Check email/password or whether login uses query parameters.";
+  }
+  if (text.includes("401") || text.includes("user_api_hash")) {
+    return "Vehicle endpoint rejected token. Confirm token is sent as user_api_hash.";
+  }
+  if (text.includes("vehicle rows") || text.includes("row array")) {
+    return "No vehicle rows found. Ask provider for get_devices response sample.";
+  }
+  return result?.error || blockers[0] || "Connection setup failed. Check the API link and credentials.";
+}
+
 function normalizeBaseUrl(value: string) {
   return normalizeProviderBaseInput(value).baseUrl;
 }
@@ -1349,6 +1713,11 @@ function CustomApiProviderForm({
   onApplyAutoDetection,
   onBaseUrlBlur,
   onUseLoginTokenSetup,
+  onConnect,
+  connectSteps,
+  connectRunning,
+  connectedProviderId,
+  providerVaultHref,
   canShowDebug,
 }: {
   form: typeof INITIAL_CUSTOM_PROVIDER_FORM;
@@ -1364,10 +1733,19 @@ function CustomApiProviderForm({
   onApplyAutoDetection: () => void;
   onBaseUrlBlur: () => void;
   onUseLoginTokenSetup: () => void;
+  onConnect: () => void;
+  connectSteps: ProgressStep[];
+  connectRunning: boolean;
+  connectedProviderId: string;
+  providerVaultHref: string;
   canShowDebug: boolean;
 }) {
   const isPost = form.http_method === "POST";
   const loginTokenHint = isFleetTrackLike(form, normalizeBaseUrl(form.base_url));
+  const simpleSecretValue =
+    form.auth_method === "post_login" || loginTokenHint
+      ? form.password
+      : form.api_key || form.password;
 
   return (
     <div style={customProviderStyle}>
@@ -1383,8 +1761,93 @@ function CustomApiProviderForm({
         <div style={safeBadgeStyle}>Self-serve API setup</div>
       </div>
 
+      <section style={simpleConnectStyle}>
+        <div>
+          <h2 style={providerWizardSectionTitleStyle}>Simple Connect</h2>
+          <p style={providerWizardSectionCopyStyle}>
+            Enter the provider link and credentials. Nava will test common API
+            patterns, detect vehicles, map core fields, and create the provider
+            inactive for review.
+          </p>
+        </div>
+        <div style={gridStyle}>
+          <TextField
+            label="Provider name"
+            value={form.provider_name}
+            onChange={(value) => updateForm({ provider_name: value })}
+            required
+          />
+          <TextField
+            label="API link / base URL"
+            value={form.base_url}
+            onChange={(value) => updateForm({ base_url: value })}
+            onBlur={onBaseUrlBlur}
+            placeholder="https://fleettrack.africa/api"
+            required
+          />
+          <TextField
+            label="Email / username"
+            value={form.username}
+            onChange={(value) => updateForm({ username: value })}
+          />
+          <TextField
+            label="Password / API key"
+            value={simpleSecretValue}
+            onChange={(value) =>
+              updateForm({ password: value, api_key: value })
+            }
+            secret
+          />
+        </div>
+        <div style={autoActionsStyle}>
+          <button
+            type="button"
+            style={buttonStyle}
+            disabled={connectRunning || saving}
+            onClick={onConnect}
+          >
+            {connectRunning ? "CONNECTING PROVIDER..." : "CONNECT PROVIDER"}
+          </button>
+          <button type="button" style={secondaryButtonStyle} onClick={onAutoFill}>
+            LET NAVA TRY COMMON API PATTERNS
+          </button>
+          {loginTokenHint && (
+            <button
+              type="button"
+              style={secondaryButtonStyle}
+              onClick={onUseLoginTokenSetup}
+            >
+              USE DETECTED LOGIN-TOKEN SETUP
+            </button>
+          )}
+          <button
+            type="button"
+            style={buttonInlineStyle}
+            disabled={testingEndpoint === "auto" || connectRunning}
+            onClick={onAutoTest}
+          >
+            {testingEndpoint === "auto" ? "AUTO-TESTING SETUP..." : "AUTO-TEST SETUP"}
+          </button>
+        </div>
+        <ConnectProgressRunner
+          steps={connectSteps}
+          providerVaultHref={providerVaultHref}
+          connectedProviderId={connectedProviderId}
+        />
+        <AutoSetupDetectionResult
+          result={detectResults.auto}
+          canShowDebug={canShowDebug}
+          onApply={onApplyAutoDetection}
+          onUseLoginTokenSetup={onUseLoginTokenSetup}
+        />
+      </section>
+
+      <details style={templateAdvancedStyle}>
+        <summary style={templateAdvancedSummaryStyle}>
+          Advanced setup
+        </summary>
       <ProviderWizardSection
-        title="1. Provider identity"
+        title="Provider identity"
         copy="Name the tracking system and choose the provider timezone used for timestamp interpretation."
       >
         <div style={gridStyle}>
@@ -1423,38 +1886,10 @@ function CustomApiProviderForm({
             placeholder="Paste short hints such as get_devices, user_api_hash, or provider endpoint notes."
           />
         </div>
-        <div style={autoActionsStyle}>
-          <button type="button" style={secondaryButtonStyle} onClick={onAutoFill}>
-            LET NAVA TRY COMMON API PATTERNS
-          </button>
-          {loginTokenHint && (
-            <button
-              type="button"
-              style={secondaryButtonStyle}
-              onClick={onUseLoginTokenSetup}
-            >
-              USE DETECTED LOGIN-TOKEN SETUP
-            </button>
-          )}
-          <button
-            type="button"
-            style={buttonInlineStyle}
-            disabled={testingEndpoint === "auto"}
-            onClick={onAutoTest}
-          >
-            {testingEndpoint === "auto" ? "AUTO-TESTING SETUP..." : "AUTO-TEST SETUP"}
-          </button>
-        </div>
-        <AutoSetupDetectionResult
-          result={detectResults.auto}
-          canShowDebug={canShowDebug}
-          onApply={onApplyAutoDetection}
-          onUseLoginTokenSetup={onUseLoginTokenSetup}
-        />
       </ProviderWizardSection>
 
       <ProviderWizardSection
-        title="2. Authentication"
+        title="Authentication"
         copy="Credentials are stored server-side only and are not echoed back after save."
       >
         <div style={gridStyle}>
@@ -1584,7 +2019,7 @@ function CustomApiProviderForm({
       </ProviderWizardSection>
 
       <ProviderWizardSection
-        title="3. Fleet/current location endpoint"
+        title="Fleet/current location endpoint"
         copy="This should be the endpoint that returns current vehicle location rows."
       >
         <div style={gridStyle}>
@@ -1671,7 +2106,7 @@ function CustomApiProviderForm({
       </ProviderWizardSection>
 
       <ProviderWizardSection
-        title="4. Field mapping"
+        title="Field mapping"
         copy="Map provider keys into Nava's standard vehicle signals. Use dot paths if the data is nested."
       >
         <div style={gridStyle}>
@@ -1743,7 +2178,7 @@ function CustomApiProviderForm({
       </ProviderWizardSection>
 
       <ProviderWizardSection
-        title="5. Signal capability"
+        title="Signal capability"
         copy="Declare only signals your provider confirms are real sensor values."
       >
         <div style={fieldGroup}>
@@ -1777,8 +2212,75 @@ function CustomApiProviderForm({
       >
         {saving ? "CREATING CUSTOM PROVIDER..." : "CREATE INACTIVE PROVIDER"}
       </button>
+      </details>
     </div>
   );
+}
+
+function ConnectProgressRunner({
+  steps,
+  providerVaultHref,
+  connectedProviderId,
+}: {
+  steps: ProgressStep[];
+  providerVaultHref: string;
+  connectedProviderId: string;
+}) {
+  const hasStarted = steps.some(
+    (step) => step.state !== "waiting" || step.detail
+  );
+  if (!hasStarted) {
+    return (
+      <div style={progressShellStyle}>
+        <div style={progressHeaderStyle}>
+          <div style={detectionTitleStyle}>Connection progress</div>
+          <div style={detectionMetaStyle}>
+            The secure setup checklist will appear here when testing starts.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={progressShellStyle}>
+      <div style={progressHeaderStyle}>
+        <div>
+          <div style={detectionTitleStyle}>Connection progress</div>
+          <div style={detectionMetaStyle}>
+            Tokens and provider payloads stay hidden while setup runs.
+          </div>
+        </div>
+        {connectedProviderId && (
+          <Link href={providerVaultHref} style={smallLinkButtonStyle}>
+            Open Provider Vault
+          </Link>
+        )}
+      </div>
+      <div style={progressListStyle}>
+        {steps.map((step) => (
+          <div key={step.id} style={progressStepStyle}>
+            <span style={progressDotStyle(step.state)}>
+              {progressSymbol(step.state)}
+            </span>
+            <span style={progressTextStyle}>
+              <strong>{step.label}</strong>
+              {step.detail && <span>{step.detail}</span>}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function progressSymbol(state: ProgressStepState) {
+  if (state === "success") return "OK";
+  if (state === "warning") return "!";
+  if (state === "failed") return "X";
+  if (state === "skipped") return "-";
+  if (state === "running") return "...";
+  return "";
 }
 
 function EndpointDetectionResult({
@@ -2474,6 +2976,14 @@ const customHeaderStyle = {
   marginBottom: 4,
 };
 
+const simpleConnectStyle = {
+  marginTop: 18,
+  border: "1px solid #bae6fd",
+  borderRadius: 12,
+  background: "#ffffff",
+  padding: 18,
+};
+
 const safeBadgeStyle = {
   border: "1px solid #bae6fd",
   background: "#ecfeff",
@@ -2592,6 +3102,69 @@ const detectionWarningStyle = {
   lineHeight: 1.6,
 };
 
+const progressShellStyle = {
+  marginTop: 14,
+  border: "1px solid #dbeafe",
+  background: "#f8fafc",
+  borderRadius: 12,
+  padding: 14,
+};
+
+const progressHeaderStyle = {
+  display: "flex",
+  justifyContent: "space-between",
+  gap: 12,
+  alignItems: "flex-start",
+};
+
+const progressListStyle = {
+  display: "grid",
+  gap: 9,
+  marginTop: 12,
+};
+
+const progressStepStyle = {
+  display: "flex",
+  gap: 10,
+  alignItems: "flex-start",
+  border: "1px solid #e2e8f0",
+  background: "#fff",
+  borderRadius: 10,
+  padding: 10,
+};
+
+const progressTextStyle = {
+  display: "flex",
+  flexDirection: "column" as const,
+  gap: 3,
+  color: "#334155",
+  fontSize: 12,
+  lineHeight: 1.45,
+};
+
+function progressDotStyle(state: ProgressStepState) {
+  const colors: Record<ProgressStepState, { background: string; color: string }> = {
+    waiting: { background: "#e2e8f0", color: "#475569" },
+    running: { background: "#cffafe", color: "#155e75" },
+    success: { background: "#dcfce7", color: "#166534" },
+    warning: { background: "#fef3c7", color: "#92400e" },
+    failed: { background: "#fee2e2", color: "#991b1b" },
+    skipped: { background: "#f1f5f9", color: "#64748b" },
+  };
+  return {
+    width: 28,
+    minWidth: 28,
+    height: 28,
+    borderRadius: 999,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontSize: 10,
+    fontWeight: 900,
+    ...colors[state],
+  };
+}
+
 const suggestionListStyle = {
   display: "grid",
   gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
@@ -2639,6 +3212,13 @@ const smallButtonStyle = {
   fontWeight: 850,
   cursor: "pointer",
   whiteSpace: "nowrap" as const,
+};
+
+const smallLinkButtonStyle = {
+  ...smallButtonStyle,
+  textDecoration: "none",
+  display: "inline-flex",
+  alignItems: "center",
 };
 
 const debugPreStyle = {
