@@ -12,6 +12,7 @@ import {
   DISTANCE_SUMMARY_FIELDS,
   createDistanceDiagnostics,
   getDistanceFieldFallbackKeys,
+  normalizeDistanceTruckKey,
   normalizeProviderTripSummary,
   type DistanceDiagnostics,
   type ProviderTripSummary,
@@ -53,6 +54,10 @@ export type SyncResult = {
   debug?: any;
 };
 
+type ProviderSyncOptions = {
+  writeDistanceSummaries?: boolean;
+};
+
 type AuthResult = {
   success: boolean;
   token?: string | null;
@@ -89,6 +94,7 @@ type FleetResult = {
 type SupplementalFeedConfig = {
   name: string;
   url: string;
+  feed_type?: string;
   auth_profile?: string;
   method?: string;
   headers?: Record<string, any>;
@@ -165,6 +171,9 @@ type SupplementalDiagnostics = {
     auth_token_candidate_paths_found?: string[];
     auth_profile_error?: string;
     error?: string;
+    feed_type?: string;
+    distance_report?: boolean;
+    setup_requirement?: string;
   }>;
 };
 
@@ -358,7 +367,8 @@ const AUTH_METADATA_PATHS: Record<keyof AuthMetadata, string[]> = {
 };
 
 export async function runProviderSync(
-  provider: ProviderRecord
+  provider: ProviderRecord,
+  options: ProviderSyncOptions = {}
 ): Promise<SyncResult> {
   // ✅ MUST have company_id – no hardcoding in code
   if (!provider.company_id) {
@@ -525,7 +535,11 @@ export async function runProviderSync(
     const distanceDiagnostics = await processProviderTripSummaries(
       provider,
       supplemental.feeds,
-      providerCapabilityProfile
+      providerCapabilityProfile,
+      supplemental.diagnostics,
+      {
+        write: options.writeDistanceSummaries !== false,
+      }
     );
 
     return {
@@ -679,14 +693,42 @@ async function insertTelemetryLogWithCapabilityFallback(payload: Record<string, 
 async function processProviderTripSummaries(
   provider: ProviderRecord,
   feeds: SupplementalFeedRows[],
-  providerCapabilityProfile: ProviderCapabilityProfile
+  providerCapabilityProfile: ProviderCapabilityProfile,
+  supplementalDiagnostics: SupplementalDiagnostics,
+  options: { write: boolean } = { write: true }
 ) {
   const diagnostics = createDistanceDiagnostics();
-  if (!provider.company_id || feeds.length === 0) return diagnostics;
+  diagnostics.write_mode = options.write ? "write" : "dry_run";
+
+  const distanceFeedDiagnostics = supplementalDiagnostics.feeds.filter(
+    (feed) => feed.distance_report
+  );
+  diagnostics.automated_distance_feeds_configured =
+    distanceFeedDiagnostics.length;
+  diagnostics.automated_distance_feeds_attempted = distanceFeedDiagnostics.filter(
+    (feed) => feed.attempted
+  ).length;
+  appendDistanceFeedSetupRequirements(diagnostics, supplementalDiagnostics);
+
+  if (!provider.company_id) return diagnostics;
+  if (distanceFeedDiagnostics.length === 0) {
+    diagnostics.no_automated_distance_feed = true;
+    diagnostics.setup_requirements.push(
+      "No automated distance report feed is active yet. Configure a provider report endpoint, auth profile, row path, and distance field mapping."
+    );
+    return diagnostics;
+  }
 
   const summaries: ProviderTripSummary[] = [];
+  const distanceFeeds = feeds.filter((feed) => isDistanceSummaryFeed(feed.config));
 
-  for (const feed of feeds) {
+  diagnostics.automated_distance_rows_found = distanceFeeds.reduce(
+    (sum, feed) => sum + feed.rows.length,
+    0
+  );
+
+  for (const feed of distanceFeeds) {
+    diagnostics.summary_rows_found += feed.rows.length;
     for (const row of feed.rows) {
       const summary = normalizeProviderTripSummary(row, feed.config.mapping || {}, {
         companyId: provider.company_id,
@@ -695,12 +737,17 @@ async function processProviderTripSummaries(
       });
       if (!summary) continue;
 
-      diagnostics.summary_rows_found++;
       if (summaries.length >= MAX_DISTANCE_SUMMARY_ROWS) {
         diagnostics.rows_skipped_over_cap++;
         continue;
       }
 
+      summary.metadata = {
+        ...summary.metadata,
+        source: "automated_provider_distance_feed",
+        feed_name: feed.config.name,
+        feed_type: feed.config.feed_type || null,
+      };
       summaries.push(summary);
     }
   }
@@ -708,26 +755,33 @@ async function processProviderTripSummaries(
   diagnostics.summaries_normalized = summaries.length;
   if (summaries.length === 0) return diagnostics;
 
-  const truckIds = Array.from(new Set(summaries.map((summary) => summary.truck_id)));
   const { data: assets, error: assetError } = await supabaseAdmin
     .from("fleet_assets")
-    .select("id, truck_id")
+    .select("id, truck_id, registration")
     .eq("company_id", provider.company_id)
-    .eq("provider_id", provider.id)
-    .in("truck_id", truckIds);
+    .eq("provider_id", provider.id);
 
   if (assetError) {
     diagnostics.errors.push(`Asset lookup failed: ${assetError.message}`);
   }
 
-  const assetsByTruck = new Map(
-    (assets || []).map((asset: any) => [String(asset.truck_id || "").toUpperCase(), asset.id])
-  );
+  const assetsByTruck = buildDistanceAssetMatchMap(assets || []);
 
   for (const summary of summaries) {
-    summary.asset_id = assetsByTruck.get(summary.truck_id.toUpperCase()) || null;
+    const matchedAsset = assetsByTruck.get(normalizeDistanceTruckKey(summary.truck_id));
+    summary.asset_id = matchedAsset?.id || null;
     incrementFieldCount(diagnostics.odometer_health_counts, summary.odometer_health);
     incrementFieldCount(diagnostics.distance_source_counts, summary.distance_source);
+
+    if (!summary.asset_id) {
+      diagnostics.unmatched_rows++;
+      continue;
+    }
+
+    diagnostics.matched_assets++;
+    diagnostics.summaries_would_write++;
+
+    if (!options.write) continue;
 
     if (!diagnostics.table_missing) {
       const writeResult = await writeProviderTripSummary(summary);
@@ -755,7 +809,39 @@ async function processProviderTripSummaries(
   }
 
   diagnostics.errors = diagnostics.errors.slice(0, 10);
+  diagnostics.setup_requirements = Array.from(
+    new Set(diagnostics.setup_requirements)
+  ).slice(0, 10);
   return diagnostics;
+}
+
+function buildDistanceAssetMatchMap(assets: any[]) {
+  const map = new Map<string, any>();
+  for (const asset of assets || []) {
+    for (const value of [asset.truck_id, asset.registration]) {
+      const key = normalizeDistanceTruckKey(value);
+      if (key && !map.has(key)) map.set(key, asset);
+    }
+  }
+  return map;
+}
+
+function appendDistanceFeedSetupRequirements(
+  diagnostics: DistanceDiagnostics,
+  supplementalDiagnostics: SupplementalDiagnostics
+) {
+  for (const feed of supplementalDiagnostics.feeds || []) {
+    if (!feed.distance_report) continue;
+    if (feed.setup_requirement) {
+      diagnostics.setup_requirements.push(feed.setup_requirement);
+      continue;
+    }
+    if (feed.error || feed.skipped_reason || feed.auth_profile_error) {
+      diagnostics.setup_requirements.push(
+        buildDistanceFeedSetupRequirement(feed.name, feed.error || feed.skipped_reason || feed.auth_profile_error)
+      );
+    }
+  }
 }
 
 async function writeProviderTripSummary(summary: ProviderTripSummary) {
@@ -1060,7 +1146,18 @@ async function fetchSupplementalFeeds(
       feedDiagnostics
     );
 
-    if (!authContext) continue;
+    if (!authContext) {
+      if (feedDiagnostics && isDistanceSummaryFeed(config)) {
+        feedDiagnostics.setup_requirement = buildDistanceFeedSetupRequirement(
+          config.name,
+          feedDiagnostics.error ||
+            feedDiagnostics.skipped_reason ||
+            feedDiagnostics.auth_profile_error ||
+            "Distance report feed authentication did not return a usable token"
+        );
+      }
+      continue;
+    }
 
     const payloadResult = buildPayloadWithDiagnostics(
       config.payload || {},
@@ -1086,6 +1183,12 @@ async function fetchSupplementalFeeds(
         feedDiagnostics.error = skippedReason;
         feedDiagnostics.missing_macros = payloadResult.missingMacros;
         feedDiagnostics.unknown_macros = payloadResult.unknownMacros;
+        if (isDistanceSummaryFeed(config)) {
+          feedDiagnostics.setup_requirement = buildDistanceFeedSetupRequirement(
+            config.name,
+            skippedReason
+          );
+        }
       }
       continue;
     }
@@ -1135,6 +1238,12 @@ async function fetchSupplementalFeeds(
         }
         feedDiagnostics.success = false;
         feedDiagnostics.error = err.message || "Supplemental feed failed";
+        if (isDistanceSummaryFeed(config)) {
+          feedDiagnostics.setup_requirement = buildDistanceFeedSetupRequirement(
+            config.name,
+            feedDiagnostics.error
+          );
+        }
       }
     }
   }
@@ -1593,6 +1702,7 @@ function getSupplementalFeedConfigs(provider: ProviderRecord): SupplementalFeedC
     feeds.push({
       name: "current_status",
       url: currentStatusUrl,
+      feed_type: "current_status",
       auth_profile: config.current_status_auth_profile,
       method: config.current_status_method || config.method || "GET",
       headers: config.current_status_headers || config.headers || {},
@@ -1609,6 +1719,7 @@ function getSupplementalFeedConfigs(provider: ProviderRecord): SupplementalFeedC
     feeds.push({
       name: "fuel_status",
       url: fuelStatusUrl,
+      feed_type: "fuel_status",
       auth_profile: config.fuel_status_auth_profile || config.current_status_auth_profile,
       method: config.fuel_status_method || config.method || "GET",
       headers: config.fuel_status_headers || config.headers || {},
@@ -1617,6 +1728,39 @@ function getSupplementalFeedConfigs(provider: ProviderRecord): SupplementalFeedC
       match_keys: config.fuel_status_match_keys,
       mapping: config.fuel_status_mapping || config.current_status_mapping || {},
       api_key_header: config.fuel_status_api_key_header,
+    });
+  }
+
+  const distanceReportUrl = config.distance_report_url || config.trip_summary_url;
+  if (distanceReportUrl) {
+    feeds.push({
+      name: config.distance_report_name || "distance_report",
+      url: distanceReportUrl,
+      feed_type: "distance_report",
+      auth_profile:
+        config.distance_report_auth_profile ||
+        config.trip_summary_auth_profile ||
+        config.current_status_auth_profile,
+      method: config.distance_report_method || config.trip_summary_method || config.method || "GET",
+      headers: config.distance_report_headers || config.trip_summary_headers || config.headers || {},
+      payload: config.distance_report_payload || config.trip_summary_payload || {},
+      vehicle_paths:
+        config.distance_report_vehicle_paths ||
+        config.trip_summary_vehicle_paths ||
+        config.current_status_vehicle_paths,
+      match_keys:
+        config.distance_report_match_keys ||
+        config.trip_summary_match_keys ||
+        config.current_status_match_keys,
+      mapping:
+        config.distance_report_mapping ||
+        config.trip_summary_mapping ||
+        config.current_status_mapping ||
+        {},
+      api_key_header:
+        config.distance_report_api_key_header ||
+        config.trip_summary_api_key_header ||
+        config.current_status_api_key_header,
     });
   }
 
@@ -1629,6 +1773,9 @@ function normalizeSupplementalFeedConfig(feed: any): SupplementalFeedConfig | nu
   return {
     name: String(feed.name || "supplemental").trim() || "supplemental",
     url: String(feed.url),
+    feed_type: feed.feed_type || feed.type || feed.purpose || feed.report_type
+      ? String(feed.feed_type || feed.type || feed.purpose || feed.report_type).trim()
+      : undefined,
     auth_profile: feed.auth_profile ? String(feed.auth_profile).trim() : undefined,
     method: feed.method || "GET",
     headers: feed.headers || {},
@@ -1648,6 +1795,49 @@ function dedupeSupplementalFeeds(feeds: SupplementalFeedConfig[]) {
     seen.add(key);
     return true;
   });
+}
+
+function isDistanceSummaryFeed(config: SupplementalFeedConfig) {
+  const type = normalizeProviderKey(config.feed_type || "");
+  const name = normalizeProviderKey(config.name || "");
+  if (
+    [
+      "distancereport",
+      "distancesummary",
+      "tripsummary",
+      "tripreport",
+      "fleettripsummary",
+      "fleetcurrentstatus",
+      "report",
+    ].includes(type)
+  ) {
+    return true;
+  }
+  if (
+    name.includes("distance") ||
+    name.includes("trip") ||
+    name.includes("report") ||
+    name.includes("fleetcurrentstatus")
+  ) {
+    return true;
+  }
+  return hasDistanceSummaryMapping(config.mapping || {});
+}
+
+function hasDistanceSummaryMapping(mapping: Record<string, string>) {
+  const fields = new Set(
+    Object.keys(mapping || {}).map((field) => String(field || "").trim())
+  );
+  return DISTANCE_SUMMARY_FIELDS.some((field) => fields.has(field));
+}
+
+function buildDistanceFeedSetupRequirement(feedName: string, reason?: string) {
+  const safeReason = sanitizeDiagnosticMessage(reason || "Distance report feed is not returning usable rows");
+  return [
+    `${feedName}: automated distance report feed setup required.`,
+    `Blocker: ${safeReason}.`,
+    "Confirm endpoint URL, auth response token_paths, vehicle row path, and mappings for truck, report_start_time, report_end_time, start_odometer, end_odometer, mileage, motion_duration, violations_count, and provider_trip_key.",
+  ].join(" ");
 }
 
 function getSupplementalAuthProfile(
@@ -1694,6 +1884,8 @@ function createSupplementalDiagnostics(
     supplemental_fields_merged: {},
     feeds: feeds.map((feed) => ({
       name: feed.name,
+      feed_type: feed.feed_type || undefined,
+      distance_report: isDistanceSummaryFeed(feed),
       attempted: false,
       success: false,
       rows_found: 0,

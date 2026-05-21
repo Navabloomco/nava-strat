@@ -19,9 +19,17 @@ export const DISTANCE_SUMMARY_FIELDS = [
 ];
 
 export type DistanceDiagnostics = {
+  write_mode?: "dry_run" | "write";
+  automated_distance_feeds_configured: number;
+  automated_distance_feeds_attempted: number;
+  automated_distance_rows_found: number;
+  no_automated_distance_feed: boolean;
   summary_rows_found: number;
   summaries_normalized: number;
+  summaries_would_write: number;
   summaries_written: number;
+  matched_assets: number;
+  unmatched_rows: number;
   asset_distance_updates: number;
   rows_skipped_over_cap: number;
   setup_required: boolean;
@@ -29,6 +37,7 @@ export type DistanceDiagnostics = {
   fleet_asset_columns_missing: boolean;
   odometer_health_counts: Record<string, number>;
   distance_source_counts: Record<string, number>;
+  setup_requirements: string[];
   errors: string[];
 };
 
@@ -89,9 +98,17 @@ export function parseDistanceCsv(
 
 export function createDistanceDiagnostics(): DistanceDiagnostics {
   return {
+    write_mode: "write",
+    automated_distance_feeds_configured: 0,
+    automated_distance_feeds_attempted: 0,
+    automated_distance_rows_found: 0,
+    no_automated_distance_feed: false,
     summary_rows_found: 0,
     summaries_normalized: 0,
+    summaries_would_write: 0,
     summaries_written: 0,
+    matched_assets: 0,
+    unmatched_rows: 0,
     asset_distance_updates: 0,
     rows_skipped_over_cap: 0,
     setup_required: false,
@@ -99,6 +116,7 @@ export function createDistanceDiagnostics(): DistanceDiagnostics {
     fleet_asset_columns_missing: false,
     odometer_health_counts: {},
     distance_source_counts: {},
+    setup_requirements: [],
     errors: [],
   };
 }

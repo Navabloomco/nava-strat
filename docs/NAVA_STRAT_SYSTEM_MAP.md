@@ -146,8 +146,8 @@ The main product principle is convenience. Every user-facing page should make th
 | --- | --- |
 | `GET/POST /api/providers` | Provider Vault list/create. Supports platform-owner `companyId` context. Sanitizes provider credentials in responses. |
 | `GET/PATCH /api/providers/[id]` | Provider detail/update. Supports platform-owner `companyId` context for safe tenant-scoped updates. Platform-owner-only advanced fleet config including supplemental feeds and auth profiles. |
-| `POST /api/providers/[id]/test` | Tests provider sync in the resolved tenant context and returns sanitized diagnostics, including safe telemetry capability and distance-evidence summary counts when available. |
-| `POST /api/providers/[id]/distance-import` | Provider-scoped admin CSV distance report import. Dry-run previews BlueTrax-style report rows, asset matches, odometer health, and rows that would write; commit writes matched rows to `provider_trip_summaries` only. |
+| `POST /api/providers/[id]/test` | Tests provider sync in the resolved tenant context and returns sanitized diagnostics, including safe telemetry capability and automated distance-report dry-run counts when available. It must not expose provider secrets or raw payloads. |
+| `POST /api/providers/[id]/distance-import` | Provider-scoped admin CSV distance report fallback/backfill import. Dry-run previews BlueTrax-style report rows, asset matches, odometer health, and rows that would write; commit writes matched rows to `provider_trip_summaries` only. |
 | `GET /api/providers/templates` | Provider templates, including verified connection templates and safe setup-only signal-mapping examples such as the Meitrack CAN Bus onboarding template. No live credentials. |
 | `GET/POST /api/providers/setup-requests` | Provider setup request list/create. |
 | `PATCH /api/providers/setup-requests/[id]` | Provider setup request status management. |
@@ -439,7 +439,8 @@ Separation rules:
 - `telemetry_logs` are point-in-time telemetry pings.
 - `provider_trip_summaries` are provider trip/report-level records such as start/end odometer, provider mileage, motion duration, start/end locations, and violations.
 - `fleet_assets` carries current odometer health, distance source preference, virtual/manual odometer baseline, last distance update time, and distance quality metadata when the additive columns exist.
-- Provider Vault can import provider distance report CSVs through a dry-run first workflow. Import writes matched rows into `provider_trip_summaries` only, never into `telemetry_logs`.
+- Provider sync should ingest configured provider distance/report enrichment feeds automatically when a provider exposes trip/report data. CSV import is fallback/backfill only.
+- Provider Vault can import provider distance report CSVs through a dry-run first workflow when automated provider API access is unavailable. Import writes matched rows into `provider_trip_summaries` only, never into `telemetry_logs`.
 
 Distance detection rules:
 
@@ -452,11 +453,18 @@ Distance detection rules:
 
 Provider distance CSV import rules:
 
-- CSV imports are company/provider scoped and require provider administration access.
+- CSV imports are company/provider scoped, require provider administration access, and are not the primary product workflow.
 - Rows match `fleet_assets` by normalized `Vehicle`, `truck_id`, or registration.
 - Dry-run must show rows parsed, matched assets, unmatched rows, static odometer counts, mismatch counts, and rows that would write.
 - Commit/import must use server-side normalization and upsert by `provider_id + provider_trip_key` when available, with a stable generated key when the provider file has no trip key.
 - CSV report fields such as `StartOdometer`, `EndOdometer`, `Mileage`, `MotionDuration`, `StartLocation`, `EndLocation`, and `Violations` are report summary evidence and must not be mixed into point telemetry.
+
+Automated provider distance feed rules:
+
+- Provider Vault advanced config may define report feeds through `supplemental_feeds` with `feed_type`/`purpose` such as `distance_report`, `trip_summary`, or `fleet_current_status`, or through direct `distance_report_*`/`trip_summary_*` config fields.
+- Required automated setup is endpoint URL, auth profile/token path when needed, row path/data group, match keys, and mappings for `truck`, `report_start_time`, `report_end_time`, `start_odometer`, `end_odometer`, `mileage`, `motion_duration`, `violations_count`, and `provider_trip_key` when available.
+- Provider Test Connection should dry-run automated distance writes and show rows found, mapped distance fields, matched assets, rows that would write, and setup blockers.
+- Scheduled/provider sync may write matched automated distance summaries into `provider_trip_summaries`.
 
 Nava Eye distance wording should follow the evidence:
 

@@ -115,9 +115,23 @@ function sanitizeCapabilitySummary(summary: any) {
 function sanitizeDistanceDiagnostics(diagnostics: any) {
   if (!diagnostics || typeof diagnostics !== "object") return null;
   return {
+    write_mode: diagnostics.write_mode || "write",
+    automated_distance_feeds_configured: Number(
+      diagnostics.automated_distance_feeds_configured || 0
+    ),
+    automated_distance_feeds_attempted: Number(
+      diagnostics.automated_distance_feeds_attempted || 0
+    ),
+    automated_distance_rows_found: Number(
+      diagnostics.automated_distance_rows_found || 0
+    ),
+    no_automated_distance_feed: Boolean(diagnostics.no_automated_distance_feed),
     summary_rows_found: Number(diagnostics.summary_rows_found || 0),
     summaries_normalized: Number(diagnostics.summaries_normalized || 0),
+    summaries_would_write: Number(diagnostics.summaries_would_write || 0),
     summaries_written: Number(diagnostics.summaries_written || 0),
+    matched_assets: Number(diagnostics.matched_assets || 0),
+    unmatched_rows: Number(diagnostics.unmatched_rows || 0),
     asset_distance_updates: Number(diagnostics.asset_distance_updates || 0),
     rows_skipped_over_cap: Number(diagnostics.rows_skipped_over_cap || 0),
     setup_required: Boolean(diagnostics.setup_required),
@@ -125,6 +139,11 @@ function sanitizeDistanceDiagnostics(diagnostics: any) {
     fleet_asset_columns_missing: Boolean(diagnostics.fleet_asset_columns_missing),
     odometer_health_counts: sanitizeCountMap(diagnostics.odometer_health_counts),
     distance_source_counts: sanitizeCountMap(diagnostics.distance_source_counts),
+    setup_requirements: Array.isArray(diagnostics.setup_requirements)
+      ? diagnostics.setup_requirements
+          .map((requirement: any) => String(requirement).slice(0, 400))
+          .slice(0, 5)
+      : [],
     errors: Array.isArray(diagnostics.errors)
       ? diagnostics.errors.map((error: any) => String(error).slice(0, 200)).slice(0, 5)
       : [],
@@ -155,6 +174,8 @@ function sanitizeSupplementalDiagnostics(diagnostics: any, includeAvailableKeys:
     supplemental_fields_merged: diagnostics.supplemental_fields_merged || {},
     feeds: (diagnostics.feeds || []).map((feed: any) => ({
       name: String(feed.name || "supplemental"),
+      feed_type: feed.feed_type ? String(feed.feed_type).slice(0, 80) : undefined,
+      distance_report: Boolean(feed.distance_report),
       attempted: Boolean(feed.attempted),
       success: Boolean(feed.success),
       rows_found: Number(feed.rows_found || 0),
@@ -295,6 +316,9 @@ function sanitizeSupplementalDiagnostics(diagnostics: any, includeAvailableKeys:
         ? (feed.unmapped_available_keys || []).slice(0, 50)
         : [],
       error: feed.error ? String(feed.error) : undefined,
+      setup_requirement: feed.setup_requirement
+        ? String(feed.setup_requirement).slice(0, 400)
+        : undefined,
     })),
   };
 }
@@ -550,7 +574,9 @@ export async function POST(
       );
     }
 
-    const result = await runProviderSync(provider as ProviderRecord);
+    const result = await runProviderSync(provider as ProviderRecord, {
+      writeDistanceSummaries: false,
+    });
 
     await supabaseAdmin
       .from("tracking_providers")

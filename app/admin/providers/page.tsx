@@ -466,28 +466,39 @@ function ProviderDistanceDiagnostics({ diagnostics }: { diagnostics: any }) {
           <h4 style={diagnosticsTitleStyle}>Distance Evidence Summary</h4>
         </div>
         <div style={diagnosticsMetaStyle}>
-          {Number(diagnostics.summaries_normalized || 0).toLocaleString()} staged
+          {diagnostics.write_mode === "dry_run" ? "test dry-run" : "sync write"}
         </div>
       </div>
 
       <div style={diagnosticsSummaryGridStyle}>
         <DiagnosticMetric
-          label="Report rows"
-          value={diagnostics.summary_rows_found}
+          label="Auto feeds"
+          value={diagnostics.automated_distance_feeds_configured}
         />
         <DiagnosticMetric
-          label="Summaries"
-          value={diagnostics.summaries_normalized}
+          label="Rows found"
+          value={diagnostics.automated_distance_rows_found}
         />
         <DiagnosticMetric
-          label="Written"
-          value={diagnostics.summaries_written}
+          label="Matched assets"
+          value={diagnostics.matched_assets}
         />
         <DiagnosticMetric
-          label="Asset updates"
-          value={diagnostics.asset_distance_updates}
+          label={diagnostics.write_mode === "dry_run" ? "Would write" : "Written"}
+          value={
+            diagnostics.write_mode === "dry_run"
+              ? diagnostics.summaries_would_write
+              : diagnostics.summaries_written
+          }
         />
       </div>
+
+      {diagnostics.no_automated_distance_feed && (
+        <div style={diagnosticsEmptyStyle}>
+          No automated distance report feed is active yet. Configure a provider
+          report endpoint, auth profile, row path, and distance field mapping.
+        </div>
+      )}
 
       {diagnostics.setup_required && (
         <div style={diagnosticsErrorStyle}>
@@ -509,11 +520,19 @@ function ProviderDistanceDiagnostics({ diagnostics }: { diagnostics: any }) {
         includeZeroCounts
       />
       <DiagnosticFieldBlock
+        title="Automated feed setup"
+        value={diagnostics.setup_requirements}
+        mutedEmpty="Automated distance feed setup looks complete."
+      />
+      <DiagnosticFieldBlock
         title="Distance notes"
         value={[
           diagnostics.table_missing ? "provider_trip_summaries table missing" : "",
           diagnostics.fleet_asset_columns_missing
             ? "fleet_assets distance columns missing"
+            : "",
+          diagnostics.unmatched_rows
+            ? `${diagnostics.unmatched_rows} report row(s) did not match provider assets`
             : "",
           diagnostics.rows_skipped_over_cap
             ? `${diagnostics.rows_skipped_over_cap} rows skipped over processing cap`
@@ -612,9 +631,10 @@ function DistanceReportImport({
       <div style={diagnosticsHeaderStyle}>
         <div>
           <div style={diagnosticsEyebrowStyle}>Distance report import</div>
-          <h4 style={diagnosticsTitleStyle}>Provider CSV Distance Report</h4>
+          <h4 style={diagnosticsTitleStyle}>CSV Fallback / Backfill Import</h4>
           <div style={diagnosticsSmallTextStyle}>
-            Upload provider report exports such as BlueTrax Fleet Current Status.
+            Use this only when an automated provider distance report feed is not
+            active yet, or when backfilling historical provider report exports.
             Dry-run first, then import matched report rows into trip summaries.
           </div>
         </div>
@@ -775,7 +795,15 @@ function ProviderEnrichmentDiagnostics({
                 <div>
                   <strong>{feed.name || "supplemental"}</strong>
                   <div style={diagnosticsSmallTextStyle}>
-                    {feed.success ? "Feed reached" : feed.attempted ? "Feed failed" : "Not attempted"}
+                    {feed.distance_report
+                      ? "Automated distance report feed"
+                      : feed.feed_type
+                        ? `Feed type: ${feed.feed_type}`
+                        : feed.success
+                          ? "Feed reached"
+                          : feed.attempted
+                            ? "Feed failed"
+                            : "Not attempted"}
                   </div>
                 </div>
                 <div style={feedStatusStyle(feed.success)}>
@@ -795,6 +823,14 @@ function ProviderEnrichmentDiagnostics({
 
               {feed.error && (
                 <div style={diagnosticsErrorStyle}>{feed.error}</div>
+              )}
+
+              {feed.distance_report && feed.setup_requirement && (
+                <DiagnosticFieldBlock
+                  title="Distance report setup"
+                  value={[feed.setup_requirement]}
+                  mutedEmpty="Distance report feed setup looks complete."
+                />
               )}
 
               <DiagnosticFieldBlock
