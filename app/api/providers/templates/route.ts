@@ -10,6 +10,15 @@ const MEITRACK_CAN_BUS_TEMPLATE = {
   display_name: "Meitrack CAN Bus Example",
   slug: "meitrack",
   auth_type: "API_KEY",
+  auth_method_label: "API key / provider credentials",
+  required_fields: [
+    { name: "username", label: "API Username", secret: false },
+    { name: "api_key", label: "API Key / Secret", secret: true },
+  ],
+  default_endpoint_labels: [
+    "Meitrack API endpoint",
+    "Fleet telemetry feed",
+  ],
   auth_config: {},
   fleet_config: {
     setup_only: true,
@@ -64,6 +73,124 @@ const MEITRACK_CAN_BUS_TEMPLATE = {
       "Example mapping only; do not add live credentials until exact tenant Meitrack API access is verified.",
   },
   setup_only: true,
+  self_serve: false,
+  requires_provider_support: true,
+  setup_notes: [
+    "Setup-only signal mapping for Meitrack/CAN planning.",
+    "Confirm tenant API endpoints and available signals before collecting live credentials.",
+  ],
+};
+
+const GENERIC_REST_GPS_TEMPLATE = {
+  id: "internal-generic-rest-gps-template",
+  display_name: "Generic REST GPS",
+  slug: "generic-rest-gps",
+  auth_type: "API_KEY",
+  auth_method_label: "API key / token",
+  required_fields: [
+    { name: "api_key", label: "API Key / Token", secret: true },
+  ],
+  default_endpoint_labels: [
+    "Provider login or token endpoint",
+    "Fleet location feed",
+  ],
+  auth_config: {},
+  fleet_config: {
+    setup_only: true,
+    capability_profile: {
+      default_capability: "GPS_ONLY",
+      note:
+        "Generic setup template. Platform owner must verify endpoint, row path, and field mapping before live sync.",
+    },
+    supported_signals: {
+      latitude: true,
+      longitude: true,
+      speed: true,
+      recorded_at: true,
+    },
+    provider_timezone: "Africa/Nairobi",
+  },
+  field_mapping: {
+    truck: "truck",
+    latitude: "latitude",
+    longitude: "longitude",
+    speed: "speed",
+    recorded_at: "recorded_at",
+  },
+  default_login_url: null,
+  default_fleet_url: null,
+  capability_profile: {
+    default_capability: "GPS_ONLY",
+  },
+  supported_signals: {
+    latitude: true,
+    longitude: true,
+    speed: true,
+    recorded_at: true,
+  },
+  provider_timezone: "Africa/Nairobi",
+  source_signal_notes: {
+    onboarding_note:
+      "Generic GPS setup requires verified endpoint, row path, and vehicle identifier mapping before live sync.",
+  },
+  setup_only: true,
+  self_serve: false,
+  requires_provider_support: true,
+  setup_notes: [
+    "Use when a provider exposes a REST GPS feed but Nava has not verified the exact connection yet.",
+  ],
+};
+
+const GENERIC_CSV_DISTANCE_TEMPLATE = {
+  id: "internal-generic-csv-distance-template",
+  display_name: "Generic CSV Distance Report",
+  slug: "generic-csv-distance-report",
+  auth_type: "NONE",
+  auth_method_label: "CSV fallback/backfill",
+  required_fields: [],
+  default_endpoint_labels: ["CSV distance report upload"],
+  auth_config: {},
+  fleet_config: {
+    setup_only: true,
+    distance_report_only: true,
+    capability_profile: {
+      default_capability: "UNKNOWN",
+      note:
+        "CSV distance reports are fallback/backfill evidence and do not create live telemetry sync.",
+    },
+    supported_signals: {},
+    provider_timezone: "Africa/Nairobi",
+  },
+  field_mapping: {
+    truck: "Vehicle",
+    report_start_time: "StartLocationTime",
+    report_end_time: "EndLocationTime",
+    start_location: "StartLocation",
+    end_location: "EndLocation",
+    start_odometer: "StartOdometer",
+    end_odometer: "EndOdometer",
+    mileage: "Mileage",
+    motion_duration: "MotionDuration",
+    violations_count: "Violations",
+  },
+  default_login_url: null,
+  default_fleet_url: null,
+  capability_profile: {
+    default_capability: "UNKNOWN",
+  },
+  supported_signals: {},
+  provider_timezone: "Africa/Nairobi",
+  source_signal_notes: {
+    onboarding_note:
+      "Fallback/backfill import only. Automated provider API feeds remain the primary product workflow.",
+  },
+  setup_only: true,
+  self_serve: false,
+  requires_provider_support: false,
+  setup_notes: [
+    "Use CSV distance reports only as fallback/backfill when automated report feeds are unavailable.",
+    "Import writes provider trip summaries, not live point telemetry.",
+  ],
 };
 
 function noStoreJson(body: any, init?: ResponseInit) {
@@ -129,7 +256,9 @@ export async function GET(req: Request) {
       .order("display_name", { ascending: true });
 
     if (templatesError) throw templatesError;
-    const safeTemplates = appendInternalTemplates(templates || []);
+    const safeTemplates = appendInternalTemplates(templates || []).map(
+      decorateTemplate
+    );
 
     return noStoreJson({
       success: true,
@@ -148,8 +277,89 @@ function appendInternalTemplates(templates: any[]) {
   const existingSlugs = new Set(
     templates.map((template) => String(template.slug || "").toLowerCase())
   );
-  if (existingSlugs.has(MEITRACK_CAN_BUS_TEMPLATE.slug)) return templates;
-  return [...templates, MEITRACK_CAN_BUS_TEMPLATE].sort((a, b) =>
+  const additions = [
+    MEITRACK_CAN_BUS_TEMPLATE,
+    GENERIC_REST_GPS_TEMPLATE,
+    GENERIC_CSV_DISTANCE_TEMPLATE,
+  ].filter(
+    (template) => !existingSlugs.has(String(template.slug || "").toLowerCase())
+  );
+  return [...templates, ...additions].sort((a, b) =>
     String(a.display_name || "").localeCompare(String(b.display_name || ""))
   );
+}
+
+function decorateTemplate(template: any) {
+  const setupOnly = Boolean(template.setup_only || template.fleet_config?.setup_only);
+  return {
+    ...template,
+    auth_method_label:
+      template.auth_method_label || authMethodLabel(template.auth_type),
+    required_fields:
+      Array.isArray(template.required_fields) && template.required_fields.length > 0
+        ? template.required_fields
+        : inferRequiredFields(template),
+    default_endpoint_labels:
+      Array.isArray(template.default_endpoint_labels)
+        ? template.default_endpoint_labels
+        : inferEndpointLabels(template),
+    self_serve:
+      typeof template.self_serve === "boolean"
+        ? template.self_serve
+        : !setupOnly &&
+          Boolean(
+            template.default_login_url ||
+              template.default_fleet_url ||
+              template.fleet_config?.fleet_url
+          ),
+    requires_provider_support:
+      typeof template.requires_provider_support === "boolean"
+        ? template.requires_provider_support
+        : setupOnly,
+    setup_notes:
+      Array.isArray(template.setup_notes)
+        ? template.setup_notes
+        : setupOnly
+          ? ["Template requires provider setup verification before live sync."]
+          : ["Create inactive, test connection, review detected vehicles, then activate sync."],
+  };
+}
+
+function authMethodLabel(authType: any) {
+  const value = String(authType || "").toUpperCase();
+  if (value.includes("BEARER")) return "Bearer token";
+  if (value.includes("PASSWORD")) return "Username and password";
+  if (value.includes("API")) return "API key / provider credentials";
+  if (value === "NONE") return "No live credentials";
+  return "Provider credentials";
+}
+
+function inferEndpointLabels(template: any) {
+  const labels = [];
+  if (template.default_login_url || template.auth_config?.login_url) {
+    labels.push("Provider access endpoint");
+  }
+  if (template.default_fleet_url || template.fleet_config?.fleet_url) {
+    labels.push("Fleet telemetry feed");
+  }
+  return labels;
+}
+
+function inferRequiredFields(template: any) {
+  const placeholders = new Set<string>();
+  const configText = JSON.stringify({
+    auth_config: template.auth_config || {},
+    fleet_config: template.fleet_config || {},
+  });
+  const matches = configText.match(/{{\s*(username|api_key|password|bearer_token)\s*}}/g) || [];
+  matches.forEach((match) => placeholders.add(match.replace(/[{}\s]/g, "")));
+
+  const fields = [
+    { name: "username", label: "API Username", secret: false },
+    { name: "api_key", label: "API Key / Secret", secret: true },
+    { name: "password", label: "Password", secret: true },
+    { name: "bearer_token", label: "Access Token", secret: true },
+  ];
+
+  return fields.filter((field) => placeholders.has(field.name));
 }

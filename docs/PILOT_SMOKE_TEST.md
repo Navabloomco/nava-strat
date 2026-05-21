@@ -60,6 +60,12 @@ Expected result:
 Open `/admin/providers?companyId=<id>`.
 
 - [ ] Confirm provider list loads.
+- [ ] Open `/admin/providers/new?companyId=<id>` as owner/admin/platform-owner.
+- [ ] Confirm the guided Add Provider flow shows provider selection, credential fields, signal capability summary, and setup notes without raw JSON by default.
+- [ ] Confirm new provider connections are created inactive and redirect back to Provider Vault for testing.
+- [ ] Confirm Activate Sync is disabled until Test Connection succeeds.
+- [ ] Confirm platform-owner advanced settings remain available but collapsed by default.
+- [ ] Confirm ops/finance/management cannot create provider connections.
 - [ ] Confirm provider detail/test actions work or fail safely.
 - [ ] Confirm Test Connection displays sanitized diagnostics.
 - [ ] Confirm capability diagnostics separate provider default capability from observed row capability.

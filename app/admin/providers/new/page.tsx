@@ -4,9 +4,31 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { supabase } from "../../../../lib/supabase";
 
+function companyIdFromLocation() {
+  if (typeof window === "undefined") return "";
+  return new URLSearchParams(window.location.search).get("companyId") || "";
+}
+
+function companyQuery(companyId: string) {
+  return companyId ? `?companyId=${encodeURIComponent(companyId)}` : "";
+}
+
+type CredentialField = {
+  name: "username" | "api_key" | "password" | "bearer_token";
+  label: string;
+  secret: boolean;
+};
+
 export default function NewProviderPage() {
   const [templates, setTemplates] = useState<any[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
+  const [selectedCompanyId, setSelectedCompanyId] = useState("");
+  const [company, setCompany] = useState<any>(null);
+  const [capabilities, setCapabilities] = useState<any>({
+    can_add_provider: false,
+    can_edit_advanced_provider_config: false,
+  });
+  const [isPlatformOwner, setIsPlatformOwner] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [loadError, setLoadError] = useState("");
@@ -30,16 +52,18 @@ export default function NewProviderPage() {
   });
 
   useEffect(() => {
+    const companyId = companyIdFromLocation();
+    setSelectedCompanyId(companyId);
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
       if (params.get("request") === "1") {
         setRequestOpen(true);
       }
     }
-    loadTemplates();
+    loadWizardData(companyId);
   }, []);
 
-  async function loadTemplates() {
+  async function loadWizardData(companyId = "") {
     setLoadError("");
 
     const {
@@ -52,19 +76,35 @@ export default function NewProviderPage() {
     }
 
     try {
-      const res = await fetch("/api/providers/templates", {
-        cache: "no-store",
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-        },
-      });
-      const data = await res.json();
+      const [templateRes, providerRes] = await Promise.all([
+        fetch("/api/providers/templates", {
+          cache: "no-store",
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+          },
+        }),
+        fetch(`/api/providers${companyQuery(companyId)}`, {
+          cache: "no-store",
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+          },
+        }),
+      ]);
+      const templateData = await templateRes.json();
+      const providerData = await providerRes.json();
 
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || "Failed to load provider templates");
+      if (!templateRes.ok || !templateData.success) {
+        throw new Error(templateData.error || "Failed to load provider templates");
       }
 
-      setTemplates(data.templates || []);
+      if (!providerRes.ok || !providerData.success) {
+        throw new Error(providerData.error || "Failed to load provider access");
+      }
+
+      setTemplates(templateData.templates || []);
+      setCapabilities(providerData.capabilities || {});
+      setCompany(providerData.company || null);
+      setIsPlatformOwner(Boolean(providerData.is_platform_owner));
     } catch (err: any) {
       setLoadError(err.message || "Failed to load provider templates");
       setTemplates([]);
@@ -74,8 +114,13 @@ export default function NewProviderPage() {
   }
 
   const selectedTemplate = templates.find((t) => t.id === selectedTemplateId);
-  const requiredCredentialFields = selectedTemplate
-    ? getCredentialFields(selectedTemplate)
+  const selectedTemplateIsSetupOnly = Boolean(
+    selectedTemplate?.setup_only || selectedTemplate?.fleet_config?.setup_only
+  );
+  const requiredCredentialFields: CredentialField[] = selectedTemplate
+    ? selectedTemplateIsSetupOnly
+      ? []
+      : getCredentialFields(selectedTemplate)
     : [];
 
   function originFromUrl(url: string | null) {
@@ -94,7 +139,7 @@ export default function NewProviderPage() {
     }
 
     const missingCredential = requiredCredentialFields.find(
-      (field) => !String(form[field.name as keyof typeof form] || "").trim()
+      (field: CredentialField) => !String(form[field.name] || "").trim()
     );
 
     if (missingCredential) {
@@ -171,7 +216,8 @@ export default function NewProviderPage() {
       login_url: loginUrl,
       fleet_url: fleetUrl,
 
-      is_active: true,
+      is_active: false,
+      ...(selectedCompanyId ? { companyId: selectedCompanyId } : {}),
       }),
     });
     const data = await res.json();
@@ -183,8 +229,8 @@ export default function NewProviderPage() {
       return;
     }
 
-    alert("Provider added. Now test the connection.");
-    window.location.href = "/admin/providers";
+    alert("Provider added inactive. Test the connection before activating sync.");
+    window.location.href = `/admin/providers${companyQuery(selectedCompanyId)}`;
   }
 
   async function handleSubmitSetupRequest() {
@@ -220,6 +266,7 @@ export default function NewProviderPage() {
           provider_contact: requestForm.provider_contact.trim() || null,
           access_type_known: requestForm.access_type_known,
           notes: requestForm.notes.trim() || null,
+          ...(selectedCompanyId ? { companyId: selectedCompanyId } : {}),
         }),
       });
       const data = await res.json();
@@ -250,15 +297,51 @@ export default function NewProviderPage() {
   return (
     <main style={pageStyle}>
       <header style={{ marginBottom: 30 }}>
-        <h1 style={titleStyle}>Add Provider</h1>
+        <div style={eyebrowStyle}>Provider onboarding</div>
+        <h1 style={titleStyle}>Connect your tracking provider</h1>
         <p style={subtitleStyle}>
-          Enter the access details supplied by your GPS/telemetry provider.
-          Nava handles the technical setup behind the scenes.
+          Choose a supported template, add the access details supplied by your
+          provider, test safely, then activate sync only after the connection is
+          verified.
         </p>
       </header>
 
+      {selectedCompanyId && isPlatformOwner && company && (
+        <div style={tenantBannerStyle}>
+          <div>
+            <div style={tenantEyebrowStyle}>Platform tenant context</div>
+            <div style={tenantTitleStyle}>
+              Adding provider for <strong>{company.name}</strong>
+            </div>
+          </div>
+          <Link
+            href={`/admin/providers${companyQuery(selectedCompanyId)}`}
+            style={tenantBackLinkStyle}
+          >
+            Back to Provider Vault
+          </Link>
+        </div>
+      )}
+
+      <WizardSteps />
+
       <section style={cardStyle}>
-        {templates.length === 0 ? (
+        {!capabilities.can_add_provider ? (
+          <div style={noAccessStyle}>
+            <div style={emptyBadgeStyle}>Provider administration</div>
+            <h2 style={emptyTitleStyle}>Provider setup requires an owner or admin</h2>
+            <p style={emptyBodyStyle}>
+              You can view provider status, but creating provider connections is
+              limited to company owners/admins and platform owners.
+            </p>
+            <Link
+              href={`/admin/providers${companyQuery(selectedCompanyId)}`}
+              style={secondaryLinkStyle}
+            >
+              Back to Provider Vault
+            </Link>
+          </div>
+        ) : templates.length === 0 ? (
           <EmptyTemplateState
             error={loadError}
             onRequest={() => setRequestOpen(true)}
@@ -295,35 +378,42 @@ export default function NewProviderPage() {
             {selectedTemplate && (
               <>
                 <div style={noticeStyle}>
-                  Template loaded: <strong>{selectedTemplate.display_name}</strong>.
-                  {selectedTemplate.setup_only || selectedTemplate.fleet_config?.setup_only
-                    ? " This is a signal-mapping example for onboarding, not a live verified connection."
-                    : " Nava will use the verified connection setup for this provider."}
+                  <strong>{selectedTemplate.display_name}</strong> selected.{" "}
+                  {selectedTemplateIsSetupOnly
+                    ? "This is a setup example for signal planning; request support before adding live credentials."
+                    : "The provider will be created inactive, then tested and activated from Provider Vault."}
                 </div>
 
-                <TemplateCapabilityPreview template={selectedTemplate} />
+                <TemplateCapabilityPreview
+                  template={selectedTemplate}
+                  canShowAdvanced={Boolean(
+                    capabilities.can_edit_advanced_provider_config
+                  )}
+                />
 
-                <div style={gridStyle}>
-                  {requiredCredentialFields.map((field) => (
-                    <div key={field.name} style={fieldGroup}>
-                      <label style={labelStyle}>{field.label}</label>
-                      <input
-                        type={field.secret ? "password" : "text"}
-                        style={inputStyle}
-                        value={form[field.name as keyof typeof form]}
-                        onChange={(e) =>
-                          setForm({ ...form, [field.name]: e.target.value })
-                        }
-                      />
-                    </div>
-                  ))}
-                </div>
+                {!selectedTemplateIsSetupOnly && (
+                  <div style={gridStyle}>
+                    {requiredCredentialFields.map((field) => (
+                      <div key={field.name} style={fieldGroup}>
+                        <label style={labelStyle}>{field.label}</label>
+                        <input
+                          type={field.secret ? "password" : "text"}
+                          style={inputStyle}
+                          value={form[field.name]}
+                          onChange={(e) =>
+                            setForm({ ...form, [field.name]: e.target.value })
+                          }
+                        />
+                      </div>
+                    ))}
+                  </div>
+                )}
 
-                {selectedTemplate.setup_only || selectedTemplate.fleet_config?.setup_only ? (
+                {selectedTemplateIsSetupOnly ? (
                   <div style={noticeStyle}>
                     This template is an onboarding example only. Request provider
                     setup after confirming exact API endpoints and available
-                    Meitrack signals.
+                    hardware signals.
                   </div>
                 ) : (
                   <button
@@ -331,7 +421,7 @@ export default function NewProviderPage() {
                     disabled={saving}
                     style={buttonStyle}
                   >
-                    {saving ? "ADDING PROVIDER..." : "ADD PROVIDER"}
+                    {saving ? "CREATING CONNECTION..." : "CREATE INACTIVE CONNECTION"}
                   </button>
                 )}
               </>
@@ -339,7 +429,7 @@ export default function NewProviderPage() {
           </>
         )}
 
-        {templates.length === 0 && requestOpen && (
+        {capabilities.can_add_provider && templates.length === 0 && requestOpen && (
           <ProviderSetupRequestForm
             requestSuccess={requestSuccess}
             requestError={requestError}
@@ -354,7 +444,34 @@ export default function NewProviderPage() {
   );
 }
 
-function TemplateCapabilityPreview({ template }: { template: any }) {
+function WizardSteps() {
+  const steps = [
+    "Choose provider",
+    "Enter credentials",
+    "Test connection",
+    "Review vehicles and signals",
+    "Activate sync",
+  ];
+
+  return (
+    <div style={wizardStepsStyle}>
+      {steps.map((step, index) => (
+        <div key={step} style={wizardStepStyle}>
+          <span style={wizardStepNumberStyle}>{index + 1}</span>
+          <span>{step}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TemplateCapabilityPreview({
+  template,
+  canShowAdvanced,
+}: {
+  template: any;
+  canShowAdvanced: boolean;
+}) {
   const capability =
     template.capability_profile?.default_capability ||
     template.fleet_config?.capability_profile?.default_capability ||
@@ -369,12 +486,69 @@ function TemplateCapabilityPreview({ template }: { template: any }) {
     .filter(([, value]) => Boolean(value))
     .map(([key]) => key);
 
+  const endpointLabels = Array.isArray(template.default_endpoint_labels)
+    ? template.default_endpoint_labels
+    : [];
+  const setupNotes = Array.isArray(template.setup_notes)
+    ? template.setup_notes
+    : [];
+
   return (
-    <div style={noticeStyle}>
-      <strong>Telemetry capability:</strong> {capabilityLabel(capability)}
-      <br />
-      <strong>Example supported signals:</strong>{" "}
-      {signalNames.length > 0 ? signalNames.join(", ") : "none declared"}
+    <div style={templatePreviewStyle}>
+      <div style={previewGridStyle}>
+        <PreviewMetric
+          label="Signal capability"
+          value={capabilityLabel(capability)}
+        />
+        <PreviewMetric
+          label="Auth method"
+          value={template.auth_method_label || template.auth_type || "Provider credentials"}
+        />
+        <PreviewMetric
+          label="Self-serve status"
+          value={
+            template.setup_only || template.fleet_config?.setup_only
+              ? "Requires provider support"
+              : "Self-serve template"
+          }
+        />
+      </div>
+
+      <div style={previewNoteStyle}>
+        <strong>Supported signals:</strong>{" "}
+        {signalNames.length > 0 ? signalNames.join(", ") : "none declared"}
+      </div>
+
+      {setupNotes.length > 0 && (
+        <div style={previewNoteStyle}>
+          <strong>Setup notes:</strong> {setupNotes.join(" ")}
+        </div>
+      )}
+
+      {canShowAdvanced && (
+        <details style={templateAdvancedStyle}>
+          <summary style={templateAdvancedSummaryStyle}>Advanced template details</summary>
+          <div style={previewNoteStyle}>
+            <strong>Endpoint labels:</strong>{" "}
+            {endpointLabels.length > 0 ? endpointLabels.join(", ") : "none declared"}
+          </div>
+          <div style={previewNoteStyle}>
+            <strong>Field mapping:</strong>{" "}
+            {Object.keys(template.field_mapping || {}).length > 0
+              ? Object.keys(template.field_mapping).join(", ")
+              : "none declared"}
+          </div>
+        </details>
+      )}
+    </div>
+  );
+}
+
+function PreviewMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={previewMetricStyle}>
+      <div style={previewMetricLabelStyle}>{label}</div>
+      <div style={previewMetricValueStyle}>{value}</div>
     </div>
   );
 }
@@ -391,7 +565,17 @@ function capabilityLabel(value: string) {
   return labels[String(value || "UNKNOWN").toUpperCase()] || "Unknown Capability";
 }
 
-function getCredentialFields(template: any) {
+function getCredentialFields(template: any): CredentialField[] {
+  if (Array.isArray(template.required_fields) && template.required_fields.length > 0) {
+    return template.required_fields.map((field: any) => ({
+      name: String(field.name || ""),
+      label: String(field.label || field.name || "Credential"),
+      secret: field.secret !== false,
+    })).filter((field: any): field is CredentialField =>
+      ["username", "api_key", "password", "bearer_token"].includes(field.name)
+    );
+  }
+
   const placeholders = new Set<string>();
   const configText = JSON.stringify({
     auth_config: template.auth_config || {},
@@ -401,7 +585,7 @@ function getCredentialFields(template: any) {
   const matches = configText.match(/{{\s*(username|api_key|password|bearer_token)\s*}}/g) || [];
   matches.forEach((match) => placeholders.add(match.replace(/[{}\s]/g, "")));
 
-  const fields = [
+  const fields: CredentialField[] = [
     { name: "username", label: "API Username", secret: false },
     { name: "api_key", label: "Provider Password / Secret", secret: true },
     { name: "password", label: "Password", secret: true },
@@ -615,6 +799,15 @@ const pageStyle = {
   maxWidth: 900,
 };
 
+const eyebrowStyle = {
+  fontSize: 12,
+  fontWeight: 850,
+  textTransform: "uppercase" as const,
+  letterSpacing: "0.12em",
+  color: "#0891b2",
+  marginBottom: 8,
+};
+
 const titleStyle = {
   fontSize: 30,
   fontWeight: 800,
@@ -633,6 +826,87 @@ const cardStyle = {
   borderRadius: 14,
   padding: 28,
   boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
+};
+
+const tenantBannerStyle = {
+  display: "flex",
+  justifyContent: "space-between",
+  gap: 16,
+  alignItems: "center",
+  border: "1px solid #bae6fd",
+  backgroundColor: "#ecfeff",
+  borderRadius: 12,
+  padding: 16,
+  marginBottom: 18,
+};
+
+const tenantEyebrowStyle = {
+  fontSize: 11,
+  fontWeight: 900,
+  color: "#0891b2",
+  textTransform: "uppercase" as const,
+  letterSpacing: "0.12em",
+  marginBottom: 4,
+};
+
+const tenantTitleStyle = {
+  color: "#0f172a",
+  fontSize: 14,
+  lineHeight: 1.5,
+};
+
+const tenantBackLinkStyle = {
+  color: "#0f172a",
+  border: "1px solid #bae6fd",
+  backgroundColor: "#fff",
+  borderRadius: 8,
+  padding: "10px 14px",
+  fontSize: 13,
+  fontWeight: 800,
+  textDecoration: "none",
+  whiteSpace: "nowrap" as const,
+};
+
+const wizardStepsStyle = {
+  display: "grid",
+  gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
+  gap: 10,
+  marginBottom: 18,
+};
+
+const wizardStepStyle = {
+  display: "flex",
+  gap: 8,
+  alignItems: "center",
+  minWidth: 0,
+  border: "1px solid #e2e8f0",
+  backgroundColor: "#f8fafc",
+  borderRadius: 10,
+  padding: "10px 12px",
+  color: "#334155",
+  fontSize: 12,
+  fontWeight: 750,
+};
+
+const wizardStepNumberStyle = {
+  width: 22,
+  height: 22,
+  borderRadius: 999,
+  backgroundColor: "#0f172a",
+  color: "#fff",
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  flexShrink: 0,
+  fontSize: 11,
+  fontWeight: 900,
+};
+
+const noAccessStyle = {
+  background: "linear-gradient(135deg, #07111f 0%, #0f172a 58%, #155e75 100%)",
+  borderRadius: 14,
+  padding: 24,
+  color: "#e0f2fe",
 };
 
 const gridStyle = {
@@ -679,6 +953,63 @@ const noticeStyle = {
   borderRadius: 10,
   color: "#334155",
   fontSize: 13,
+};
+
+const templatePreviewStyle = {
+  marginTop: 18,
+  border: "1px solid #dbeafe",
+  background: "#f8fafc",
+  borderRadius: 12,
+  padding: 16,
+};
+
+const previewGridStyle = {
+  display: "grid",
+  gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+  gap: 12,
+};
+
+const previewMetricStyle = {
+  border: "1px solid #e2e8f0",
+  background: "#fff",
+  borderRadius: 10,
+  padding: 12,
+};
+
+const previewMetricLabelStyle = {
+  color: "#64748b",
+  fontSize: 11,
+  fontWeight: 850,
+  textTransform: "uppercase" as const,
+  letterSpacing: "0.08em",
+  marginBottom: 6,
+};
+
+const previewMetricValueStyle = {
+  color: "#0f172a",
+  fontSize: 13,
+  fontWeight: 850,
+  lineHeight: 1.4,
+};
+
+const previewNoteStyle = {
+  marginTop: 12,
+  color: "#334155",
+  fontSize: 13,
+  lineHeight: 1.6,
+};
+
+const templateAdvancedStyle = {
+  marginTop: 14,
+  borderTop: "1px solid #e2e8f0",
+  paddingTop: 12,
+};
+
+const templateAdvancedSummaryStyle = {
+  cursor: "pointer",
+  color: "#0f172a",
+  fontSize: 13,
+  fontWeight: 850,
 };
 
 const buttonStyle = {

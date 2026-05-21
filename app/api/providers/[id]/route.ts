@@ -160,6 +160,7 @@ function sanitizeProvider(provider: any, capabilities: ProviderCapabilities) {
     name: provider.provider_name,
     provider_name: provider.provider_name,
     status: provider.last_test_status || (provider.is_active ? "active" : "inactive"),
+    is_active: Boolean(provider.is_active),
     last_test_status: provider.last_test_status || null,
     last_test_message: provider.last_test_message || null,
     last_test_at: provider.last_test_at || null,
@@ -887,6 +888,28 @@ export async function PATCH(
       if (Object.prototype.hasOwnProperty.call(body, field)) {
         updates[field] = body[field];
       }
+    }
+
+    if (
+      !resolved.capabilities.can_edit_advanced_provider_config &&
+      Object.prototype.hasOwnProperty.call(body, "is_active")
+    ) {
+      updates.is_active = Boolean(body.is_active);
+    }
+
+    if (
+      Object.prototype.hasOwnProperty.call(updates, "is_active") &&
+      updates.is_active === true &&
+      existingProvider.is_active !== true &&
+      existingProvider.last_test_status !== "success"
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Test connection must succeed before provider sync can be activated.",
+        },
+        { status: 400 }
+      );
     }
 
     if (Object.prototype.hasOwnProperty.call(updates, "fleet_config")) {

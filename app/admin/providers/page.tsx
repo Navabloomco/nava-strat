@@ -116,6 +116,9 @@ export default function ProviderVault() {
           }
         : {
             username: finalProvider.username || null,
+            ...(typeof finalProvider.is_active === "boolean"
+              ? { is_active: finalProvider.is_active }
+              : {}),
             ...(selectedCompanyId ? { companyId: selectedCompanyId } : {}),
           };
 
@@ -166,7 +169,10 @@ export default function ProviderVault() {
           </p>
         </div>
         {capabilities.can_add_provider && (
-          <Link href="/admin/providers/new" style={primaryLinkStyle}>
+          <Link
+            href={`/admin/providers/new${companyQuery(selectedCompanyId)}`}
+            style={primaryLinkStyle}
+          >
             Add Provider
           </Link>
         )}
@@ -185,7 +191,10 @@ export default function ProviderVault() {
       )}
 
       {providers.length === 0 ? (
-        <EmptyProviderState capabilities={capabilities} />
+        <EmptyProviderState
+          capabilities={capabilities}
+          selectedCompanyId={selectedCompanyId}
+        />
       ) : (
         providers.map((p) => (
           <ProviderCard 
@@ -202,7 +211,13 @@ export default function ProviderVault() {
   );
 }
 
-function EmptyProviderState({ capabilities }: { capabilities: any }) {
+function EmptyProviderState({
+  capabilities,
+  selectedCompanyId,
+}: {
+  capabilities: any;
+  selectedCompanyId: string;
+}) {
   const steps = [
     "Choose your GPS/telemetry provider",
     "Enter the access details supplied by your provider",
@@ -224,10 +239,18 @@ function EmptyProviderState({ capabilities }: { capabilities: any }) {
         <div style={ctaRowStyle}>
           {capabilities.can_add_provider ? (
             <>
-              <Link href="/admin/providers/new" style={primaryLinkStyle}>
+              <Link
+                href={`/admin/providers/new${companyQuery(selectedCompanyId)}`}
+                style={primaryLinkStyle}
+              >
                 Add Provider
               </Link>
-              <Link href="/admin/providers/new?request=1" style={secondaryLinkStyle}>
+              <Link
+                href={`/admin/providers/new${companyQuery(
+                  selectedCompanyId
+                )}${selectedCompanyId ? "&" : "?"}request=1`}
+                style={secondaryLinkStyle}
+              >
                 Request provider setup
               </Link>
             </>
@@ -311,6 +334,12 @@ function ProviderCard({
       setTestResult(result);
 
       if (result.success) {
+        setForm((current: any) => ({
+          ...current,
+          last_test_status: "success",
+          last_test_message: result.message || current.last_test_message,
+          last_test_at: new Date().toISOString(),
+        }));
         const skippedLine = result.skipped_missing_identifier
           ? `\nSkipped missing identifier: ${result.skipped_missing_identifier}`
           : "";
@@ -323,6 +352,12 @@ function ProviderCard({
           }${skippedLine}${crossProviderLine}`
         );
       } else {
+        setForm((current: any) => ({
+          ...current,
+          last_test_status: "failure",
+          last_test_message: result.message || result.error || current.last_test_message,
+          last_test_at: new Date().toISOString(),
+        }));
         alert(`❌ ${result.stage || "ERROR"}: ${result.message || result.error}`);
       }
     } catch (err: any) {
@@ -339,8 +374,13 @@ function ProviderCard({
         <div>
           <h3 style={{ margin: 0 }}>{provider.provider_name}</h3>
           <p style={statusText}>
-            Last Status: <span style={{ color: provider.last_test_status === 'success' ? '#10b981' : '#ef4444' }}>
-              {provider.last_test_status || "Pending"}
+            Connection:{" "}
+            <span style={{ color: form.is_active ? "#10b981" : "#64748b" }}>
+              {form.is_active ? "Active sync" : "Inactive until activated"}
+            </span>
+            {" · "}
+            Test: <span style={{ color: form.last_test_status === 'success' ? '#10b981' : '#ef4444' }}>
+              {form.last_test_status || "Pending"}
             </span>
           </p>
         </div>
@@ -368,6 +408,20 @@ function ProviderCard({
           You can view provider status, but provider administration is limited
           to company administrators.
         </div>
+      )}
+
+      {(capabilities.can_update_provider_credentials ||
+        capabilities.can_edit_advanced_provider_config) && (
+        <ProviderActivationPanel
+          provider={form}
+          isSaving={isSaving}
+          onActivate={(nextActive) =>
+            onSave({
+              ...form,
+              is_active: nextActive,
+            })
+          }
+        />
       )}
 
       <ProviderCapabilityDiagnostics summary={testResult?.capability_summary} />
@@ -455,6 +509,64 @@ function ProviderCapabilityDiagnostics({ summary }: { summary: any }) {
         mutedEmpty="No unsupported zero engine/fuel placeholders detected."
         includeZeroCounts
       />
+    </section>
+  );
+}
+
+function ProviderActivationPanel({
+  provider,
+  isSaving,
+  onActivate,
+}: {
+  provider: any;
+  isSaving: boolean;
+  onActivate: (nextActive: boolean) => void;
+}) {
+  const testedSuccessfully = provider.last_test_status === "success";
+  const isActive = Boolean(provider.is_active);
+
+  return (
+    <section style={activationPanelStyle}>
+      <div>
+        <div style={activationEyebrowStyle}>Sync activation</div>
+        <div style={activationTitleStyle}>
+          {isActive
+            ? "Provider sync is active"
+            : testedSuccessfully
+              ? "Connection tested. Sync can be activated."
+              : "Test connection before activation"}
+        </div>
+        <p style={activationCopyStyle}>
+          New providers stay inactive until a successful connection test. Sync
+          activation is explicit so vehicles and signals can be reviewed before
+          regular provider pulls are enabled.
+        </p>
+      </div>
+      <div style={activationActionsStyle}>
+        {isActive ? (
+          <button
+            type="button"
+            disabled={isSaving}
+            onClick={() => onActivate(false)}
+            style={secondaryActionButtonStyle}
+          >
+            Pause sync
+          </button>
+        ) : (
+          <button
+            type="button"
+            disabled={isSaving || !testedSuccessfully}
+            onClick={() => onActivate(true)}
+            style={{
+              ...saveBtn,
+              opacity: isSaving || !testedSuccessfully ? 0.55 : 1,
+              cursor: isSaving || !testedSuccessfully ? "not-allowed" : "pointer",
+            }}
+          >
+            Activate sync
+          </button>
+        )}
+      </div>
     </section>
   );
 }
@@ -1242,90 +1354,103 @@ function AdvancedProviderEditor({
   setForm: (form: any) => void;
 }) {
   return (
-    <div style={formGrid}>
-      <div>
-        <label style={labelStyle}>Provider Access Setup</label>
-        <input 
-          style={inputStyle}
-          value={form.login_url || ""} 
-          onChange={(e) => setForm({...form, login_url: e.target.value})} 
-        />
-      </div>
-      <div>
-        <label style={labelStyle}>Fleet Data Setup</label>
-        <input 
-          style={inputStyle}
-          value={form.fleet_url || ""} 
-          onChange={(e) => setForm({...form, fleet_url: e.target.value})} 
-        />
-      </div>
-      
-      <div style={{ gridColumn: "span 2" }}>
-        <label style={labelStyle}>Provider Data Group</label>
-        <input 
-          style={inputStyle}
-          placeholder="Enter the confirmed provider data path"
-          value={form.fleet_config?.vehicle_paths?.[0] || ""} 
-          onChange={(e) => {
-            const newPath = e.target.value;
-            setForm({
-              ...form,
-              fleet_config: {
-                ...form.fleet_config,
-                vehicle_paths: [newPath]
-              }
-            });
-          }} 
-        />
+    <>
+      <div style={formGrid}>
+        <CredentialProviderFields provider={provider} form={form} setForm={setForm} />
       </div>
 
-      <CredentialProviderFields provider={provider} form={form} setForm={setForm} />
+      <details style={advancedDetailsStyle}>
+        <summary style={advancedSummaryStyle}>
+          Advanced settings
+          <span style={advancedSummaryHintStyle}>
+            endpoints, mappings, capability profile
+          </span>
+        </summary>
 
-      <div style={{ gridColumn: "span 2" }}>
-        <label style={labelStyle}>Connection Setup</label>
-        <textarea 
-          style={textareaStyle}
-          value={typeof form.field_mapping === 'object' ? JSON.stringify(form.field_mapping, null, 2) : form.field_mapping}
-          onChange={(e) => setForm({...form, field_mapping: e.target.value})}
-        />
-      </div>
+        <div style={formGrid}>
+          <div>
+            <label style={labelStyle}>Provider Access Setup</label>
+            <input
+              style={inputStyle}
+              value={form.login_url || ""}
+              onChange={(e) => setForm({...form, login_url: e.target.value})}
+            />
+          </div>
+          <div>
+            <label style={labelStyle}>Fleet Data Setup</label>
+            <input
+              style={inputStyle}
+              value={form.fleet_url || ""}
+              onChange={(e) => setForm({...form, fleet_url: e.target.value})}
+            />
+          </div>
 
-      <div style={{ gridColumn: "span 2" }}>
-        <label style={labelStyle}>Telemetry Capability Profile</label>
-        <textarea
-          style={textareaStyle}
-          value={jsonFieldValue(form.capability_profile)}
-          onChange={(e) => setForm({ ...form, capability_profile: e.target.value })}
-        />
-      </div>
+          <div style={{ gridColumn: "span 2" }}>
+            <label style={labelStyle}>Provider Data Group</label>
+            <input
+              style={inputStyle}
+              placeholder="Enter the confirmed provider data path"
+              value={form.fleet_config?.vehicle_paths?.[0] || ""}
+              onChange={(e) => {
+                const newPath = e.target.value;
+                setForm({
+                  ...form,
+                  fleet_config: {
+                    ...form.fleet_config,
+                    vehicle_paths: [newPath]
+                  }
+                });
+              }}
+            />
+          </div>
 
-      <div style={{ gridColumn: "span 2" }}>
-        <label style={labelStyle}>Supported Signals</label>
-        <textarea
-          style={textareaStyle}
-          value={jsonFieldValue(form.supported_signals)}
-          onChange={(e) => setForm({ ...form, supported_signals: e.target.value })}
-        />
-      </div>
+          <div style={{ gridColumn: "span 2" }}>
+            <label style={labelStyle}>Connection Setup</label>
+            <textarea
+              style={textareaStyle}
+              value={typeof form.field_mapping === 'object' ? JSON.stringify(form.field_mapping, null, 2) : form.field_mapping}
+              onChange={(e) => setForm({...form, field_mapping: e.target.value})}
+            />
+          </div>
 
-      <div>
-        <label style={labelStyle}>Provider Timezone</label>
-        <input
-          style={inputStyle}
-          value={form.provider_timezone || "Africa/Nairobi"}
-          onChange={(e) => setForm({ ...form, provider_timezone: e.target.value })}
-        />
-      </div>
+          <div style={{ gridColumn: "span 2" }}>
+            <label style={labelStyle}>Telemetry Capability Profile</label>
+            <textarea
+              style={textareaStyle}
+              value={jsonFieldValue(form.capability_profile)}
+              onChange={(e) => setForm({ ...form, capability_profile: e.target.value })}
+            />
+          </div>
 
-      <div>
-        <label style={labelStyle}>Signal Notes</label>
-        <textarea
-          style={textareaStyle}
-          value={jsonFieldValue(form.source_signal_notes)}
-          onChange={(e) => setForm({ ...form, source_signal_notes: e.target.value })}
-        />
-      </div>
-    </div>
+          <div style={{ gridColumn: "span 2" }}>
+            <label style={labelStyle}>Supported Signals</label>
+            <textarea
+              style={textareaStyle}
+              value={jsonFieldValue(form.supported_signals)}
+              onChange={(e) => setForm({ ...form, supported_signals: e.target.value })}
+            />
+          </div>
+
+          <div>
+            <label style={labelStyle}>Provider Timezone</label>
+            <input
+              style={inputStyle}
+              value={form.provider_timezone || "Africa/Nairobi"}
+              onChange={(e) => setForm({ ...form, provider_timezone: e.target.value })}
+            />
+          </div>
+
+          <div>
+            <label style={labelStyle}>Signal Notes</label>
+            <textarea
+              style={textareaStyle}
+              value={jsonFieldValue(form.source_signal_notes)}
+              onChange={(e) => setForm({ ...form, source_signal_notes: e.target.value })}
+            />
+          </div>
+        </div>
+      </details>
+    </>
   );
 }
 
@@ -1647,6 +1772,15 @@ const labelStyle = { display: "block", fontSize: "11px", fontWeight: "bold", col
 const inputStyle = { width: "100%", padding: "10px", borderRadius: "6px", border: "1px solid #cbd5e1", marginBottom: "10px", fontSize: "14px" };
 const textareaStyle = { width: "100%", minHeight: "120px", padding: "12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontFamily: "monospace", fontSize: "12px", backgroundColor: "#f8fafc" };
 const formGrid = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "15px" };
+const advancedDetailsStyle = { marginTop: 14, border: "1px solid #e2e8f0", backgroundColor: "#f8fafc", borderRadius: 10, padding: 14 };
+const advancedSummaryStyle = { cursor: "pointer", color: "#0f172a", fontSize: 13, fontWeight: 850 };
+const advancedSummaryHintStyle = { marginLeft: 10, color: "#64748b", fontSize: 12, fontWeight: 650 };
 const saveBtn = { backgroundColor: "#0f172a", color: "#fff", border: "none", padding: "8px 24px", borderRadius: "6px", fontWeight: "bold", cursor: "pointer" };
 const testBtn = { backgroundColor: "#fff", color: "#0f172a", border: "1px solid #cbd5e1", padding: "8px 20px", borderRadius: "6px", fontWeight: "bold", cursor: "pointer" };
 const statusOnlyStyle = { border: "1px solid #e2e8f0", backgroundColor: "#f8fafc", color: "#64748b", borderRadius: 8, padding: 14, fontSize: 13, lineHeight: 1.6 };
+const activationPanelStyle = { marginTop: 18, display: "flex", justifyContent: "space-between", gap: 18, alignItems: "center", border: "1px solid #bae6fd", backgroundColor: "#ecfeff", borderRadius: 12, padding: 16 };
+const activationEyebrowStyle = { color: "#0891b2", fontSize: 11, fontWeight: 900, textTransform: "uppercase" as const, letterSpacing: "0.12em", marginBottom: 4 };
+const activationTitleStyle = { color: "#0f172a", fontSize: 15, fontWeight: 850 };
+const activationCopyStyle = { margin: "6px 0 0 0", color: "#475569", fontSize: 13, lineHeight: 1.6, maxWidth: 680 };
+const activationActionsStyle = { flexShrink: 0 };
+const secondaryActionButtonStyle = { backgroundColor: "#fff", color: "#0f172a", border: "1px solid #cbd5e1", padding: "8px 20px", borderRadius: "6px", fontWeight: "bold", cursor: "pointer" };

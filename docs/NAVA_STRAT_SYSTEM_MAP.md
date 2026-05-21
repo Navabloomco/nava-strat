@@ -99,8 +99,8 @@ The main product principle is convenience. Every user-facing page should make th
 | --- | --- |
 | `/admin` | Role-aware Admin Hub. Platform owners see platform tools; company owners/admins see company tools. |
 | `/admin/assets` | Asset Review for imported provider assets and intelligence/billing readiness. Supports platform-owner `?companyId=` tenant context. |
-| `/admin/providers` | Provider Vault for tracking provider configuration, testing, sync diagnostics, and enrichment diagnostics. Supports platform-owner `?companyId=` tenant context. |
-| `/admin/providers/new` | Add provider page. |
+| `/admin/providers` | Provider Vault for tracking provider configuration, testing, sync diagnostics, activation, and enrichment diagnostics. Supports platform-owner `?companyId=` tenant context. |
+| `/admin/providers/new` | Guided Add Provider wizard. Customer owners/admins and platform owners choose a provider template, enter safe credential fields, create an inactive connection, then test/review/activate from Provider Vault. |
 | `/admin/provider-requests` | Platform-owner provider setup requests. |
 | `/admin/provider-playbook` | Platform-owner internal provider onboarding playbook. |
 | `/admin/pilot-readiness` | Platform-owner pilot/go-live readiness checklist across tenants. |
@@ -144,11 +144,11 @@ The main product principle is convenience. Every user-facing page should make th
 
 | API Route | Purpose |
 | --- | --- |
-| `GET/POST /api/providers` | Provider Vault list/create. Supports platform-owner `companyId` context. Sanitizes provider credentials in responses. |
-| `GET/PATCH /api/providers/[id]` | Provider detail/update. Supports platform-owner `companyId` context for safe tenant-scoped updates. Platform-owner-only advanced fleet config including supplemental feeds and auth profiles. |
+| `GET/POST /api/providers` | Provider Vault list/create. Supports platform-owner `companyId` context. Sanitizes provider credentials in responses. New provider connections are created inactive by default. |
+| `GET/PATCH /api/providers/[id]` | Provider detail/update and explicit sync activation. Supports platform-owner `companyId` context for safe tenant-scoped updates. Platform-owner-only advanced fleet config including supplemental feeds and auth profiles. Customer owners/admins may update credentials and activate/deactivate sync for their company only after a successful connection test. |
 | `POST /api/providers/[id]/test` | Tests provider sync in the resolved tenant context and returns sanitized diagnostics, including safe telemetry capability and automated distance-report dry-run counts when available. It must not expose provider secrets or raw payloads. |
 | `POST /api/providers/[id]/distance-import` | Provider-scoped admin CSV distance report fallback/backfill import. Dry-run previews BlueTrax-style report rows, asset matches, odometer health, and rows that would write; commit writes matched rows to `provider_trip_summaries` only. |
-| `GET /api/providers/templates` | Provider templates, including verified connection templates and safe setup-only signal-mapping examples such as the Meitrack CAN Bus onboarding template. No live credentials. |
+| `GET /api/providers/templates` | Provider templates, including verified self-serve connection templates and safe setup-only signal-mapping/fallback examples such as Meitrack CAN Bus, Generic REST GPS, and Generic CSV Distance Report. No live credentials. |
 | `GET/POST /api/providers/setup-requests` | Provider setup request list/create. |
 | `PATCH /api/providers/setup-requests/[id]` | Provider setup request status management. |
 | `POST /api/sync/providers` | Cron/provider automation sync. Requires `Authorization: Bearer <CRON_SECRET>`. |
@@ -372,6 +372,20 @@ Nava Eye conversations are short investigation threads, not durable operational 
 ## 7. Provider Integration Model
 
 Provider sync is implemented in `lib/providers/engine.ts` with normalization in `lib/providers/normalizeVehicle.ts`.
+
+### Self-Serve Provider Onboarding
+
+Provider Vault is moving from platform-developer configuration toward a guided SaaS onboarding flow:
+
+1. Choose a platform-maintained provider template.
+2. Enter only the credential fields required by that template.
+3. Create the tenant provider connection as inactive.
+4. Test the connection and review detected vehicles, observed signal capability, asset matches/unmatched rows, distance diagnostics, and setup blockers.
+5. Explicitly activate sync after a successful test.
+
+Customer owners/admins may create and manage provider connections for their own company, but raw endpoints, JSON field mappings, supplemental auth profiles, token paths, and advanced feed configuration remain advanced-only. Platform owners keep advanced visibility for provider setup and diagnostics. Ops, finance, and management users may view status where allowed but cannot create provider connections.
+
+New provider records must not start active by default, and provider sync must not run automatically just because a connection was created. CSV distance report import remains fallback/backfill, not the primary provider workflow.
 
 ### Primary Flow
 
