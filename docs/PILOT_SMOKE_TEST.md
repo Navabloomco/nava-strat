@@ -64,7 +64,10 @@ Open `/admin/providers?companyId=<id>`.
 - [ ] As a customer owner/admin, confirm the guided Add Provider flow shows only public/supported providers, Custom API provider, and Request assisted setup.
 - [ ] Select Custom API provider and confirm the guided form collects provider identity, auth method, endpoint URL, row path, labeled field mappings, and business-language signal capability without exposing internal templates.
 - [ ] Enter a provider base URL and confirm "Let Nava try common API patterns" fills likely login/fleet endpoint candidates without requiring raw JSON.
+- [ ] Enter an endpoint-specific value such as `https://fleettrack.africa/api/login` in API base URL and confirm the wizard normalizes the base to `https://fleettrack.africa/api` while filling the login endpoint separately.
+- [ ] When provider notes mention `user_api_hash` or `get_devices`, confirm "Use detected login-token setup" fills POST login token, token path, fleet endpoint, and row path defaults.
 - [ ] Use Auto-test setup with a safe FleetTrack-style provider and confirm it detects login token path, fleet endpoint, row path, field mappings, and vehicle count when available.
+- [ ] Confirm row path accepts one JSON path only, such as `data`, and rejects URLs or multiple paths like `items data devices`.
 - [ ] Use Test Endpoint & Detect on a safe provider login endpoint and confirm token path suggestions appear without raw secrets or full payloads.
 - [ ] Use Test Endpoint & Detect on a safe fleet/current-location endpoint and confirm row path and field mapping suggestions can be applied.
 - [ ] Confirm Test Endpoint & Detect rejects localhost/private/internal/metadata URLs.

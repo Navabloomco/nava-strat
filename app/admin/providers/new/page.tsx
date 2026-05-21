@@ -21,6 +21,14 @@ type CredentialField = {
 
 const REQUEST_SETUP_OPTION = "__request_provider_setup__";
 const CUSTOM_API_OPTION = "__custom_api_provider__";
+const KNOWN_LOGIN_ENDPOINTS = ["/auth/login", "/login"] as const;
+const KNOWN_FLEET_ENDPOINTS = [
+  "/get_devices",
+  "/devices",
+  "/vehicles",
+  "/fleet",
+  "/get_reports",
+] as const;
 
 const INITIAL_CUSTOM_PROVIDER_FORM = {
   provider_name: "",
@@ -316,6 +324,23 @@ export default function NewProviderPage() {
     setCustomForm((current) => ({ ...current, ...patch }));
   }
 
+  function handleBaseUrlBlur() {
+    const split = normalizeProviderBaseInput(customForm.base_url);
+    const patch: Record<string, string> = { base_url: split.baseUrl };
+
+    if (split.endpointKind === "login" && split.endpointUrl) {
+      patch.login_url = customForm.login_url.trim() || split.endpointUrl;
+    }
+    if (split.endpointKind === "fleet" && split.endpointUrl) {
+      patch.endpoint_url = customForm.endpoint_url.trim() || split.endpointUrl;
+    }
+    if (split.fleetTrackLike) {
+      Object.assign(patch, buildLoginTokenSetupPatch(split.baseUrl, customForm));
+    }
+
+    updateCustomForm(patch);
+  }
+
   async function handleCreateCustomProvider() {
     const validationError = validateCustomProviderForm(customForm);
     if (validationError) {
@@ -444,6 +469,9 @@ export default function NewProviderPage() {
           bearer_token: customForm.bearer_token,
           username: customForm.username,
           password: customForm.password,
+          login_url: customForm.login_url.trim(),
+          login_token_path: customForm.login_token_path.trim(),
+          login_credential_placement: customForm.login_credential_placement,
           login_username_field:
             customForm.login_username_field.trim() || "username",
           login_secret_field:
@@ -495,28 +523,38 @@ export default function NewProviderPage() {
   }
 
   function handleAutoFillCustomProvider() {
-    const baseUrl = normalizeBaseUrl(customForm.base_url);
+    const split = normalizeProviderBaseInput(customForm.base_url);
+    const baseUrl = split.baseUrl;
     if (!baseUrl) {
       alert("Enter a provider base URL first.");
       return;
     }
-    const fleetTrackLike = isFleetTrackLike(customForm, baseUrl);
+    const fleetTrackLike = split.fleetTrackLike || isFleetTrackLike(customForm, baseUrl);
     const patch: Record<string, string> = {
       base_url: baseUrl,
       provider_timezone: customForm.provider_timezone || "Africa/Nairobi",
     };
 
-    if (customForm.auth_method === "post_login") {
-      patch.login_url = customForm.login_url.trim() || `${baseUrl}/login`;
-      patch.login_token_path =
-        customForm.login_token_path.trim() ||
-        (fleetTrackLike ? "user_api_hash" : "token");
-      patch.login_username_field =
-        customForm.login_username_field.trim() || "username";
-      patch.login_secret_field =
-        customForm.login_secret_field.trim() || "password";
-      patch.login_credential_placement =
-        customForm.login_credential_placement || "json_body";
+    if (split.endpointKind === "login" && split.endpointUrl) {
+      patch.login_url = customForm.login_url.trim() || split.endpointUrl;
+    }
+    if (split.endpointKind === "fleet" && split.endpointUrl) {
+      patch.endpoint_url = customForm.endpoint_url.trim() || split.endpointUrl;
+    }
+
+    if (fleetTrackLike) {
+      Object.assign(patch, buildLoginTokenSetupPatch(baseUrl, customForm));
+    } else if (customForm.auth_method === "post_login") {
+      Object.assign(patch, {
+        login_url: customForm.login_url.trim() || `${baseUrl}/login`,
+        login_token_path: customForm.login_token_path.trim() || "token",
+        login_username_field:
+          customForm.login_username_field.trim() || "username",
+        login_secret_field:
+          customForm.login_secret_field.trim() || "password",
+        login_credential_placement:
+          customForm.login_credential_placement || "json_body",
+      });
     }
 
     if (!customForm.endpoint_url.trim()) {
@@ -533,8 +571,21 @@ export default function NewProviderPage() {
     updateCustomForm(patch);
   }
 
+  function handleUseLoginTokenSetup() {
+    const split = normalizeProviderBaseInput(customForm.base_url);
+    if (!split.baseUrl) {
+      alert("Enter a provider base URL first.");
+      return;
+    }
+    updateCustomForm({
+      base_url: split.baseUrl,
+      ...buildLoginTokenSetupPatch(split.baseUrl, customForm, true),
+    });
+  }
+
   async function handleAutoTestCustomProvider() {
-    const baseUrl = normalizeBaseUrl(customForm.base_url);
+    const split = normalizeProviderBaseInput(customForm.base_url);
+    const baseUrl = split.baseUrl;
     if (!baseUrl) {
       alert("Enter a provider base URL first.");
       return;
@@ -566,7 +617,11 @@ export default function NewProviderPage() {
           base_url: baseUrl,
           provider_name: customForm.provider_name.trim(),
           provider_website: customForm.provider_website.trim(),
-          provider_notes: customForm.provider_notes.trim(),
+          provider_notes: [
+            customForm.provider_notes.trim(),
+            customForm.login_url.trim(),
+            customForm.endpoint_url.trim(),
+          ].filter(Boolean).join("\n"),
           auth_method: customForm.auth_method,
           api_key_header: customForm.api_key_header.trim() || "x-api-key",
           api_key: customForm.api_key,
@@ -599,6 +654,7 @@ export default function NewProviderPage() {
     };
 
     if (result.login) {
+      patch.auth_method = "post_login";
       patch.login_url = result.login.login_url || customForm.login_url;
       patch.login_token_path = result.login.token_path || customForm.login_token_path;
       patch.login_username_field =
@@ -813,6 +869,8 @@ export default function NewProviderPage() {
                 onAutoFill={handleAutoFillCustomProvider}
                 onAutoTest={handleAutoTestCustomProvider}
                 onApplyAutoDetection={applyAutoDetection}
+                onBaseUrlBlur={handleBaseUrlBlur}
+                onUseLoginTokenSetup={handleUseLoginTokenSetup}
                 canShowDebug={Boolean(
                   capabilities.can_edit_advanced_provider_config
                 )}
@@ -1034,6 +1092,8 @@ function validateCustomProviderForm(form: typeof INITIAL_CUSTOM_PROVIDER_FORM) {
   if (!form.provider_name.trim()) return "Provider name is required.";
   if (!form.endpoint_url.trim()) return "Fleet/current location endpoint URL is required.";
   if (!form.row_path.trim()) return "Row path / data group is required.";
+  const rowPathError = validateSingleJsonPath(form.row_path, "Row path / data group");
+  if (rowPathError) return rowPathError;
   if (!form.vehicle_field.trim()) return "Vehicle / registration field is required.";
   if (!form.latitude_field.trim()) return "Latitude field is required.";
   if (!form.longitude_field.trim()) return "Longitude field is required.";
@@ -1085,15 +1145,63 @@ function validateCustomProviderForm(form: typeof INITIAL_CUSTOM_PROVIDER_FORM) {
 }
 
 function normalizeBaseUrl(value: string) {
+  return normalizeProviderBaseInput(value).baseUrl;
+}
+
+function normalizeProviderBaseInput(value: string) {
   const text = String(value || "").trim();
-  if (!text) return "";
+  if (!text) {
+    return {
+      baseUrl: "",
+      endpointKind: "",
+      endpointUrl: "",
+      fleetTrackLike: false,
+    };
+  }
+
   try {
     const parsed = new URL(text);
     parsed.hash = "";
+    const endpointUrl = parsed.toString().replace(/\/+$/, "");
+    const path = parsed.pathname.replace(/\/+$/, "") || "/";
+    const lowerPath = path.toLowerCase();
+
+    const matchedLogin = KNOWN_LOGIN_ENDPOINTS.find((endpoint) =>
+      lowerPath.endsWith(endpoint)
+    );
+    const matchedFleet = KNOWN_FLEET_ENDPOINTS.find((endpoint) =>
+      lowerPath.endsWith(endpoint)
+    );
+    const matched = matchedLogin || matchedFleet || "";
+
+    if (matched) {
+      parsed.search = "";
+      const basePath = path.slice(0, path.length - matched.length).replace(/\/+$/, "");
+      parsed.pathname = basePath || "/";
+      const baseUrl = parsed.toString().replace(/\/+$/, "");
+      return {
+        baseUrl,
+        endpointKind: matchedLogin ? "login" : "fleet",
+        endpointUrl,
+        fleetTrackLike: isFleetTrackHint(`${text} ${matched}`),
+      };
+    }
+
     parsed.search = "";
-    return parsed.toString().replace(/\/+$/, "");
+    return {
+      baseUrl: parsed.toString().replace(/\/+$/, ""),
+      endpointKind: "",
+      endpointUrl: "",
+      fleetTrackLike: isFleetTrackHint(text),
+    };
   } catch {
-    return text.replace(/\/+$/, "");
+    const trimmed = text.replace(/\/+$/, "");
+    return {
+      baseUrl: trimmed,
+      endpointKind: "",
+      endpointUrl: "",
+      fleetTrackLike: isFleetTrackHint(trimmed),
+    };
   }
 }
 
@@ -1101,12 +1209,61 @@ function isFleetTrackLike(
   form: typeof INITIAL_CUSTOM_PROVIDER_FORM,
   baseUrl: string
 ) {
-  const text = `${form.provider_name} ${form.provider_website} ${form.provider_notes} ${baseUrl}`.toLowerCase();
+  const text = `${form.provider_name} ${form.provider_website} ${form.provider_notes} ${form.login_url} ${form.endpoint_url} ${baseUrl}`;
+  return isFleetTrackHint(text);
+}
+
+function isFleetTrackHint(value: string) {
+  const text = String(value || "").toLowerCase();
   return (
     text.includes("fleettrack") ||
     text.includes("get_devices") ||
-    text.includes("user_api_hash")
+    text.includes("user_api_hash") ||
+    text.includes("api_hash") ||
+    text.includes("post_login")
   );
+}
+
+function buildLoginTokenSetupPatch(
+  baseUrl: string,
+  form: typeof INITIAL_CUSTOM_PROVIDER_FORM,
+  force = false
+) {
+  return {
+    auth_method: "post_login",
+    login_url:
+      !force && form.login_url.trim()
+        ? form.login_url.trim()
+        : `${baseUrl}/login?email={{username}}&password={{password}}`,
+    login_token_path: "user_api_hash",
+    login_username_field:
+      !force && form.login_username_field.trim()
+        ? form.login_username_field.trim()
+        : "email",
+    login_secret_field:
+      !force && form.login_secret_field.trim()
+        ? form.login_secret_field.trim()
+        : "password",
+    login_credential_placement: "query_params",
+    endpoint_url: `${baseUrl}/get_devices?lang=en&user_api_hash={{user_api_hash}}`,
+    fleet_token_placement: "query_user_api_hash",
+    row_path: !force && form.row_path.trim() ? form.row_path.trim() : "data",
+  };
+}
+
+function validateSingleJsonPath(value: string, label: string) {
+  const text = String(value || "").trim();
+  if (!text) return `${label} is required.`;
+  if (/https?:\/\//i.test(text)) {
+    return `${label} must be one JSON path, not a URL.`;
+  }
+  if (/[{},]/.test(text)) {
+    return `${label} must be one JSON path only, for example data or data.vehicles.`;
+  }
+  if (/\s/.test(text)) {
+    return `${label} cannot contain spaces. Enter one path only, for example data, items, devices, or data.vehicles.`;
+  }
+  return "";
 }
 
 function getCredentialFields(template: any): CredentialField[] {
@@ -1190,6 +1347,8 @@ function CustomApiProviderForm({
   onAutoFill,
   onAutoTest,
   onApplyAutoDetection,
+  onBaseUrlBlur,
+  onUseLoginTokenSetup,
   canShowDebug,
 }: {
   form: typeof INITIAL_CUSTOM_PROVIDER_FORM;
@@ -1203,9 +1362,12 @@ function CustomApiProviderForm({
   onAutoFill: () => void;
   onAutoTest: () => void;
   onApplyAutoDetection: () => void;
+  onBaseUrlBlur: () => void;
+  onUseLoginTokenSetup: () => void;
   canShowDebug: boolean;
 }) {
   const isPost = form.http_method === "POST";
+  const loginTokenHint = isFleetTrackLike(form, normalizeBaseUrl(form.base_url));
 
   return (
     <div style={customProviderStyle}>
@@ -1242,7 +1404,7 @@ function CustomApiProviderForm({
             label="API base URL"
             value={form.base_url}
             onChange={(value) => updateForm({ base_url: value })}
-            onBlur={() => updateForm({ base_url: normalizeBaseUrl(form.base_url) })}
+            onBlur={onBaseUrlBlur}
             placeholder="https://provider.example/api"
             required
           />
@@ -1265,6 +1427,15 @@ function CustomApiProviderForm({
           <button type="button" style={secondaryButtonStyle} onClick={onAutoFill}>
             LET NAVA TRY COMMON API PATTERNS
           </button>
+          {loginTokenHint && (
+            <button
+              type="button"
+              style={secondaryButtonStyle}
+              onClick={onUseLoginTokenSetup}
+            >
+              USE DETECTED LOGIN-TOKEN SETUP
+            </button>
+          )}
           <button
             type="button"
             style={buttonInlineStyle}
@@ -1278,6 +1449,7 @@ function CustomApiProviderForm({
           result={detectResults.auto}
           canShowDebug={canShowDebug}
           onApply={onApplyAutoDetection}
+          onUseLoginTokenSetup={onUseLoginTokenSetup}
         />
       </ProviderWizardSection>
 
@@ -1457,6 +1629,10 @@ function CustomApiProviderForm({
             placeholder="data.vehicles"
             required
           />
+        </div>
+        <div style={helperTextStyle}>
+          Enter one JSON path only, for example data, items, devices, or
+          data.vehicles.
         </div>
 
         {isPost && (
@@ -1746,10 +1922,12 @@ function AutoSetupDetectionResult({
   result,
   canShowDebug,
   onApply,
+  onUseLoginTokenSetup,
 }: {
   result: any;
   canShowDebug: boolean;
   onApply: () => void;
+  onUseLoginTokenSetup: () => void;
 }) {
   if (!result) return null;
   if (result.error) return <div style={requestErrorStyle}>{result.error}</div>;
@@ -1787,6 +1965,15 @@ function AutoSetupDetectionResult({
           {blockers.map((blocker: string) => (
             <div key={blocker}>{blocker}</div>
           ))}
+          {result.suggested_auth_method === "post_login" && (
+            <button
+              type="button"
+              style={smallButtonStyle}
+              onClick={onUseLoginTokenSetup}
+            >
+              Use POST login token setup
+            </button>
+          )}
         </div>
       )}
 

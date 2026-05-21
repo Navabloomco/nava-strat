@@ -13,6 +13,14 @@ const MAX_RESPONSE_BYTES = 256 * 1024;
 const TEST_TIMEOUT_MS = 12_000;
 const AUTO_TEST_TIMEOUT_MS = 7_000;
 const MAX_SUGGESTIONS = 20;
+const KNOWN_LOGIN_ENDPOINTS = ["/auth/login", "/login"];
+const KNOWN_FLEET_ENDPOINTS = [
+  "/get_devices",
+  "/devices",
+  "/vehicles",
+  "/fleet",
+  "/get_reports",
+];
 
 type ProviderCapabilities = {
   can_use_provider_setup_tools: boolean;
@@ -70,7 +78,15 @@ export async function POST(req: Request) {
       return noStoreJson({ success: true, ...autoResult });
     }
 
-    const singleResult = await testEndpointCandidate(body, TEST_TIMEOUT_MS);
+    const effectiveBody = await resolveTemplatedEndpoint(body);
+    if ("error" in effectiveBody) {
+      return noStoreJson(
+        { success: false, error: effectiveBody.error },
+        { status: 400 }
+      );
+    }
+
+    const singleResult = await testEndpointCandidate(effectiveBody.body, TEST_TIMEOUT_MS);
     if (singleResult.error) {
       return noStoreJson(
         { success: false, error: singleResult.error },
@@ -80,7 +96,7 @@ export async function POST(req: Request) {
 
     return noStoreJson({
       success: true,
-      ...publicDetectionResult(singleResult),
+      ...publicDetectionResult(singleResult, effectiveBody.body.mode || null),
     });
   } catch (err: any) {
     const aborted = err?.name === "AbortError";
@@ -197,7 +213,8 @@ async function autoTestSetup(body: any) {
 
   const baseUrl = baseResult.baseUrl as string;
   const authMethod = String(body.auth_method || "none").trim().toLowerCase();
-  const providerText = `${body.provider_name || ""} ${body.provider_website || ""} ${body.provider_notes || ""} ${baseUrl}`.toLowerCase();
+  const providerText = `${body.provider_name || ""} ${body.provider_website || ""} ${body.provider_notes || ""} ${body.login_url || ""} ${body.endpoint_url || ""} ${baseUrl}`.toLowerCase();
+  const loginTokenHint = hasLoginTokenHint(providerText);
   const loginUrlCandidates = buildLoginUrlCandidates(baseUrl);
   const fleetUrlCandidates = buildFleetUrlCandidates(baseUrl, providerText);
   const tokenPathCandidates = [
@@ -212,6 +229,7 @@ async function autoTestSetup(body: any) {
   let loginResult: any = null;
   let tokenValue = "";
   let loginAttempts = 0;
+  const loginStatuses: number[] = [];
 
   if (authMethod === "post_login") {
     const username = safeCredential(body.username, 255);
@@ -249,6 +267,7 @@ async function autoTestSetup(body: any) {
                   login_secret_field: "password",
                 };
           const result = await testEndpointCandidate(candidate, AUTO_TEST_TIMEOUT_MS);
+          if (result.response?.status) loginStatuses.push(result.response.status);
           if (result.error || !result.response?.ok) continue;
 
           const matchedPath = tokenPathCandidates.find((path) =>
@@ -278,6 +297,7 @@ async function autoTestSetup(body: any) {
   const fleetAuthCandidates = buildFleetAuthCandidates(body, authMethod, tokenValue);
   let fleetResult: any = null;
   let fleetAttempts = 0;
+  const fleetStatuses: number[] = [];
 
   for (const fleetUrl of fleetUrlCandidates) {
     for (const authCandidate of fleetAuthCandidates as any[]) {
@@ -299,6 +319,7 @@ async function autoTestSetup(body: any) {
         password: authCandidate.password,
       };
       const result = await testEndpointCandidate(candidate, AUTO_TEST_TIMEOUT_MS);
+      if (result.response?.status) fleetStatuses.push(result.response.status);
       if (result.error || !result.response?.ok) continue;
       const rowPath = result.analysis.row_path_suggestions[0];
       if (!rowPath) continue;
@@ -333,19 +354,160 @@ async function autoTestSetup(body: any) {
     fleet_candidates: fleetUrlCandidates,
     token_path_candidates: tokenPathCandidates,
     row_path_candidates: ["data", "items", "devices", "vehicles", "result.items"],
+    suggested_auth_method:
+      authMethod !== "post_login" && loginTokenHint ? "post_login" : null,
     attempts: {
       login: loginAttempts,
       fleet: fleetAttempts,
     },
     setup_blockers: [
+      ...(authMethod !== "post_login" && loginTokenHint
+        ? [
+            `${authLabel(authMethod)} auth is selected, so login-token discovery was skipped. This provider appears to use user_api_hash. Switch to POST login token?`,
+          ]
+        : []),
       ...(authMethod === "post_login" && !loginResult
-        ? ["No login candidate returned a usable token path."]
+        ? [
+            loginStatuses.includes(422)
+              ? "The provider rejected the login request shape. Try query-parameter login or JSON-body login."
+              : "No login candidate returned a usable token path.",
+          ]
         : []),
       ...(!fleetResult
-        ? ["No vehicle rows found yet. Try another endpoint or ask your provider for the exact get_devices response."]
+        ? [
+            fleetStatuses.includes(401)
+              ? "The provider rejected the fleet request. Confirm the login token is passed as user_api_hash."
+              : "No vehicle rows found yet. Try another endpoint or ask your provider for the exact get_devices response.",
+          ]
         : []),
     ],
   };
+}
+
+async function resolveTemplatedEndpoint(body: any) {
+  if (body.mode === "login") {
+    return { body: resolveLoginEndpointUrl(body) };
+  }
+  return resolveTemplatedFleetEndpoint(body);
+}
+
+function resolveLoginEndpointUrl(body: any) {
+  if (
+    String(body.auth_method || "").trim().toLowerCase() !== "post_login" ||
+    String(body.login_credential_placement || "").trim() !== "query_params"
+  ) {
+    return body;
+  }
+
+  const usernameField = safeProviderPath(body.login_username_field || "username");
+  const passwordField = safeProviderPath(body.login_secret_field || "password");
+  const username = safeCredential(body.username, 255);
+  const password = safeCredential(body.password, 4000);
+  if (!usernameField || !passwordField || !username || !password) return body;
+
+  return {
+    ...body,
+    url: appendQueryParams(String(body.url || ""), {
+      [usernameField]: username,
+      [passwordField]: password,
+    }),
+    method: "GET",
+    auth_method: "none",
+  };
+}
+
+async function resolveTemplatedFleetEndpoint(body: any) {
+  const url = String(body.url || "");
+  const needsUserHash = url.includes("{{user_api_hash}}");
+  const needsToken = url.includes("{{token}}");
+  if (!needsUserHash && !needsToken) return { body };
+
+  const authMethod = String(body.auth_method || "").trim().toLowerCase();
+  if (authMethod !== "post_login") {
+    return {
+      error:
+        "This fleet endpoint uses a login-token placeholder. Switch auth method to POST login token before testing.",
+    };
+  }
+
+  const login = await runLoginTokenDetection(body, TEST_TIMEOUT_MS);
+  if (login.error) return { error: login.error };
+  const token = login.token as string;
+  return {
+    body: {
+      ...body,
+      url: url
+        .split("{{user_api_hash}}")
+        .join(encodeURIComponent(token))
+        .split("{{token}}")
+        .join(encodeURIComponent(token)),
+      auth_method:
+        needsUserHash || needsToken ? "none" : body.auth_method,
+    },
+  };
+}
+
+async function runLoginTokenDetection(body: any, timeoutMs: number) {
+  const loginUrl = String(body.login_url || "").trim();
+  if (!loginUrl) return { error: "Login endpoint URL is required before testing this tokenized fleet endpoint." };
+
+  const tokenPath = safeProviderPath(body.login_token_path || "");
+  if (!tokenPath) return { error: "Login token path is required before testing this tokenized fleet endpoint." };
+
+  const username = safeCredential(body.username, 255);
+  const password = safeCredential(body.password, 4000);
+  if (!username || !password) {
+    return { error: "Login username and password are required before testing this tokenized fleet endpoint." };
+  }
+
+  const usernameField = safeProviderPath(body.login_username_field || "username");
+  const passwordField = safeProviderPath(body.login_secret_field || "password");
+  if (!usernameField || !passwordField) {
+    return { error: "Login credential field names are invalid." };
+  }
+
+  const placement =
+    String(body.login_credential_placement || "json_body").trim() ===
+    "query_params"
+      ? "query_params"
+      : "json_body";
+  const candidate =
+    placement === "query_params"
+      ? {
+          mode: "login",
+          url: appendQueryParams(loginUrl, {
+            [usernameField]: username,
+            [passwordField]: password,
+          }),
+          method: "GET",
+          auth_method: "none",
+        }
+      : {
+          mode: "login",
+          url: loginUrl,
+          method: "POST",
+          auth_method: "post_login",
+          username,
+          password,
+          login_username_field: usernameField,
+          login_secret_field: passwordField,
+        };
+
+  const result = await testEndpointCandidate(candidate, timeoutMs);
+  if (result.error) return { error: result.error };
+  if (!result.response?.ok) {
+    return {
+      error:
+        result.response?.status === 422
+          ? "The provider rejected the login request shape. Try query-parameter login or JSON-body login."
+          : `Login endpoint returned HTTP ${result.response?.status || "error"}.`,
+    };
+  }
+  const token = getByPath(result.analysis.parsed, tokenPath);
+  if (!isUsableToken(token)) {
+    return { error: "Login succeeded, but the configured token path did not return a usable token." };
+  }
+  return { token: String(token) };
 }
 
 async function testEndpointCandidate(body: any, timeoutMs: number) {
@@ -394,13 +556,13 @@ async function testEndpointCandidate(body: any, timeoutMs: number) {
   };
 }
 
-function publicDetectionResult(result: any) {
+function publicDetectionResult(result: any, mode: any = null) {
   const response = result.response as Response;
   const setupBlockers = buildSetupBlockers(
     response,
     result.analysis,
     result.truncated,
-    null
+    mode
   );
 
   return {
@@ -486,7 +648,17 @@ function normalizeBaseUrl(value: any) {
   try {
     const parsed = new URL(text);
     parsed.hash = "";
+    const path = parsed.pathname.replace(/\/+$/, "") || "/";
+    const lowerPath = path.toLowerCase();
+    const matched =
+      KNOWN_LOGIN_ENDPOINTS.find((endpoint) => lowerPath.endsWith(endpoint)) ||
+      KNOWN_FLEET_ENDPOINTS.find((endpoint) => lowerPath.endsWith(endpoint)) ||
+      "";
     parsed.search = "";
+    if (matched) {
+      const basePath = path.slice(0, path.length - matched.length).replace(/\/+$/, "");
+      parsed.pathname = basePath || "/";
+    }
     return parsed.toString().replace(/\/+$/, "");
   } catch {
     return text.replace(/\/+$/, "");
@@ -502,10 +674,7 @@ function buildLoginUrlCandidates(baseUrl: string) {
 }
 
 function buildFleetUrlCandidates(baseUrl: string, providerText: string) {
-  const fleetTrackLikely =
-    providerText.includes("fleettrack") ||
-    providerText.includes("get_devices") ||
-    providerText.includes("user_api_hash");
+  const fleetTrackLikely = hasLoginTokenHint(providerText);
   return uniqueStrings([
     ...(fleetTrackLikely ? [`${baseUrl}/get_devices?lang=en`] : []),
     `${baseUrl}/get_devices`,
@@ -514,6 +683,27 @@ function buildFleetUrlCandidates(baseUrl: string, providerText: string) {
     `${baseUrl}/fleet`,
     `${baseUrl}/fleet_current_locations`,
   ]);
+}
+
+function hasLoginTokenHint(value: string) {
+  const text = String(value || "").toLowerCase();
+  return (
+    text.includes("fleettrack") ||
+    text.includes("get_devices") ||
+    text.includes("user_api_hash") ||
+    text.includes("api_hash") ||
+    text.includes("post_login")
+  );
+}
+
+function authLabel(value: string) {
+  const labels: Record<string, string> = {
+    api_key_header: "API key header",
+    bearer_token: "Bearer token",
+    basic: "Basic username/password",
+    none: "No auth",
+  };
+  return labels[value] || "The selected";
 }
 
 function buildFleetAuthCandidates(body: any, authMethod: string, loginToken: string) {
@@ -946,6 +1136,10 @@ function buildSetupBlockers(
   const blockers: string[] = [];
   if (response.status >= 300 && response.status < 400) {
     blockers.push("Endpoint returned a redirect; redirects are not followed by setup detection.");
+  } else if (mode === "login" && response.status === 422) {
+    blockers.push("The provider rejected the login request shape. Try query-parameter login or JSON-body login.");
+  } else if (mode === "fleet" && response.status === 401) {
+    blockers.push("The provider rejected the fleet request. Confirm the login token is passed as user_api_hash.");
   } else if (!response.ok) {
     blockers.push(`Endpoint returned HTTP ${response.status}.`);
   }
@@ -1025,7 +1219,7 @@ function isBlockedAddress(address: string) {
 function safeProviderPath(value: any) {
   const text = String(value || "").trim();
   if (!text || text.length > 160) return "";
-  if (/https?:\/\//i.test(text) || /[{}]/.test(text)) return "";
+  if (/https?:\/\//i.test(text) || /[{},]/.test(text) || /\s/.test(text)) return "";
   return text;
 }
 

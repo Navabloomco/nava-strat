@@ -256,6 +256,35 @@ function originFromUrl(url: string | null) {
   }
 }
 
+function normalizeProviderBaseUrl(value: any) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  try {
+    const parsed = new URL(text);
+    parsed.hash = "";
+    parsed.search = "";
+    const path = parsed.pathname.replace(/\/+$/, "") || "/";
+    const lowerPath = path.toLowerCase();
+    const endpointSuffixes = [
+      "/auth/login",
+      "/login",
+      "/get_devices",
+      "/devices",
+      "/vehicles",
+      "/fleet",
+      "/get_reports",
+    ];
+    const matched = endpointSuffixes.find((suffix) => lowerPath.endsWith(suffix));
+    if (matched) {
+      const basePath = path.slice(0, path.length - matched.length).replace(/\/+$/, "");
+      parsed.pathname = basePath || "/";
+    }
+    return parsed.toString().replace(/\/+$/, "");
+  } catch {
+    return text.replace(/\/+$/, "");
+  }
+}
+
 function buildCustomApiProviderConfig(input: any) {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     return { error: "Custom provider details are required." };
@@ -313,6 +342,9 @@ function buildCustomApiProviderConfig(input: any) {
     endpointUrl.url as string,
     tokenPlacement
   );
+  const normalizedBase = normalizeProviderBaseUrl(
+    input.base_url || endpointUrl.url
+  );
   const websiteUrl = providerWebsite.url || null;
   const fleetConfig = {
     fleet_url: endpoint,
@@ -367,7 +399,7 @@ function buildCustomApiProviderConfig(input: any) {
         capability_warning:
           "Engine and tank signals must be confirmed as real sensor values, not dashboard placeholders.",
       },
-      base_url: originFromUrl(endpoint),
+      base_url: normalizedBase || originFromUrl(endpoint),
       login_url: authResult.login_url,
       fleet_url: endpoint,
       username: authResult.username,
@@ -719,6 +751,11 @@ function validateProviderPath(value: any, label: string) {
   if (text.length > 160) return { error: `${label} is too long.` };
   if (/https?:\/\//i.test(text) || /[{}]/.test(text)) {
     return { error: `${label} must be a provider key/path, not a URL or template.` };
+  }
+  if (/,/.test(text) || /\s/.test(text)) {
+    return {
+      error: `${label} must be one JSON path only, for example data, items, devices, or data.vehicles.`,
+    };
   }
   return { path: text };
 }
