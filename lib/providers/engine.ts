@@ -304,6 +304,8 @@ const SUPPORTED_TEMPLATE_MACROS = new Set([
   "api_secret",
   "bearer_token",
   "token",
+  "access_token",
+  "user_api_hash",
   "now_iso",
   "now_minus_1h_iso",
   "now_minus_24h_iso",
@@ -1264,7 +1266,11 @@ async function authenticateProvider(provider: ProviderRecord): Promise<AuthResul
       : { user_name: "{{username}}", key: "{{api_key}}" };
     const payload = buildPayload(payloadTemplate, provider);
     const headers = buildHeaders(config.headers || {}, provider, null);
-    const response = await fetch(loginUrl, {
+    const loginRequestUrl =
+      method === "GET" || config.credential_placement === "query"
+        ? appendPayloadToUrl(loginUrl, payload)
+        : loginUrl;
+    const response = await fetch(loginRequestUrl, {
       method,
       headers: withJsonContentType(headers),
       body: method === "GET" ? undefined : JSON.stringify(payload),
@@ -1312,14 +1318,31 @@ async function fetchFleet(
   const authType = (provider.auth_type || "POST_LOGIN").toUpperCase();
   const config = provider.fleet_config || {};
   const method = String(config.method || "POST").toUpperCase();
+  const effectiveFleetUrl = String(
+    renderTemplateValue(fleetUrl, {
+      provider,
+      token,
+      authMetadata,
+      fallbackAuthMetadata: {},
+      credentialOverrides: {},
+      now: new Date(),
+    }).value || fleetUrl
+  );
   const headers = buildHeaders(config.headers || {}, provider, token, authMetadata);
   if (token) {
-    if (authType === "API_KEY") headers[config.api_key_header || "x-api-key"] = token;
+    const tokenPlacement = String(config.token_placement || "").toLowerCase();
+    if (tokenPlacement === "query_user_api_hash" || tokenPlacement === "query_token" || tokenPlacement === "none") {
+      // Token is already represented in the templated URL, or intentionally omitted.
+    } else if (tokenPlacement === "x_api_key") {
+      headers[config.api_key_header || "X-API-Key"] = token;
+    } else if (tokenPlacement === "authorization_bearer") {
+      headers.Authorization = `Bearer ${token}`;
+    } else if (authType === "API_KEY") headers[config.api_key_header || "x-api-key"] = token;
     else if (authType === "BASIC_AUTH") headers.Authorization = `Basic ${token}`;
     else headers.Authorization = `Bearer ${token}`;
   }
   const payload = buildPayload(config.payload || {}, provider, token, authMetadata);
-  const response = await fetch(fleetUrl, {
+  const response = await fetch(effectiveFleetUrl, {
     method,
     headers: withJsonContentType(headers),
     body: method === "GET" ? undefined : JSON.stringify(payload),
@@ -1331,7 +1354,7 @@ async function fetchFleet(
       success: false,
       vehicles: [],
       message: `Fleet API returned HTTP ${response.status}`,
-      debug: { status: response.status, fleetUrl, fleet_response: data },
+      debug: { status: response.status, fleetUrl: maskUrlToken(effectiveFleetUrl, token), fleet_response: data },
     };
   }
   const vehiclePaths = Array.isArray(config.vehicle_paths) && config.vehicle_paths.length > 0
@@ -1341,7 +1364,7 @@ async function fetchFleet(
   return {
     success: true,
     vehicles: Array.isArray(vehicles) ? vehicles : [],
-    debug: { fleetUrl, vehicle_paths_checked: vehiclePaths, fleet_response: data },
+    debug: { fleetUrl: maskUrlToken(effectiveFleetUrl, token), vehicle_paths_checked: vehiclePaths, fleet_response: data },
   };
 }
 
@@ -3416,6 +3439,8 @@ function getTemplateMacroValue(
   if (macro === "api_key") return provider.api_key || "";
   if (macro === "bearer_token") return provider.bearer_token || "";
   if (macro === "token") return token || "";
+  if (macro === "access_token") return token || "";
+  if (macro === "user_api_hash") return token || "";
 
   const dateValue = getDateMacroValue(macro, now);
   if (dateValue) return dateValue;
@@ -3737,6 +3762,21 @@ function getByPaths(data: any, paths: string[]) {
 function getByPath(obj: any, path: string) {
   if (path === "$") return obj;
   return path.split(".").reduce((current, part) => current?.[part], obj);
+}
+
+function appendPayloadToUrl(url: string, payload: any) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return url;
+  const parsed = new URL(url);
+  for (const [key, value] of Object.entries(payload)) {
+    if (value === undefined || value === null) continue;
+    parsed.searchParams.set(key, String(value));
+  }
+  return parsed.toString();
+}
+
+function maskUrlToken(url: string, token: string | null) {
+  if (!token) return url;
+  return url.split(String(token)).join("[redacted]");
 }
 
 function defaultTokenPaths() {

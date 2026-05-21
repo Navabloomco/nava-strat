@@ -305,7 +305,14 @@ function buildCustomApiProviderConfig(input: any) {
     fieldMapping.mapping,
     capability
   );
-  const endpoint = endpointUrl.url as string;
+  const tokenPlacement = normalizeFleetTokenPlacement(
+    input.fleet_token_placement,
+    authMethod
+  );
+  const endpoint = applyFleetTokenPlacement(
+    endpointUrl.url as string,
+    tokenPlacement
+  );
   const websiteUrl = providerWebsite.url || null;
   const fleetConfig = {
     fleet_url: endpoint,
@@ -315,6 +322,7 @@ function buildCustomApiProviderConfig(input: any) {
     provider_timezone: providerTimezone,
     self_serve_custom_api: true,
     api_key_header: authResult.api_key_header || undefined,
+    token_placement: tokenPlacement || undefined,
     capability_profile: {
       default_capability: capability,
       supported_signals: supportedSignals,
@@ -451,11 +459,17 @@ function buildCustomAuthConfig(input: any, authMethod: string) {
   if (!username || !password) {
     return { error: "Login username and password are required." };
   }
+  const credentialPlacement =
+    String(input.login_credential_placement || "json_body").trim() ===
+    "query_params"
+      ? "query"
+      : "body";
 
   return {
     auth_type: "POST_LOGIN",
     auth_config: {
-      method: "POST",
+      method: credentialPlacement === "query" ? "GET" : "POST",
+      credential_placement: credentialPlacement,
       login_url: loginUrl.url,
       payload: {
         [usernameField.path]: "{{username}}",
@@ -559,6 +573,40 @@ function customCapabilityFromChoice(value: any) {
   return CUSTOM_CAPABILITY_OPTIONS[key] || "UNKNOWN";
 }
 
+function normalizeFleetTokenPlacement(value: any, authMethod: string) {
+  const text = String(value || "").trim().toLowerCase();
+  if (authMethod !== "post_login") return "";
+  if (
+    [
+      "query_user_api_hash",
+      "query_token",
+      "authorization_bearer",
+      "x_api_key",
+      "none",
+    ].includes(text)
+  ) {
+    return text;
+  }
+  return "authorization_bearer";
+}
+
+function applyFleetTokenPlacement(url: string, placement: string) {
+  if (placement === "query_user_api_hash") {
+    return appendQueryTemplate(url, "user_api_hash", "{{user_api_hash}}");
+  }
+  if (placement === "query_token") {
+    return appendQueryTemplate(url, "token", "{{token}}");
+  }
+  return url;
+}
+
+function appendQueryTemplate(url: string, key: string, value: string) {
+  const separator = url.includes("?") ? "&" : "?";
+  const keyPattern = new RegExp(`([?&])${key}=`, "i");
+  if (keyPattern.test(url)) return url;
+  return `${url}${separator}${key}=${value}`;
+}
+
 function parseCustomRequestBody(value: any, method: string) {
   if (value === undefined || value === null || String(value).trim() === "") {
     return { payload: {} };
@@ -610,7 +658,7 @@ function validatePublicHttpsUrl(value: any, label: string) {
       error: `${label} URL cannot target localhost, private, link-local, or metadata network addresses.`,
     };
   }
-  return { url: parsed.toString() };
+  return { url: text };
 }
 
 function optionalPublicHttpsUrl(value: any, label: string) {

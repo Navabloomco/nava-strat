@@ -25,8 +25,11 @@ const CUSTOM_API_OPTION = "__custom_api_provider__";
 const INITIAL_CUSTOM_PROVIDER_FORM = {
   provider_name: "",
   provider_website: "",
+  base_url: "",
+  provider_notes: "",
   provider_timezone: "Africa/Nairobi",
   auth_method: "api_key_header",
+  login_credential_placement: "json_body",
   api_key_header: "x-api-key",
   api_key: "",
   bearer_token: "",
@@ -37,6 +40,7 @@ const INITIAL_CUSTOM_PROVIDER_FORM = {
   login_username_field: "username",
   login_secret_field: "password",
   endpoint_url: "",
+  fleet_token_placement: "authorization_bearer",
   http_method: "GET",
   row_path: "",
   request_body: "",
@@ -343,8 +347,11 @@ export default function NewProviderPage() {
         custom_provider: {
           provider_name: customForm.provider_name.trim(),
           provider_website: customForm.provider_website.trim() || null,
+          base_url: normalizeBaseUrl(customForm.base_url),
+          provider_notes: customForm.provider_notes.trim() || null,
           provider_timezone: customForm.provider_timezone.trim() || "Africa/Nairobi",
           auth_method: customForm.auth_method,
+          login_credential_placement: customForm.login_credential_placement,
           api_key_header: customForm.api_key_header.trim() || "x-api-key",
           api_key: customForm.api_key,
           bearer_token: customForm.bearer_token,
@@ -357,6 +364,7 @@ export default function NewProviderPage() {
           login_secret_field:
             customForm.login_secret_field.trim() || "password",
           endpoint_url: customForm.endpoint_url.trim(),
+          fleet_token_placement: customForm.fleet_token_placement,
           http_method: customForm.http_method,
           row_path: customForm.row_path.trim(),
           request_body: customForm.request_body.trim(),
@@ -483,6 +491,143 @@ export default function NewProviderPage() {
     if (suggestions.ignition) patch.ignition_field = suggestions.ignition;
     if (suggestions.engine_rpm) patch.rpm_field = suggestions.engine_rpm;
     if (suggestions.odometer) patch.odometer_field = suggestions.odometer;
+    updateCustomForm(patch);
+  }
+
+  function handleAutoFillCustomProvider() {
+    const baseUrl = normalizeBaseUrl(customForm.base_url);
+    if (!baseUrl) {
+      alert("Enter a provider base URL first.");
+      return;
+    }
+    const fleetTrackLike = isFleetTrackLike(customForm, baseUrl);
+    const patch: Record<string, string> = {
+      base_url: baseUrl,
+      provider_timezone: customForm.provider_timezone || "Africa/Nairobi",
+    };
+
+    if (customForm.auth_method === "post_login") {
+      patch.login_url = customForm.login_url.trim() || `${baseUrl}/login`;
+      patch.login_token_path =
+        customForm.login_token_path.trim() ||
+        (fleetTrackLike ? "user_api_hash" : "token");
+      patch.login_username_field =
+        customForm.login_username_field.trim() || "username";
+      patch.login_secret_field =
+        customForm.login_secret_field.trim() || "password";
+      patch.login_credential_placement =
+        customForm.login_credential_placement || "json_body";
+    }
+
+    if (!customForm.endpoint_url.trim()) {
+      patch.endpoint_url = fleetTrackLike
+        ? `${baseUrl}/get_devices?lang=en&user_api_hash={{user_api_hash}}`
+        : `${baseUrl}/get_devices`;
+    }
+    patch.http_method = customForm.http_method || "GET";
+    patch.row_path = customForm.row_path.trim() || "data";
+    patch.fleet_token_placement = fleetTrackLike
+      ? "query_user_api_hash"
+      : customForm.fleet_token_placement || "authorization_bearer";
+
+    updateCustomForm(patch);
+  }
+
+  async function handleAutoTestCustomProvider() {
+    const baseUrl = normalizeBaseUrl(customForm.base_url);
+    if (!baseUrl) {
+      alert("Enter a provider base URL first.");
+      return;
+    }
+
+    setTestingEndpoint("auto");
+
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    if (!session?.access_token) {
+      alert("Session expired. Please log in again.");
+      setTestingEndpoint("");
+      window.location.href = "/login";
+      return;
+    }
+
+    try {
+      const res = await fetch("/api/providers/test-endpoint", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          ...(selectedCompanyId ? { companyId: selectedCompanyId } : {}),
+          mode: "auto_setup",
+          base_url: baseUrl,
+          provider_name: customForm.provider_name.trim(),
+          provider_website: customForm.provider_website.trim(),
+          provider_notes: customForm.provider_notes.trim(),
+          auth_method: customForm.auth_method,
+          api_key_header: customForm.api_key_header.trim() || "x-api-key",
+          api_key: customForm.api_key,
+          bearer_token: customForm.bearer_token,
+          username: customForm.username,
+          password: customForm.password,
+        }),
+      });
+      const data = await res.json();
+      setDetectResults((current) => ({
+        ...current,
+        auto: res.ok && data.success ? data : { error: data.error || "Auto-test failed" },
+      }));
+    } catch (err: any) {
+      setDetectResults((current) => ({
+        ...current,
+        auto: { error: err.message || "Auto-test failed" },
+      }));
+    } finally {
+      setTestingEndpoint("");
+    }
+  }
+
+  function applyAutoDetection() {
+    const result = detectResults.auto;
+    if (!result || result.error) return;
+
+    const patch: Record<string, string> = {
+      base_url: result.base_url || normalizeBaseUrl(customForm.base_url),
+    };
+
+    if (result.login) {
+      patch.login_url = result.login.login_url || customForm.login_url;
+      patch.login_token_path = result.login.token_path || customForm.login_token_path;
+      patch.login_username_field =
+        result.login.username_field || customForm.login_username_field;
+      patch.login_secret_field =
+        result.login.password_field || customForm.login_secret_field;
+      patch.login_credential_placement =
+        result.login.credential_placement ||
+        customForm.login_credential_placement;
+    }
+
+    if (result.fleet) {
+      patch.endpoint_url = result.fleet.endpoint_url || customForm.endpoint_url;
+      patch.row_path = result.fleet.row_path || customForm.row_path;
+      patch.fleet_token_placement =
+        result.fleet.token_placement || customForm.fleet_token_placement;
+      const suggestions = result.fleet.field_mapping_suggestions || {};
+      if (suggestions.vehicle) patch.vehicle_field = suggestions.vehicle;
+      if (suggestions.latitude) patch.latitude_field = suggestions.latitude;
+      if (suggestions.longitude) patch.longitude_field = suggestions.longitude;
+      if (suggestions.timestamp) patch.timestamp_field = suggestions.timestamp;
+      if (suggestions.speed) patch.speed_field = suggestions.speed;
+      if (suggestions.location_label) patch.location_label_field = suggestions.location_label;
+      if (suggestions.fuel_level) patch.fuel_level_field = suggestions.fuel_level;
+      if (suggestions.ignition) patch.ignition_field = suggestions.ignition;
+      if (suggestions.engine_rpm) patch.rpm_field = suggestions.engine_rpm;
+      if (suggestions.odometer) patch.odometer_field = suggestions.odometer;
+    }
+
     updateCustomForm(patch);
   }
 
@@ -665,6 +810,9 @@ export default function NewProviderPage() {
                 testingEndpoint={testingEndpoint}
                 onTestEndpoint={handleTestCustomEndpoint}
                 onApplyDetection={applyEndpointDetection}
+                onAutoFill={handleAutoFillCustomProvider}
+                onAutoTest={handleAutoTestCustomProvider}
+                onApplyAutoDetection={applyAutoDetection}
                 canShowDebug={Boolean(
                   capabilities.can_edit_advanced_provider_config
                 )}
@@ -882,6 +1030,7 @@ function capabilityLabel(value: string) {
 }
 
 function validateCustomProviderForm(form: typeof INITIAL_CUSTOM_PROVIDER_FORM) {
+  if (!form.base_url.trim()) return "API base URL is required.";
   if (!form.provider_name.trim()) return "Provider name is required.";
   if (!form.endpoint_url.trim()) return "Fleet/current location endpoint URL is required.";
   if (!form.row_path.trim()) return "Row path / data group is required.";
@@ -933,6 +1082,31 @@ function validateCustomProviderForm(form: typeof INITIAL_CUSTOM_PROVIDER_FORM) {
   }
 
   return "";
+}
+
+function normalizeBaseUrl(value: string) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  try {
+    const parsed = new URL(text);
+    parsed.hash = "";
+    parsed.search = "";
+    return parsed.toString().replace(/\/+$/, "");
+  } catch {
+    return text.replace(/\/+$/, "");
+  }
+}
+
+function isFleetTrackLike(
+  form: typeof INITIAL_CUSTOM_PROVIDER_FORM,
+  baseUrl: string
+) {
+  const text = `${form.provider_name} ${form.provider_website} ${form.provider_notes} ${baseUrl}`.toLowerCase();
+  return (
+    text.includes("fleettrack") ||
+    text.includes("get_devices") ||
+    text.includes("user_api_hash")
+  );
 }
 
 function getCredentialFields(template: any): CredentialField[] {
@@ -1013,6 +1187,9 @@ function CustomApiProviderForm({
   testingEndpoint,
   onTestEndpoint,
   onApplyDetection,
+  onAutoFill,
+  onAutoTest,
+  onApplyAutoDetection,
   canShowDebug,
 }: {
   form: typeof INITIAL_CUSTOM_PROVIDER_FORM;
@@ -1023,6 +1200,9 @@ function CustomApiProviderForm({
   testingEndpoint: string;
   onTestEndpoint: (target: "login" | "fleet") => void;
   onApplyDetection: (target: "login" | "fleet") => void;
+  onAutoFill: () => void;
+  onAutoTest: () => void;
+  onApplyAutoDetection: () => void;
   canShowDebug: boolean;
 }) {
   const isPost = form.http_method === "POST";
@@ -1059,11 +1239,46 @@ function CustomApiProviderForm({
             placeholder="https://provider.example"
           />
           <TextField
+            label="API base URL"
+            value={form.base_url}
+            onChange={(value) => updateForm({ base_url: value })}
+            onBlur={() => updateForm({ base_url: normalizeBaseUrl(form.base_url) })}
+            placeholder="https://provider.example/api"
+            required
+          />
+          <TextField
             label="Provider timezone"
             value={form.provider_timezone}
             onChange={(value) => updateForm({ provider_timezone: value })}
           />
         </div>
+        <div style={fieldGroupWithTop}>
+          <label style={labelStyle}>Provider docs / notes optional</label>
+          <textarea
+            style={textareaStyle}
+            value={form.provider_notes}
+            onChange={(e) => updateForm({ provider_notes: e.target.value })}
+            placeholder="Paste short hints such as get_devices, user_api_hash, or provider endpoint notes."
+          />
+        </div>
+        <div style={autoActionsStyle}>
+          <button type="button" style={secondaryButtonStyle} onClick={onAutoFill}>
+            LET NAVA TRY COMMON API PATTERNS
+          </button>
+          <button
+            type="button"
+            style={buttonInlineStyle}
+            disabled={testingEndpoint === "auto"}
+            onClick={onAutoTest}
+          >
+            {testingEndpoint === "auto" ? "AUTO-TESTING SETUP..." : "AUTO-TEST SETUP"}
+          </button>
+        </div>
+        <AutoSetupDetectionResult
+          result={detectResults.auto}
+          canShowDebug={canShowDebug}
+          onApply={onApplyAutoDetection}
+        />
       </ProviderWizardSection>
 
       <ProviderWizardSection
@@ -1133,6 +1348,19 @@ function CustomApiProviderForm({
 
           {form.auth_method === "post_login" && (
             <>
+              <div style={fieldGroup}>
+                <label style={labelStyle}>Credential placement</label>
+                <select
+                  style={inputStyle}
+                  value={form.login_credential_placement}
+                  onChange={(e) =>
+                    updateForm({ login_credential_placement: e.target.value })
+                  }
+                >
+                  <option value="json_body">JSON body</option>
+                  <option value="query_params">Query params</option>
+                </select>
+              </div>
               <TextField
                 label="Login endpoint URL"
                 value={form.login_url}
@@ -1206,6 +1434,22 @@ function CustomApiProviderForm({
               <option value="POST">POST</option>
             </select>
           </div>
+          <div style={fieldGroup}>
+            <label style={labelStyle}>Token placement</label>
+            <select
+              style={inputStyle}
+              value={form.fleet_token_placement}
+              onChange={(e) =>
+                updateForm({ fleet_token_placement: e.target.value })
+              }
+            >
+              <option value="authorization_bearer">Authorization Bearer</option>
+              <option value="query_user_api_hash">Query user_api_hash</option>
+              <option value="query_token">Query token</option>
+              <option value="x_api_key">X-API-Key header</option>
+              <option value="none">No token on fleet endpoint</option>
+            </select>
+          </div>
           <TextField
             label="Row path / data group"
             value={form.row_path}
@@ -1246,6 +1490,7 @@ function CustomApiProviderForm({
           result={detectResults.fleet}
           canShowDebug={canShowDebug}
           onApply={() => onApplyDetection("fleet")}
+          onChooseRowPath={(path) => updateForm({ row_path: path })}
         />
       </ProviderWizardSection>
 
@@ -1365,11 +1610,13 @@ function EndpointDetectionResult({
   result,
   canShowDebug,
   onApply,
+  onChooseRowPath,
 }: {
   target: "login" | "fleet";
   result: any;
   canShowDebug: boolean;
   onApply: () => void;
+  onChooseRowPath?: (path: string) => void;
 }) {
   if (!result) return null;
 
@@ -1386,6 +1633,12 @@ function EndpointDetectionResult({
   const suggestedFields = Object.entries(suggestions)
     .filter(([, value]) => Boolean(value))
     .slice(0, 10);
+  const rowPathButtons =
+    target === "fleet"
+      ? ((result.row_path_suggestions || []).length > 0
+          ? result.row_path_suggestions
+          : ["data", "items", "devices"])
+      : [];
   const canApply =
     target === "login" ? Boolean(tokenPath) : Boolean(rowPath || suggestedFields.length);
 
@@ -1449,6 +1702,20 @@ function EndpointDetectionResult({
               ))}
             </div>
           )}
+          {onChooseRowPath && rowPathButtons.length > 0 && (
+            <div style={rowPathButtonWrapStyle}>
+              {rowPathButtons.slice(0, 6).map((path: string) => (
+                <button
+                  key={path}
+                  type="button"
+                  style={rowPathButtonStyle}
+                  onClick={() => onChooseRowPath(path)}
+                >
+                  {path}
+                </button>
+              ))}
+            </div>
+          )}
         </>
       )}
 
@@ -1464,6 +1731,130 @@ function EndpointDetectionResult({
                 array_paths: result.array_paths,
                 token_like_paths: result.token_like_paths,
                 sanitized_sample: result.sanitized_sample,
+              },
+              null,
+              2
+            )}
+          </pre>
+        </details>
+      )}
+    </div>
+  );
+}
+
+function AutoSetupDetectionResult({
+  result,
+  canShowDebug,
+  onApply,
+}: {
+  result: any;
+  canShowDebug: boolean;
+  onApply: () => void;
+}) {
+  if (!result) return null;
+  if (result.error) return <div style={requestErrorStyle}>{result.error}</div>;
+
+  const blockers = Array.isArray(result.setup_blockers)
+    ? result.setup_blockers
+    : [];
+  const fleet = result.fleet || null;
+  const login = result.login || null;
+  const canApply = Boolean(login || fleet);
+
+  return (
+    <div style={detectionResultStyle}>
+      <div style={detectionHeaderStyle}>
+        <div>
+          <div style={detectionTitleStyle}>
+            {fleet
+              ? "Nava found vehicles at this endpoint"
+              : "Auto-test completed"}
+          </div>
+          <div style={detectionMetaStyle}>
+            Tried {result.attempts?.login || 0} login candidates and{" "}
+            {result.attempts?.fleet || 0} fleet endpoint candidates.
+          </div>
+        </div>
+        {canApply && (
+          <button type="button" style={smallButtonStyle} onClick={onApply}>
+            Apply detected setup
+          </button>
+        )}
+      </div>
+
+      {blockers.length > 0 && (
+        <div style={detectionWarningStyle}>
+          {blockers.map((blocker: string) => (
+            <div key={blocker}>{blocker}</div>
+          ))}
+        </div>
+      )}
+
+      <div style={detectionGridStyle}>
+        <PreviewMetric
+          label="Login endpoint"
+          value={login?.login_url || "No login token detected"}
+        />
+        <PreviewMetric
+          label="Token path"
+          value={login?.token_path || "none detected"}
+        />
+        <PreviewMetric
+          label="Fleet endpoint"
+          value={fleet?.endpoint_url || "No vehicle rows found"}
+        />
+        <PreviewMetric
+          label="Detected vehicles"
+          value={
+            fleet?.detected_vehicle_count !== undefined
+              ? String(fleet.detected_vehicle_count)
+              : "0"
+          }
+        />
+      </div>
+
+      {fleet?.row_path && (
+        <div style={suggestionListStyle}>
+          <div style={suggestionItemStyle}>
+            <span>Row path</span>
+            <strong>{fleet.row_path}</strong>
+          </div>
+          <div style={suggestionItemStyle}>
+            <span>Token placement</span>
+            <strong>{tokenPlacementLabel(fleet.token_placement)}</strong>
+          </div>
+          {Object.entries(fleet.field_mapping_suggestions || {})
+            .filter(([, value]) => Boolean(value))
+            .slice(0, 8)
+            .map(([key, value]) => (
+              <div key={key} style={suggestionItemStyle}>
+                <span>{fieldSuggestionLabel(key)}</span>
+                <strong>{String(value)}</strong>
+              </div>
+            ))}
+        </div>
+      )}
+
+      {!fleet && (
+        <div style={emptyNoteLightStyle}>
+          No vehicle rows found yet. Try another endpoint or ask your provider
+          for the exact get_devices response.
+        </div>
+      )}
+
+      {canShowDebug && (
+        <details style={templateAdvancedStyle}>
+          <summary style={templateAdvancedSummaryStyle}>
+            Sanitized auto-test debug
+          </summary>
+          <pre style={debugPreStyle}>
+            {JSON.stringify(
+              {
+                login_candidates: result.login_candidates,
+                fleet_candidates: result.fleet_candidates,
+                token_path_candidates: result.token_path_candidates,
+                row_path_candidates: result.row_path_candidates,
+                setup_blockers: result.setup_blockers,
               },
               null,
               2
@@ -1493,6 +1884,18 @@ function fieldSuggestionLabel(value: string) {
   return labels[value] || value;
 }
 
+function tokenPlacementLabel(value: string) {
+  const labels: Record<string, string> = {
+    query_user_api_hash: "Query user_api_hash",
+    query_token: "Query token",
+    authorization_bearer: "Authorization Bearer",
+    x_api_key: "X-API-Key header",
+    basic_auth: "Basic auth",
+    none: "None",
+  };
+  return labels[value] || value || "Not detected";
+}
+
 function ProviderWizardSection({
   title,
   copy,
@@ -1515,6 +1918,7 @@ function TextField({
   label,
   value,
   onChange,
+  onBlur,
   placeholder,
   secret = false,
   required = false,
@@ -1522,6 +1926,7 @@ function TextField({
   label: string;
   value: string;
   onChange: (value: string) => void;
+  onBlur?: () => void;
   placeholder?: string;
   secret?: boolean;
   required?: boolean;
@@ -1537,6 +1942,7 @@ function TextField({
         style={inputStyle}
         value={value}
         placeholder={placeholder}
+        onBlur={onBlur}
         onChange={(e) => onChange(e.target.value)}
       />
     </div>
@@ -1925,6 +2331,34 @@ const warningStyle = {
   lineHeight: 1.6,
 };
 
+const autoActionsStyle = {
+  display: "flex",
+  gap: 10,
+  flexWrap: "wrap" as const,
+  marginTop: 14,
+};
+
+const buttonInlineStyle = {
+  background: "#0f172a",
+  color: "#fff",
+  border: "none",
+  borderRadius: 8,
+  padding: "10px 14px",
+  fontWeight: 800,
+  cursor: "pointer",
+};
+
+const emptyNoteLightStyle = {
+  marginTop: 12,
+  background: "#f8fafc",
+  border: "1px solid #e2e8f0",
+  borderRadius: 10,
+  padding: 12,
+  color: "#475569",
+  fontSize: 13,
+  lineHeight: 1.6,
+};
+
 const detectionResultStyle = {
   marginTop: 14,
   border: "1px solid #bae6fd",
@@ -1988,6 +2422,24 @@ const suggestionItemStyle = {
   padding: 10,
   color: "#334155",
   fontSize: 12,
+};
+
+const rowPathButtonWrapStyle = {
+  display: "flex",
+  gap: 8,
+  flexWrap: "wrap" as const,
+  marginTop: 12,
+};
+
+const rowPathButtonStyle = {
+  background: "#ffffff",
+  color: "#0f172a",
+  border: "1px solid #bae6fd",
+  borderRadius: 8,
+  padding: "8px 10px",
+  fontSize: 12,
+  fontWeight: 850,
+  cursor: "pointer",
 };
 
 const smallButtonStyle = {

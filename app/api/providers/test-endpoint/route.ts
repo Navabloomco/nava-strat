@@ -11,6 +11,7 @@ export const runtime = "nodejs";
 
 const MAX_RESPONSE_BYTES = 256 * 1024;
 const TEST_TIMEOUT_MS = 12_000;
+const AUTO_TEST_TIMEOUT_MS = 7_000;
 const MAX_SUGGESTIONS = 20;
 
 type ProviderCapabilities = {
@@ -58,83 +59,28 @@ export async function POST(req: Request) {
       );
     }
 
-    const urlResult = await validateOutboundUrl(body.url);
-    if (urlResult.error) {
+    if (body.mode === "auto_setup") {
+      const autoResult = await autoTestSetup(body);
+      if (autoResult.error) {
+        return noStoreJson(
+          { success: false, error: autoResult.error },
+          { status: 400 }
+        );
+      }
+      return noStoreJson({ success: true, ...autoResult });
+    }
+
+    const singleResult = await testEndpointCandidate(body, TEST_TIMEOUT_MS);
+    if (singleResult.error) {
       return noStoreJson(
-        { success: false, error: urlResult.error },
+        { success: false, error: singleResult.error },
         { status: 400 }
       );
     }
-    const outboundUrl = String(urlResult.url);
-
-    const method = normalizeHttpMethod(body.method);
-    if (!method) {
-      return noStoreJson(
-        { success: false, error: "HTTP method must be GET or POST." },
-        { status: 400 }
-      );
-    }
-
-    const requestPayload = buildRequestPayload(body, method);
-    if (requestPayload.error) {
-      return noStoreJson(
-        { success: false, error: requestPayload.error },
-        { status: 400 }
-      );
-    }
-
-    const headers = buildAllowedHeaders(body, method);
-    if (headers.error) {
-      return noStoreJson(
-        { success: false, error: headers.error },
-        { status: 400 }
-      );
-    }
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), TEST_TIMEOUT_MS);
-    let response: Response;
-
-    try {
-      response = await fetch(outboundUrl, {
-        method,
-        headers: headers.headers,
-        body:
-          method === "GET"
-            ? undefined
-            : JSON.stringify(requestPayload.payload || {}),
-        cache: "no-store",
-        redirect: "manual",
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timeout);
-    }
-
-    const contentType = response.headers.get("content-type") || "";
-    const limited = await readLimitedResponseText(response, MAX_RESPONSE_BYTES);
-    const analysis = analyzeResponseBody(limited.text, contentType);
-    const setupBlockers = buildSetupBlockers(
-      response,
-      analysis,
-      limited.truncated,
-      body.mode
-    );
 
     return noStoreJson({
       success: true,
-      status_code: response.status,
-      content_type: contentType,
-      response_type: analysis.response_type,
-      top_level_keys: analysis.top_level_keys,
-      array_paths: analysis.array_paths,
-      token_like_paths: analysis.token_like_paths,
-      row_path_suggestions: analysis.row_path_suggestions,
-      field_mapping_suggestions: analysis.field_mapping_suggestions,
-      sanitized_sample: analysis.sanitized_sample,
-      setup_blockers: setupBlockers,
-      truncated: limited.truncated,
-      redirect_not_followed: response.status >= 300 && response.status < 400,
+      ...publicDetectionResult(singleResult),
     });
   } catch (err: any) {
     const aborted = err?.name === "AbortError";
@@ -245,6 +191,234 @@ async function resolveAccess(
   };
 }
 
+async function autoTestSetup(body: any) {
+  const baseResult = await validateBaseUrl(body.base_url);
+  if (baseResult.error) return { error: baseResult.error };
+
+  const baseUrl = baseResult.baseUrl as string;
+  const authMethod = String(body.auth_method || "none").trim().toLowerCase();
+  const providerText = `${body.provider_name || ""} ${body.provider_website || ""} ${body.provider_notes || ""} ${baseUrl}`.toLowerCase();
+  const loginUrlCandidates = buildLoginUrlCandidates(baseUrl);
+  const fleetUrlCandidates = buildFleetUrlCandidates(baseUrl, providerText);
+  const tokenPathCandidates = [
+    "user_api_hash",
+    "data.user_api_hash",
+    "token",
+    "data.token",
+    "access_token",
+    "data.access_token",
+  ];
+
+  let loginResult: any = null;
+  let tokenValue = "";
+  let loginAttempts = 0;
+
+  if (authMethod === "post_login") {
+    const username = safeCredential(body.username, 255);
+    const password = safeCredential(body.password, 4000);
+    if (!username || !password) {
+      return { error: "Username and password are required for auto-testing POST login token setup." };
+    }
+
+    const usernameKeys = ["email", "username", "user_name"];
+    const credentialPlacements = ["json_body", "query_params"];
+
+    for (const loginUrl of loginUrlCandidates) {
+      for (const usernameKey of usernameKeys) {
+        for (const placement of credentialPlacements) {
+          loginAttempts += 1;
+          const candidate =
+            placement === "query_params"
+              ? {
+                  mode: "login",
+                  url: appendQueryParams(loginUrl, {
+                    [usernameKey]: username,
+                    password,
+                  }),
+                  method: "GET",
+                  auth_method: "none",
+                }
+              : {
+                  mode: "login",
+                  url: loginUrl,
+                  method: "POST",
+                  auth_method: "post_login",
+                  username,
+                  password,
+                  login_username_field: usernameKey,
+                  login_secret_field: "password",
+                };
+          const result = await testEndpointCandidate(candidate, AUTO_TEST_TIMEOUT_MS);
+          if (result.error || !result.response?.ok) continue;
+
+          const matchedPath = tokenPathCandidates.find((path) =>
+            isUsableToken(getByPath(result.analysis.parsed, path))
+          );
+          if (!matchedPath) continue;
+
+          tokenValue = String(getByPath(result.analysis.parsed, matchedPath));
+          loginResult = {
+            login_url: loginUrl,
+            token_path: matchedPath,
+            credential_placement: placement,
+            username_field: usernameKey,
+            password_field: "password",
+            status_code: result.response.status,
+            token_preview: maskString(tokenValue),
+            token_like_paths: result.analysis.token_like_paths,
+          };
+          break;
+        }
+        if (loginResult) break;
+      }
+      if (loginResult) break;
+    }
+  }
+
+  const fleetAuthCandidates = buildFleetAuthCandidates(body, authMethod, tokenValue);
+  let fleetResult: any = null;
+  let fleetAttempts = 0;
+
+  for (const fleetUrl of fleetUrlCandidates) {
+    for (const authCandidate of fleetAuthCandidates as any[]) {
+      fleetAttempts += 1;
+      const candidate = {
+        mode: "fleet",
+        url:
+          authCandidate.token_placement === "query_user_api_hash"
+            ? appendQueryParams(fleetUrl, { user_api_hash: authCandidate.token })
+            : authCandidate.token_placement === "query_token"
+              ? appendQueryParams(fleetUrl, { token: authCandidate.token })
+              : fleetUrl,
+        method: "GET",
+        auth_method: authCandidate.auth_method,
+        api_key_header: authCandidate.api_key_header,
+        api_key: authCandidate.api_key,
+        bearer_token: authCandidate.bearer_token,
+        username: authCandidate.username,
+        password: authCandidate.password,
+      };
+      const result = await testEndpointCandidate(candidate, AUTO_TEST_TIMEOUT_MS);
+      if (result.error || !result.response?.ok) continue;
+      const rowPath = result.analysis.row_path_suggestions[0];
+      if (!rowPath) continue;
+      const rows = getByPath(result.analysis.parsed, rowPath);
+      const detectedVehicleCount = Array.isArray(rows) ? rows.length : 0;
+      if (detectedVehicleCount < 1) continue;
+
+      fleetResult = {
+        endpoint_url: buildSavedFleetEndpointUrl(fleetUrl, authCandidate.token_placement),
+        token_placement: authCandidate.token_placement,
+        row_path: rowPath,
+        field_mapping_suggestions: result.analysis.field_mapping_suggestions,
+        detected_vehicle_count: detectedVehicleCount,
+        status_code: result.response.status,
+        setup_blockers: buildSetupBlockers(
+          result.response,
+          result.analysis,
+          result.truncated,
+          "fleet"
+        ),
+      };
+      break;
+    }
+    if (fleetResult) break;
+  }
+
+  return {
+    base_url: baseUrl,
+    login: loginResult,
+    fleet: fleetResult,
+    login_candidates: loginUrlCandidates,
+    fleet_candidates: fleetUrlCandidates,
+    token_path_candidates: tokenPathCandidates,
+    row_path_candidates: ["data", "items", "devices", "vehicles", "result.items"],
+    attempts: {
+      login: loginAttempts,
+      fleet: fleetAttempts,
+    },
+    setup_blockers: [
+      ...(authMethod === "post_login" && !loginResult
+        ? ["No login candidate returned a usable token path."]
+        : []),
+      ...(!fleetResult
+        ? ["No vehicle rows found yet. Try another endpoint or ask your provider for the exact get_devices response."]
+        : []),
+    ],
+  };
+}
+
+async function testEndpointCandidate(body: any, timeoutMs: number) {
+  const urlResult = await validateOutboundUrl(body.url);
+  if (urlResult.error) return { error: urlResult.error };
+  const outboundUrl = String(urlResult.url);
+
+  const method = normalizeHttpMethod(body.method);
+  if (!method) return { error: "HTTP method must be GET or POST." };
+
+  const requestPayload = buildRequestPayload(body, method);
+  if (requestPayload.error) return { error: requestPayload.error };
+
+  const headers = buildAllowedHeaders(body, method);
+  if (headers.error) return { error: headers.error };
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  let response: Response;
+
+  try {
+    response = await fetch(outboundUrl, {
+      method,
+      headers: headers.headers,
+      body:
+        method === "GET"
+          ? undefined
+          : JSON.stringify(requestPayload.payload || {}),
+      cache: "no-store",
+      redirect: "manual",
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  const contentType = response.headers.get("content-type") || "";
+  const limited = await readLimitedResponseText(response, MAX_RESPONSE_BYTES);
+  const analysis = analyzeResponseBody(limited.text, contentType);
+
+  return {
+    response,
+    contentType,
+    analysis,
+    truncated: limited.truncated,
+  };
+}
+
+function publicDetectionResult(result: any) {
+  const response = result.response as Response;
+  const setupBlockers = buildSetupBlockers(
+    response,
+    result.analysis,
+    result.truncated,
+    null
+  );
+
+  return {
+    status_code: response.status,
+    content_type: result.contentType,
+    response_type: result.analysis.response_type,
+    top_level_keys: result.analysis.top_level_keys,
+    array_paths: result.analysis.array_paths,
+    token_like_paths: result.analysis.token_like_paths,
+    row_path_suggestions: result.analysis.row_path_suggestions,
+    field_mapping_suggestions: result.analysis.field_mapping_suggestions,
+    sanitized_sample: result.analysis.sanitized_sample,
+    setup_blockers: setupBlockers,
+    truncated: result.truncated,
+    redirect_not_followed: response.status >= 300 && response.status < 400,
+  };
+}
+
 async function validateOutboundUrl(value: any) {
   const text = String(value || "").trim();
   if (!text) return { error: "Endpoint URL is required." };
@@ -296,6 +470,133 @@ async function validateOutboundUrl(value: any) {
   }
 
   return { url: parsed.toString() };
+}
+
+async function validateBaseUrl(value: any) {
+  const text = normalizeBaseUrl(value);
+  if (!text) return { error: "Base URL is required." };
+  const urlResult = await validateOutboundUrl(text);
+  if (urlResult.error) return urlResult;
+  return { baseUrl: text };
+}
+
+function normalizeBaseUrl(value: any) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  try {
+    const parsed = new URL(text);
+    parsed.hash = "";
+    parsed.search = "";
+    return parsed.toString().replace(/\/+$/, "");
+  } catch {
+    return text.replace(/\/+$/, "");
+  }
+}
+
+function buildLoginUrlCandidates(baseUrl: string) {
+  return uniqueStrings([
+    `${baseUrl}/login`,
+    `${baseUrl}/auth/login`,
+    `${baseUrl}/Login`,
+  ]);
+}
+
+function buildFleetUrlCandidates(baseUrl: string, providerText: string) {
+  const fleetTrackLikely =
+    providerText.includes("fleettrack") ||
+    providerText.includes("get_devices") ||
+    providerText.includes("user_api_hash");
+  return uniqueStrings([
+    ...(fleetTrackLikely ? [`${baseUrl}/get_devices?lang=en`] : []),
+    `${baseUrl}/get_devices`,
+    `${baseUrl}/devices`,
+    `${baseUrl}/vehicles`,
+    `${baseUrl}/fleet`,
+    `${baseUrl}/fleet_current_locations`,
+  ]);
+}
+
+function buildFleetAuthCandidates(body: any, authMethod: string, loginToken: string) {
+  if (authMethod === "post_login" && loginToken) {
+    return [
+      {
+        token_placement: "query_user_api_hash",
+        token: loginToken,
+        auth_method: "none",
+      },
+      {
+        token_placement: "query_token",
+        token: loginToken,
+        auth_method: "none",
+      },
+      {
+        token_placement: "authorization_bearer",
+        token: loginToken,
+        auth_method: "bearer_token",
+        bearer_token: loginToken,
+      },
+      {
+        token_placement: "x_api_key",
+        token: loginToken,
+        auth_method: "api_key_header",
+        api_key_header: "X-API-Key",
+        api_key: loginToken,
+      },
+    ];
+  }
+
+  if (authMethod === "api_key_header") {
+    return [
+      {
+        token_placement: "x_api_key",
+        auth_method: "api_key_header",
+        api_key_header: body.api_key_header || "x-api-key",
+        api_key: body.api_key,
+      },
+    ];
+  }
+  if (authMethod === "bearer_token") {
+    return [
+      {
+        token_placement: "authorization_bearer",
+        auth_method: "bearer_token",
+        bearer_token: body.bearer_token,
+      },
+    ];
+  }
+  if (authMethod === "basic") {
+    return [
+      {
+        token_placement: "basic_auth",
+        auth_method: "basic",
+        username: body.username,
+        password: body.password,
+      },
+    ];
+  }
+  return [{ token_placement: "none", auth_method: "none" }];
+}
+
+function buildSavedFleetEndpointUrl(url: string, tokenPlacement: string) {
+  if (tokenPlacement === "query_user_api_hash") {
+    return appendQueryParams(url, { user_api_hash: "{{user_api_hash}}" });
+  }
+  if (tokenPlacement === "query_token") {
+    return appendQueryParams(url, { token: "{{token}}" });
+  }
+  return url;
+}
+
+function appendQueryParams(url: string, params: Record<string, string>) {
+  const parsed = new URL(url);
+  for (const [key, value] of Object.entries(params)) {
+    parsed.searchParams.set(key, value);
+  }
+  return parsed.toString();
+}
+
+function uniqueStrings(values: string[]) {
+  return Array.from(new Set(values.filter(Boolean)));
 }
 
 function normalizeHttpMethod(value: any) {
@@ -817,6 +1118,12 @@ function looksLikeSecret(value: string) {
     /^[A-Za-z0-9._~+/=-]+$/.test(text) &&
     !/\s/.test(text)
   );
+}
+
+function isUsableToken(value: any) {
+  if (value === undefined || value === null) return false;
+  const text = String(value).trim();
+  return text.length >= 4 && text.length <= 4000;
 }
 
 function maskString(value: string) {
