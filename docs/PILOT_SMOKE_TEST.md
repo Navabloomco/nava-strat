@@ -77,6 +77,9 @@ Open `/admin/providers?companyId=<id>`.
 - [ ] Confirm enrichment diagnostics show safe counts/key names only.
 - [ ] Confirm BlueTrax current fuel limitation is treated as a provider-pending integration item, not a product failure.
 - [ ] Confirm the Meitrack CAN Bus template, if visible, is setup-only/example mapping and does not ask for live credentials until a verified connection path exists.
+- [ ] If testing a second provider on an existing fleet, confirm Provider Vault reports cross-provider asset matches instead of creating duplicate billable-review assets.
+- [ ] Confirm second-provider telemetry logs preserve the incoming `provider_id` and signal quality.
+- [ ] Confirm verified richer capability declarations can improve asset capability, while placeholder/auto-observed values do not silently upgrade GPS-only assets.
 
 Expected BlueTrax note:
 

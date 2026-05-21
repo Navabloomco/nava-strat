@@ -44,8 +44,10 @@ type ResolveCompanyResult =
 
 type AssetMatch = {
   id: string;
+  provider_id?: string | null;
   truck_id: string | null;
   registration: string | null;
+  intelligence_enabled?: boolean | null;
   odometer_health?: string | null;
   distance_quality?: Record<string, any> | null;
 };
@@ -255,7 +257,7 @@ export async function POST(
       throw new Error(assetsResult.error);
     }
 
-    const assetsByTruck = buildAssetMatchMap(assetsResult.assets);
+    const assetsByTruck = buildAssetMatchMap(assetsResult.assets, provider.id);
     const matchedSummaries: ProviderTripSummary[] = [];
     const unmatchedRows: Array<{ truck_id: string; provider_trip_key: string | null }> = [];
     const odometerHealthCounts: Record<string, number> = {};
@@ -391,16 +393,14 @@ async function loadProvider(providerId: string, companyId: string) {
 async function loadProviderAssets(companyId: string, providerId: string) {
   const { data, error } = await supabaseAdmin
     .from("fleet_assets")
-    .select("id, truck_id, registration, odometer_health, distance_quality")
-    .eq("company_id", companyId)
-    .eq("provider_id", providerId);
+    .select("id, provider_id, truck_id, registration, intelligence_enabled, odometer_health, distance_quality")
+    .eq("company_id", companyId);
 
   if (isMissingDistanceColumnError(error)) {
     const retry = await supabaseAdmin
       .from("fleet_assets")
-      .select("id, truck_id, registration")
-      .eq("company_id", companyId)
-      .eq("provider_id", providerId);
+      .select("id, provider_id, truck_id, registration, intelligence_enabled")
+      .eq("company_id", companyId);
 
     if (retry.error) {
       return {
@@ -438,15 +438,29 @@ async function loadProviderAssets(companyId: string, providerId: string) {
   };
 }
 
-function buildAssetMatchMap(assets: AssetMatch[]) {
+function buildAssetMatchMap(assets: AssetMatch[], preferredProviderId?: string) {
   const map = new Map<string, AssetMatch>();
-  for (const asset of assets) {
+  for (const asset of sortAssetsByPreferredProvider(assets, preferredProviderId)) {
     for (const value of [asset.truck_id, asset.registration]) {
       const key = normalizeDistanceTruckKey(value);
       if (key && !map.has(key)) map.set(key, asset);
     }
   }
   return map;
+}
+
+function sortAssetsByPreferredProvider(
+  assets: AssetMatch[],
+  preferredProviderId?: string
+) {
+  return [...assets].sort((a, b) => {
+    const aPreferred = preferredProviderId && a.provider_id === preferredProviderId ? 0 : 1;
+    const bPreferred = preferredProviderId && b.provider_id === preferredProviderId ? 0 : 1;
+    if (aPreferred !== bPreferred) return aPreferred - bPreferred;
+    const aEnabled = a.intelligence_enabled ? 0 : 1;
+    const bEnabled = b.intelligence_enabled ? 0 : 1;
+    return aEnabled - bEnabled;
+  });
 }
 
 async function importDistanceSummaries(

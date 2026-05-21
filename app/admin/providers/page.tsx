@@ -314,10 +314,13 @@ function ProviderCard({
         const skippedLine = result.skipped_missing_identifier
           ? `\nSkipped missing identifier: ${result.skipped_missing_identifier}`
           : "";
+        const crossProviderLine = result.cross_provider_asset_matches
+          ? `\nMatched existing assets from another provider: ${result.cross_provider_asset_matches}`
+          : "";
         alert(
           `✅ ${result.message}\nAssets: ${result.assets_count}\nLatest telemetry: ${
             result.latest_telemetry_at || "none"
-          }${skippedLine}`
+          }${skippedLine}${crossProviderLine}`
         );
       } else {
         alert(`❌ ${result.stage || "ERROR"}: ${result.message || result.error}`);
@@ -368,6 +371,7 @@ function ProviderCard({
       )}
 
       <ProviderCapabilityDiagnostics summary={testResult?.capability_summary} />
+      <ProviderSecondSourceDiagnostics result={testResult} />
       <ProviderDistanceDiagnostics diagnostics={testResult?.distance_diagnostics} />
       <DistanceReportImport
         providerId={form.id}
@@ -450,6 +454,46 @@ function ProviderCapabilityDiagnostics({ summary }: { summary: any }) {
         value={summary.placeholder_zero_signal_counts}
         mutedEmpty="No unsupported zero engine/fuel placeholders detected."
         includeZeroCounts
+      />
+    </section>
+  );
+}
+
+function ProviderSecondSourceDiagnostics({ result }: { result: any }) {
+  if (!result || !Number(result.cross_provider_asset_matches || 0)) return null;
+
+  return (
+    <section style={diagnosticsStyle}>
+      <div style={diagnosticsHeaderStyle}>
+        <div>
+          <div style={diagnosticsEyebrowStyle}>Second provider safety</div>
+          <h4 style={diagnosticsTitleStyle}>Existing Asset Matches</h4>
+        </div>
+        <div style={diagnosticsMetaStyle}>
+          {Number(result.cross_provider_asset_matches || 0).toLocaleString()} matched
+        </div>
+      </div>
+      <div style={diagnosticsEmptyStyle}>
+        This provider reported vehicles that already exist from another provider.
+        Nava kept those as cross-provider telemetry and did not create duplicate
+        billable-review assets.
+      </div>
+      <DiagnosticFieldBlock
+        title="Matched vehicles"
+        value={(result.cross_provider_asset_match_samples || []).map(
+          (item: any) =>
+            `${item.truck_id} — existing: ${item.existing_provider_name || "provider"}, incoming: ${item.incoming_provider_name || "provider"}`
+        )}
+        mutedEmpty="No samples available."
+      />
+      <DiagnosticFieldBlock
+        title="Capability updates"
+        value={
+          result.capability_upgrades_applied
+            ? [`${result.capability_upgrades_applied} verified capability upgrade(s) applied`]
+            : []
+        }
+        mutedEmpty="No capability upgrade was needed."
       />
     </section>
   );

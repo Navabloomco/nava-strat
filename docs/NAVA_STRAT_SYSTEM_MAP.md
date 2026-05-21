@@ -398,9 +398,22 @@ Provider sync is implemented in `lib/providers/engine.ts` with normalization in 
    - `location_label`
    - `recorded_at`
 5. Skip rows that do not have a safe vehicle identifier after mapped and fallback keys are checked. Provider sync must not create `UNKNOWN`, blank, or null reviewable assets.
-6. Upsert `fleet_assets` by `(provider_id, truck_id)`.
-7. Insert `telemetry_logs`.
-8. Do not overwrite reviewed asset classification, billing, or intelligence enablement fields on sync.
+6. If the same provider has already imported the asset, upsert that provider-owned `fleet_assets` row by `(provider_id, truck_id)`.
+7. If a different provider reports the same normalized registration/truck ID for an existing company asset, treat it as cross-provider telemetry for that asset and do not create a duplicate billable-review asset automatically.
+8. Insert `telemetry_logs` with the incoming `provider_id`, normalized signal quality, and capability flags preserved.
+9. Do not overwrite reviewed asset classification, billing, or intelligence enablement fields on sync.
+
+### Second Provider Onboarding
+
+Multiple active `tracking_providers` can exist for one tenant. During controlled onboarding of a second provider:
+
+- Test connection first before enabling automated sync.
+- Existing tenant assets should match by normalized registration/truck ID where possible.
+- Cross-provider matches are reported in Provider Vault diagnostics and kept as telemetry evidence, not silently inserted as duplicate billable-review assets.
+- Telemetry logs must retain the incoming `provider_id` so BlueTrax, Meitrack, CAN bus, tank sensor, and future feeds remain auditable.
+- Verified richer capability declarations from a second provider may upgrade the canonical asset capability when they outrank the existing non-manual capability.
+- Weak auto-observed signals and placeholder zeros must not silently upgrade high-stakes capability such as CAN bus or tank intelligence.
+- Existing manual/admin-reviewed capability settings must not be downgraded or overwritten by provider sync.
 
 ### Provider Import Defaults
 

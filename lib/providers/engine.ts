@@ -47,6 +47,13 @@ export type SyncResult = {
   message: string;
   vehicleCount: number;
   skipped_missing_identifier?: number;
+  cross_provider_asset_matches?: number;
+  cross_provider_asset_match_samples?: Array<{
+    truck_id: string;
+    existing_provider_name?: string | null;
+    incoming_provider_name?: string | null;
+  }>;
+  capability_upgrades_applied?: number;
   sample_normalized?: any;
   supplemental_diagnostics?: SupplementalDiagnostics;
   capability_summary?: any;
@@ -411,9 +418,13 @@ export async function runProviderSync(
     let syncedCount = 0;
     let skippedMissingIdentifier = 0;
     let capabilityRowsProcessed = 0;
+    let crossProviderAssetMatches = 0;
+    let capabilityUpgradesApplied = 0;
     const capabilityCounts: Record<string, number> = {};
     const placeholderZeroSignalCounts: Record<string, number> = {};
     const errors: string[] = [];
+    const crossProviderAssetMatchSamples: SyncResult["cross_provider_asset_match_samples"] = [];
+    const providerAssetLookup = await loadProviderAssetLookup(provider.company_id);
 
     for (const rawVehicle of fleet.vehicles) {
       try {
@@ -448,16 +459,18 @@ export async function runProviderSync(
             (placeholderZeroSignalCounts[signal] || 0) + 1;
         }
 
-        const { data: existingAsset, error: existingAssetError } = await supabaseAdmin
-          .from("fleet_assets")
-          .select("id")
-          .eq("provider_id", provider.id)
-          .eq("truck_id", normalized.truck_id)
-          .maybeSingle();
-
-        if (existingAssetError) {
-          throw new Error(`Asset registry lookup failed: ${existingAssetError.message}`);
-        }
+        const existingAsset = findProviderAssetMatch(
+          providerAssetLookup,
+          provider.id,
+          normalized.truck_id
+        );
+        const crossProviderAsset = existingAsset
+          ? null
+          : findCrossProviderAssetMatch(
+              providerAssetLookup,
+              provider.id,
+              normalized.truck_id
+            );
 
         const assetPayload: Record<string, any> = {
           provider_id: provider.id,
@@ -482,7 +495,7 @@ export async function runProviderSync(
             normalized.telemetry_capability === "HYBRID_CAN_AND_FUEL_ROD",
         };
 
-        if (!existingAsset) {
+        if (!existingAsset && !crossProviderAsset) {
           assetPayload.asset_category = "unknown";
           assetPayload.billing_status = "unreviewed";
           assetPayload.intelligence_enabled = false;
@@ -494,9 +507,46 @@ export async function runProviderSync(
         }
 
         // ✅ Upsert telemetry fields only; reviewed billing/classification fields are not overwritten.
-        const assetError = await upsertFleetAssetWithCapabilityFallback(assetPayload);
+        if (crossProviderAsset) {
+          crossProviderAssetMatches++;
+          if (crossProviderAssetMatchSamples.length < 10) {
+            crossProviderAssetMatchSamples.push({
+              truck_id: normalized.truck_id,
+              existing_provider_name: crossProviderAsset.provider_name || null,
+              incoming_provider_name: provider.provider_name || null,
+            });
+          }
 
-        if (assetError) throw new Error(`Asset registry write failed: ${assetError.message}`);
+          const upgradeResult = await maybeUpgradeCanonicalAssetCapability(
+            crossProviderAsset,
+            normalized,
+            provider.company_id
+          );
+          if (upgradeResult.error) {
+            errors.push(upgradeResult.error);
+          } else if (upgradeResult.upgraded) {
+            capabilityUpgradesApplied++;
+          }
+        } else {
+          const assetError = existingAsset?.id
+            ? await updateFleetAssetByIdWithCapabilityFallback(
+                existingAsset.id,
+                assetPayload,
+                provider.company_id
+              )
+            : await upsertFleetAssetWithCapabilityFallback(assetPayload);
+
+          if (assetError) throw new Error(`Asset registry write failed: ${assetError.message}`);
+
+          if (!existingAsset) {
+            const insertedAsset = await loadProviderAssetByExactTruckId(
+              provider.id,
+              provider.company_id,
+              normalized.truck_id
+            );
+            if (insertedAsset) providerAssetLookup.push(insertedAsset);
+          }
+        }
 
         // ✅ Insert into telemetry_logs with company_id
         const telemetryError = await insertTelemetryLogWithCapabilityFallback({
@@ -553,6 +603,9 @@ export async function runProviderSync(
         ),
       vehicleCount: syncedCount,
       skipped_missing_identifier: skippedMissingIdentifier,
+      cross_provider_asset_matches: crossProviderAssetMatches,
+      cross_provider_asset_match_samples: crossProviderAssetMatchSamples,
+      capability_upgrades_applied: capabilityUpgradesApplied,
       sample_normalized,
       supplemental_diagnostics: supplemental.diagnostics,
       capability_summary: buildCapabilitySummary({
@@ -678,6 +731,171 @@ async function upsertFleetAssetWithCapabilityFallback(payload: Record<string, an
   return retryError;
 }
 
+async function updateFleetAssetByIdWithCapabilityFallback(
+  assetId: string,
+  payload: Record<string, any>,
+  companyId?: string
+) {
+  const query = supabaseAdmin.from("fleet_assets").update(payload).eq("id", assetId);
+  const { error } = companyId ? await query.eq("company_id", companyId) : await query;
+
+  if (!isMissingCapabilityColumnError(error)) return error;
+
+  const retryQuery = supabaseAdmin
+    .from("fleet_assets")
+    .update(stripCapabilityAssetColumns(payload))
+    .eq("id", assetId);
+  const { error: retryError } = companyId
+    ? await retryQuery.eq("company_id", companyId)
+    : await retryQuery;
+
+  return retryError;
+}
+
+async function loadProviderAssetByExactTruckId(
+  providerId: string,
+  companyId: string | undefined,
+  truckId: string
+) {
+  if (!companyId || !truckId) return null;
+  const { data, error } = await supabaseAdmin
+    .from("fleet_assets")
+    .select("id, provider_id, provider_name, truck_id, registration, telemetry_capability, telemetry_capability_source")
+    .eq("company_id", companyId)
+    .eq("provider_id", providerId)
+    .eq("truck_id", truckId)
+    .maybeSingle();
+
+  if (error) return null;
+  return data || null;
+}
+
+async function loadProviderAssetLookup(companyId?: string) {
+  if (!companyId) return [] as any[];
+
+  const capabilitySelect =
+    "id, provider_id, provider_name, truck_id, registration, telemetry_capability, telemetry_capability_source";
+  const baseSelect = "id, provider_id, provider_name, truck_id, registration";
+  let { data, error } = await supabaseAdmin
+    .from("fleet_assets")
+    .select(capabilitySelect)
+    .eq("company_id", companyId);
+
+  if (isMissingCapabilityColumnError(error)) {
+    const retry = await supabaseAdmin
+      .from("fleet_assets")
+      .select(baseSelect)
+      .eq("company_id", companyId);
+    data = retry.data as any;
+    error = retry.error;
+  }
+
+  if (error) {
+    throw new Error(`Asset registry lookup failed: ${error.message}`);
+  }
+
+  return data || [];
+}
+
+function findProviderAssetMatch(assets: any[], providerId: string, truckId: string) {
+  const targetKey = normalizeDistanceTruckKey(truckId);
+  if (!targetKey) return null;
+  return (
+    assets.find(
+      (asset) =>
+        asset.provider_id === providerId &&
+        getAssetMatchKeys(asset).includes(targetKey)
+    ) || null
+  );
+}
+
+function findCrossProviderAssetMatch(assets: any[], providerId: string, truckId: string) {
+  const targetKey = normalizeDistanceTruckKey(truckId);
+  if (!targetKey) return null;
+  return (
+    assets.find(
+      (asset) =>
+        asset.provider_id !== providerId &&
+        getAssetMatchKeys(asset).includes(targetKey)
+    ) || null
+  );
+}
+
+function getAssetMatchKeys(asset: any) {
+  return [asset?.truck_id, asset?.registration]
+    .map((value) => normalizeDistanceTruckKey(value))
+    .filter(Boolean);
+}
+
+async function maybeUpgradeCanonicalAssetCapability(
+  asset: any,
+  normalized: any,
+  companyId?: string
+) {
+  if (!asset?.id || !companyId) return { upgraded: false };
+  if (!shouldUpgradeCanonicalCapability(asset, normalized)) {
+    return { upgraded: false };
+  }
+
+  const payload = {
+    telemetry_capability: normalized.telemetry_capability,
+    telemetry_capabilities: normalized.telemetry_capabilities,
+    telemetry_capability_source: normalized.telemetry_capability_source,
+    canbus_enabled:
+      normalized.telemetry_capability === "CAN_BUS" ||
+      normalized.telemetry_capability === "HYBRID_CAN_AND_FUEL_ROD",
+    fuel_rod_installed:
+      normalized.telemetry_capability === "FUEL_ROD" ||
+      normalized.telemetry_capability === "HYBRID_CAN_AND_FUEL_ROD",
+    updated_at: new Date().toISOString(),
+  };
+
+  const { error } = await supabaseAdmin
+    .from("fleet_assets")
+    .update(payload)
+    .eq("id", asset.id)
+    .eq("company_id", companyId);
+
+  if (isMissingCapabilityColumnError(error)) return { upgraded: false };
+  if (error) return { upgraded: false, error: `Capability upgrade failed: ${error.message}` };
+  return { upgraded: true };
+}
+
+function shouldUpgradeCanonicalCapability(asset: any, normalized: any) {
+  const source = String(normalized.telemetry_capability_source || "").toLowerCase();
+  if (source !== "provider_declaration") return false;
+
+  const existingSource = String(asset.telemetry_capability_source || "").toLowerCase();
+  if (
+    ["manual", "admin", "asset_review", "verified"].some((token) =>
+      existingSource.includes(token)
+    )
+  ) {
+    return false;
+  }
+
+  return (
+    telemetryCapabilityRank(normalized.telemetry_capability) >
+    telemetryCapabilityRank(asset.telemetry_capability)
+  );
+}
+
+function telemetryCapabilityRank(value: any) {
+  switch (String(value || "UNKNOWN").toUpperCase()) {
+    case "HYBRID_CAN_AND_FUEL_ROD":
+      return 5;
+    case "CAN_BUS":
+    case "FUEL_ROD":
+      return 4;
+    case "GPS_WITH_IGNITION":
+      return 3;
+    case "GPS_ONLY":
+      return 2;
+    default:
+      return 1;
+  }
+}
+
 async function insertTelemetryLogWithCapabilityFallback(payload: Record<string, any>) {
   const { error } = await supabaseAdmin.from("telemetry_logs").insert(payload);
 
@@ -757,15 +975,14 @@ async function processProviderTripSummaries(
 
   const { data: assets, error: assetError } = await supabaseAdmin
     .from("fleet_assets")
-    .select("id, truck_id, registration")
-    .eq("company_id", provider.company_id)
-    .eq("provider_id", provider.id);
+    .select("id, provider_id, truck_id, registration, intelligence_enabled")
+    .eq("company_id", provider.company_id);
 
   if (assetError) {
     diagnostics.errors.push(`Asset lookup failed: ${assetError.message}`);
   }
 
-  const assetsByTruck = buildDistanceAssetMatchMap(assets || []);
+  const assetsByTruck = buildDistanceAssetMatchMap(assets || [], provider.id);
 
   for (const summary of summaries) {
     const matchedAsset = assetsByTruck.get(normalizeDistanceTruckKey(summary.truck_id));
@@ -815,15 +1032,26 @@ async function processProviderTripSummaries(
   return diagnostics;
 }
 
-function buildDistanceAssetMatchMap(assets: any[]) {
+function buildDistanceAssetMatchMap(assets: any[], preferredProviderId?: string) {
   const map = new Map<string, any>();
-  for (const asset of assets || []) {
+  for (const asset of sortAssetsByPreferredProvider(assets || [], preferredProviderId)) {
     for (const value of [asset.truck_id, asset.registration]) {
       const key = normalizeDistanceTruckKey(value);
       if (key && !map.has(key)) map.set(key, asset);
     }
   }
   return map;
+}
+
+function sortAssetsByPreferredProvider(assets: any[], preferredProviderId?: string) {
+  return [...assets].sort((a, b) => {
+    const aPreferred = preferredProviderId && a.provider_id === preferredProviderId ? 0 : 1;
+    const bPreferred = preferredProviderId && b.provider_id === preferredProviderId ? 0 : 1;
+    if (aPreferred !== bPreferred) return aPreferred - bPreferred;
+    const aEnabled = a.intelligence_enabled ? 0 : 1;
+    const bEnabled = b.intelligence_enabled ? 0 : 1;
+    return aEnabled - bEnabled;
+  });
 }
 
 function appendDistanceFeedSetupRequirements(

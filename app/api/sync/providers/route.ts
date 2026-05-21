@@ -69,6 +69,8 @@ export async function GET(req: Request) {
         message: result.message,
         vehicle_count: result.vehicleCount,
         skipped_missing_identifier: result.skipped_missing_identifier || 0,
+        cross_provider_asset_matches: result.cross_provider_asset_matches || 0,
+        capability_upgrades_applied: result.capability_upgrades_applied || 0,
         capability_summary: result.capability_summary || null,
         distance_diagnostics: result.distance_diagnostics || null,
         latency_ms: Date.now() - providerStartedAt,
