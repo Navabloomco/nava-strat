@@ -94,6 +94,19 @@ export default function ProviderVault() {
             auth_type: finalProvider.auth_type,
             fleet_config: finalProvider.fleet_config,
             field_mapping: finalProvider.field_mapping,
+            capability_profile: parseJsonObjectField(
+              finalProvider.capability_profile,
+              "Capability profile"
+            ),
+            supported_signals: parseJsonObjectField(
+              finalProvider.supported_signals,
+              "Supported signals"
+            ),
+            provider_timezone: finalProvider.provider_timezone || "Africa/Nairobi",
+            source_signal_notes: parseJsonObjectField(
+              finalProvider.source_signal_notes,
+              "Source signal notes"
+            ),
             username: finalProvider.username || null,
             base_url: finalProvider.base_url || null,
             login_url: finalProvider.login_url || null,
@@ -375,15 +388,22 @@ function ProviderCapabilityDiagnostics({ summary }: { summary: any }) {
           <h4 style={diagnosticsTitleStyle}>Signal Capability Summary</h4>
         </div>
         <div style={diagnosticsMetaStyle}>
-          {summary.default_capability_label || "Unknown Capability"}
+          Provider default: {summary.default_capability_label || "Unknown Capability"}
         </div>
       </div>
 
       <div style={diagnosticsSummaryGridStyle}>
-        <DiagnosticMetric label="Rows processed" value={summary.rows_processed} />
         <DiagnosticMetric
-          label="Supported signals"
-          value={(summary.supported_signals || []).length}
+          label="Observed rows"
+          value={summary.rows_processed}
+        />
+        <DiagnosticMetric
+          label="Observed capabilities"
+          value={(summary.observed_capabilities || []).length}
+        />
+        <DiagnosticMetric
+          label="Engine/tank signals"
+          value={(summary.supported_engine_tank_signals || []).length}
         />
         <DiagnosticMetric
           label="Placeholder zeros"
@@ -395,21 +415,26 @@ function ProviderCapabilityDiagnostics({ summary }: { summary: any }) {
       </div>
 
       <DiagnosticFieldBlock
-        title="Provider signal support"
+        title="Provider default capability"
         value={[
-          `Default: ${summary.default_capability_label || "Unknown Capability"}`,
+          summary.default_capability_label || "Unknown Capability",
           `Timezone: ${summary.provider_timezone || "Africa/Nairobi"}`,
         ]}
       />
       <DiagnosticFieldBlock
-        title="Supported signals"
-        value={summary.supported_signals}
-        mutedEmpty="No provider-supported engine or tank signals are declared yet."
+        title="Observed row capability"
+        value={(summary.observed_capabilities || []).map(
+          (item: any) =>
+            `${item.label || item.capability} — ${Number(item.rows || 0).toLocaleString()} row${
+              Number(item.rows || 0) === 1 ? "" : "s"
+            }`
+        )}
+        mutedEmpty="No rows were normalized during this test."
       />
       <DiagnosticFieldBlock
-        title="Rows by capability"
-        value={summary.capability_counts}
-        includeZeroCounts
+        title="Supported engine/tank signals"
+        value={summary.supported_engine_tank_signals}
+        mutedEmpty="None declared."
       />
       <DiagnosticFieldBlock
         title="Placeholder zero signals"
@@ -905,8 +930,64 @@ function AdvancedProviderEditor({
           onChange={(e) => setForm({...form, field_mapping: e.target.value})}
         />
       </div>
+
+      <div style={{ gridColumn: "span 2" }}>
+        <label style={labelStyle}>Telemetry Capability Profile</label>
+        <textarea
+          style={textareaStyle}
+          value={jsonFieldValue(form.capability_profile)}
+          onChange={(e) => setForm({ ...form, capability_profile: e.target.value })}
+        />
+      </div>
+
+      <div style={{ gridColumn: "span 2" }}>
+        <label style={labelStyle}>Supported Signals</label>
+        <textarea
+          style={textareaStyle}
+          value={jsonFieldValue(form.supported_signals)}
+          onChange={(e) => setForm({ ...form, supported_signals: e.target.value })}
+        />
+      </div>
+
+      <div>
+        <label style={labelStyle}>Provider Timezone</label>
+        <input
+          style={inputStyle}
+          value={form.provider_timezone || "Africa/Nairobi"}
+          onChange={(e) => setForm({ ...form, provider_timezone: e.target.value })}
+        />
+      </div>
+
+      <div>
+        <label style={labelStyle}>Signal Notes</label>
+        <textarea
+          style={textareaStyle}
+          value={jsonFieldValue(form.source_signal_notes)}
+          onChange={(e) => setForm({ ...form, source_signal_notes: e.target.value })}
+        />
+      </div>
     </div>
   );
+}
+
+function parseJsonObjectField(value: any, label: string) {
+  if (value === undefined || value === null || value === "") return {};
+  if (typeof value === "object" && !Array.isArray(value)) return value;
+  try {
+    const parsed = JSON.parse(String(value));
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed;
+    }
+  } catch {
+    // Throw below with a friendly field label.
+  }
+  throw new Error(`${label} must be a JSON object.`);
+}
+
+function jsonFieldValue(value: any) {
+  if (typeof value === "string") return value;
+  if (!value || typeof value !== "object") return "{}";
+  return JSON.stringify(value, null, 2);
 }
 
 function CredentialProviderEditor({

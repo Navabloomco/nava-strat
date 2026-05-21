@@ -62,9 +62,14 @@ Open `/admin/providers?companyId=<id>`.
 - [ ] Confirm provider list loads.
 - [ ] Confirm provider detail/test actions work or fail safely.
 - [ ] Confirm Test Connection displays sanitized diagnostics.
+- [ ] Confirm capability diagnostics separate provider default capability from observed row capability.
+- [ ] Confirm observed BlueTrax/JLCL rows show `GPS Intelligence` unless ignition/CAN/tank signals have been explicitly verified.
+- [ ] Confirm supported engine/tank signals show `none declared` for GPS-only providers.
+- [ ] Confirm placeholder zero signals are shown as safe counts only and do not upgrade capability.
 - [ ] Confirm no secrets, tokens, cookies, Authorization values, raw provider payloads, or auth configs are visible.
 - [ ] Confirm enrichment diagnostics show safe counts/key names only.
 - [ ] Confirm BlueTrax current fuel limitation is treated as a provider-pending integration item, not a product failure.
+- [ ] Confirm the Meitrack CAN Bus template, if visible, is setup-only/example mapping and does not ask for live credentials until a verified connection path exists.
 
 Expected BlueTrax note:
 
@@ -166,6 +171,8 @@ Expected result:
 - [ ] Nava Eye does not expose private driver phone, license, notes, or employee code.
 - [ ] Nava Eye avoids accusations and gives evidence-based answers.
 - [ ] Fuel suspicion answers distinguish usable fuel telemetry from unavailable or all-zero readings.
+- [ ] GPS-only assets answer with movement/location evidence but do not confirm engine-on idling, exact fuel burn, tank-volume change, or theft.
+- [ ] CAN Bus or tank-sensor wording appears only when the asset/provider capability is actually verified.
 - [ ] If BlueTrax current fuel is not yet ingesting, Nava Eye explains the provider data limitation carefully.
 - [ ] Investigation answers include practical next checks instead of stopping at "no data."
 - [ ] Current role permissions still apply on every message inside a conversation.

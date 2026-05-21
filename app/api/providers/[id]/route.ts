@@ -182,10 +182,16 @@ function sanitizeProvider(provider: any, capabilities: ProviderCapabilities) {
     baseProvider.fleet_config = sanitizeFleetConfigForResponse(
       provider.fleet_config || {}
     );
-    baseProvider.capability_profile = provider.capability_profile || {};
-    baseProvider.supported_signals = provider.supported_signals || {};
+    baseProvider.capability_profile = sanitizeOptionalObject(
+      provider.capability_profile
+    );
+    baseProvider.supported_signals = sanitizeOptionalObject(
+      provider.supported_signals
+    );
     baseProvider.provider_timezone = provider.provider_timezone || null;
-    baseProvider.source_signal_notes = provider.source_signal_notes || {};
+    baseProvider.source_signal_notes = sanitizeOptionalObject(
+      provider.source_signal_notes
+    );
   }
 
   return baseProvider;
@@ -858,6 +864,10 @@ export async function PATCH(
       "login_url",
       "fleet_url",
       "is_active",
+      "capability_profile",
+      "supported_signals",
+      "provider_timezone",
+      "source_signal_notes",
     ];
     const allowedFields = resolved.capabilities.can_edit_advanced_provider_config
       ? [...advancedFields, ...credentialFields]
@@ -910,6 +920,15 @@ export async function PATCH(
       }
     }
 
+    for (const field of ["capability_profile", "supported_signals", "source_signal_notes"]) {
+      if (Object.prototype.hasOwnProperty.call(updates, field)) {
+        updates[field] = sanitizeOptionalObject(updates[field]);
+      }
+    }
+    if (Object.prototype.hasOwnProperty.call(updates, "provider_timezone")) {
+      updates.provider_timezone = sanitizeProviderTimezone(updates.provider_timezone);
+    }
+
     if (Object.keys(updates).length === 0) {
       return NextResponse.json({
         success: true,
@@ -917,13 +936,34 @@ export async function PATCH(
       });
     }
 
-    const { data: provider, error } = await supabaseAdmin
+    let { data: provider, error } = await supabaseAdmin
       .from("tracking_providers")
       .update(updates)
       .eq("id", params.id)
       .eq("company_id", resolved.company.id)
       .select("*")
       .single();
+
+    if (isMissingOptionalProviderCapabilityColumnError(error)) {
+      const retryUpdates = stripProviderCapabilityColumns(updates);
+      if (Object.keys(retryUpdates).length === 0) {
+        return NextResponse.json({
+          success: true,
+          provider: sanitizeProvider(existingProvider, resolved.capabilities),
+          capability_setup_pending: true,
+        });
+      }
+
+      const retry = await supabaseAdmin
+        .from("tracking_providers")
+        .update(retryUpdates)
+        .eq("id", params.id)
+        .eq("company_id", resolved.company.id)
+        .select("*")
+        .single();
+      provider = retry.data;
+      error = retry.error;
+    }
 
     if (error) throw error;
 
@@ -938,4 +978,76 @@ export async function PATCH(
       { status: 500 }
     );
   }
+}
+
+function sanitizeOptionalObject(value: any) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return sanitizeSafeConfigObject(value);
+}
+
+function sanitizeSafeConfigObject(value: any, depth = 0): any {
+  if (depth > 5) return null;
+  if (Array.isArray(value)) {
+    return value.slice(0, 50).map((entry) => sanitizeSafeConfigObject(entry, depth + 1));
+  }
+  if (!value || typeof value !== "object") {
+    if (typeof value === "string") return value.slice(0, 500);
+    if (typeof value === "number" || typeof value === "boolean" || value === null) {
+      return value;
+    }
+    return String(value || "").slice(0, 500);
+  }
+
+  const output: Record<string, any> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (isSensitiveCapabilityKey(key)) continue;
+    output[key] = sanitizeSafeConfigObject(entry, depth + 1);
+  }
+  return output;
+}
+
+function isSensitiveCapabilityKey(key: string) {
+  const normalized = key.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+  return [
+    "password",
+    "token",
+    "cookie",
+    "authorization",
+    "api_key",
+    "apikey",
+    "provider_secret",
+    "auth_config",
+    "raw_payload",
+    "credentials",
+    "secret",
+    "bearer_token",
+  ].some((blocked) => normalized.includes(blocked));
+}
+
+function sanitizeProviderTimezone(value: any) {
+  const text = String(value || "").trim();
+  return text && text.length <= 120 ? text : "Africa/Nairobi";
+}
+
+function stripProviderCapabilityColumns(payload: Record<string, any>) {
+  const {
+    capability_profile,
+    supported_signals,
+    provider_timezone,
+    source_signal_notes,
+    ...base
+  } = payload;
+  return base;
+}
+
+function isMissingOptionalProviderCapabilityColumnError(error: any) {
+  if (!error) return false;
+  const code = String(error.code || "").toUpperCase();
+  const message = String(error.message || error.details || error.hint || "").toLowerCase();
+  return (
+    code === "PGRST204" ||
+    message.includes("column") ||
+    message.includes("schema cache") ||
+    message.includes("could not find")
+  );
 }

@@ -157,6 +157,10 @@ export default function NewProviderPage() {
       auth_config: selectedTemplate.auth_config,
       fleet_config: selectedTemplate.fleet_config,
       field_mapping: selectedTemplate.field_mapping,
+      capability_profile: selectedTemplate.capability_profile || selectedTemplate.fleet_config?.capability_profile || {},
+      supported_signals: selectedTemplate.supported_signals || selectedTemplate.fleet_config?.supported_signals || {},
+      provider_timezone: selectedTemplate.provider_timezone || selectedTemplate.fleet_config?.provider_timezone || "Africa/Nairobi",
+      source_signal_notes: selectedTemplate.source_signal_notes || {},
 
       username: form.username,
       api_key: form.api_key,
@@ -292,8 +296,12 @@ export default function NewProviderPage() {
               <>
                 <div style={noticeStyle}>
                   Template loaded: <strong>{selectedTemplate.display_name}</strong>.
-                  Nava will use the verified connection setup for this provider.
+                  {selectedTemplate.setup_only || selectedTemplate.fleet_config?.setup_only
+                    ? " This is a signal-mapping example for onboarding, not a live verified connection."
+                    : " Nava will use the verified connection setup for this provider."}
                 </div>
+
+                <TemplateCapabilityPreview template={selectedTemplate} />
 
                 <div style={gridStyle}>
                   {requiredCredentialFields.map((field) => (
@@ -311,13 +319,21 @@ export default function NewProviderPage() {
                   ))}
                 </div>
 
-                <button
-                  onClick={handleCreateProvider}
-                  disabled={saving}
-                  style={buttonStyle}
-                >
-                  {saving ? "ADDING PROVIDER..." : "ADD PROVIDER"}
-                </button>
+                {selectedTemplate.setup_only || selectedTemplate.fleet_config?.setup_only ? (
+                  <div style={noticeStyle}>
+                    This template is an onboarding example only. Request provider
+                    setup after confirming exact API endpoints and available
+                    Meitrack signals.
+                  </div>
+                ) : (
+                  <button
+                    onClick={handleCreateProvider}
+                    disabled={saving}
+                    style={buttonStyle}
+                  >
+                    {saving ? "ADDING PROVIDER..." : "ADD PROVIDER"}
+                  </button>
+                )}
               </>
             )}
           </>
@@ -336,6 +352,43 @@ export default function NewProviderPage() {
       </section>
     </main>
   );
+}
+
+function TemplateCapabilityPreview({ template }: { template: any }) {
+  const capability =
+    template.capability_profile?.default_capability ||
+    template.fleet_config?.capability_profile?.default_capability ||
+    "UNKNOWN";
+  const supportedSignals =
+    template.supported_signals || template.fleet_config?.supported_signals || {};
+  const safeSupportedSignals =
+    supportedSignals && typeof supportedSignals === "object" && !Array.isArray(supportedSignals)
+      ? supportedSignals
+      : {};
+  const signalNames = Object.entries(safeSupportedSignals)
+    .filter(([, value]) => Boolean(value))
+    .map(([key]) => key);
+
+  return (
+    <div style={noticeStyle}>
+      <strong>Telemetry capability:</strong> {capabilityLabel(capability)}
+      <br />
+      <strong>Example supported signals:</strong>{" "}
+      {signalNames.length > 0 ? signalNames.join(", ") : "none declared"}
+    </div>
+  );
+}
+
+function capabilityLabel(value: string) {
+  const labels: Record<string, string> = {
+    UNKNOWN: "Unknown Capability",
+    GPS_ONLY: "GPS Intelligence",
+    GPS_WITH_IGNITION: "Ignition-Aware GPS",
+    CAN_BUS: "Engine Intelligence",
+    FUEL_ROD: "Tank Intelligence",
+    HYBRID_CAN_AND_FUEL_ROD: "Full Fuel Intelligence",
+  };
+  return labels[String(value || "UNKNOWN").toUpperCase()] || "Unknown Capability";
 }
 
 function getCredentialFields(template: any) {

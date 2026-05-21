@@ -6,6 +6,7 @@ import {
   runProviderSync,
 } from "../../../../../lib/providers/engine";
 import { recordAnalyticsEvent } from "../../../../../lib/api/analyticsEvents";
+import { telemetryCapabilityLabel } from "../../../../../lib/telemetry/capabilities";
 
 export const dynamic = "force-dynamic";
 
@@ -84,21 +85,44 @@ function sanitizeNormalizedSample(sample: any) {
 
 function sanitizeCapabilitySummary(summary: any) {
   if (!summary || typeof summary !== "object") return null;
+  const capabilityCounts = sanitizeCountMap(summary.capability_counts);
+  const supportedSignals = Array.isArray(summary.supported_signals)
+    ? summary.supported_signals.map((signal: any) => String(signal)).slice(0, 30)
+    : [];
 
   return {
     default_capability: summary.default_capability || "UNKNOWN",
     default_capability_label:
       summary.default_capability_label || "Unknown Capability",
     provider_timezone: summary.provider_timezone || "Africa/Nairobi",
-    supported_signals: Array.isArray(summary.supported_signals)
-      ? summary.supported_signals.map((signal: any) => String(signal)).slice(0, 30)
-      : [],
+    supported_signals: supportedSignals,
+    supported_engine_tank_signals: supportedSignals.filter(isEngineOrTankSignal),
     rows_processed: Number(summary.rows_processed || 0),
-    capability_counts: sanitizeCountMap(summary.capability_counts),
+    observed_capabilities: Object.entries(capabilityCounts)
+      .filter(([, count]) => Number(count || 0) > 0)
+      .map(([capability, count]) => ({
+        capability,
+        label: telemetryCapabilityLabel(capability),
+        rows: Number(count || 0),
+      })),
+    capability_counts: capabilityCounts,
     placeholder_zero_signal_counts: sanitizeCountMap(
       summary.placeholder_zero_signal_counts
     ),
   };
+}
+
+function isEngineOrTankSignal(signal: string) {
+  return [
+    "ignition_on",
+    "engine_rpm",
+    "engine_on",
+    "fuel_rate",
+    "lifetime_fuel_used",
+    "engine_hours",
+    "fuel_raw",
+    "fuel_volume_liters",
+  ].includes(signal);
 }
 
 function sanitizeSupplementalDiagnostics(diagnostics: any, includeAvailableKeys: boolean) {

@@ -147,7 +147,7 @@ The main product principle is convenience. Every user-facing page should make th
 | `GET/POST /api/providers` | Provider Vault list/create. Supports platform-owner `companyId` context. Sanitizes provider credentials in responses. |
 | `GET/PATCH /api/providers/[id]` | Provider detail/update. Supports platform-owner `companyId` context for safe tenant-scoped updates. Platform-owner-only advanced fleet config including supplemental feeds and auth profiles. |
 | `POST /api/providers/[id]/test` | Tests provider sync in the resolved tenant context and returns sanitized diagnostics, including safe telemetry capability summary counts when available. |
-| `GET /api/providers/templates` | Provider templates. |
+| `GET /api/providers/templates` | Provider templates, including verified connection templates and safe setup-only signal-mapping examples such as the Meitrack CAN Bus onboarding template. No live credentials. |
 | `GET/POST /api/providers/setup-requests` | Provider setup request list/create. |
 | `PATCH /api/providers/setup-requests/[id]` | Provider setup request status management. |
 | `POST /api/sync/providers` | Cron/provider automation sync. Requires `Authorization: Bearer <CRON_SECRET>`. |
@@ -252,7 +252,7 @@ The main product principle is convenience. Every user-facing page should make th
 | --- | --- |
 | `tracking_providers` | Provider credentials/config, auth type, fleet URL, field mapping, fleet config, sync status, safe telemetry capability declarations, supported signal metadata, provider timezone, and test diagnostics. |
 | `provider_setup_requests` | Assisted provider onboarding requests. |
-| `provider_templates` | Reusable provider setup templates. |
+| `provider_templates` | Reusable provider setup templates. Internal setup-only templates may document signal mappings for future providers without live credentials or endpoints. |
 | `fleet_assets` | Imported provider assets, latest asset state, review status, intelligence enablement, billing readiness, and asset telemetry capability profile. |
 | `telemetry_logs` | Historical telemetry points from provider sync: location, speed, fuel level, normalized engine/ignition/fuel/tank signal placeholders where supported, provider location label, validation, capability flags, and raw payload server-side. |
 | `telemetry_events` | Derived operational events and alert context annotations. |
@@ -450,6 +450,17 @@ Signal validation rules:
 - Observed signal patterns may suggest capability but must not silently upgrade high-stakes fuel/theft claims.
 - BlueTrax/JLCL assets classify as `GPS_ONLY` unless real ignition, CAN, or tank signals are verified. BlueTrax dashboard zero fuel/RPM placeholders must not be treated as engine/fuel evidence.
 - Meitrack and future hardware should plug in through provider adapter, field mapping, `supported_signals`, and normalized telemetry columns without provider-specific Nava Eye rewrites.
+
+Provider Vault should separate provider declarations from observed row evidence:
+
+- Provider default capability comes from `tracking_providers.capability_profile.default_capability` and may remain `UNKNOWN` during onboarding.
+- Observed row capability comes from normalized test/sync rows and should be counted separately, for example `GPS Intelligence - 21 rows`.
+- Supported engine/tank signals should show declared meaningful signals only, not field names that are present but unsupported.
+- Placeholder zero signals should be reported as safe counts/key names and must not upgrade the asset or provider capability.
+
+BlueTrax/JLCL current state is GPS Intelligence: the primary feed supports location/speed/timestamp movement intelligence, while engine-on idling, exact fuel burn, tank volume, and fuel-theft conclusions remain unverified until ignition/CAN/tank signals are explicitly proven.
+
+Meitrack onboarding uses a setup-only CAN Bus example template for field mapping and capability planning. It is not a live credential template. Expected normalized signals include location, speed, recorded time, ignition, RPM, fuel rate, lifetime fuel used, and engine hours where the specific Meitrack installation actually provides them.
 
 ### Supplemental Auth Profiles
 
