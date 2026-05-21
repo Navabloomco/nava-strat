@@ -959,10 +959,46 @@ function resolvePendingFollowupQuestion(
   const pending = sanitizeConversationMetadata(pendingFollowup || {});
   const activeTopic = getActiveTruckTopic(pending, options.companyId);
   const prompt = typeof pending.prompt === "string" ? pending.prompt.trim() : "";
+  const normalizedQuestion = String(question || "")
+    .toLowerCase()
+    .replace(/[’]/g, "'");
   const detailedTimelineRequest = isDetailedTimelineRequest(question);
   const explicitFleetScope = asksForExplicitFleetScope(question);
   const explicitVehicleInput = containsVehicleLikeInput(question);
   const ellipticalTruckQuestion = isEllipticalTruckQuestion(question);
+  const explicitTimeframe = questionHasExplicitTimeframe(normalizedQuestion);
+
+  if (
+    detailedTimelineRequest &&
+    activeTopic &&
+    !explicitVehicleInput &&
+    !explicitFleetScope
+  ) {
+    const timeframe = explicitTimeframe
+      ? resolveTruckTimelineTimeframe(normalizedQuestion, activeTopic.timeframe)
+      : activeTopic.timeframe;
+
+    if (!timeframe?.requested) {
+      return {
+        question,
+        usedPendingFollowup: false,
+        usedActiveTopic: true,
+        pendingType: typeof pending.type === "string" ? pending.type : "active_truck_topic",
+        needsClarification: true,
+        clarificationReason: "missing_active_truck_timeframe",
+        clarification: `Should I show today's or yesterday's detailed timeline for ${activeTopic.truck_id}?`,
+      };
+    }
+
+    return {
+      question: `Show detailed timeline for ${activeTopic.truck_id}${formatTimeframeQuestionSuffix(
+        timeframe
+      )}.`,
+      usedPendingFollowup: true,
+      usedActiveTopic: true,
+      pendingType: typeof pending.type === "string" ? pending.type : "active_truck_topic",
+    };
+  }
 
   if (
     detailedTimelineRequest &&
@@ -1036,6 +1072,8 @@ function getActiveTruckTopic(pending: any, companyId?: string | null) {
     truck_id: truckId,
     company_id: topicCompanyId || companyId || null,
     timeframe: sanitizeTopicTimeframe(topic.timeframe),
+    last_intent: typeof topic.last_intent === "string" ? topic.last_intent.slice(0, 80) : null,
+    detail_mode_available: Boolean(topic.detail_mode_available),
   };
 }
 
@@ -1043,7 +1081,12 @@ function sanitizeTopicTimeframe(value: any) {
   if (!value || typeof value !== "object") return null;
   const requested = String(value.requested || "").trim().toLowerCase();
   if (requested !== "today" && requested !== "yesterday") return null;
-  const dayOffset = requested === "yesterday" ? -1 : 0;
+  const rawDayOffset = value.dayOffset ?? value.day_offset;
+  const dayOffset = Number.isFinite(Number(rawDayOffset))
+    ? Number(rawDayOffset)
+    : requested === "yesterday"
+      ? -1
+      : 0;
   return {
     requested,
     dayOffset,
@@ -1054,6 +1097,13 @@ function sanitizeTopicTimeframe(value: any) {
       ? String(value.display_date_label).slice(0, 80)
       : null,
   };
+}
+
+function formatTimeframeQuestionSuffix(timeframe: any) {
+  const requested = String(timeframe?.requested || "").toLowerCase();
+  if (requested === "yesterday") return " for yesterday";
+  if (requested === "today") return " for today";
+  return "";
 }
 
 function buildTruckScopedFollowupQuestion(question: string, activeTopic: any) {
@@ -1219,6 +1269,7 @@ function buildPendingFollowup(context: any, answer: string) {
   ) {
     const timeline = context.truck_timeline_comparison || {};
     const requestedTimeframe = timeline.timeframe?.requested || "today";
+    const topicTimeframe = sanitizeTimelineTimeframe(timeline) || timeline.timeframe;
     if (timeline.timeframe?.new_day_rollover_window || timeline.day_story?.new_day_rollover_window) {
       return attachActiveTopic({
         type: "compare_stop_motion_timeline",
@@ -1231,10 +1282,11 @@ function buildPendingFollowup(context: any, answer: string) {
       type: "show_detailed_timeline",
       truck_id: truckLabel,
       timeframe: requestedTimeframe,
+      display_date_label: topicTimeframe?.display_date_label || null,
       prompt: `Show the detailed timeline for ${truckLabel}${
         requestedTimeframe === "yesterday" ? " for yesterday" : ""
       }. Include movement/stationary blocks and idle marker evidence, but do not show raw coordinates or provider payloads.`,
-    }, timeline.timeframe);
+    }, topicTimeframe);
   }
 
   if (context.fuel_investigation && truckLabel) {
@@ -1274,6 +1326,10 @@ function buildActiveTruckTopic(context: any, truckLabel: string, timeframeOverri
     context.truck_timeline_comparison ||
     Object.values(context.truck_timelines || {})[0] ||
     null;
+  const hasTimelineContext = Boolean(
+    context.truck_timeline_comparison ||
+      (context.truck_timelines && Object.keys(context.truck_timelines).length > 0)
+  );
   const timeframe =
     sanitizeTopicTimeframe(timeframeOverride) ||
     sanitizeTimelineTimeframe(timeline) ||
@@ -1284,8 +1340,9 @@ function buildActiveTruckTopic(context: any, truckLabel: string, timeframeOverri
     entity_type: "truck",
     truck_id: truckLabel,
     company_id: context.company?.id || null,
-    last_intent: context.intent || null,
+    last_intent: hasTimelineContext ? "truck_timeline" : context.intent || null,
     timeframe,
+    detail_mode_available: hasTimelineContext,
     updated_at: new Date().toISOString(),
   };
 }
