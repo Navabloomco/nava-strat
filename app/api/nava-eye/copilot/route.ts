@@ -1419,10 +1419,12 @@ function buildFleetMovementSummaryAnswer(context: any) {
   const timeframe = summary.timeframe || {};
   const timeZone = summary.timezone?.time_zone || DEFAULT_OPERATIONAL_TIME_ZONE;
   const localDay = timeframe.local_day || "the selected day";
-  const label = summary.timezone?.label || "local time";
+  const dateLabel = formatTimelineDateLabel(localDay, timeZone);
+  const timeZoneLabel = formatShortTimeZoneLabel(timeZone);
+  const companyName = context.company?.name || "Company";
   const parts: string[] = [];
 
-  parts.push(`Fleet movement summary for ${localDay} (${label}).`);
+  parts.push(`${companyName} fleet movement summary for ${dateLabel}. Times shown in ${timeZoneLabel}.`);
 
   if (Number(summary.enabled_asset_count || 0) === 0) {
     parts.push("No enabled intelligence assets are available for this company, so fleet movement cannot be summarized yet.");
@@ -1431,20 +1433,12 @@ function buildFleetMovementSummaryAnswer(context: any) {
 
   if (Number(summary.telemetry_points || 0) === 0) {
     parts.push(
-      `No enabled-asset telemetry was found for ${localDay}. I will not fall back to another date unless you ask for a different operating day.`
+      `No enabled-asset telemetry was found for ${dateLabel}. I will not fall back to another date unless you ask for a different operating day.`
     );
     return parts.join("\n");
   }
 
-  parts.push(
-    `${Number(summary.trucks_with_telemetry || 0).toLocaleString()} of ${Number(
-      summary.enabled_asset_count || 0
-    ).toLocaleString()} enabled truck(s) reported telemetry. ${Number(
-      summary.moving_truck_count || 0
-    ).toLocaleString()} showed movement during the operating day; ${Number(
-      summary.stationary_truck_count || 0
-    ).toLocaleString()} ended the window stationary or low-speed.`
-  );
+  parts.push(buildFleetMovementInterpretation(summary));
 
   if (summary.truncated) {
     parts.push(
@@ -1457,7 +1451,7 @@ function buildFleetMovementSummaryAnswer(context: any) {
     : [];
   if (sampleTrucks.length) {
     parts.push("");
-    parts.push("Sample truck reads");
+    parts.push("Operational snapshot");
     parts.push(
       ...sampleTrucks.map((truck: any) => {
         const labelText = truck.registration || truck.truck_id || "truck";
@@ -1481,16 +1475,45 @@ function buildFleetMovementSummaryAnswer(context: any) {
     );
   }
 
-  if (Number(summary.no_telemetry_truck_count || 0) > 0) {
-    parts.push(
-      `${Number(summary.no_telemetry_truck_count).toLocaleString()} enabled truck(s) had no telemetry in this resolved window.`
-    );
-  }
-
   parts.push("");
   parts.push("Ask about a specific truck for a corridor route narrative or detailed timeline.");
 
   return parts.join("\n");
+}
+
+function buildFleetMovementInterpretation(summary: any) {
+  const enabled = Number(summary.enabled_asset_count || 0);
+  const withTelemetry = Number(summary.trucks_with_telemetry || 0);
+  const moving = Number(summary.moving_truck_count || 0);
+  const stationary = Number(summary.stationary_truck_count || 0);
+  const noTelemetry = Number(summary.no_telemetry_truck_count || 0);
+  const sentences: string[] = [];
+
+  sentences.push(
+    `${moving.toLocaleString()} of ${enabled.toLocaleString()} enabled truck(s) recorded movement during the operating day.`
+  );
+
+  if (stationary > moving && stationary > 0) {
+    sentences.push(
+      `Most units with telemetry ended the window stationary or low-speed, which suggests the fleet was largely parked, queued, or waiting by close of day.`
+    );
+  } else if (moving > 0) {
+    sentences.push(
+      `${withTelemetry.toLocaleString()} enabled truck(s) reported telemetry, with movement visible across the active subset.`
+    );
+  } else {
+    sentences.push(
+      `${withTelemetry.toLocaleString()} enabled truck(s) reported telemetry, but no clear movement was visible in this window.`
+    );
+  }
+
+  if (noTelemetry > 0) {
+    sentences.push(
+      `${noTelemetry.toLocaleString()} enabled truck(s) had no telemetry in the resolved operating window.`
+    );
+  }
+
+  return sentences.join(" ");
 }
 
 function buildCompoundTruckAnswer(context: any) {
@@ -1898,7 +1921,7 @@ function buildLogisticsTimelineOpening(
   const speedText = speed === null ? "" : ` with speed ${formatNumber(speed)}`;
   const positionText =
     timeframe?.requested === "yesterday"
-      ? `${label}'s yesterday movement ended ${location}`
+      ? `${label} ended yesterday ${location}`
       : speed === null
       ? `${label} has a latest known position ${location}`
       : `${label} is currently ${movementState} ${location}`;
@@ -1909,16 +1932,17 @@ function buildLogisticsTimelineOpening(
   const verdict =
     timeframe?.requested === "yesterday"
       ? routeEvidence
-        ? "This is a previous-day route narrative, not a current-status snapshot."
-        : "This is a narrow previous-day operating read, so it should not be forced into a full route story."
+        ? ""
+        : "Only a narrow previous-day operating window is visible."
       : rollover
     ? "This is a new-day window after the EAT rollover, so a full-day route has not accumulated yet."
     : routeEvidence
     ? "The truck was not stuck in an all-day delay."
     : "This is a narrow operating read, so it should not be forced into a full-day route story.";
   const metricSentence = rollover ? "" : buildHumanTimelineMetrics(dayStory.stop_summary || {});
+  const verdictText = verdict ? ` ${verdict}` : "";
 
-  return `${positionText}, last seen at ${time}${speedText}. ${verdict}${
+  return `${positionText}, last seen at ${time}${speedText}.${verdictText}${
     metricSentence ? ` ${metricSentence}` : ""
   }`;
 }
@@ -2051,7 +2075,7 @@ function buildCorridorRouteNarrative(label: string, dayStory: any, summary: any,
   }
 
   if (route.length >= 2) {
-    sentences.push(`The observed corridor runs ${formatCorridorRoute(route)}.`);
+    sentences.push(`The corridor route: ${label} moved ${formatCorridorRoute(route)}.`);
   } else if (route.length === 1) {
     sentences.push(`The available points are concentrated around ${route[0]}.`);
   } else if (Number(summary.movement_blocks || 0) > 0) {
@@ -3589,9 +3613,38 @@ function formatTimelineClock(value: any, timeZone: string) {
   }).format(date);
 }
 
+function formatTimelineDateLabel(value: any, timeZone: string) {
+  const text = String(value || "").trim();
+  const localDateMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const date = localDateMatch
+    ? new Date(
+        Date.UTC(
+          Number(localDateMatch[1]),
+          Number(localDateMatch[2]) - 1,
+          Number(localDateMatch[3]),
+          12,
+          0,
+          0
+        )
+      )
+    : new Date(value);
+
+  if (Number.isNaN(date.getTime())) return text || "the selected day";
+
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone,
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  }).format(date);
+}
+
 function formatTimelineTimeNote(timeZone: string) {
-  const label = timeZone === DEFAULT_OPERATIONAL_TIME_ZONE ? "EAT" : timeZone;
-  return `Times shown in ${label}.`;
+  return `Times shown in ${formatShortTimeZoneLabel(timeZone)}.`;
+}
+
+function formatShortTimeZoneLabel(timeZone: string) {
+  return timeZone === DEFAULT_OPERATIONAL_TIME_ZONE ? "EAT" : timeZone;
 }
 
 function stripLeadingPlacePrefix(value: any) {
