@@ -963,6 +963,7 @@ function resolvePendingFollowupQuestion(
     .toLowerCase()
     .replace(/[’]/g, "'");
   const detailedTimelineRequest = isDetailedTimelineRequest(question);
+  const rawIdleMarkerRequest = isRawIdleMarkerRequest(question);
   const explicitFleetScope = asksForExplicitFleetScope(question);
   const explicitVehicleInput = containsVehicleLikeInput(question);
   const ellipticalTruckQuestion = isEllipticalTruckQuestion(question);
@@ -993,7 +994,7 @@ function resolvePendingFollowupQuestion(
     return {
       question: `Show detailed timeline for ${activeTopic.truck_id}${formatTimeframeQuestionSuffix(
         timeframe
-      )}.`,
+      )}.${rawIdleMarkerRequest ? " Show every idle marker." : ""}`,
       usedPendingFollowup: true,
       usedActiveTopic: true,
       pendingType: typeof pending.type === "string" ? pending.type : "active_truck_topic",
@@ -1223,7 +1224,21 @@ function isDetailedTimelineRequest(question: string) {
     lower.includes("expand the timeline") ||
     lower.includes("expand timeline") ||
     lower.includes("show the log blocks") ||
-    lower.includes("log blocks")
+    lower.includes("log blocks") ||
+    isRawIdleMarkerRequest(lower)
+  );
+}
+
+function isRawIdleMarkerRequest(question: string) {
+  const lower = String(question || "").trim().toLowerCase();
+  return (
+    lower.includes("show every idle marker") ||
+    lower.includes("list every idle marker") ||
+    lower.includes("list all idle markers") ||
+    lower.includes("list all idle alerts") ||
+    lower.includes("show all idle alerts") ||
+    lower.includes("raw idle markers") ||
+    lower.includes("raw idle alerts")
   );
 }
 
@@ -1901,6 +1916,9 @@ function buildTruckTimelineComparisonAnswer(context: any) {
   const latest = timeline.latest_snapshot || null;
   const blocks = Array.isArray(timeline.motion_blocks) ? timeline.motion_blocks : [];
   const idleEvents = Array.isArray(timeline.idle_events) ? timeline.idle_events : [];
+  const idleAlertWindows = Array.isArray(timeline.idle_alert_windows)
+    ? timeline.idle_alert_windows
+    : [];
   const continuity = timeline.continuity || {};
   const timeframe = timeline.timeframe || {
     requested: "today",
@@ -1918,8 +1936,10 @@ function buildTruckTimelineComparisonAnswer(context: any) {
       latest,
       blocks,
       idleEvents,
+      idleAlertWindows,
       continuity,
       timeframe,
+      rawIdleMarkersRequested: Boolean(context.raw_idle_markers_requested),
     });
   }
 
@@ -2291,8 +2311,10 @@ function buildDetailedTruckTimelineAnswer({
   latest,
   blocks,
   idleEvents,
+  idleAlertWindows = [],
   continuity,
   timeframe = {},
+  rawIdleMarkersRequested = false,
 }: any) {
   const parts: string[] = [];
   parts.push(`Detailed timeline evidence for ${label}. ${formatTimelineTimeNote(timeZone)}`);
@@ -2327,10 +2349,22 @@ function buildDetailedTruckTimelineAnswer({
   parts.push("");
   parts.push("Idle marker evidence");
   if (idleEvents.length) {
-    if (countUnresolvedGpsMarkers(idleEvents) > 0) {
+    if (rawIdleMarkersRequested) {
+      if (countUnresolvedGpsMarkers(idleEvents) > 0) {
+        parts.push("- Some marker locations are unresolved GPS points.");
+      }
+      parts.push(...idleEvents.map((event: any) => formatIdleComparison(event, timeZone)));
+    } else if (idleAlertWindows.length) {
+      if (countUnresolvedGpsWindows(idleAlertWindows) > 0) {
+        parts.push("- Some alert window locations are unresolved GPS points.");
+      }
+      parts.push(...idleAlertWindows.map((window: any) => formatIdleAlertWindow(window, timeZone)));
+    } else if (countUnresolvedGpsMarkers(idleEvents) > 0) {
       parts.push("- Some marker locations are unresolved GPS points.");
+      parts.push(...idleEvents.map((event: any) => formatIdleComparison(event, timeZone)));
+    } else {
+      parts.push(...idleEvents.map((event: any) => formatIdleComparison(event, timeZone)));
     }
-    parts.push(...idleEvents.map((event: any) => formatIdleComparison(event, timeZone)));
   } else {
     parts.push("- No idle or excessive-idle events were found for this truck in this operating window.");
   }
@@ -2499,6 +2533,14 @@ function formatContinuityRead(continuity: any, summary: any) {
 function countUnresolvedGpsMarkers(idleEvents: any[]) {
   return idleEvents.filter(
     (event) => event.location_resolution?.confidence_source === "coordinates_only"
+  ).length;
+}
+
+function countUnresolvedGpsWindows(windows: any[]) {
+  return windows.filter(
+    (window) =>
+      window.location_resolution?.confidence_source === "coordinates_only" ||
+      window.location_group_key === "unresolved"
   ).length;
 }
 
@@ -3615,6 +3657,68 @@ function formatDurationWords(value: any) {
   const remainder = Math.round(minutes % 60);
   if (remainder === 0) return `${hours} hr${hours === 1 ? "" : "s"}`;
   return `${hours} hr ${remainder} min`;
+}
+
+function formatIdleAlertWindow(window: any, timeZone: string) {
+  const first = formatTimelineClock(window.first_marker_at, timeZone);
+  const last = formatTimelineClock(window.last_marker_at, timeZone);
+  const eventType = formatSpareEventType(window.event_type || "idle");
+  const markerCount = Number(window.marker_count || 0);
+  const repeated = markerCount > 1 ? "repeated " : "";
+  const markerText =
+    markerCount > 1
+      ? `${markerCount.toLocaleString()} markers`
+      : "1 marker";
+  const location = formatOperationalLocation(
+    {
+      location_resolution: window.location_resolution,
+      geofence_match: window.geofence_match,
+    },
+    { gpsFallback: null }
+  );
+  const locationText = location
+    ? `around ${stripLeadingPlacePrefix(location)}`
+    : "location unresolved";
+  const timeRange = first === last ? first : `${first} to ${last}`;
+  const durationText = formatIdleWindowDuration(window);
+  const statusText = formatIdleWindowStatus(window, timeZone);
+  const providerDurationNote =
+    window.repeated_provider_duration_values && markerCount > 1
+      ? " Repeated provider duration values were treated as alert markers, not summed."
+      : "";
+
+  return `- ${timeRange} - ${repeated}${eventType} markers ${locationText}; ${markerText}.${durationText}${statusText}${providerDurationNote}`;
+}
+
+function formatIdleWindowDuration(window: any) {
+  const minutes = finiteNumberOrNull(window.operational_duration_minutes);
+  if (minutes === null || minutes <= 0) return "";
+  const duration = formatDurationWords(minutes);
+  switch (window.duration_basis) {
+    case "event_bounds":
+      return ` Event bounds suggest about ${duration}.`;
+    case "stationary_block":
+      return ` Containing stationary block is about ${duration}.`;
+    case "movement_resume":
+      return ` First marker to movement resume is about ${duration}.`;
+    case "alert_span":
+      return ` Alert span is about ${duration}.`;
+    default:
+      return ` Operational duration estimate is about ${duration}.`;
+  }
+}
+
+function formatIdleWindowStatus(window: any, timeZone: string) {
+  if (window.status === "ended_by_later_movement" && window.movement_after_window_at) {
+    return ` Ended by movement at ${formatTimelineClock(window.movement_after_window_at, timeZone)}.`;
+  }
+  if (window.status === "may_relate_to_current_stop") {
+    return " No later movement appears after this window, so it may relate to the final/current stop.";
+  }
+  if (window.status === "no_later_movement_found") {
+    return " No later movement found after this window in the selected period.";
+  }
+  return " Continuity is not proven from the available movement blocks.";
 }
 
 function formatIdleComparison(event: any, timeZone: string) {

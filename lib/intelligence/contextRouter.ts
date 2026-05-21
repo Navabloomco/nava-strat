@@ -134,6 +134,7 @@ export async function routeContext(
     coordinate_request: detectCoordinateRequest(lower),
     live_status_idle_focus: /\b(idle|idling|excessive idle|stopped|stationary)\b/.test(lower),
     timeline_detail_requested: detectDetailedTimelineRequest(lower),
+    raw_idle_markers_requested: detectRawIdleMarkerRequest(lower),
     timeline_history_requested: timelineHistoryRequest,
     timeline_timeframe: resolveTruckTimelineTimeframe(lower),
     compound_truck_request: compoundTruckRequest,
@@ -804,7 +805,8 @@ function detectTimelineHistoryRequest(lower: string) {
     lower.includes("expand the timeline") ||
     lower.includes("expand timeline") ||
     lower.includes("show the log blocks") ||
-    lower.includes("log blocks");
+    lower.includes("log blocks") ||
+    detectRawIdleMarkerRequest(lower);
   const hasTimeframe =
     lower.includes("today") ||
     lower.includes("yesterday") ||
@@ -971,7 +973,20 @@ function detectDetailedTimelineRequest(lower: string) {
     lower.includes("expand the timeline") ||
     lower.includes("expand timeline") ||
     lower.includes("show the log blocks") ||
-    lower.includes("log blocks")
+    lower.includes("log blocks") ||
+    detectRawIdleMarkerRequest(lower)
+  );
+}
+
+function detectRawIdleMarkerRequest(lower: string) {
+  return (
+    lower.includes("show every idle marker") ||
+    lower.includes("list every idle marker") ||
+    lower.includes("list all idle markers") ||
+    lower.includes("list all idle alerts") ||
+    lower.includes("show all idle alerts") ||
+    lower.includes("raw idle markers") ||
+    lower.includes("raw idle alerts")
   );
 }
 

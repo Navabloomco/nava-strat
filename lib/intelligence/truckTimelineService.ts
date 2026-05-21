@@ -152,7 +152,7 @@ export async function buildTruckTimelineIntelligence(input: TimelineInput) {
     supabaseAdmin
       .from("telemetry_events")
       .select(
-        "truck_id, event_type, severity, location_name, latitude, longitude, created_at, started_at, duration_minutes, context_label, context_type"
+        "truck_id, event_type, severity, location_name, latitude, longitude, created_at, started_at, ended_at, duration_minutes, context_label, context_type"
       )
       .eq("company_id", input.companyId)
       .eq("truck_id", canonicalTruckId)
@@ -238,6 +238,7 @@ export async function buildTruckTimelineIntelligence(input: TimelineInput) {
       }),
     }))
   );
+  const idleAlertWindows = buildIdleAlertWindows(idleEventComparisons, rawBlocks);
   const notableStops = hydratedBlocks
     .filter((block) => block.state === "stationary" && Number(block.duration_minutes || 0) >= SHORT_STOP_MINUTES)
     .map((block) => ({
@@ -426,6 +427,7 @@ export async function buildTruckTimelineIntelligence(input: TimelineInput) {
     motion_blocks: hydratedBlocks,
     notable_stops: notableStops,
     idle_events: idleEventComparisons.slice(0, 20),
+    idle_alert_windows: idleAlertWindows.slice(0, 12),
     continuity: {
       continuous_all_day_idle_supported: continuousIdleSupported,
       historical_idle_markers_broken_by_movement: hasBrokenIdleMarkers,
@@ -658,6 +660,7 @@ function compareIdleEventToMotionBlocks(event: any, blocks: TimelineBlock[], lat
     severity: event.severity || null,
     created_at: event.created_at || null,
     started_at: event.started_at || null,
+    ended_at: event.ended_at || null,
     duration_minutes: event.duration_minutes ?? null,
     location_name: event.location_name || null,
     context_label: event.context_label || null,
@@ -676,6 +679,221 @@ function compareIdleEventToMotionBlocks(event: any, blocks: TimelineBlock[], lat
     location_distance_km: roundNumber(locationDistanceKm),
     classification,
   };
+}
+
+function buildIdleAlertWindows(events: any[], blocks: TimelineBlock[]) {
+  const sortedEvents = (events || [])
+    .slice()
+    .sort((a, b) => eventTimestampMillis(a) - eventTimestampMillis(b));
+  const draftWindows: any[] = [];
+
+  for (const event of sortedEvents) {
+    const eventTime = eventTimestampMillis(event);
+    if (!Number.isFinite(eventTime)) continue;
+
+    const lastWindow = draftWindows[draftWindows.length - 1];
+    if (lastWindow && canJoinIdleAlertWindow(lastWindow, event)) {
+      lastWindow._markers.push(event);
+      lastWindow.last_marker_at = event.started_at || event.created_at || lastWindow.last_marker_at;
+      lastWindow.last_marker_ms = eventTime;
+      continue;
+    }
+
+    draftWindows.push({
+      _markers: [event],
+      event_type: normalizeIdleEventType(event.event_type),
+      continuity_status: String(event.classification || "continuity_unknown"),
+      location_group_key: idleEventLocationGroupKey(event),
+      location_resolution: event.location_resolution || null,
+      geofence_match: event.geofence_match || null,
+      first_marker_at: event.started_at || event.created_at || null,
+      last_marker_at: event.started_at || event.created_at || null,
+      first_marker_ms: eventTime,
+      last_marker_ms: eventTime,
+    });
+  }
+
+  return draftWindows.map((window) => finalizeIdleAlertWindow(window, blocks));
+}
+
+function canJoinIdleAlertWindow(window: any, event: any) {
+  const eventTime = eventTimestampMillis(event);
+  const gapMinutes = Number.isFinite(eventTime)
+    ? (eventTime - Number(window.last_marker_ms || 0)) / 60000
+    : Number.POSITIVE_INFINITY;
+
+  return (
+    normalizeIdleEventType(event.event_type) === window.event_type &&
+    String(event.classification || "continuity_unknown") === window.continuity_status &&
+    gapMinutes >= 0 &&
+    gapMinutes <= 15 &&
+    idleEventLocationsCanGroup(window._markers[window._markers.length - 1], event)
+  );
+}
+
+function idleEventLocationsCanGroup(first: any, second: any) {
+  const firstKey = idleEventLocationGroupKey(first);
+  const secondKey = idleEventLocationGroupKey(second);
+  if (firstKey && firstKey === secondKey) return true;
+  if (firstKey === "unresolved" && secondKey === "unresolved") return true;
+  const distanceKm = distanceBetweenPointsKm(first, second);
+  return distanceKm !== null && distanceKm <= 0.5;
+}
+
+function finalizeIdleAlertWindow(window: any, blocks: TimelineBlock[]) {
+  const markers = window._markers || [];
+  const markerCount = markers.length;
+  const firstMarkerMs = Number(window.first_marker_ms);
+  const lastMarkerMs = Number(window.last_marker_ms);
+  const markerSpanMinutes =
+    Number.isFinite(firstMarkerMs) && Number.isFinite(lastMarkerMs)
+      ? Math.max(0, Math.round((lastMarkerMs - firstMarkerMs) / 60000))
+      : null;
+  const movementAfterWindow = validateMovementAfterEvent(
+    findMovementAfter(blocks, lastMarkerMs),
+    lastMarkerMs
+  );
+  const eventBounds = estimateDurationFromEventBounds(markers, firstMarkerMs, movementAfterWindow);
+  const stationaryBounds = estimateDurationFromStationaryBlock(markers, blocks, firstMarkerMs, lastMarkerMs);
+  const movementBounds =
+    movementAfterWindow?.movement_after_at && Number.isFinite(firstMarkerMs)
+      ? {
+          minutes: minutesBetween(window.first_marker_at, movementAfterWindow.movement_after_at),
+          basis: "movement_resume",
+        }
+      : null;
+  const alertSpan =
+    markerSpanMinutes !== null
+      ? {
+          minutes: markerSpanMinutes,
+          basis: "alert_span",
+        }
+      : null;
+  const duration =
+    eventBounds ||
+    stationaryBounds ||
+    movementBounds ||
+    alertSpan ||
+    { minutes: null, basis: "unknown" };
+  const status = movementAfterWindow
+    ? "ended_by_later_movement"
+    : markers.some((event: any) => event.classification === "possibly_current_same_location")
+      ? "may_relate_to_current_stop"
+      : markers.some((event: any) => event.classification === "no_movement_after_event_but_not_confirmed_current")
+        ? "no_later_movement_found"
+        : "continuity_unknown";
+
+  return {
+    event_type: window.event_type,
+    first_marker_at: window.first_marker_at,
+    last_marker_at: window.last_marker_at,
+    marker_count: markerCount,
+    location_resolution: window.location_resolution || null,
+    geofence_match: window.geofence_match || null,
+    location_group_key: window.location_group_key || "unresolved",
+    continuity_status: window.continuity_status,
+    status,
+    operational_duration_minutes: duration.minutes,
+    duration_basis: duration.basis,
+    alert_span_minutes: markerSpanMinutes,
+    movement_after_window_at:
+      movementAfterWindow?.movement_after_at || movementAfterWindow?.start_at || null,
+    movement_after_window_block: movementAfterWindow
+      ? {
+          block_index: movementAfterWindow.index,
+          start_at: movementAfterWindow.start_at,
+          end_at: movementAfterWindow.end_at,
+          max_speed: movementAfterWindow.max_speed,
+        }
+      : null,
+    repeated_provider_duration_values: hasRepeatedProviderDurationValues(markers),
+  };
+}
+
+function estimateDurationFromEventBounds(markers: any[], firstMarkerMs: number, movementAfterWindow: any) {
+  if (!Number.isFinite(firstMarkerMs)) return null;
+  if (markers.length > 1 && hasRepeatedProviderDurationValues(markers)) return null;
+  const endedAtValues = markers
+    .map((event) => event?.ended_at)
+    .filter(Boolean)
+    .map((value) => ({ value, ms: new Date(value).getTime() }))
+    .filter((item) => Number.isFinite(item.ms) && item.ms > firstMarkerMs)
+    .sort((a, b) => b.ms - a.ms);
+  const latestEndedAt = endedAtValues[0] || null;
+  if (!latestEndedAt) return null;
+
+  const movementMs = new Date(
+    movementAfterWindow?.movement_after_at || movementAfterWindow?.start_at || 0
+  ).getTime();
+  if (Number.isFinite(movementMs) && latestEndedAt.ms > movementMs + 60000) return null;
+  const durationMinutes = Math.round((latestEndedAt.ms - firstMarkerMs) / 60000);
+  if (durationMinutes <= 0 || durationMinutes > 24 * 60) return null;
+  return {
+    minutes: durationMinutes,
+    basis: "event_bounds",
+  };
+}
+
+function estimateDurationFromStationaryBlock(
+  markers: any[],
+  blocks: TimelineBlock[],
+  firstMarkerMs: number,
+  lastMarkerMs: number
+) {
+  if (!Number.isFinite(firstMarkerMs) || !Number.isFinite(lastMarkerMs)) return null;
+  const nearbyIndex = markers.find((event) => event.nearby_block_index !== null)?.nearby_block_index;
+  const block =
+    blocks.find((item) => item.index === nearbyIndex && item.state === "stationary") ||
+    blocks.find((item) => {
+      if (item.state !== "stationary") return false;
+      const start = new Date(item.start_at || 0).getTime();
+      const end = new Date(item.end_at || 0).getTime();
+      return Number.isFinite(start) && Number.isFinite(end) && start <= firstMarkerMs && end >= lastMarkerMs;
+    });
+  if (!block?.start_at || !block?.end_at) return null;
+  const minutes = minutesBetween(block.start_at, block.end_at);
+  if (minutes === null || minutes <= 0) return null;
+  return {
+    minutes,
+    basis: "stationary_block",
+  };
+}
+
+function hasRepeatedProviderDurationValues(markers: any[]) {
+  const values = markers
+    .map((event) => event?.duration_minutes)
+    .filter((value) => value !== null && value !== undefined)
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value));
+  return values.length > 1 && new Set(values).size === 1;
+}
+
+function normalizeIdleEventType(value: any) {
+  const type = String(value || "").trim().toLowerCase();
+  if (type === "excessive_idle") return "excessive_idle";
+  if (type === "idle") return "idle";
+  return type || "idle";
+}
+
+function idleEventLocationGroupKey(event: any) {
+  if (event?.geofence_match?.id) return `geofence:${event.geofence_match.id}`;
+  if (event?.geofence_match?.name) return `geofence:${cleanLocationKey(event.geofence_match.name)}`;
+  const resolved = event?.location_resolution;
+  if (resolved?.display_label && resolved.confidence_source !== "coordinates_only") {
+    return `resolved:${cleanLocationKey(resolved.display_label)}`;
+  }
+  if (event?.location_name) return `provider:${cleanLocationKey(event.location_name)}`;
+  return "unresolved";
+}
+
+function cleanLocationKey(value: any) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/^(near|inside|at)\s+/i, "")
+    .split(",")[0]
+    .replace(/\babout\s+\d+(?:\.\d+)?\s*km\b.*$/i, "")
+    .replace(/[^a-z0-9]+/g, "")
+    .slice(0, 80);
 }
 
 function validateMovementAfterEvent(movement: any, eventTime: number) {
