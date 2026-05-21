@@ -46,6 +46,30 @@ type ResolveCompanyResult =
     };
 
 const USERNAME_OVERRIDE_REDACTION = "__configured__";
+const CUSTOM_API_PROVIDER_MODE = "custom_api";
+
+const CUSTOM_AUTH_METHODS = new Set([
+  "none",
+  "api_key_header",
+  "bearer_token",
+  "basic",
+  "post_login",
+]);
+
+const CUSTOM_CAPABILITY_OPTIONS: Record<string, string> = {
+  not_sure: "UNKNOWN",
+  location_only: "GPS_ONLY",
+  location_ignition: "GPS_WITH_IGNITION",
+  engine: "CAN_BUS",
+  tank: "FUEL_ROD",
+};
+
+const CUSTOM_REQUIRED_MAPPING_KEYS = [
+  "truck",
+  "latitude",
+  "longitude",
+  "recorded_at",
+];
 
 function getProviderCapabilities(roles: string[], isPlatformOwner: boolean) {
   const normalizedRoles = new Set(roles.map((role) => role.toLowerCase()));
@@ -232,6 +256,485 @@ function originFromUrl(url: string | null) {
   }
 }
 
+function buildCustomApiProviderConfig(input: any) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return { error: "Custom provider details are required." };
+  }
+
+  const providerName = safeShortText(input.provider_name, 120);
+  const providerTimezone = sanitizeProviderTimezone(input.provider_timezone);
+  const providerWebsite: any = optionalPublicHttpsUrl(
+    input.provider_website,
+    "Provider website"
+  );
+  const endpointUrl: any = validatePublicHttpsUrl(
+    input.endpoint_url,
+    "Fleet/current location endpoint"
+  );
+  const method = normalizeHttpMethod(input.http_method);
+  const rowPath: any = validateProviderPath(input.row_path, "Row path / data group");
+  const authMethod = String(input.auth_method || "none").trim().toLowerCase();
+  const fieldMapping: any = buildCustomFieldMapping(input.field_mapping);
+  const capability = customCapabilityFromChoice(input.capability_declaration);
+
+  if (!providerName) return { error: "Provider name is required." };
+  if (providerWebsite.error) return { error: providerWebsite.error };
+  if (endpointUrl.error) return { error: endpointUrl.error };
+  if (!method) return { error: "HTTP method must be GET or POST." };
+  if (rowPath.error) return { error: rowPath.error };
+  if (!CUSTOM_AUTH_METHODS.has(authMethod)) {
+    return { error: "Choose a supported authentication method." };
+  }
+  if (fieldMapping.error) return { error: fieldMapping.error };
+  const capabilityMappingError = validateCapabilityMapping(
+    capability,
+    fieldMapping.mapping
+  );
+  if (capabilityMappingError) return { error: capabilityMappingError };
+
+  const requestBodyResult: any = parseCustomRequestBody(
+    input.request_body,
+    method
+  );
+  if (requestBodyResult.error) return { error: requestBodyResult.error };
+
+  const authResult: any = buildCustomAuthConfig(input, authMethod);
+  if (authResult.error) return { error: authResult.error };
+
+  const supportedSignals = buildCustomSupportedSignals(
+    fieldMapping.mapping,
+    capability
+  );
+  const endpoint = endpointUrl.url as string;
+  const websiteUrl = providerWebsite.url || null;
+  const fleetConfig = {
+    fleet_url: endpoint,
+    method,
+    vehicle_paths: [rowPath.path],
+    payload: requestBodyResult.payload,
+    provider_timezone: providerTimezone,
+    self_serve_custom_api: true,
+    api_key_header: authResult.api_key_header || undefined,
+    capability_profile: {
+      default_capability: capability,
+      supported_signals: supportedSignals,
+      provider_timezone: providerTimezone,
+      source_signal_notes: {
+        onboarding_source: "self_serve_custom_api",
+        verification_note:
+          "Customer-declared capability. Test Connection must verify meaningful signals before high-stakes conclusions.",
+      },
+    },
+    supported_signals: supportedSignals,
+    source_signal_notes: {
+      onboarding_source: "self_serve_custom_api",
+      provider_website: websiteUrl,
+    },
+  };
+
+  return {
+    config: {
+      provider_name: providerName,
+      provider_type: "custom_api",
+      auth_type: authResult.auth_type,
+      auth_config: authResult.auth_config,
+      fleet_config: removeUndefinedKeys(fleetConfig),
+      field_mapping: fieldMapping.mapping,
+      capability_profile: {
+        default_capability: capability,
+        supported_signals: supportedSignals,
+        provider_timezone: providerTimezone,
+        source_signal_notes: {
+          onboarding_source: "self_serve_custom_api",
+          provider_website: websiteUrl,
+          verification_note:
+            "Capability was declared during custom API setup and remains subject to connection-test signal checks.",
+        },
+      },
+      supported_signals: supportedSignals,
+      provider_timezone: providerTimezone,
+      source_signal_notes: {
+        onboarding_source: "self_serve_custom_api",
+        provider_website: websiteUrl,
+        capability_warning:
+          "Engine and tank signals must be confirmed as real sensor values, not dashboard placeholders.",
+      },
+      base_url: originFromUrl(endpoint),
+      login_url: authResult.login_url,
+      fleet_url: endpoint,
+      username: authResult.username,
+      api_key: authResult.api_key,
+      password: authResult.password,
+      bearer_token: authResult.bearer_token,
+    },
+  };
+}
+
+function buildCustomAuthConfig(input: any, authMethod: string) {
+  if (authMethod === "none") {
+    return {
+      auth_type: "NONE",
+      auth_config: {},
+      login_url: null,
+      username: null,
+      api_key: null,
+      password: null,
+      bearer_token: null,
+    };
+  }
+
+  if (authMethod === "api_key_header") {
+    const apiKey = safeCredential(input.api_key, 2000);
+    const headerName = safeHeaderName(input.api_key_header || "x-api-key");
+    if (!apiKey) return { error: "API key is required." };
+    if (!headerName) return { error: "API key header name is invalid." };
+    return {
+      auth_type: "API_KEY",
+      auth_config: {},
+      login_url: null,
+      username: null,
+      api_key: apiKey,
+      password: null,
+      bearer_token: null,
+      api_key_header: headerName,
+    };
+  }
+
+  if (authMethod === "bearer_token") {
+    const token = safeCredential(input.bearer_token, 4000);
+    if (!token) return { error: "Bearer token is required." };
+    return {
+      auth_type: "BEARER",
+      auth_config: {},
+      login_url: null,
+      username: null,
+      api_key: null,
+      password: null,
+      bearer_token: token,
+    };
+  }
+
+  if (authMethod === "basic") {
+    const username = safeCredential(input.username, 255);
+    const password = safeCredential(input.password, 4000);
+    if (!username || !password) {
+      return { error: "Basic username and password are required." };
+    }
+    return {
+      auth_type: "BASIC_AUTH",
+      auth_config: {},
+      login_url: null,
+      username,
+      api_key: null,
+      password,
+      bearer_token: null,
+    };
+  }
+
+  const loginUrl = validatePublicHttpsUrl(input.login_url, "Login endpoint");
+  const tokenPath: any = validateProviderPath(input.login_token_path, "Login token path");
+  const username = safeCredential(input.username, 255);
+  const password = safeCredential(input.password, 4000);
+  const usernameField: any = validateProviderPath(
+    input.login_username_field || "username",
+    "Login username field"
+  );
+  const passwordField: any = validateProviderPath(
+    input.login_secret_field || "password",
+    "Login password field"
+  );
+
+  if (loginUrl.error) return { error: loginUrl.error };
+  if (tokenPath.error) return { error: tokenPath.error };
+  if (usernameField.error) return { error: usernameField.error };
+  if (passwordField.error) return { error: passwordField.error };
+  if (!username || !password) {
+    return { error: "Login username and password are required." };
+  }
+
+  return {
+    auth_type: "POST_LOGIN",
+    auth_config: {
+      method: "POST",
+      login_url: loginUrl.url,
+      payload: {
+        [usernameField.path]: "{{username}}",
+        [passwordField.path]: "{{password}}",
+      },
+      token_paths: [tokenPath.path],
+    },
+    login_url: loginUrl.url,
+    username,
+    api_key: null,
+    password,
+    bearer_token: null,
+  };
+}
+
+function buildCustomFieldMapping(input: any) {
+  const source = input && typeof input === "object" && !Array.isArray(input) ? input : {};
+  const mapping: Record<string, string> = {};
+  const aliases: Record<string, string> = {
+    vehicle: "truck",
+    timestamp: "recorded_at",
+    ignition: "ignition_on",
+    rpm: "engine_rpm",
+    odometer: "odometer_km",
+  };
+
+  for (const key of [
+    "truck",
+    "vehicle",
+    "latitude",
+    "longitude",
+    "recorded_at",
+    "timestamp",
+    "speed",
+    "location_label",
+    "fuel_level",
+    "ignition_on",
+    "ignition",
+    "engine_rpm",
+    "rpm",
+    "odometer",
+  ]) {
+    const target = aliases[key] || key;
+    const value = source[key];
+    if (value === undefined || value === null || String(value).trim() === "") continue;
+    const path: any = validateProviderPath(value, `${target} field`);
+    if (path.error) return { error: path.error };
+    mapping[target] = path.path;
+  }
+
+  for (const key of CUSTOM_REQUIRED_MAPPING_KEYS) {
+    if (!mapping[key]) {
+      return { error: `${fieldLabel(key)} mapping is required.` };
+    }
+  }
+
+  return { mapping };
+}
+
+function buildCustomSupportedSignals(
+  mapping: Record<string, string>,
+  capability: string
+) {
+  const signals: Record<string, boolean> = {
+    latitude: true,
+    longitude: true,
+    recorded_at: true,
+  };
+  if (mapping.speed) signals.speed = true;
+  if (mapping.location_label) signals.location_label = true;
+  if (mapping.fuel_level) signals.fuel_level = true;
+  if (mapping.ignition_on) signals.ignition_on = true;
+  if (capability === "CAN_BUS") {
+    if (mapping.engine_rpm) signals.engine_rpm = true;
+  }
+  if (capability === "FUEL_ROD") {
+    if (mapping.fuel_level) signals.fuel_volume_liters = true;
+  }
+  if (mapping.odometer_km) signals.odometer_km = true;
+  return signals;
+}
+
+function validateCapabilityMapping(
+  capability: string,
+  mapping: Record<string, string>
+) {
+  if (capability === "GPS_WITH_IGNITION" && !mapping.ignition_on) {
+    return "Ignition-aware setup requires an ignition field mapping.";
+  }
+  if (capability === "CAN_BUS" && !mapping.engine_rpm) {
+    return "Engine data setup requires an RPM field mapping.";
+  }
+  if (capability === "FUEL_ROD" && !mapping.fuel_level) {
+    return "Tank fuel sensor setup requires a fuel/tank level field mapping.";
+  }
+  return null;
+}
+
+function customCapabilityFromChoice(value: any) {
+  const key = String(value || "not_sure").trim().toLowerCase();
+  return CUSTOM_CAPABILITY_OPTIONS[key] || "UNKNOWN";
+}
+
+function parseCustomRequestBody(value: any, method: string) {
+  if (value === undefined || value === null || String(value).trim() === "") {
+    return { payload: {} };
+  }
+  if (method !== "POST") {
+    return { error: "Request body is only supported for POST endpoints." };
+  }
+
+  let parsed: any;
+  if (typeof value === "string") {
+    try {
+      parsed = JSON.parse(value);
+    } catch {
+      return { error: "Request body must be valid JSON." };
+    }
+  } else {
+    parsed = value;
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return { error: "Request body must be a JSON object." };
+  }
+  const sensitiveKey = findSensitiveKey(parsed);
+  if (sensitiveKey) {
+    return {
+      error: `Request body cannot contain credential-like key '${sensitiveKey}'. Use the auth fields instead.`,
+    };
+  }
+  return { payload: sanitizeSafeConfigObject(parsed) };
+}
+
+function validatePublicHttpsUrl(value: any, label: string) {
+  const text = String(value || "").trim();
+  if (!text) return { error: `${label} URL is required.` };
+  if (text.length > 2000) return { error: `${label} URL is too long.` };
+
+  let parsed: URL;
+  try {
+    parsed = new URL(text);
+  } catch {
+    return { error: `${label} URL must be valid.` };
+  }
+
+  if (parsed.protocol !== "https:") {
+    return { error: `${label} URL must use https.` };
+  }
+  if (isBlockedNetworkHost(parsed.hostname)) {
+    return {
+      error: `${label} URL cannot target localhost, private, link-local, or metadata network addresses.`,
+    };
+  }
+  return { url: parsed.toString() };
+}
+
+function optionalPublicHttpsUrl(value: any, label: string) {
+  const text = String(value || "").trim();
+  if (!text) return { url: null };
+  return validatePublicHttpsUrl(text, label);
+}
+
+function isBlockedNetworkHost(hostname: string) {
+  const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  if (
+    host === "localhost" ||
+    host === "0.0.0.0" ||
+    host === "127.0.0.1" ||
+    host === "::1" ||
+    host === "169.254.169.254"
+  ) {
+    return true;
+  }
+
+  const ipv4 = parseIpv4(host);
+  if (ipv4) {
+    const [a, b] = ipv4;
+    return (
+      a === 0 ||
+      a === 10 ||
+      a === 127 ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168) ||
+      (a === 169 && b === 254)
+    );
+  }
+
+  if (host.includes(":")) {
+    return (
+      host.startsWith("fc") ||
+      host.startsWith("fd") ||
+      host.startsWith("fe80")
+    );
+  }
+
+  return host.endsWith(".local");
+}
+
+function parseIpv4(hostname: string) {
+  const parts = hostname.split(".");
+  if (parts.length !== 4) return null;
+  const numbers = parts.map((part) => Number(part));
+  if (numbers.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
+    return null;
+  }
+  return numbers;
+}
+
+function validateProviderPath(value: any, label: string) {
+  const text = String(value || "").trim();
+  if (!text) return { error: `${label} is required.` };
+  if (text.length > 160) return { error: `${label} is too long.` };
+  if (/https?:\/\//i.test(text) || /[{}]/.test(text)) {
+    return { error: `${label} must be a provider key/path, not a URL or template.` };
+  }
+  return { path: text };
+}
+
+function normalizeHttpMethod(value: any) {
+  const method = String(value || "GET").trim().toUpperCase();
+  return method === "GET" || method === "POST" ? method : "";
+}
+
+function safeHeaderName(value: any) {
+  const text = String(value || "").trim();
+  if (!text || text.length > 80) return "";
+  return /^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/.test(text) ? text : "";
+}
+
+function safeCredential(value: any, maxLength: number) {
+  const text = String(value || "").trim();
+  return text && text.length <= maxLength ? text : "";
+}
+
+function safeShortText(value: any, maxLength: number) {
+  const text = String(value || "").trim();
+  return text && text.length <= maxLength ? text : "";
+}
+
+function removeUndefinedKeys(value: any): any {
+  if (Array.isArray(value)) return value.map(removeUndefinedKeys);
+  if (!value || typeof value !== "object") return value;
+  const output: Record<string, any> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (entry === undefined) continue;
+    output[key] = removeUndefinedKeys(entry);
+  }
+  return output;
+}
+
+function findSensitiveKey(value: any): string | null {
+  if (!value || typeof value !== "object") return null;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const nested = findSensitiveKey(item);
+      if (nested) return nested;
+    }
+    return null;
+  }
+
+  for (const [key, entry] of Object.entries(value)) {
+    if (isSensitiveCapabilityKey(key)) return key;
+    const nested = findSensitiveKey(entry);
+    if (nested) return nested;
+  }
+  return null;
+}
+
+function fieldLabel(key: string) {
+  const labels: Record<string, string> = {
+    truck: "Vehicle / registration field",
+    latitude: "Latitude field",
+    longitude: "Longitude field",
+    recorded_at: "Timestamp field",
+  };
+  return labels[key] || key;
+}
+
 async function resolveCompany(
   req: Request,
   requestedCompanyId?: string | null
@@ -391,7 +894,19 @@ export async function POST(req: Request) {
       );
     }
 
-    const providerTemplate: any = body.template_id
+    const customApiResult =
+      body.provider_mode === CUSTOM_API_PROVIDER_MODE
+        ? buildCustomApiProviderConfig(body.custom_provider)
+        : null;
+    if (customApiResult?.error) {
+      return noStoreJson(
+        { success: false, error: customApiResult.error },
+        { status: 400 }
+      );
+    }
+    const customApiConfig: any = customApiResult?.config || null;
+
+    const providerTemplate: any = !customApiConfig && body.template_id
       ? await loadProviderTemplateForCreate(
           body.template_id,
           resolved.capabilities.can_edit_advanced_provider_config
@@ -400,6 +915,7 @@ export async function POST(req: Request) {
 
     if (
       body.template_id &&
+      !customApiConfig &&
       !providerTemplate &&
       !resolved.capabilities.can_edit_advanced_provider_config
     ) {
@@ -414,43 +930,51 @@ export async function POST(req: Request) {
 
     if (
       !providerTemplate &&
+      !customApiConfig &&
       !resolved.capabilities.can_edit_advanced_provider_config
     ) {
       return noStoreJson(
         {
           success: false,
-          error: "Provider template is required for self-serve setup.",
+          error: "Choose a supported provider, custom API provider, or request assisted setup.",
         },
         { status: 400 }
       );
     }
 
-    const effectiveAuthConfig =
-      resolved.capabilities.can_edit_advanced_provider_config
+    const effectiveAuthConfig = customApiConfig
+      ? customApiConfig.auth_config
+      : resolved.capabilities.can_edit_advanced_provider_config
         ? body.auth_config ?? providerTemplate?.auth_config ?? null
         : providerTemplate?.auth_config ?? null;
-    const effectiveFleetConfig =
-      resolved.capabilities.can_edit_advanced_provider_config
+    const effectiveFleetConfig = customApiConfig
+      ? customApiConfig.fleet_config
+      : resolved.capabilities.can_edit_advanced_provider_config
         ? body.fleet_config ?? providerTemplate?.fleet_config ?? null
         : providerTemplate?.fleet_config ?? null;
-    const effectiveFieldMapping =
-      resolved.capabilities.can_edit_advanced_provider_config
+    const effectiveFieldMapping = customApiConfig
+      ? customApiConfig.field_mapping
+      : resolved.capabilities.can_edit_advanced_provider_config
         ? body.field_mapping ?? providerTemplate?.field_mapping ?? {}
         : providerTemplate?.field_mapping ?? {};
-    const effectiveCapabilityProfile =
-      resolved.capabilities.can_edit_advanced_provider_config
+    const effectiveCapabilityProfile = customApiConfig
+      ? customApiConfig.capability_profile
+      : resolved.capabilities.can_edit_advanced_provider_config
         ? body.capability_profile ?? providerTemplate?.capability_profile ?? effectiveFleetConfig?.capability_profile ?? {}
         : providerTemplate?.capability_profile ?? effectiveFleetConfig?.capability_profile ?? {};
-    const effectiveSupportedSignals =
-      resolved.capabilities.can_edit_advanced_provider_config
+    const effectiveSupportedSignals = customApiConfig
+      ? customApiConfig.supported_signals
+      : resolved.capabilities.can_edit_advanced_provider_config
         ? body.supported_signals ?? providerTemplate?.supported_signals ?? effectiveFleetConfig?.supported_signals ?? {}
         : providerTemplate?.supported_signals ?? effectiveFleetConfig?.supported_signals ?? {};
-    const effectiveSourceSignalNotes =
-      resolved.capabilities.can_edit_advanced_provider_config
+    const effectiveSourceSignalNotes = customApiConfig
+      ? customApiConfig.source_signal_notes
+      : resolved.capabilities.can_edit_advanced_provider_config
         ? body.source_signal_notes ?? providerTemplate?.source_signal_notes ?? {}
         : providerTemplate?.source_signal_notes ?? {};
     const loginUrl = String(
-      (resolved.capabilities.can_edit_advanced_provider_config
+      customApiConfig?.login_url ||
+        (resolved.capabilities.can_edit_advanced_provider_config
         ? body.login_url
         : null) ||
         providerTemplate?.default_login_url ||
@@ -458,7 +982,8 @@ export async function POST(req: Request) {
         ""
     ).trim() || null;
     const fleetUrl = String(
-      (resolved.capabilities.can_edit_advanced_provider_config
+      customApiConfig?.fleet_url ||
+        (resolved.capabilities.can_edit_advanced_provider_config
         ? body.fleet_url
         : null) ||
         providerTemplate?.default_fleet_url ||
@@ -466,7 +991,8 @@ export async function POST(req: Request) {
         ""
     ).trim() || null;
     const baseUrl = String(
-      (resolved.capabilities.can_edit_advanced_provider_config
+      customApiConfig?.base_url ||
+        (resolved.capabilities.can_edit_advanced_provider_config
         ? body.base_url
         : null) ||
         providerTemplate?.base_url ||
@@ -477,12 +1003,22 @@ export async function POST(req: Request) {
     ).trim();
 
     const providerName = String(
-      body.provider_name || body.name || providerTemplate?.display_name || ""
+      customApiConfig?.provider_name ||
+        body.provider_name ||
+        body.name ||
+        providerTemplate?.display_name ||
+        ""
     ).trim();
     const providerType = String(
-      body.provider_type || body.provider_slug || providerTemplate?.slug || ""
+      customApiConfig?.provider_type ||
+        body.provider_type ||
+        body.provider_slug ||
+        providerTemplate?.slug ||
+        ""
     ).trim();
-    const authType = String(body.auth_type || providerTemplate?.auth_type || "").trim();
+    const authType = String(
+      customApiConfig?.auth_type || body.auth_type || providerTemplate?.auth_type || ""
+    ).trim();
 
     if (!providerName || !providerType || !baseUrl || !authType) {
       return noStoreJson(
@@ -525,12 +1061,30 @@ export async function POST(req: Request) {
       capability_profile: sanitizeOptionalObject(effectiveCapabilityProfile),
       supported_signals: sanitizeOptionalObject(effectiveSupportedSignals),
       provider_timezone: sanitizeProviderTimezone(
-        body.provider_timezone ||
+        customApiConfig?.provider_timezone ||
+          body.provider_timezone ||
           providerTemplate?.provider_timezone ||
           effectiveFleetConfig?.provider_timezone
       ),
       source_signal_notes: sanitizeOptionalObject(effectiveSourceSignalNotes),
     };
+
+    insertPayload.username =
+      customApiConfig?.username !== undefined
+        ? customApiConfig.username
+        : insertPayload.username;
+    insertPayload.api_key =
+      customApiConfig?.api_key !== undefined
+        ? customApiConfig.api_key
+        : insertPayload.api_key;
+    insertPayload.password =
+      customApiConfig?.password !== undefined
+        ? customApiConfig.password
+        : insertPayload.password;
+    insertPayload.bearer_token =
+      customApiConfig?.bearer_token !== undefined
+        ? customApiConfig.bearer_token
+        : insertPayload.bearer_token;
 
     let { data: provider, error } = await supabaseAdmin
       .from("tracking_providers")

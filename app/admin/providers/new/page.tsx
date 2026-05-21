@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import Link from "next/link";
 import { supabase } from "../../../../lib/supabase";
 
@@ -20,6 +20,38 @@ type CredentialField = {
 };
 
 const REQUEST_SETUP_OPTION = "__request_provider_setup__";
+const CUSTOM_API_OPTION = "__custom_api_provider__";
+
+const INITIAL_CUSTOM_PROVIDER_FORM = {
+  provider_name: "",
+  provider_website: "",
+  provider_timezone: "Africa/Nairobi",
+  auth_method: "api_key_header",
+  api_key_header: "x-api-key",
+  api_key: "",
+  bearer_token: "",
+  username: "",
+  password: "",
+  login_url: "",
+  login_token_path: "",
+  login_username_field: "username",
+  login_secret_field: "password",
+  endpoint_url: "",
+  http_method: "GET",
+  row_path: "",
+  request_body: "",
+  vehicle_field: "",
+  latitude_field: "",
+  longitude_field: "",
+  timestamp_field: "",
+  speed_field: "",
+  location_label_field: "",
+  fuel_level_field: "",
+  ignition_field: "",
+  rpm_field: "",
+  odometer_field: "",
+  capability_declaration: "not_sure",
+};
 
 export default function NewProviderPage() {
   const [templates, setTemplates] = useState<any[]>([]);
@@ -52,6 +84,7 @@ export default function NewProviderPage() {
     access_type_known: "unsure",
     notes: "",
   });
+  const [customForm, setCustomForm] = useState(INITIAL_CUSTOM_PROVIDER_FORM);
 
   useEffect(() => {
     const companyId = companyIdFromLocation();
@@ -117,6 +150,7 @@ export default function NewProviderPage() {
 
   const selectedTemplate = templates.find((t) => t.id === selectedTemplateId);
   const requestSetupSelected = selectedTemplateId === REQUEST_SETUP_OPTION;
+  const customApiSelected = selectedTemplateId === CUSTOM_API_OPTION;
   const publicTemplates = templates.filter((template) => !template.internal_template);
   const internalTemplates = templates.filter((template) => template.internal_template);
   const selectedTemplateIsSetupOnly = Boolean(
@@ -138,6 +172,11 @@ export default function NewProviderPage() {
   }
 
   async function handleCreateProvider() {
+    if (customApiSelected) {
+      await handleCreateCustomProvider();
+      return;
+    }
+
     if (!selectedTemplate) {
       alert("Choose a supported provider first.");
       return;
@@ -267,10 +306,95 @@ export default function NewProviderPage() {
     window.location.href = `/admin/providers${companyQuery(selectedCompanyId)}`;
   }
 
+  function updateCustomForm(patch: Record<string, string>) {
+    setCustomForm((current) => ({ ...current, ...patch }));
+  }
+
+  async function handleCreateCustomProvider() {
+    const validationError = validateCustomProviderForm(customForm);
+    if (validationError) {
+      alert(validationError);
+      return;
+    }
+
+    setSaving(true);
+
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    if (!session?.access_token) {
+      alert("Session expired. Please log in again.");
+      setSaving(false);
+      window.location.href = "/login";
+      return;
+    }
+
+    const res = await fetch("/api/providers", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        provider_mode: "custom_api",
+        custom_provider: {
+          provider_name: customForm.provider_name.trim(),
+          provider_website: customForm.provider_website.trim() || null,
+          provider_timezone: customForm.provider_timezone.trim() || "Africa/Nairobi",
+          auth_method: customForm.auth_method,
+          api_key_header: customForm.api_key_header.trim() || "x-api-key",
+          api_key: customForm.api_key,
+          bearer_token: customForm.bearer_token,
+          username: customForm.username,
+          password: customForm.password,
+          login_url: customForm.login_url.trim(),
+          login_token_path: customForm.login_token_path.trim(),
+          login_username_field:
+            customForm.login_username_field.trim() || "username",
+          login_secret_field:
+            customForm.login_secret_field.trim() || "password",
+          endpoint_url: customForm.endpoint_url.trim(),
+          http_method: customForm.http_method,
+          row_path: customForm.row_path.trim(),
+          request_body: customForm.request_body.trim(),
+          field_mapping: {
+            truck: customForm.vehicle_field.trim(),
+            latitude: customForm.latitude_field.trim(),
+            longitude: customForm.longitude_field.trim(),
+            recorded_at: customForm.timestamp_field.trim(),
+            speed: customForm.speed_field.trim(),
+            location_label: customForm.location_label_field.trim(),
+            fuel_level: customForm.fuel_level_field.trim(),
+            ignition_on: customForm.ignition_field.trim(),
+            engine_rpm: customForm.rpm_field.trim(),
+            odometer: customForm.odometer_field.trim(),
+          },
+          capability_declaration: customForm.capability_declaration,
+        },
+        is_active: false,
+        ...(selectedCompanyId ? { companyId: selectedCompanyId } : {}),
+      }),
+    });
+    const data = await res.json();
+
+    setSaving(false);
+
+    if (!res.ok || !data.success) {
+      alert(`Provider creation failed: ${data.error || "Unknown error"}`);
+      return;
+    }
+
+    alert("Custom provider added inactive. Test the connection before activating sync.");
+    window.location.href = `/admin/providers${companyQuery(selectedCompanyId)}`;
+  }
+
   function handleProviderSelection(value: string) {
     setSelectedTemplateId(value);
     if (value === REQUEST_SETUP_OPTION) {
       setRequestOpen(true);
+    } else {
+      setRequestOpen(false);
     }
   }
 
@@ -382,13 +506,9 @@ export default function NewProviderPage() {
               Back to Provider Vault
             </Link>
           </div>
-        ) : templates.length === 0 ? (
-          <EmptyTemplateState
-            error={loadError}
-            onRequest={() => setRequestOpen(true)}
-          />
         ) : (
           <>
+            {loadError && <div style={errorStyle}>{loadError}</div>}
             <div style={fieldGroup}>
               <label style={labelStyle}>Supported Provider</label>
               <select
@@ -402,8 +522,9 @@ export default function NewProviderPage() {
                     {template.display_name}
                   </option>
                 ))}
+                <option value={CUSTOM_API_OPTION}>Custom API provider</option>
                 <option value={REQUEST_SETUP_OPTION}>
-                  Other provider / Request setup
+                  Request assisted setup
                 </option>
                 {capabilities.can_edit_advanced_provider_config &&
                   internalTemplates.length > 0 && (
@@ -435,6 +556,15 @@ export default function NewProviderPage() {
                 provider and prepare a verified setup path before collecting
                 sensitive credentials.
               </div>
+            )}
+
+            {customApiSelected && (
+              <CustomApiProviderForm
+                form={customForm}
+                updateForm={updateCustomForm}
+                saving={saving}
+                onCreate={handleCreateProvider}
+              />
             )}
 
             {selectedTemplate && (
@@ -489,17 +619,6 @@ export default function NewProviderPage() {
               </>
             )}
           </>
-        )}
-
-        {capabilities.can_add_provider && templates.length === 0 && requestOpen && (
-          <ProviderSetupRequestForm
-            requestSuccess={requestSuccess}
-            requestError={requestError}
-            requestSaving={requestSaving}
-            requestForm={requestForm}
-            setRequestForm={setRequestForm}
-            onSubmit={handleSubmitSetupRequest}
-          />
         )}
       </section>
     </main>
@@ -658,6 +777,60 @@ function capabilityLabel(value: string) {
   return labels[String(value || "UNKNOWN").toUpperCase()] || "Unknown Capability";
 }
 
+function validateCustomProviderForm(form: typeof INITIAL_CUSTOM_PROVIDER_FORM) {
+  if (!form.provider_name.trim()) return "Provider name is required.";
+  if (!form.endpoint_url.trim()) return "Fleet/current location endpoint URL is required.";
+  if (!form.row_path.trim()) return "Row path / data group is required.";
+  if (!form.vehicle_field.trim()) return "Vehicle / registration field is required.";
+  if (!form.latitude_field.trim()) return "Latitude field is required.";
+  if (!form.longitude_field.trim()) return "Longitude field is required.";
+  if (!form.timestamp_field.trim()) return "Timestamp field is required.";
+
+  if (form.http_method === "GET" && form.request_body.trim()) {
+    return "Request body is only supported for POST endpoints.";
+  }
+
+  if (form.http_method === "POST" && form.request_body.trim()) {
+    try {
+      const parsed = JSON.parse(form.request_body);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        return "Request body must be a JSON object.";
+      }
+    } catch {
+      return "Request body must be valid JSON.";
+    }
+  }
+
+  if (form.auth_method === "api_key_header" && !form.api_key.trim()) {
+    return "API key is required.";
+  }
+  if (form.auth_method === "bearer_token" && !form.bearer_token.trim()) {
+    return "Bearer token is required.";
+  }
+  if (form.auth_method === "basic" && (!form.username.trim() || !form.password.trim())) {
+    return "Basic username and password are required.";
+  }
+  if (form.auth_method === "post_login") {
+    if (!form.login_url.trim()) return "Login endpoint URL is required.";
+    if (!form.login_token_path.trim()) return "Login token path is required.";
+    if (!form.username.trim() || !form.password.trim()) {
+      return "Login username and password are required.";
+    }
+  }
+
+  if (form.capability_declaration === "location_ignition" && !form.ignition_field.trim()) {
+    return "Location + ignition setup requires an ignition field mapping.";
+  }
+  if (form.capability_declaration === "engine" && !form.rpm_field.trim()) {
+    return "Engine data setup requires an RPM field mapping.";
+  }
+  if (form.capability_declaration === "tank" && !form.fuel_level_field.trim()) {
+    return "Tank fuel sensor setup requires a fuel/tank level field mapping.";
+  }
+
+  return "";
+}
+
 function getCredentialFields(template: any): CredentialField[] {
   if (Array.isArray(template.required_fields) && template.required_fields.length > 0) {
     return template.required_fields.map((field: any) => ({
@@ -723,6 +896,364 @@ function EmptyTemplateState({
         Provider access details should only be saved after Nava has verified the
         provider connection safely.
       </div>
+    </div>
+  );
+}
+
+function CustomApiProviderForm({
+  form,
+  updateForm,
+  saving,
+  onCreate,
+}: {
+  form: typeof INITIAL_CUSTOM_PROVIDER_FORM;
+  updateForm: (patch: Record<string, string>) => void;
+  saving: boolean;
+  onCreate: () => void;
+}) {
+  const isPost = form.http_method === "POST";
+
+  return (
+    <div style={customProviderStyle}>
+      <div style={customHeaderStyle}>
+        <div>
+          <div style={requestTitleStyle}>Custom API provider</div>
+          <p style={requestCopyStyle}>
+            Use this when your tracking provider gives you API details. The
+            connection is saved inactive, then tested before sync can be
+            activated.
+          </p>
+        </div>
+        <div style={safeBadgeStyle}>Self-serve API setup</div>
+      </div>
+
+      <ProviderWizardSection
+        title="1. Provider identity"
+        copy="Name the tracking system and choose the provider timezone used for timestamp interpretation."
+      >
+        <div style={gridStyle}>
+          <TextField
+            label="Provider name"
+            value={form.provider_name}
+            onChange={(value) => updateForm({ provider_name: value })}
+            required
+          />
+          <TextField
+            label="Provider website optional"
+            value={form.provider_website}
+            onChange={(value) => updateForm({ provider_website: value })}
+            placeholder="https://provider.example"
+          />
+          <TextField
+            label="Provider timezone"
+            value={form.provider_timezone}
+            onChange={(value) => updateForm({ provider_timezone: value })}
+          />
+        </div>
+      </ProviderWizardSection>
+
+      <ProviderWizardSection
+        title="2. Authentication"
+        copy="Credentials are stored server-side only and are not echoed back after save."
+      >
+        <div style={gridStyle}>
+          <div style={fieldGroup}>
+            <label style={labelStyle}>Auth method</label>
+            <select
+              style={inputStyle}
+              value={form.auth_method}
+              onChange={(e) => updateForm({ auth_method: e.target.value })}
+            >
+              <option value="none">No auth / public endpoint</option>
+              <option value="api_key_header">API key header</option>
+              <option value="bearer_token">Bearer token</option>
+              <option value="basic">Basic username/password</option>
+              <option value="post_login">POST login token</option>
+            </select>
+          </div>
+
+          {form.auth_method === "api_key_header" && (
+            <>
+              <TextField
+                label="API key header"
+                value={form.api_key_header}
+                onChange={(value) => updateForm({ api_key_header: value })}
+              />
+              <TextField
+                label="API key"
+                value={form.api_key}
+                onChange={(value) => updateForm({ api_key: value })}
+                secret
+                required
+              />
+            </>
+          )}
+
+          {form.auth_method === "bearer_token" && (
+            <TextField
+              label="Bearer token"
+              value={form.bearer_token}
+              onChange={(value) => updateForm({ bearer_token: value })}
+              secret
+              required
+            />
+          )}
+
+          {(form.auth_method === "basic" || form.auth_method === "post_login") && (
+            <>
+              <TextField
+                label="Username"
+                value={form.username}
+                onChange={(value) => updateForm({ username: value })}
+                required
+              />
+              <TextField
+                label="Password / secret"
+                value={form.password}
+                onChange={(value) => updateForm({ password: value })}
+                secret
+                required
+              />
+            </>
+          )}
+
+          {form.auth_method === "post_login" && (
+            <>
+              <TextField
+                label="Login endpoint URL"
+                value={form.login_url}
+                onChange={(value) => updateForm({ login_url: value })}
+                placeholder="https://api.provider.example/login"
+                required
+              />
+              <TextField
+                label="Login token path"
+                value={form.login_token_path}
+                onChange={(value) => updateForm({ login_token_path: value })}
+                placeholder="data.token"
+                required
+              />
+              <TextField
+                label="Login username field"
+                value={form.login_username_field}
+                onChange={(value) => updateForm({ login_username_field: value })}
+              />
+              <TextField
+                label="Login password field"
+                value={form.login_secret_field}
+                onChange={(value) => updateForm({ login_secret_field: value })}
+              />
+            </>
+          )}
+        </div>
+      </ProviderWizardSection>
+
+      <ProviderWizardSection
+        title="3. Fleet/current location endpoint"
+        copy="This should be the endpoint that returns current vehicle location rows."
+      >
+        <div style={gridStyle}>
+          <TextField
+            label="Endpoint URL"
+            value={form.endpoint_url}
+            onChange={(value) => updateForm({ endpoint_url: value })}
+            placeholder="https://api.provider.example/fleet"
+            required
+          />
+          <div style={fieldGroup}>
+            <label style={labelStyle}>HTTP method</label>
+            <select
+              style={inputStyle}
+              value={form.http_method}
+              onChange={(e) => updateForm({ http_method: e.target.value })}
+            >
+              <option value="GET">GET</option>
+              <option value="POST">POST</option>
+            </select>
+          </div>
+          <TextField
+            label="Row path / data group"
+            value={form.row_path}
+            onChange={(value) => updateForm({ row_path: value })}
+            placeholder="data.vehicles"
+            required
+          />
+        </div>
+
+        {isPost && (
+          <div style={fieldGroupWithTop}>
+            <label style={labelStyle}>Request body optional, JSON object</label>
+            <textarea
+              style={textareaStyle}
+              value={form.request_body}
+              onChange={(e) => updateForm({ request_body: e.target.value })}
+              placeholder='{"fleetId":"example"}'
+            />
+            <div style={helperTextStyle}>
+              Keep credentials out of the request body. Use the authentication
+              fields above for tokens, keys, and passwords.
+            </div>
+          </div>
+        )}
+      </ProviderWizardSection>
+
+      <ProviderWizardSection
+        title="4. Field mapping"
+        copy="Map provider keys into Nava's standard vehicle signals. Use dot paths if the data is nested."
+      >
+        <div style={gridStyle}>
+          <TextField
+            label="Vehicle / registration field"
+            value={form.vehicle_field}
+            onChange={(value) => updateForm({ vehicle_field: value })}
+            placeholder="reg_no"
+            required
+          />
+          <TextField
+            label="Latitude field"
+            value={form.latitude_field}
+            onChange={(value) => updateForm({ latitude_field: value })}
+            placeholder="latitude"
+            required
+          />
+          <TextField
+            label="Longitude field"
+            value={form.longitude_field}
+            onChange={(value) => updateForm({ longitude_field: value })}
+            placeholder="longitude"
+            required
+          />
+          <TextField
+            label="Timestamp field"
+            value={form.timestamp_field}
+            onChange={(value) => updateForm({ timestamp_field: value })}
+            placeholder="recorded_at"
+            required
+          />
+          <TextField
+            label="Speed field optional"
+            value={form.speed_field}
+            onChange={(value) => updateForm({ speed_field: value })}
+            placeholder="speed"
+          />
+          <TextField
+            label="Location label field optional"
+            value={form.location_label_field}
+            onChange={(value) => updateForm({ location_label_field: value })}
+            placeholder="location"
+          />
+          <TextField
+            label="Fuel/tank level field optional"
+            value={form.fuel_level_field}
+            onChange={(value) => updateForm({ fuel_level_field: value })}
+            placeholder="fuelLevel"
+          />
+          <TextField
+            label="Ignition field optional"
+            value={form.ignition_field}
+            onChange={(value) => updateForm({ ignition_field: value })}
+            placeholder="ignition"
+          />
+          <TextField
+            label="RPM field optional"
+            value={form.rpm_field}
+            onChange={(value) => updateForm({ rpm_field: value })}
+            placeholder="rpm"
+          />
+          <TextField
+            label="Odometer field optional"
+            value={form.odometer_field}
+            onChange={(value) => updateForm({ odometer_field: value })}
+            placeholder="odometer"
+          />
+        </div>
+      </ProviderWizardSection>
+
+      <ProviderWizardSection
+        title="5. Signal capability"
+        copy="Declare only signals your provider confirms are real sensor values."
+      >
+        <div style={fieldGroup}>
+          <label style={labelStyle}>What can this provider prove?</label>
+          <select
+            style={inputStyle}
+            value={form.capability_declaration}
+            onChange={(e) =>
+              updateForm({ capability_declaration: e.target.value })
+            }
+          >
+            <option value="not_sure">Not sure</option>
+            <option value="location_only">Location only</option>
+            <option value="location_ignition">Location + ignition</option>
+            <option value="engine">Engine data available</option>
+            <option value="tank">Tank fuel sensor available</option>
+          </select>
+        </div>
+        <div style={warningStyle}>
+          Only select engine or tank signals if your provider confirms these
+          fields are real sensor values, not dashboard placeholders. Test
+          Connection will still verify the observed rows before sync activation.
+        </div>
+      </ProviderWizardSection>
+
+      <button
+        type="button"
+        onClick={onCreate}
+        disabled={saving}
+        style={buttonStyle}
+      >
+        {saving ? "CREATING CUSTOM PROVIDER..." : "CREATE INACTIVE PROVIDER"}
+      </button>
+    </div>
+  );
+}
+
+function ProviderWizardSection({
+  title,
+  copy,
+  children,
+}: {
+  title: string;
+  copy: string;
+  children: ReactNode;
+}) {
+  return (
+    <section style={providerWizardSectionStyle}>
+      <h2 style={providerWizardSectionTitleStyle}>{title}</h2>
+      <p style={providerWizardSectionCopyStyle}>{copy}</p>
+      {children}
+    </section>
+  );
+}
+
+function TextField({
+  label,
+  value,
+  onChange,
+  placeholder,
+  secret = false,
+  required = false,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  secret?: boolean;
+  required?: boolean;
+}) {
+  return (
+    <div style={fieldGroup}>
+      <label style={labelStyle}>
+        {label}
+        {required ? " *" : ""}
+      </label>
+      <input
+        type={secret ? "password" : "text"}
+        style={inputStyle}
+        value={value}
+        placeholder={placeholder}
+        onChange={(e) => onChange(e.target.value)}
+      />
     </div>
   );
 }
@@ -1036,6 +1567,77 @@ const textareaStyle = {
   fontSize: 14,
   minHeight: 90,
   resize: "vertical" as const,
+};
+
+const fieldGroupWithTop = {
+  ...fieldGroup,
+  marginTop: 18,
+};
+
+const helperTextStyle = {
+  color: "#64748b",
+  fontSize: 12,
+  lineHeight: 1.6,
+};
+
+const customProviderStyle = {
+  marginTop: 18,
+  border: "1px solid #dbeafe",
+  borderRadius: 12,
+  background: "#f8fafc",
+  padding: 18,
+};
+
+const customHeaderStyle = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "flex-start",
+  gap: 16,
+  marginBottom: 4,
+};
+
+const safeBadgeStyle = {
+  border: "1px solid #bae6fd",
+  background: "#ecfeff",
+  color: "#155e75",
+  borderRadius: 8,
+  padding: "7px 10px",
+  fontSize: 11,
+  fontWeight: 900,
+  textTransform: "uppercase" as const,
+  letterSpacing: "0.08em",
+  whiteSpace: "nowrap" as const,
+};
+
+const providerWizardSectionStyle = {
+  marginTop: 18,
+  borderTop: "1px solid #e2e8f0",
+  paddingTop: 18,
+};
+
+const providerWizardSectionTitleStyle = {
+  margin: 0,
+  color: "#0f172a",
+  fontSize: 16,
+  fontWeight: 850,
+};
+
+const providerWizardSectionCopyStyle = {
+  margin: "6px 0 0 0",
+  color: "#64748b",
+  fontSize: 13,
+  lineHeight: 1.6,
+};
+
+const warningStyle = {
+  marginTop: 12,
+  background: "#fffbeb",
+  border: "1px solid #fde68a",
+  borderRadius: 10,
+  padding: 12,
+  color: "#92400e",
+  fontSize: 13,
+  lineHeight: 1.6,
 };
 
 const noticeStyle = {

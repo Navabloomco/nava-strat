@@ -100,7 +100,7 @@ The main product principle is convenience. Every user-facing page should make th
 | `/admin` | Role-aware Admin Hub. Platform owners see platform tools; company owners/admins see company tools. |
 | `/admin/assets` | Asset Review for imported provider assets and intelligence/billing readiness. Supports platform-owner `?companyId=` tenant context. |
 | `/admin/providers` | Provider Vault for tracking provider configuration, testing, sync diagnostics, activation, and enrichment diagnostics. Supports platform-owner `?companyId=` tenant context. |
-| `/admin/providers/new` | Guided Add Provider wizard. Customer owners/admins see only public/supported provider choices plus "Other provider / Request setup"; internal/setup-only templates are platform-owner-only and clearly marked as not customer-facing. New connections are created inactive, then tested/reviewed/activated from Provider Vault. |
+| `/admin/providers/new` | Guided Add Provider wizard. Customer owners/admins see public/supported providers, Custom API provider, and Request assisted setup; internal/setup-only templates are platform-owner-only and clearly marked as not customer-facing. New connections are created inactive, then tested/reviewed/activated from Provider Vault. |
 | `/admin/provider-requests` | Platform-owner provider setup requests. |
 | `/admin/provider-playbook` | Platform-owner internal provider onboarding playbook. |
 | `/admin/pilot-readiness` | Platform-owner pilot/go-live readiness checklist across tenants. |
@@ -144,7 +144,7 @@ The main product principle is convenience. Every user-facing page should make th
 
 | API Route | Purpose |
 | --- | --- |
-| `GET/POST /api/providers` | Provider Vault list/create. Supports platform-owner `companyId` context. Sanitizes provider credentials in responses. New provider connections are created inactive by default. |
+| `GET/POST /api/providers` | Provider Vault list/create. Supports platform-owner `companyId` context. Sanitizes provider credentials in responses. POST supports public template creation and structured self-serve custom API provider creation; raw advanced config remains platform-owner-only. New provider connections are created inactive by default. |
 | `GET/PATCH /api/providers/[id]` | Provider detail/update and explicit sync activation. Supports platform-owner `companyId` context for safe tenant-scoped updates. Platform-owner-only advanced fleet config including supplemental feeds and auth profiles. Customer owners/admins may update credentials and activate/deactivate sync for their company only after a successful connection test. |
 | `POST /api/providers/[id]/test` | Tests provider sync in the resolved tenant context and returns sanitized diagnostics, including safe telemetry capability and automated distance-report dry-run counts when available. It must not expose provider secrets or raw payloads. |
 | `POST /api/providers/[id]/distance-import` | Provider-scoped admin CSV distance report fallback/backfill import. Dry-run previews BlueTrax-style report rows, asset matches, odometer health, and rows that would write; commit writes matched rows to `provider_trip_summaries` only. |
@@ -377,15 +377,18 @@ Provider sync is implemented in `lib/providers/engine.ts` with normalization in 
 
 Provider Vault is moving from platform-developer configuration toward a guided SaaS onboarding flow:
 
-1. Choose a platform-maintained provider template.
-2. Enter only the credential fields required by that template.
-3. Create the tenant provider connection as inactive.
-4. Test the connection and review detected vehicles, observed signal capability, asset matches/unmatched rows, distance diagnostics, and setup blockers.
-5. Explicitly activate sync after a successful test.
+1. Choose a public provider template, Custom API provider, or Request assisted setup.
+2. For public templates, enter only the credential fields required by that template.
+3. For Custom API provider, enter provider identity, safe auth method, fleet/current-location endpoint, row path, labeled field mappings, and business-language signal capability declaration. The API converts this structured form into provider config server-side.
+4. Create the tenant provider connection as inactive.
+5. Test the connection and review detected vehicles, observed signal capability, asset matches/unmatched rows, distance diagnostics, and setup blockers.
+6. Explicitly activate sync after a successful test.
 
-Customer owners/admins may create and manage provider connections for their own company, but raw endpoints, JSON field mappings, supplemental auth profiles, token paths, and advanced feed configuration remain advanced-only. Platform owners keep advanced visibility for provider setup and diagnostics. Ops, finance, and management users may view status where allowed but cannot create provider connections.
+Customer owners/admins may create and manage provider connections for their own company. In Custom API setup, endpoint URL, row path, and field mapping are collected through guided fields instead of raw JSON templates. Supplemental auth profiles, advanced feed configuration, raw template internals, and internal setup-only templates remain advanced-only. Platform owners keep advanced visibility for provider setup and diagnostics. Ops, finance, and management users may view status where allowed but cannot create provider connections.
 
-Customer-facing onboarding must not expose internal provider strategy, hardware roadmap, raw capability tiers, or setup-only engineering templates. Customer owners/admins should see public/supported providers and "Other provider / Request setup"; platform-owner-only templates such as Meitrack planning examples, generic REST GPS, or generic CSV distance report backfill templates may exist for internal setup work but must be labeled internal/platform setup only.
+Customer-facing onboarding must not expose internal provider strategy, hardware roadmap, raw capability tiers, or setup-only engineering templates. Customer owners/admins should see public/supported providers, Custom API provider, and Request assisted setup. Platform-owner-only templates such as Meitrack planning examples, generic REST GPS, or generic CSV distance report backfill templates may exist for internal setup work but must be labeled internal/platform setup only.
+
+Custom API provider setup supports safe auth options: no auth/public endpoint, API key header, bearer token, basic username/password, and POST login token where the current provider test infrastructure can authenticate and safely extract a token. Customer-submitted request bodies must be JSON objects and must not contain credential-like keys; credentials belong in secure auth fields and are never echoed back to customers after save.
 
 Before a connection test, customer-facing capability language should stay business-oriented: vehicles detected, location tracking verified, engine data not verified, fuel/tank sensor not verified, matched assets, unmatched vehicles, and sync activation status. Raw values such as `GPS_ONLY`, `CAN_BUS`, `FUEL_ROD`, JSON mappings, endpoint URLs, token paths, and provider auth internals are not customer-facing onboarding copy.
 
