@@ -1651,13 +1651,31 @@ async function fetchTruckStatus(
   assignmentLookup: any = null
 ) {
   const targetKey = normalizeTruckKey(truckId);
-  const { data } = await supabaseAdmin
+  const capabilitySelect =
+    "id, truck_id, registration, status, latitude, longitude, last_seen_at, provider_location_label, asset_category, telemetry_capability, telemetry_capabilities, telemetry_capability_source, canbus_enabled, fuel_rod_installed, fuel_rod_calibration_status";
+  const baseSelect =
+    "id, truck_id, registration, status, latitude, longitude, last_seen_at, provider_location_label, asset_category";
+  let { data, error } = await supabaseAdmin
     .from("fleet_assets")
-    .select("id, truck_id, registration, status, latitude, longitude, last_seen_at, provider_location_label, asset_category")
+    .select(capabilitySelect)
     .eq("company_id", companyId)
     .eq("status", "active")
     .eq("intelligence_enabled", true)
     .limit(1000);
+
+  if (isMissingOptionalTelemetryColumnError(error)) {
+    const retry = await supabaseAdmin
+      .from("fleet_assets")
+      .select(baseSelect)
+      .eq("company_id", companyId)
+      .eq("status", "active")
+      .eq("intelligence_enabled", true)
+      .limit(1000);
+    data = retry.data as any;
+    error = retry.error;
+  }
+
+  if (error) throw error;
 
   const asset = (data || []).find((item) =>
     getVehicleMatchKeys(item).some((key) => key === targetKey)
@@ -1710,14 +1728,44 @@ async function fetchTruckEvents(
 }
 
 async function fetchTruckTelemetry(companyId: string, truckId: string) {
-  const { data } = await supabaseAdmin
+  const capabilitySelect =
+    "truck_id, recorded_at, latitude, longitude, speed, fuel_level, fuel_unit, provider_location_label, validation, engine_rpm, engine_on, ignition_on, fuel_rate, lifetime_fuel_used, engine_hours, fuel_raw, fuel_volume_liters, telemetry_capability, signal_quality, provider_signal_flags";
+  const baseSelect =
+    "truck_id, recorded_at, latitude, longitude, speed, fuel_level, fuel_unit, provider_location_label, validation";
+  let { data, error } = await supabaseAdmin
     .from("telemetry_logs")
-    .select("truck_id, recorded_at, latitude, longitude, speed, fuel_level, fuel_unit, provider_location_label, validation")
+    .select(capabilitySelect)
     .eq("company_id", companyId)
     .eq("truck_id", truckId)
     .order("recorded_at", { ascending: false })
     .limit(20);
+
+  if (isMissingOptionalTelemetryColumnError(error)) {
+    const retry = await supabaseAdmin
+      .from("telemetry_logs")
+      .select(baseSelect)
+      .eq("company_id", companyId)
+      .eq("truck_id", truckId)
+      .order("recorded_at", { ascending: false })
+      .limit(20);
+    data = retry.data as any;
+    error = retry.error;
+  }
+
+  if (error) throw error;
   return data || [];
+}
+
+function isMissingOptionalTelemetryColumnError(error: any) {
+  if (!error) return false;
+  const code = String(error.code || "").toUpperCase();
+  const message = String(error.message || error.details || error.hint || "").toLowerCase();
+  return (
+    code === "PGRST204" ||
+    message.includes("column") ||
+    message.includes("schema cache") ||
+    message.includes("could not find")
+  );
 }
 
 async function fetchTruckStopMotionTimelineComparison(

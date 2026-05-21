@@ -399,6 +399,10 @@ export default function AssetReviewPage() {
                         <Detail label="Truck ID" value={asset.truck_id || "Not available"} />
                         <Detail label="Provider" value={asset.provider_name || "Not available"} />
                         <Detail label="Provider status" value={asset.status || "Not available"} />
+                        <Detail
+                          label="Telemetry capability"
+                          value={capabilityLabel(asset.telemetry_capability)}
+                        />
                         <Detail label="First seen" value={formatDate(asset.first_seen_at)} />
                         <Detail label="Last seen" value={formatDate(asset.last_seen_at)} />
                         <Detail
@@ -594,6 +598,19 @@ function statusLabel(status: string) {
   if (status === "disabled") return "Disabled";
   if (status === "unreviewed") return "Unreviewed";
   return status || "Unknown";
+}
+
+function capabilityLabel(value: string) {
+  const labels: Record<string, string> = {
+    UNKNOWN: "Unknown Capability",
+    GPS_ONLY: "GPS Intelligence",
+    GPS_WITH_IGNITION: "Ignition-Aware GPS",
+    CAN_BUS: "Engine Intelligence",
+    FUEL_ROD: "Tank Intelligence",
+    HYBRID_CAN_AND_FUEL_ROD: "Full Fuel Intelligence",
+  };
+  const key = String(value || "UNKNOWN").toUpperCase();
+  return labels[key] || "Unknown Capability";
 }
 
 function categoryLabel(value: string) {

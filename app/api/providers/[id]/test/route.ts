@@ -82,6 +82,25 @@ function sanitizeNormalizedSample(sample: any) {
   return safeSample;
 }
 
+function sanitizeCapabilitySummary(summary: any) {
+  if (!summary || typeof summary !== "object") return null;
+
+  return {
+    default_capability: summary.default_capability || "UNKNOWN",
+    default_capability_label:
+      summary.default_capability_label || "Unknown Capability",
+    provider_timezone: summary.provider_timezone || "Africa/Nairobi",
+    supported_signals: Array.isArray(summary.supported_signals)
+      ? summary.supported_signals.map((signal: any) => String(signal)).slice(0, 30)
+      : [],
+    rows_processed: Number(summary.rows_processed || 0),
+    capability_counts: sanitizeCountMap(summary.capability_counts),
+    placeholder_zero_signal_counts: sanitizeCountMap(
+      summary.placeholder_zero_signal_counts
+    ),
+  };
+}
+
 function sanitizeSupplementalDiagnostics(diagnostics: any, includeAvailableKeys: boolean) {
   if (!diagnostics || typeof diagnostics !== "object") return null;
 
@@ -539,6 +558,7 @@ export async function POST(
       assets_count: assetsCount || 0,
       telemetry_count: telemetryCount || 0,
       latest_telemetry_at: latestTelemetryAt,
+      capability_summary: sanitizeCapabilitySummary(result.capability_summary),
     };
 
     responseBody.supplemental_diagnostics = sanitizeSupplementalDiagnostics(
@@ -562,6 +582,10 @@ export async function POST(
         skipped_missing_identifier: result.skipped_missing_identifier || 0,
         assets_count: assetsCount || 0,
         telemetry_count: telemetryCount || 0,
+        default_capability: result.capability_summary?.default_capability || null,
+        placeholder_zero_signal_count: Object.values(
+          result.capability_summary?.placeholder_zero_signal_counts || {}
+        ).reduce((sum: number, count: any) => sum + Number(count || 0), 0),
         ...analyticsSupplementalCounts(result.supplemental_diagnostics),
       },
     });

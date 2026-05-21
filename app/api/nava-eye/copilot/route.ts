@@ -28,6 +28,11 @@ import {
   NAVA_EYE_CONVERSATION_SETUP_MESSAGE,
 } from "../../../../lib/api/navaEyeConversations";
 import { normalizeProviderLocationLabel } from "../../../../lib/location/resolveOperationalLocation";
+import {
+  normalizeTelemetryCapability,
+  resolveTelemetryCapability,
+  telemetryCapabilityWording,
+} from "../../../../lib/telemetry/capabilities";
 
 export async function POST(req: Request) {
   try {
@@ -1691,6 +1696,7 @@ function buildTruckStatusFallbackAnswer(context: any, options: any = {}) {
       speed: model.speed,
       idleFocus: Boolean(context.live_status_idle_focus),
       ignitionState: model.ignitionState,
+      telemetryCapability: model.telemetryCapability,
     });
     if (idleRead) parts.push(idleRead);
   }
@@ -1715,6 +1721,7 @@ function buildTruckIdleStatusAnswer(context: any) {
     speed: model.speed,
     idleFocus: true,
     ignitionState: model.ignitionState,
+    telemetryCapability: model.telemetryCapability,
   });
   if (idleRead) {
     parts.push(idleRead);
@@ -1769,6 +1776,42 @@ function buildLiveTruckStatusModel(context: any) {
       truck.engine_on ??
       truck.ignition_on
   );
+  const telemetryCapability = resolveTelemetryCapability({
+    asset: truck,
+    observedSignals: {
+      latitude: hasGpsPoint,
+      longitude: hasGpsPoint,
+      speed: speed !== null,
+      fuel_level:
+        latestTelemetry?.fuel_level !== null &&
+        latestTelemetry?.fuel_level !== undefined,
+      engine_rpm:
+        latestTelemetry?.engine_rpm !== null &&
+        latestTelemetry?.engine_rpm !== undefined,
+      engine_on:
+        latestTelemetry?.engine_on !== null &&
+        latestTelemetry?.engine_on !== undefined,
+      ignition_on:
+        latestTelemetry?.ignition_on !== null &&
+        latestTelemetry?.ignition_on !== undefined,
+      fuel_rate:
+        latestTelemetry?.fuel_rate !== null &&
+        latestTelemetry?.fuel_rate !== undefined,
+      lifetime_fuel_used:
+        latestTelemetry?.lifetime_fuel_used !== null &&
+        latestTelemetry?.lifetime_fuel_used !== undefined,
+      engine_hours:
+        latestTelemetry?.engine_hours !== null &&
+        latestTelemetry?.engine_hours !== undefined,
+      fuel_raw:
+        latestTelemetry?.fuel_raw !== null &&
+        latestTelemetry?.fuel_raw !== undefined,
+      fuel_volume_liters:
+        latestTelemetry?.fuel_volume_liters !== null &&
+        latestTelemetry?.fuel_volume_liters !== undefined,
+    },
+    hasGps: hasGpsPoint,
+  });
 
   return {
     truck,
@@ -1785,6 +1828,7 @@ function buildLiveTruckStatusModel(context: any) {
     stale,
     timestampWarnings,
     ignitionState,
+    telemetryCapability,
   };
 }
 
@@ -1828,12 +1872,14 @@ function formatLiveIdleMarkerRead({
   speed,
   idleFocus,
   ignitionState,
+  telemetryCapability,
 }: {
   idleEvents: any[];
   latestPoint: any;
   speed: number | null;
   idleFocus: boolean;
   ignitionState: string | null;
+  telemetryCapability?: any;
 }) {
   const latestIdle = idleEvents[0] || null;
   if (!latestIdle) {
@@ -1858,10 +1904,18 @@ function formatLiveIdleMarkerRead({
     return `${base} Ignition is off, so this looks like a parked/stopped state rather than active idling.`;
   }
   if (speed !== null && speed <= 5) {
-    return `${base} Without ignition data, this remains an unverified idle risk, not confirmed engine-on idling.`;
+    return `${base} ${capabilityBoundarySentence(telemetryCapability)}`;
   }
 
   return `${base} Latest speed does not support a stopped live-idle read right now.`;
+}
+
+function capabilityBoundarySentence(telemetryCapability: any) {
+  const capability = normalizeTelemetryCapability(telemetryCapability?.capability);
+  if (capability === "GPS_WITH_IGNITION") {
+    return "Ignition should be available for this asset, but it is missing from the latest read, so engine-on idling is not verified here.";
+  }
+  return telemetryCapability?.wording || telemetryCapabilityWording(capability);
 }
 
 function formatIdleMarkerLabel(event: any) {
@@ -2267,6 +2321,23 @@ function buildNarrativeIdleAlerts(idleEvents: any[], continuity: any, summary: a
 
 function formatHardwareNote(latest: any) {
   const speed = finiteNumberOrNull(latest?.speed);
+  const telemetryCapability = resolveTelemetryCapability({
+    asset: latest,
+    observedSignals: {
+      speed: speed !== null,
+      engine_rpm: latest?.engine_rpm !== null && latest?.engine_rpm !== undefined,
+      engine_on: latest?.engine_on !== null && latest?.engine_on !== undefined,
+      ignition_on: latest?.ignition_on !== null && latest?.ignition_on !== undefined,
+      fuel_rate: latest?.fuel_rate !== null && latest?.fuel_rate !== undefined,
+      lifetime_fuel_used:
+        latest?.lifetime_fuel_used !== null &&
+        latest?.lifetime_fuel_used !== undefined,
+      fuel_raw: latest?.fuel_raw !== null && latest?.fuel_raw !== undefined,
+      fuel_volume_liters:
+        latest?.fuel_volume_liters !== null && latest?.fuel_volume_liters !== undefined,
+    },
+    hasGps: Boolean(latest?.location_resolution),
+  });
   const ignitionState = normalizeIgnitionState(
     latest?.ignition_status ??
       latest?.engine_status ??
@@ -2287,10 +2358,14 @@ function formatHardwareNote(latest: any) {
   if (ignitionState === "off") {
     return "Ignition data shows the engine appears off.";
   }
-  if (speed !== null && speed <= 5) {
-    return "Ignition data is not available in this feed, so the truck is stopped but active fuel-burn idling is not confirmed.";
+  const capability = normalizeTelemetryCapability(telemetryCapability.capability);
+  if (capability !== "UNKNOWN") {
+    return telemetryCapability.wording;
   }
-  return "Ignition data is not available in this feed, so movement can be described from speed and location but engine state is not confirmed.";
+  if (speed !== null && speed <= 5) {
+    return "Hardware capability is not classified yet. The truck is stopped, but engine and fuel conclusions are not verified.";
+  }
+  return "Hardware capability is not classified yet. Movement can be described from speed and location, but engine and fuel conclusions are not verified.";
 }
 
 function normalizeIgnitionState(value: any) {

@@ -119,6 +119,10 @@ function sanitizeProvider(provider: any, capabilities: ProviderCapabilities) {
     baseProvider.fleet_config = sanitizeFleetConfigForResponse(
       provider.fleet_config || {}
     );
+    baseProvider.capability_profile = provider.capability_profile || {};
+    baseProvider.supported_signals = provider.supported_signals || {};
+    baseProvider.provider_timezone = provider.provider_timezone || null;
+    baseProvider.source_signal_notes = provider.source_signal_notes || {};
   }
 
   return baseProvider;

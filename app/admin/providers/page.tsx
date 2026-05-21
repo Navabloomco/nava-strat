@@ -354,11 +354,70 @@ function ProviderCard({
         </div>
       )}
 
+      <ProviderCapabilityDiagnostics summary={testResult?.capability_summary} />
+
       <ProviderEnrichmentDiagnostics
         diagnostics={testResult?.supplemental_diagnostics}
         canShowAvailableKeys={capabilities.can_edit_advanced_provider_config}
       />
     </div>
+  );
+}
+
+function ProviderCapabilityDiagnostics({ summary }: { summary: any }) {
+  if (!summary) return null;
+
+  return (
+    <section style={diagnosticsStyle}>
+      <div style={diagnosticsHeaderStyle}>
+        <div>
+          <div style={diagnosticsEyebrowStyle}>Telemetry capability</div>
+          <h4 style={diagnosticsTitleStyle}>Signal Capability Summary</h4>
+        </div>
+        <div style={diagnosticsMetaStyle}>
+          {summary.default_capability_label || "Unknown Capability"}
+        </div>
+      </div>
+
+      <div style={diagnosticsSummaryGridStyle}>
+        <DiagnosticMetric label="Rows processed" value={summary.rows_processed} />
+        <DiagnosticMetric
+          label="Supported signals"
+          value={(summary.supported_signals || []).length}
+        />
+        <DiagnosticMetric
+          label="Placeholder zeros"
+          value={Object.values(summary.placeholder_zero_signal_counts || {}).reduce(
+            (sum: number, count: any) => sum + Number(count || 0),
+            0
+          )}
+        />
+      </div>
+
+      <DiagnosticFieldBlock
+        title="Provider signal support"
+        value={[
+          `Default: ${summary.default_capability_label || "Unknown Capability"}`,
+          `Timezone: ${summary.provider_timezone || "Africa/Nairobi"}`,
+        ]}
+      />
+      <DiagnosticFieldBlock
+        title="Supported signals"
+        value={summary.supported_signals}
+        mutedEmpty="No provider-supported engine or tank signals are declared yet."
+      />
+      <DiagnosticFieldBlock
+        title="Rows by capability"
+        value={summary.capability_counts}
+        includeZeroCounts
+      />
+      <DiagnosticFieldBlock
+        title="Placeholder zero signals"
+        value={summary.placeholder_zero_signal_counts}
+        mutedEmpty="No unsupported zero engine/fuel placeholders detected."
+        includeZeroCounts
+      />
+    </section>
   );
 }
 

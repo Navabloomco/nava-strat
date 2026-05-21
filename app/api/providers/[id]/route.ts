@@ -39,6 +39,13 @@ const SUPPORTED_SUPPLEMENTAL_MAPPING_TARGETS = new Set([
   "odometer",
   "mileage",
   "engine_hours",
+  "engine_rpm",
+  "engine_on",
+  "ignition_on",
+  "fuel_rate",
+  "lifetime_fuel_used",
+  "fuel_raw",
+  "fuel_volume_liters",
   "battery_voltage",
   "temperature",
   "driver_name",
@@ -175,6 +182,10 @@ function sanitizeProvider(provider: any, capabilities: ProviderCapabilities) {
     baseProvider.fleet_config = sanitizeFleetConfigForResponse(
       provider.fleet_config || {}
     );
+    baseProvider.capability_profile = provider.capability_profile || {};
+    baseProvider.supported_signals = provider.supported_signals || {};
+    baseProvider.provider_timezone = provider.provider_timezone || null;
+    baseProvider.source_signal_notes = provider.source_signal_notes || {};
   }
 
   return baseProvider;

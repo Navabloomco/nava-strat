@@ -76,15 +76,29 @@ export async function buildTruckTimelineIntelligence(input: TimelineInput) {
     input.geofences || (await fetchActiveGeofences(supabaseAdmin, input.companyId));
   const targetKey = normalizeVehicleKey(input.truckId);
 
-  const { data: assetRows, error: assetError } = await supabaseAdmin
+  const assetCapabilitySelect =
+    "id, truck_id, registration, latitude, longitude, last_seen_at, provider_location_label, status, asset_category, telemetry_capability, telemetry_capabilities, telemetry_capability_source, canbus_enabled, fuel_rod_installed, fuel_rod_calibration_status";
+  const assetBaseSelect =
+    "id, truck_id, registration, latitude, longitude, last_seen_at, provider_location_label, status, asset_category";
+  let { data: assetRows, error: assetError } = await supabaseAdmin
     .from("fleet_assets")
-    .select(
-      "id, truck_id, registration, latitude, longitude, last_seen_at, provider_location_label, status, asset_category"
-    )
+    .select(assetCapabilitySelect)
     .eq("company_id", input.companyId)
     .eq("status", "active")
     .eq("intelligence_enabled", true)
     .limit(1000);
+
+  if (isMissingOptionalTelemetryColumnError(assetError)) {
+    const retry = await supabaseAdmin
+      .from("fleet_assets")
+      .select(assetBaseSelect)
+      .eq("company_id", input.companyId)
+      .eq("status", "active")
+      .eq("intelligence_enabled", true)
+      .limit(1000);
+    assetRows = retry.data as any;
+    assetError = retry.error;
+  }
 
   if (assetError) throw assetError;
 
@@ -137,12 +151,14 @@ export async function buildTruckTimelineIntelligence(input: TimelineInput) {
 
   const eventFetchStartUtc = shiftIsoTime(localDayRange.startUtc, -24 * 60);
   const eventFetchEndUtc = shiftIsoTime(localDayRange.endUtc, 24 * 60);
-  const [telemetryResult, eventsResult] = await Promise.all([
+  const telemetryCapabilitySelect =
+    "truck_id, recorded_at, latitude, longitude, speed, provider_location_label, validation, engine_rpm, engine_on, ignition_on, fuel_rate, lifetime_fuel_used, engine_hours, fuel_raw, fuel_volume_liters, telemetry_capability, signal_quality, provider_signal_flags";
+  const telemetryBaseSelect =
+    "truck_id, recorded_at, latitude, longitude, speed, provider_location_label, validation";
+  const [initialTelemetryResult, eventsResult] = await Promise.all([
     supabaseAdmin
       .from("telemetry_logs")
-      .select(
-        "truck_id, recorded_at, latitude, longitude, speed, provider_location_label, validation"
-      )
+      .select(telemetryCapabilitySelect)
       .eq("company_id", input.companyId)
       .eq("truck_id", canonicalTruckId)
       .gte("recorded_at", localDayRange.startUtc)
@@ -163,10 +179,23 @@ export async function buildTruckTimelineIntelligence(input: TimelineInput) {
       .limit(100),
   ]);
 
+  let telemetryResult: any = initialTelemetryResult;
+  if (isMissingOptionalTelemetryColumnError(initialTelemetryResult.error)) {
+    telemetryResult = await supabaseAdmin
+      .from("telemetry_logs")
+      .select(telemetryBaseSelect)
+      .eq("company_id", input.companyId)
+      .eq("truck_id", canonicalTruckId)
+      .gte("recorded_at", localDayRange.startUtc)
+      .lt("recorded_at", localDayRange.endUtc)
+      .order("recorded_at", { ascending: true })
+      .limit(maxRows);
+  }
+
   if (telemetryResult.error) throw telemetryResult.error;
   if (eventsResult.error) throw eventsResult.error;
 
-  const telemetryRows = (telemetryResult.data || []).map((row) => ({
+  const telemetryRows = (telemetryResult.data || []).map((row: any) => ({
     ...row,
     geofence_match: matchPointToGeofence(row, geofences),
   }));
@@ -339,6 +368,17 @@ export async function buildTruckTimelineIntelligence(input: TimelineInput) {
           recorded_at:
             latestTelemetry?.recorded_at || (timeframe === "today" ? asset.last_seen_at : null),
           speed: latestTelemetry?.speed ?? null,
+          telemetry_capability:
+            latestTelemetry?.telemetry_capability || asset.telemetry_capability || null,
+          signal_quality: latestTelemetry?.signal_quality || null,
+          provider_signal_flags: latestTelemetry?.provider_signal_flags || null,
+          engine_rpm: latestTelemetry?.engine_rpm ?? null,
+          engine_on: latestTelemetry?.engine_on ?? null,
+          ignition_on: latestTelemetry?.ignition_on ?? null,
+          fuel_rate: latestTelemetry?.fuel_rate ?? null,
+          lifetime_fuel_used: latestTelemetry?.lifetime_fuel_used ?? null,
+          fuel_raw: latestTelemetry?.fuel_raw ?? null,
+          fuel_volume_liters: latestTelemetry?.fuel_volume_liters ?? null,
           location_resolution: latestLocationResolution,
           geofence_match: matchPointToGeofence(latestPoint, geofences),
           timestamp_warnings: latestTelemetry?.validation?.warnings || [],
@@ -384,6 +424,8 @@ export async function buildTruckTimelineIntelligence(input: TimelineInput) {
               latestTelemetry?.recorded_at || (timeframe === "today" ? asset.last_seen_at : null),
             location: latestLocationResolution,
             speed: latestTelemetry?.speed ?? null,
+            telemetry_capability:
+              latestTelemetry?.telemetry_capability || asset.telemetry_capability || null,
           }
         : null,
       route_progression: progression,
@@ -957,6 +999,18 @@ function shiftIsoTime(value: string, minutes: number) {
   const timestamp = new Date(value || 0).getTime();
   if (!Number.isFinite(timestamp)) return value;
   return new Date(timestamp + minutes * 60000).toISOString();
+}
+
+function isMissingOptionalTelemetryColumnError(error: any) {
+  if (!error) return false;
+  const code = String(error.code || "").toUpperCase();
+  const message = String(error.message || error.details || error.hint || "").toLowerCase();
+  return (
+    code === "PGRST204" ||
+    message.includes("column") ||
+    message.includes("schema cache") ||
+    message.includes("could not find")
+  );
 }
 
 function minutesBetween(start: any, end: any) {

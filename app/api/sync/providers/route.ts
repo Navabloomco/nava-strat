@@ -69,6 +69,7 @@ export async function GET(req: Request) {
         message: result.message,
         vehicle_count: result.vehicleCount,
         skipped_missing_identifier: result.skipped_missing_identifier || 0,
+        capability_summary: result.capability_summary || null,
         latency_ms: Date.now() - providerStartedAt,
       });
     }

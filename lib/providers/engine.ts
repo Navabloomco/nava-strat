@@ -1,5 +1,13 @@
 import { supabaseAdmin } from "../supabaseAdmin";
 import { normalizeVehicle } from "./normalizeVehicle";
+import {
+  buildCapabilitySummary,
+  buildProviderCapabilityProfile,
+  isSignalSupported,
+  resolveTelemetryCapability,
+  telemetryCapabilityLabel,
+  type ProviderCapabilityProfile,
+} from "../telemetry/capabilities";
 
 export type ProviderRecord = {
   id: string;
@@ -19,6 +27,10 @@ export type ProviderRecord = {
   fleet_config?: any;
   field_mapping?: any;
   company_id?: string;        // ✅ multi‑tenant key
+  capability_profile?: any;
+  supported_signals?: any;
+  provider_timezone?: string | null;
+  source_signal_notes?: any;
 };
 
 export type SyncResult = {
@@ -28,6 +40,7 @@ export type SyncResult = {
   skipped_missing_identifier?: number;
   sample_normalized?: any;
   supplemental_diagnostics?: SupplementalDiagnostics;
+  capability_summary?: any;
   debug?: any;
 };
 
@@ -221,12 +234,29 @@ const SUPPLEMENTAL_FIELDS = [
   "odometer",
   "mileage",
   "engine_hours",
+  "engine_rpm",
+  "engine_on",
+  "ignition_on",
+  "fuel_rate",
+  "lifetime_fuel_used",
+  "fuel_raw",
+  "fuel_volume_liters",
   "driver_name",
   "battery_voltage",
   "temperature",
 ];
 
-const PERSISTED_SUPPLEMENTAL_FIELDS = new Set(["fuel_level"]);
+const PERSISTED_SUPPLEMENTAL_FIELDS = new Set([
+  "fuel_level",
+  "engine_hours",
+  "engine_rpm",
+  "engine_on",
+  "ignition_on",
+  "fuel_rate",
+  "lifetime_fuel_used",
+  "fuel_raw",
+  "fuel_volume_liters",
+]);
 const MAX_UNMAPPED_AVAILABLE_KEYS = 50;
 
 const DEFAULT_SUPPLEMENTAL_MATCH_KEYS = [
@@ -330,6 +360,7 @@ export async function runProviderSync(
   }
 
   try {
+    const providerCapabilityProfile = buildProviderCapabilityProfile(provider);
     const auth = await authenticateProvider(provider);
     if (!auth.success) {
       return {
@@ -359,6 +390,9 @@ export async function runProviderSync(
     let sample_normalized = null;
     let syncedCount = 0;
     let skippedMissingIdentifier = 0;
+    let capabilityRowsProcessed = 0;
+    const capabilityCounts: Record<string, number> = {};
+    const placeholderZeroSignalCounts: Record<string, number> = {};
     const errors: string[] = [];
 
     for (const rawVehicle of fleet.vehicles) {
@@ -366,7 +400,8 @@ export async function runProviderSync(
         const normalized = normalizeVehicle(
           rawVehicle,
           provider.field_mapping || {},
-          provider.provider_name
+          provider.provider_name,
+          providerCapabilityProfile
         );
 
         if (normalized.validation.missing_fields.includes("truck_id")) {
@@ -379,10 +414,19 @@ export async function runProviderSync(
           rawVehicle,
           provider.field_mapping || {},
           supplemental.feeds,
-          supplemental.diagnostics
+          supplemental.diagnostics,
+          providerCapabilityProfile
         );
+        refreshNormalizedCapability(normalized, providerCapabilityProfile);
 
         if (!sample_normalized) sample_normalized = normalized;
+        capabilityRowsProcessed++;
+        capabilityCounts[normalized.telemetry_capability] =
+          (capabilityCounts[normalized.telemetry_capability] || 0) + 1;
+        for (const signal of normalized.signal_quality?.placeholder_zero_signals || []) {
+          placeholderZeroSignalCounts[signal] =
+            (placeholderZeroSignalCounts[signal] || 0) + 1;
+        }
 
         const { data: existingAsset, error: existingAssetError } = await supabaseAdmin
           .from("fleet_assets")
@@ -407,6 +451,15 @@ export async function runProviderSync(
           last_seen_at: normalized.recorded_at,
           raw_payload: normalized.raw,
           updated_at: new Date().toISOString(),
+          telemetry_capability: normalized.telemetry_capability,
+          telemetry_capabilities: normalized.telemetry_capabilities,
+          telemetry_capability_source: normalized.telemetry_capability_source,
+          canbus_enabled:
+            normalized.telemetry_capability === "CAN_BUS" ||
+            normalized.telemetry_capability === "HYBRID_CAN_AND_FUEL_ROD",
+          fuel_rod_installed:
+            normalized.telemetry_capability === "FUEL_ROD" ||
+            normalized.telemetry_capability === "HYBRID_CAN_AND_FUEL_ROD",
         };
 
         if (!existingAsset) {
@@ -421,31 +474,35 @@ export async function runProviderSync(
         }
 
         // ✅ Upsert telemetry fields only; reviewed billing/classification fields are not overwritten.
-        const { error: assetError } = await supabaseAdmin
-          .from("fleet_assets")
-          .upsert(
-            assetPayload,
-            { onConflict: "provider_id,truck_id" }
-          );
+        const assetError = await upsertFleetAssetWithCapabilityFallback(assetPayload);
 
         if (assetError) throw new Error(`Asset registry write failed: ${assetError.message}`);
 
         // ✅ Insert into telemetry_logs with company_id
-        const { error: telemetryError } = await supabaseAdmin
-          .from("telemetry_logs")
-          .insert({
-            provider_id: provider.id,
-            company_id: provider.company_id,
-            truck_id: normalized.truck_id,
-            latitude: normalized.latitude,
-            longitude: normalized.longitude,
-            speed: normalized.speed,
-            fuel_level: normalized.fuel_level,
-            provider_location_label: normalized.location_label || null,
-            recorded_at: normalized.recorded_at,
-            raw_payload: normalized.raw,
-            validation: normalized.validation,
-          });
+        const telemetryError = await insertTelemetryLogWithCapabilityFallback({
+          provider_id: provider.id,
+          company_id: provider.company_id,
+          truck_id: normalized.truck_id,
+          latitude: normalized.latitude,
+          longitude: normalized.longitude,
+          speed: normalized.speed,
+          fuel_level: normalized.fuel_level,
+          provider_location_label: normalized.location_label || null,
+          recorded_at: normalized.recorded_at,
+          raw_payload: normalized.raw,
+          validation: normalized.validation,
+          engine_rpm: normalized.engine_rpm,
+          engine_on: normalized.engine_on,
+          ignition_on: normalized.ignition_on,
+          fuel_rate: normalized.fuel_rate,
+          lifetime_fuel_used: normalized.lifetime_fuel_used,
+          engine_hours: normalized.engine_hours,
+          fuel_raw: normalized.fuel_raw,
+          fuel_volume_liters: normalized.fuel_volume_liters,
+          telemetry_capability: normalized.telemetry_capability,
+          signal_quality: normalized.signal_quality,
+          provider_signal_flags: normalized.provider_signal_flags,
+        });
 
         if (telemetryError) throw new Error(`Telemetry log write failed: ${telemetryError.message}`);
 
@@ -468,11 +525,23 @@ export async function runProviderSync(
       skipped_missing_identifier: skippedMissingIdentifier,
       sample_normalized,
       supplemental_diagnostics: supplemental.diagnostics,
+      capability_summary: buildCapabilitySummary({
+        rows_processed: capabilityRowsProcessed,
+        capability_counts: capabilityCounts,
+        placeholder_zero_signal_counts: placeholderZeroSignalCounts,
+        providerProfile: providerCapabilityProfile,
+      }),
       debug: {
         errors,
         skipped_missing_identifier: skippedMissingIdentifier,
         fleet_debug: fleet.debug || null,
         supplemental_diagnostics: supplemental.diagnostics,
+        capability_summary: buildCapabilitySummary({
+          rows_processed: capabilityRowsProcessed,
+          capability_counts: capabilityCounts,
+          placeholder_zero_signal_counts: placeholderZeroSignalCounts,
+          providerProfile: providerCapabilityProfile,
+        }),
       },
     };
   } catch (err: any) {
@@ -501,6 +570,137 @@ function buildSyncMessage(
   return `${base} Skipped ${skippedMissingIdentifier} provider row${
     skippedMissingIdentifier === 1 ? "" : "s"
   } missing a safe vehicle identifier.`;
+}
+
+function refreshNormalizedCapability(
+  normalized: any,
+  providerCapabilityProfile: ProviderCapabilityProfile
+) {
+  const observedSignals = {
+    latitude: normalized.latitude !== null && normalized.latitude !== undefined,
+    longitude: normalized.longitude !== null && normalized.longitude !== undefined,
+    speed: normalized.speed !== null && normalized.speed !== undefined,
+    fuel_level: normalized.fuel_level !== null && normalized.fuel_level !== undefined,
+    engine_rpm: normalized.engine_rpm !== null && normalized.engine_rpm !== undefined,
+    engine_on: normalized.engine_on !== null && normalized.engine_on !== undefined,
+    ignition_on: normalized.ignition_on !== null && normalized.ignition_on !== undefined,
+    fuel_rate: normalized.fuel_rate !== null && normalized.fuel_rate !== undefined,
+    lifetime_fuel_used:
+      normalized.lifetime_fuel_used !== null &&
+      normalized.lifetime_fuel_used !== undefined,
+    engine_hours:
+      normalized.engine_hours !== null && normalized.engine_hours !== undefined,
+    fuel_raw: normalized.fuel_raw !== null && normalized.fuel_raw !== undefined,
+    fuel_volume_liters:
+      normalized.fuel_volume_liters !== null &&
+      normalized.fuel_volume_liters !== undefined,
+  };
+  const resolution = resolveTelemetryCapability({
+    providerProfile: providerCapabilityProfile,
+    observedSignals,
+    hasGps: Boolean(observedSignals.latitude && observedSignals.longitude),
+  });
+
+  normalized.telemetry_capability = resolution.capability;
+  normalized.telemetry_capability_source = resolution.source;
+  normalized.telemetry_capabilities = {
+    ...(normalized.telemetry_capabilities || {}),
+    label: telemetryCapabilityLabel(resolution.capability),
+    supported_signals: Object.keys(providerCapabilityProfile.supported_signals).filter(
+      (signal) => providerCapabilityProfile.supported_signals[signal]
+    ),
+    meaningful_signals: Object.keys(observedSignals).filter(
+      (signal) => (observedSignals as Record<string, boolean>)[signal]
+    ),
+  };
+  normalized.signal_quality = {
+    ...(normalized.signal_quality || {}),
+    capability_label: telemetryCapabilityLabel(resolution.capability),
+    capability_source: resolution.source,
+    meaningful_signals: Object.keys(observedSignals).filter(
+      (signal) => (observedSignals as Record<string, boolean>)[signal]
+    ),
+  };
+  normalized.provider_signal_flags = {
+    ...(normalized.provider_signal_flags || {}),
+    provider_timezone: providerCapabilityProfile.provider_timezone,
+    provider_supported_signals: Object.keys(providerCapabilityProfile.supported_signals).filter(
+      (signal) => providerCapabilityProfile.supported_signals[signal]
+    ),
+  };
+}
+
+async function upsertFleetAssetWithCapabilityFallback(payload: Record<string, any>) {
+  const { error } = await supabaseAdmin
+    .from("fleet_assets")
+    .upsert(payload, { onConflict: "provider_id,truck_id" });
+
+  if (!isMissingCapabilityColumnError(error)) return error;
+
+  const { error: retryError } = await supabaseAdmin
+    .from("fleet_assets")
+    .upsert(stripCapabilityAssetColumns(payload), {
+      onConflict: "provider_id,truck_id",
+    });
+
+  return retryError;
+}
+
+async function insertTelemetryLogWithCapabilityFallback(payload: Record<string, any>) {
+  const { error } = await supabaseAdmin.from("telemetry_logs").insert(payload);
+
+  if (!isMissingCapabilityColumnError(error)) return error;
+
+  const { error: retryError } = await supabaseAdmin
+    .from("telemetry_logs")
+    .insert(stripCapabilityTelemetryColumns(payload));
+
+  return retryError;
+}
+
+function stripCapabilityAssetColumns(payload: Record<string, any>) {
+  const {
+    telemetry_capability,
+    telemetry_capabilities,
+    telemetry_capability_source,
+    canbus_enabled,
+    fuel_rod_installed,
+    fuel_rod_last_calibration,
+    fuel_rod_calibration_status,
+    tank_calibration,
+    ...base
+  } = payload;
+  return base;
+}
+
+function stripCapabilityTelemetryColumns(payload: Record<string, any>) {
+  const {
+    engine_rpm,
+    engine_on,
+    ignition_on,
+    fuel_rate,
+    lifetime_fuel_used,
+    engine_hours,
+    fuel_raw,
+    fuel_volume_liters,
+    telemetry_capability,
+    signal_quality,
+    provider_signal_flags,
+    ...base
+  } = payload;
+  return base;
+}
+
+function isMissingCapabilityColumnError(error: any) {
+  if (!error) return false;
+  const message = String(error.message || error.details || error.hint || "").toLowerCase();
+  const code = String(error.code || "").toUpperCase();
+  return (
+    code === "PGRST204" ||
+    message.includes("column") ||
+    message.includes("schema cache") ||
+    message.includes("could not find")
+  );
 }
 
 /* -------------------------------
@@ -1957,7 +2157,8 @@ function mergeSupplementalData(
   rawVehicle: any,
   primaryMapping: any,
   feeds: SupplementalFeedRows[],
-  diagnostics: SupplementalDiagnostics
+  diagnostics: SupplementalDiagnostics,
+  providerCapabilityProfile?: ProviderCapabilityProfile | null
 ) {
   if (!feeds.length) return;
 
@@ -1988,7 +2189,7 @@ function mergeSupplementalData(
 
     for (const field of SUPPLEMENTAL_FIELDS) {
       const value = enrichment[field];
-      if (!isMeaningfulSupplementalValue(field, value)) continue;
+      if (!isMeaningfulSupplementalValue(field, value, providerCapabilityProfile)) continue;
 
       if (!PERSISTED_SUPPLEMENTAL_FIELDS.has(field)) {
         incrementFieldCount(feedDiagnostics?.mapped_fields_skipped, field);
@@ -1996,7 +2197,13 @@ function mergeSupplementalData(
       }
 
       if (field === "fuel_level") {
-        if (!isMeaningfulSupplementalValue(field, normalized.fuel_level)) {
+        if (
+          !isMeaningfulSupplementalValue(
+            field,
+            normalized.fuel_level,
+            providerCapabilityProfile
+          )
+        ) {
           normalized.fuel_level = value;
           mergedFields.push(field);
         } else {
@@ -2005,7 +2212,7 @@ function mergeSupplementalData(
         continue;
       }
 
-      if (!isMeaningfulSupplementalValue(field, normalized[field])) {
+      if (!isMeaningfulSupplementalValue(field, normalized[field], providerCapabilityProfile)) {
         normalized[field] = value;
         mergedFields.push(field);
       }
@@ -2086,6 +2293,12 @@ function extractSupplementalFields(row: any, mapping: Record<string, string>) {
       continue;
     }
 
+    if (field === "engine_on" || field === "ignition_on") {
+      const parsedBoolean = parseProviderBoolean(value);
+      if (parsedBoolean !== null) output[field] = parsedBoolean;
+      continue;
+    }
+
     const parsed = parseProviderNumber(value);
     if (parsed === null) continue;
 
@@ -2158,6 +2371,43 @@ function getFieldFallbackKeys(field: string) {
     return ["engine_hours", "engineHours", "engine hours", "hours"];
   }
 
+  if (field === "engine_rpm") {
+    return ["engine_rpm", "engineRpm", "rpm", "RPM", "Engine RPM"];
+  }
+
+  if (field === "engine_on") {
+    return ["engine_on", "engineOn", "engine", "engine_status", "engineStatus"];
+  }
+
+  if (field === "ignition_on") {
+    return ["ignition_on", "ignitionOn", "ignition", "ignition_status", "ignitionStatus"];
+  }
+
+  if (field === "fuel_rate") {
+    return ["fuel_rate", "fuelRate", "fuel consumption", "fuel_consumption"];
+  }
+
+  if (field === "lifetime_fuel_used") {
+    return ["lifetime_fuel_used", "lifetimeFuelUsed", "total_fuel_used", "totalFuelUsed"];
+  }
+
+  if (field === "fuel_raw") {
+    return ["fuel_raw", "fuelRaw", "fuel_adc", "fuelAdc", "tank_raw", "tankRaw"];
+  }
+
+  if (field === "fuel_volume_liters") {
+    return [
+      "fuel_volume_liters",
+      "fuelVolumeLiters",
+      "fuel_liters",
+      "fuelLiters",
+      "fuel_litres",
+      "litres",
+      "liters",
+      "tank_volume_liters",
+    ];
+  }
+
   if (field === "driver_name") {
     return ["driver_name", "driverName", "driver", "Driver"];
   }
@@ -2173,11 +2423,20 @@ function getFieldFallbackKeys(field: string) {
   return [field];
 }
 
-function isMeaningfulSupplementalValue(field: string, value: any) {
+function isMeaningfulSupplementalValue(
+  field: string,
+  value: any,
+  providerCapabilityProfile?: ProviderCapabilityProfile | null
+) {
   if (value === null || value === undefined || value === "") return false;
+  if (field === "engine_on" || field === "ignition_on") {
+    if (value === true) return true;
+    if (value === false) return isSignalSupported(providerCapabilityProfile, field);
+  }
   if (typeof value === "number") {
     if (!Number.isFinite(value)) return false;
     if (field === "temperature") return true;
+    if (value === 0) return isSignalSupported(providerCapabilityProfile, field);
     return value > 0;
   }
   return String(value).trim().length > 0;
@@ -2191,10 +2450,32 @@ function isSaneSupplementalNumber(field: string, value: number) {
     return value >= 0 && value <= 10000000;
   }
   if (field === "engine_hours") return value >= 0 && value <= 1000000;
+  if (field === "engine_rpm") return value >= 0 && value <= 10000;
+  if (field === "fuel_rate") return value >= 0 && value <= 500;
+  if (field === "lifetime_fuel_used") return value >= 0 && value <= 100000000;
+  if (field === "fuel_raw") return value >= 0 && value <= 10000000;
+  if (field === "fuel_volume_liters") return value >= 0 && value <= 5000;
   if (field === "battery_voltage") return value >= 0 && value <= 1000;
   if (field === "temperature") return value >= -100 && value <= 1000;
 
   return true;
+}
+
+function parseProviderBoolean(value: any): boolean | null {
+  if (value === true || value === 1) return true;
+  if (value === false || value === 0) return false;
+  if (value === undefined || value === null || value === "") return null;
+  const text = String(value).trim().toLowerCase();
+  if (!text || text === "-" || text === "--" || text === "n/a" || text === "na") {
+    return null;
+  }
+  if (["on", "true", "yes", "running", "engine_on", "ignition_on", "1"].includes(text)) {
+    return true;
+  }
+  if (["off", "false", "no", "stopped", "engine_off", "ignition_off", "0"].includes(text)) {
+    return false;
+  }
+  return null;
 }
 
 function parseProviderNumber(value: any): number | null {

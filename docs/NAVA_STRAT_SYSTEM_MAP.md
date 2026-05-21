@@ -146,7 +146,7 @@ The main product principle is convenience. Every user-facing page should make th
 | --- | --- |
 | `GET/POST /api/providers` | Provider Vault list/create. Supports platform-owner `companyId` context. Sanitizes provider credentials in responses. |
 | `GET/PATCH /api/providers/[id]` | Provider detail/update. Supports platform-owner `companyId` context for safe tenant-scoped updates. Platform-owner-only advanced fleet config including supplemental feeds and auth profiles. |
-| `POST /api/providers/[id]/test` | Tests provider sync in the resolved tenant context and returns sanitized diagnostics. |
+| `POST /api/providers/[id]/test` | Tests provider sync in the resolved tenant context and returns sanitized diagnostics, including safe telemetry capability summary counts when available. |
 | `GET /api/providers/templates` | Provider templates. |
 | `GET/POST /api/providers/setup-requests` | Provider setup request list/create. |
 | `PATCH /api/providers/setup-requests/[id]` | Provider setup request status management. |
@@ -250,11 +250,11 @@ The main product principle is convenience. Every user-facing page should make th
 
 | Table | Used For |
 | --- | --- |
-| `tracking_providers` | Provider credentials/config, auth type, fleet URL, field mapping, fleet config, sync status, and test diagnostics. |
+| `tracking_providers` | Provider credentials/config, auth type, fleet URL, field mapping, fleet config, sync status, safe telemetry capability declarations, supported signal metadata, provider timezone, and test diagnostics. |
 | `provider_setup_requests` | Assisted provider onboarding requests. |
 | `provider_templates` | Reusable provider setup templates. |
-| `fleet_assets` | Imported provider assets, latest asset state, review status, intelligence enablement, and billing readiness. |
-| `telemetry_logs` | Historical telemetry points from provider sync: location, speed, fuel level, provider location label, validation, and raw payload server-side. |
+| `fleet_assets` | Imported provider assets, latest asset state, review status, intelligence enablement, billing readiness, and asset telemetry capability profile. |
+| `telemetry_logs` | Historical telemetry points from provider sync: location, speed, fuel level, normalized engine/ignition/fuel/tank signal placeholders where supported, provider location label, validation, capability flags, and raw payload server-side. |
 | `telemetry_events` | Derived operational events and alert context annotations. |
 | `location_cache` | Reverse-geocoded location cache. |
 | `fuel_risk_scores` | Fuel risk scoring output from fuel risk engine. |
@@ -338,6 +338,8 @@ Nava Eye location answers should be operational, not coordinate-first. Nava-owne
 
 Nava Eye follows an Asymmetric Intelligence / Command Voice contract. The dark analytical layer resolves tenant context and current role capabilities first, fetches only role-safe company-scoped data, resolves places before text output, and runs calculations, timeline aggregation, chronology checks, idle continuity logic, and finance/billing math in TypeScript helpers instead of freeform prose. The presentation layer then gives concise operator-ready answers: direct operational statements, no raw provider payloads or telemetry dumps, no secrets/private driver fields/unreviewed asset telemetry, no default coordinate series, and no weak software-apology language such as "based on the data provided" or "available data does not prove." Default answers summarize; detailed evidence appears only when explicitly requested. High-confidence conclusions require evidence, active engine-on idling requires ignition/engine or equivalent support, and Nava Eye must not accuse drivers or recommend discipline/contact-driver by default.
 
+Nava Eye must also speak according to the asset's telemetry capability. Providers send signals, Nava normalizes signals, and assets carry capability profiles. Capability values are `UNKNOWN`, `GPS_ONLY`, `GPS_WITH_IGNITION`, `CAN_BUS`, `FUEL_ROD`, and `HYBRID_CAN_AND_FUEL_ROD`. Manual/admin asset classification outranks provider declarations; provider declarations outrank weak auto-observed patterns. GPS-only assets can support movement/location/stop stories, but they must not support engine-on idling, fuel-burn, tank-volume, or theft conclusions. Zero RPM/fuel/tank values are placeholders unless the provider or asset capability confirms that signal is supported.
+
 For narrow truck-specific compound prompts, Nava Eye may answer multiple ordered sub-questions in one response. Supported sub-intents are current location/status, current idle risk, movement timeline, and detailed timeline evidence. "Show detailed timeline" must not override earlier requested live-status or movement-summary sections. Each sub-answer still uses the same enabled-asset, company-scoped, role-aware contract, and detailed block evidence remains limited to the selected truck and requested timeframe.
 
 Truck conversation threads maintain a safe active truck topic in short pending-follow-up metadata. If a follow-up omits the truck ID, such as "what are yesterday's movements?" or "show detailed timeline," Nava Eye should keep using the active truck unless the user explicitly asks for fleet/all-truck scope. A detailed timeline follow-up should inherit the active truck timeline's resolved timeframe/date window unless the new message explicitly says today or yesterday. A truck ID written in the current prompt always wins over cached truck or fleet context. If no active truck topic exists for an elliptical truck question, ask which truck to check. Relative dates such as today/yesterday must resolve once in the company/operator timezone and stay consistent between truck summary, truck detail, and fleet movement summary modes.
@@ -380,6 +382,17 @@ Provider sync is implemented in `lib/providers/engine.ts` with normalization in 
    - `longitude`
    - `speed`
    - `fuel_level`
+   - `engine_rpm`
+   - `engine_on`
+   - `ignition_on`
+   - `fuel_rate`
+   - `lifetime_fuel_used`
+   - `engine_hours`
+   - `fuel_raw`
+   - `fuel_volume_liters`
+   - `telemetry_capability`
+   - `signal_quality`
+   - `provider_signal_flags`
    - `location_label`
    - `recorded_at`
 5. Skip rows that do not have a safe vehicle identifier after mapped and fallback keys are checked. Provider sync must not create `UNKNOWN`, blank, or null reviewable assets.
@@ -414,6 +427,29 @@ Supported feed capabilities:
 - Sanitized diagnostics.
 
 Currently persisted enrichment is intentionally conservative. `fuel_level` is the main end-to-end stored enrichment field. Other mapped fields may be diagnosed or merged internally only where code supports them.
+
+### Provider-Agnostic Telemetry Capability Model
+
+Telemetry capability is the contract between hardware evidence and Nava Eye wording:
+
+| Capability | Friendly Label | What It Proves |
+| --- | --- | --- |
+| `UNKNOWN` | Unknown Capability | Hardware capability is not classified yet. Location may be available, but engine and fuel conclusions are not verified. |
+| `GPS_ONLY` | GPS Intelligence | GPS movement/location data only. Fuel burn and engine-on idling are not verified. |
+| `GPS_WITH_IGNITION` | Ignition-Aware GPS | Ignition state can verify idle risk, but exact fuel burn is not measured. |
+| `CAN_BUS` | Engine Intelligence | RPM/fuel-rate/lifetime-fuel/engine-hour signals can support engine-on idle and fuel-burn estimates. |
+| `FUEL_ROD` | Tank Intelligence | Tank-volume changes can be evaluated, subject to calibration and signal quality. |
+| `HYBRID_CAN_AND_FUEL_ROD` | Full Fuel Intelligence | Engine and tank signals can be cross-checked. |
+
+Signal validation rules:
+
+- Null, blank, and dash-like values mean unsupported.
+- Zero is valid only when the provider or asset confirms that signal is supported.
+- Repeated zero RPM/fuel on a moving asset should be treated as placeholder/unsupported unless verified.
+- Provider field presence alone does not prove that a signal is meaningful.
+- Observed signal patterns may suggest capability but must not silently upgrade high-stakes fuel/theft claims.
+- BlueTrax/JLCL assets classify as `GPS_ONLY` unless real ignition, CAN, or tank signals are verified. BlueTrax dashboard zero fuel/RPM placeholders must not be treated as engine/fuel evidence.
+- Meitrack and future hardware should plug in through provider adapter, field mapping, `supported_signals`, and normalized telemetry columns without provider-specific Nava Eye rewrites.
 
 ### Supplemental Auth Profiles
 

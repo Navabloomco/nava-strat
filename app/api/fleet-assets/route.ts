@@ -66,6 +66,11 @@ function sanitizeAsset(asset: any) {
     reviewed_at: asset.reviewed_at || null,
     billing_enabled_at: asset.billing_enabled_at || null,
     billing_disabled_at: asset.billing_disabled_at || null,
+    telemetry_capability: asset.telemetry_capability || "UNKNOWN",
+    telemetry_capability_source: asset.telemetry_capability_source || "unknown",
+    canbus_enabled: Boolean(asset.canbus_enabled),
+    fuel_rod_installed: Boolean(asset.fuel_rod_installed),
+    fuel_rod_calibration_status: asset.fuel_rod_calibration_status || null,
   };
 }
 
@@ -101,6 +106,18 @@ function buildSummary(assets: any[]) {
     excluded_count: assets.filter((asset) => asset.billing_status === "excluded").length,
     disabled_count: assets.filter((asset) => asset.billing_status === "disabled").length,
   };
+}
+
+function isMissingOptionalTelemetryColumnError(error: any) {
+  if (!error) return false;
+  const code = String(error.code || "").toUpperCase();
+  const message = String(error.message || error.details || error.hint || "").toLowerCase();
+  return (
+    code === "PGRST204" ||
+    message.includes("column") ||
+    message.includes("schema cache") ||
+    message.includes("could not find")
+  );
 }
 
 function firstReviewCompanyId(memberships: any[]) {
@@ -217,12 +234,22 @@ export async function GET(req: Request) {
     const resolved = await resolveReviewAccess(req, searchParams.get("companyId"));
     if (resolved.error) return resolved.error;
 
-    const { data: assets, error } = await supabaseAdmin
+    const assetBaseSelect =
+      "id, registration, truck_id, provider_name, status, last_seen_at, provider_location_label, asset_category, billing_status, intelligence_enabled, excluded_reason, ai_suggested_category, ai_suggested_reason, ai_confidence, first_seen_at, reviewed_at, billing_enabled_at, billing_disabled_at";
+    const assetCapabilitySelect = `${assetBaseSelect}, telemetry_capability, telemetry_capability_source, canbus_enabled, fuel_rod_installed, fuel_rod_calibration_status`;
+    let { data: assets, error } = await supabaseAdmin
       .from("fleet_assets")
-      .select(
-        "id, registration, truck_id, provider_name, status, last_seen_at, provider_location_label, asset_category, billing_status, intelligence_enabled, excluded_reason, ai_suggested_category, ai_suggested_reason, ai_confidence, first_seen_at, reviewed_at, billing_enabled_at, billing_disabled_at"
-      )
+      .select(assetCapabilitySelect)
       .eq("company_id", resolved.company.id);
+
+    if (isMissingOptionalTelemetryColumnError(error)) {
+      const retry = await supabaseAdmin
+        .from("fleet_assets")
+        .select(assetBaseSelect)
+        .eq("company_id", resolved.company.id);
+      assets = retry.data as any;
+      error = retry.error;
+    }
 
     if (error) throw error;
 
