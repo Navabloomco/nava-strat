@@ -84,6 +84,9 @@ Open `/admin/providers?companyId=<id>`.
 - [ ] Confirm ops/finance/management cannot create provider connections.
 - [ ] Confirm provider detail/test actions work or fail safely.
 - [ ] Confirm Test Connection displays sanitized diagnostics.
+- [ ] Run Provider Vault Data Discovery Diagnostics with no extra endpoint and confirm it tests configured endpoints only, shows sanitized response shape/key/path information, and writes nothing.
+- [ ] Confirm Data Discovery Diagnostics allows one explicitly entered report/trip candidate endpoint at a time or a short explicit list, with masked query values and no raw payload display.
+- [ ] If no BlueTrax report endpoint is configured, confirm the setup blocker says to ask BlueTrax for trip/report endpoint, auth method, token path, row path, and sample response.
 - [ ] Confirm capability diagnostics separate provider default capability from observed row capability.
 - [ ] Confirm observed BlueTrax/JLCL rows show `GPS Intelligence` unless ignition/CAN/tank signals have been explicitly verified.
 - [ ] Confirm supported engine/tank signals show `none declared` for GPS-only providers.
@@ -97,6 +100,7 @@ Open `/admin/providers?companyId=<id>`.
 - [ ] Confirm static zero odometer values with non-zero mileage are treated as odometer-health issues, not as zero movement.
 - [ ] Confirm no secrets, tokens, cookies, Authorization values, raw provider payloads, or auth configs are visible.
 - [ ] Confirm enrichment diagnostics show safe counts/key names only.
+- [ ] Confirm data discovery sample shape shows keys and value types only, not provider secrets, tokens, cookies, Authorization values, raw rows, or raw response bodies.
 - [ ] Confirm BlueTrax current fuel limitation is treated as a provider-pending integration item, not a product failure.
 - [ ] If testing a second provider on an existing fleet, confirm Provider Vault reports cross-provider asset matches instead of creating duplicate billable-review assets.
 - [ ] Confirm second-provider telemetry logs preserve the incoming `provider_id` and signal quality.

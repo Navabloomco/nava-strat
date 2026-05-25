@@ -65,6 +65,42 @@ type ProviderSyncOptions = {
   writeDistanceSummaries?: boolean;
 };
 
+export type ProviderDiscoveryEndpointInput = {
+  name?: string;
+  url: string;
+  method?: string;
+  row_paths?: string[];
+};
+
+export type ProviderDataDiscoveryEndpointDiagnostics = {
+  name: string;
+  endpoint_source: "configured_primary" | "configured_supplemental" | "candidate";
+  endpoint_tested: string;
+  auth_used: string;
+  http_status?: number;
+  success: boolean;
+  response_type?: SupplementalResponseDiagnostics["response_type"];
+  content_type?: string | null;
+  top_level_keys: string[];
+  candidate_row_paths: string[];
+  candidate_row_paths_found: Record<string, number>;
+  detected_useful_fields: string[];
+  sanitized_sample_shape: any;
+  rows_detected: number;
+  body_truncated?: boolean;
+  setup_blocker?: string;
+  error?: string;
+};
+
+export type ProviderDataDiscoveryDiagnostics = {
+  endpoints_configured: number;
+  endpoints_attempted: number;
+  endpoints_succeeded: number;
+  useful_fields_detected: string[];
+  setup_blockers: string[];
+  endpoints: ProviderDataDiscoveryEndpointDiagnostics[];
+};
+
 type AuthResult = {
   success: boolean;
   token?: string | null;
@@ -640,6 +676,728 @@ export async function runProviderSync(
     };
   }
 }
+
+export async function runProviderDataDiscovery(
+  provider: ProviderRecord,
+  options: { candidateEndpoints?: ProviderDiscoveryEndpointInput[] } = {}
+): Promise<ProviderDataDiscoveryDiagnostics> {
+  const endpoints = buildProviderDiscoveryEndpoints(
+    provider,
+    options.candidateEndpoints || []
+  );
+  const setupBlockers: string[] = [];
+  const diagnostics: ProviderDataDiscoveryDiagnostics = {
+    endpoints_configured: endpoints.length,
+    endpoints_attempted: 0,
+    endpoints_succeeded: 0,
+    useful_fields_detected: [],
+    setup_blockers: setupBlockers,
+    endpoints: [],
+  };
+
+  if (endpoints.length === 0) {
+    setupBlockers.push(buildNoAdditionalReportEndpointMessage(provider));
+    return diagnostics;
+  }
+
+  const primaryAuth = await authenticateProvider(provider);
+  if (!primaryAuth.success) {
+    setupBlockers.push(
+      sanitizeDiagnosticMessage(
+        primaryAuth.message || "Provider authentication failed"
+      )
+    );
+    diagnostics.endpoints = endpoints.map((endpoint) =>
+      buildSkippedDiscoveryEndpoint(endpoint, "Saved provider authentication failed")
+    );
+    return diagnostics;
+  }
+
+  const primaryAuthMetadata = primaryAuth.metadata || {};
+  const supplementalProfileCache = new Map<string, Promise<AuthResult>>();
+  const usefulFields = new Set<string>();
+
+  for (const endpoint of endpoints) {
+    diagnostics.endpoints_attempted++;
+    const endpointDiagnostic = await testProviderDiscoveryEndpoint(
+      provider,
+      endpoint,
+      primaryAuth.token || null,
+      primaryAuthMetadata,
+      supplementalProfileCache
+    );
+    diagnostics.endpoints.push(endpointDiagnostic);
+
+    if (endpointDiagnostic.success) diagnostics.endpoints_succeeded++;
+    for (const field of endpointDiagnostic.detected_useful_fields || []) {
+      usefulFields.add(field);
+    }
+    if (endpointDiagnostic.setup_blocker) {
+      setupBlockers.push(endpointDiagnostic.setup_blocker);
+    }
+  }
+
+  const hasAdditionalReportEndpoint = endpoints.some(
+    (endpoint) =>
+      endpoint.source !== "configured_primary" &&
+      (isDistanceSummaryFeed(endpoint.supplementalConfig || ({} as any)) ||
+        endpoint.source === "candidate")
+  );
+
+  if (!hasAdditionalReportEndpoint) {
+    setupBlockers.push(buildNoAdditionalReportEndpointMessage(provider));
+  }
+
+  diagnostics.useful_fields_detected = Array.from(usefulFields).slice(0, 50);
+  diagnostics.setup_blockers = Array.from(new Set(setupBlockers)).slice(0, 8);
+  return diagnostics;
+}
+
+type ProviderDiscoveryEndpointConfig = {
+  name: string;
+  source: ProviderDataDiscoveryEndpointDiagnostics["endpoint_source"];
+  url: string;
+  method: string;
+  rowPaths: string[];
+  headers?: Record<string, any>;
+  payload?: Record<string, any>;
+  apiKeyHeader?: string;
+  tokenPlacement?: string;
+  supplementalConfig?: SupplementalFeedConfig;
+};
+
+function buildProviderDiscoveryEndpoints(
+  provider: ProviderRecord,
+  candidateEndpoints: ProviderDiscoveryEndpointInput[]
+): ProviderDiscoveryEndpointConfig[] {
+  const endpoints: ProviderDiscoveryEndpointConfig[] = [];
+  const fleetUrl =
+    provider.fleet_url ||
+    provider.fleet_config?.fleet_url ||
+    provider.default_fleet_url;
+
+  if (fleetUrl) {
+    endpoints.push({
+      name: "Configured current/fleet endpoint",
+      source: "configured_primary",
+      url: String(fleetUrl),
+      method: String(provider.fleet_config?.method || "POST").toUpperCase(),
+      rowPaths: buildDiscoveryCandidateRowPaths(
+        provider.fleet_config?.vehicle_paths || defaultVehiclePaths()
+      ),
+      headers: provider.fleet_config?.headers || {},
+      payload: provider.fleet_config?.payload || {},
+      apiKeyHeader: provider.fleet_config?.api_key_header,
+      tokenPlacement: provider.fleet_config?.token_placement,
+    });
+  }
+
+  for (const feed of getSupplementalFeedConfigs(provider)) {
+    endpoints.push({
+      name: `Configured ${feed.name}`,
+      source: "configured_supplemental",
+      url: feed.url,
+      method: String(feed.method || "GET").toUpperCase(),
+      rowPaths: buildDiscoveryCandidateRowPaths(
+        feed.vehicle_paths || defaultSupplementalVehiclePaths()
+      ),
+      headers: feed.headers || {},
+      payload: feed.payload || {},
+      apiKeyHeader: feed.api_key_header,
+      supplementalConfig: feed,
+    });
+  }
+
+  for (const candidate of candidateEndpoints) {
+    const url = String(candidate.url || "").trim();
+    if (!url) continue;
+    endpoints.push({
+      name: String(candidate.name || "Candidate report endpoint").slice(0, 80),
+      source: "candidate",
+      url,
+      method: normalizeDiscoveryMethod(candidate.method),
+      rowPaths: buildDiscoveryCandidateRowPaths(candidate.row_paths || []),
+      headers: {},
+      payload: {},
+    });
+  }
+
+  const seen = new Set<string>();
+  return endpoints.filter((endpoint) => {
+    const key = `${endpoint.source}:${endpoint.method}:${endpoint.url}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function buildDiscoveryCandidateRowPaths(paths: any) {
+  const configured = Array.isArray(paths)
+    ? paths.map((path) => String(path)).filter(Boolean)
+    : [];
+  return Array.from(
+    new Set([
+      ...configured,
+      ...defaultSupplementalVehiclePaths(),
+      "reports",
+      "trips",
+      "records",
+      "data.reports",
+      "data.trips",
+      "data.records",
+      "result.reports",
+      "result.trips",
+      "result.records",
+    ])
+  ).slice(0, 40);
+}
+
+function buildSkippedDiscoveryEndpoint(
+  endpoint: ProviderDiscoveryEndpointConfig,
+  reason: string
+): ProviderDataDiscoveryEndpointDiagnostics {
+  return {
+    name: endpoint.name,
+    endpoint_source: endpoint.source,
+    endpoint_tested: sanitizeDiscoveryUrl(endpoint.url),
+    auth_used: "saved provider auth",
+    success: false,
+    top_level_keys: [],
+    candidate_row_paths: endpoint.rowPaths,
+    candidate_row_paths_found: {},
+    detected_useful_fields: [],
+    sanitized_sample_shape: null,
+    rows_detected: 0,
+    setup_blocker: sanitizeDiagnosticMessage(reason),
+  };
+}
+
+async function testProviderDiscoveryEndpoint(
+  provider: ProviderRecord,
+  endpoint: ProviderDiscoveryEndpointConfig,
+  primaryToken: string | null,
+  primaryMetadata: AuthMetadata,
+  profileCache: Map<string, Promise<AuthResult>>
+): Promise<ProviderDataDiscoveryEndpointDiagnostics> {
+  const baseDiagnostic: ProviderDataDiscoveryEndpointDiagnostics = {
+    name: endpoint.name,
+    endpoint_source: endpoint.source,
+    endpoint_tested: sanitizeDiscoveryUrl(endpoint.url),
+    auth_used: describeDiscoveryAuth(provider, endpoint),
+    success: false,
+    top_level_keys: [],
+    candidate_row_paths: endpoint.rowPaths,
+    candidate_row_paths_found: {},
+    detected_useful_fields: [],
+    sanitized_sample_shape: null,
+    rows_detected: 0,
+  };
+
+  const validationError = validateSafeDiscoveryUrl(endpoint.url);
+  if (validationError) {
+    return {
+      ...baseDiagnostic,
+      setup_blocker: validationError,
+      error: validationError,
+    };
+  }
+
+  let authContext: SupplementalAuthContext = {
+    token: primaryToken,
+    metadata: primaryMetadata,
+    fallbackMetadata: {},
+    authType: (provider.auth_type || "POST_LOGIN").toUpperCase(),
+    profileName: null,
+  };
+
+  if (endpoint.supplementalConfig) {
+    const supplementalAuth = await resolveSupplementalAuthContext(
+      provider,
+      endpoint.supplementalConfig,
+      primaryToken,
+      primaryMetadata,
+      profileCache
+    );
+
+    if (!supplementalAuth) {
+      return {
+        ...baseDiagnostic,
+        setup_blocker:
+          "Configured supplemental auth profile did not return a usable token.",
+        error: "Supplemental auth failed",
+      };
+    }
+
+    authContext = supplementalAuth;
+  }
+
+  const renderedUrl = String(
+    renderTemplateValue(endpoint.url, {
+      provider,
+      token: authContext.token,
+      authMetadata: authContext.metadata,
+      fallbackAuthMetadata: authContext.fallbackMetadata,
+      credentialOverrides: {},
+      now: new Date(),
+    }).value || endpoint.url
+  );
+  const renderedUrlValidationError = validateSafeDiscoveryUrl(renderedUrl);
+  if (renderedUrlValidationError) {
+    return {
+      ...baseDiagnostic,
+      endpoint_tested: sanitizeDiscoveryUrl(renderedUrl),
+      setup_blocker: renderedUrlValidationError,
+      error: renderedUrlValidationError,
+    };
+  }
+
+  const payloadResult = buildPayloadWithDiagnostics(
+    endpoint.payload || {},
+    provider,
+    authContext.token,
+    authContext.metadata,
+    authContext.fallbackMetadata
+  );
+  if (
+    payloadResult.missingMacros.length > 0 ||
+    payloadResult.unknownMacros.length > 0
+  ) {
+    const macroMessage =
+      payloadResult.unknownMacros.length > 0
+        ? `Unknown template macro(s): ${payloadResult.unknownMacros.join(", ")}`
+        : `Missing required template macro(s): ${payloadResult.missingMacros.join(", ")}`;
+    return {
+      ...baseDiagnostic,
+      endpoint_tested: sanitizeDiscoveryUrl(renderedUrl),
+      setup_blocker: sanitizeDiagnosticMessage(macroMessage),
+      error: sanitizeDiagnosticMessage(macroMessage),
+    };
+  }
+
+  const headers = buildDiscoveryHeaders(provider, endpoint, authContext);
+  const method = normalizeDiscoveryMethod(endpoint.method);
+
+  try {
+    const response = await fetchDiscoveryResponse(renderedUrl, {
+      method,
+      headers: withJsonContentType(headers),
+      body: method === "GET" ? undefined : JSON.stringify(payloadResult.value || {}),
+    });
+    const rowPaths = endpoint.rowPaths;
+    const rows = getRowsByPaths(response.data, rowPaths);
+    const usefulFields = detectUsefulDiscoveryFields(response.data, rows);
+    const blocker = buildDiscoverySetupBlocker({
+      httpStatus: response.httpStatus,
+      responseType: response.responseType,
+      rowsDetected: rows.length,
+      usefulFields,
+      endpoint,
+    });
+
+    return {
+      ...baseDiagnostic,
+      endpoint_tested: sanitizeDiscoveryUrl(renderedUrl),
+      http_status: response.httpStatus,
+      success: response.ok,
+      response_type: response.responseType,
+      content_type: response.contentType,
+      top_level_keys: collectTopLevelKeys(response.data),
+      candidate_row_paths_found: collectArrayPathCounts(response.data),
+      detected_useful_fields: usefulFields,
+      sanitized_sample_shape: buildSanitizedSampleShape(rows[0] || response.data),
+      rows_detected: rows.length,
+      body_truncated: response.bodyTruncated,
+      setup_blocker: blocker,
+    };
+  } catch (err: any) {
+    const message =
+      err?.name === "AbortError"
+        ? "Endpoint timed out during safe discovery."
+        : sanitizeDiagnosticMessage(err?.message || "Endpoint discovery failed");
+    return {
+      ...baseDiagnostic,
+      endpoint_tested: sanitizeDiscoveryUrl(renderedUrl),
+      setup_blocker: message,
+      error: message,
+    };
+  }
+}
+
+function buildDiscoveryHeaders(
+  provider: ProviderRecord,
+  endpoint: ProviderDiscoveryEndpointConfig,
+  authContext: SupplementalAuthContext
+) {
+  const headers = buildHeaders(
+    endpoint.headers || {},
+    provider,
+    authContext.token,
+    authContext.metadata,
+    authContext.fallbackMetadata
+  );
+  const token = authContext.token;
+  if (!token) return headers;
+  if (/\{\{\s*(token|access_token|user_api_hash)\s*\}\}/i.test(endpoint.url)) {
+    return headers;
+  }
+
+  if (endpoint.supplementalConfig) {
+    if (authContext.authType === "API_KEY") {
+      headers[
+        endpoint.apiKeyHeader ||
+          provider.fleet_config?.api_key_header ||
+          "x-api-key"
+      ] = token;
+    } else if (authContext.authType === "BASIC_AUTH") {
+      headers.Authorization = `Basic ${token}`;
+    } else {
+      headers.Authorization = `Bearer ${token}`;
+    }
+    return headers;
+  }
+
+  const authType = (provider.auth_type || "POST_LOGIN").toUpperCase();
+  const tokenPlacement = String(endpoint.tokenPlacement || "").toLowerCase();
+  if (
+    tokenPlacement === "query_user_api_hash" ||
+    tokenPlacement === "query_token" ||
+    tokenPlacement === "none"
+  ) {
+    return headers;
+  }
+  if (tokenPlacement === "x_api_key") {
+    headers[endpoint.apiKeyHeader || "X-API-Key"] = token;
+  } else if (tokenPlacement === "authorization_bearer") {
+    headers.Authorization = `Bearer ${token}`;
+  } else if (authType === "API_KEY") {
+    headers[endpoint.apiKeyHeader || "x-api-key"] = token;
+  } else if (authType === "BASIC_AUTH") {
+    headers.Authorization = `Basic ${token}`;
+  } else {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
+  return headers;
+}
+
+async function fetchDiscoveryResponse(
+  url: string,
+  init: { method: string; headers: Record<string, string>; body?: string }
+) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 12000);
+
+  try {
+    const response = await fetch(url, {
+      method: init.method,
+      headers: stripUnsafeDiscoveryHeaders(init.headers),
+      body: init.body,
+      cache: "no-store",
+      redirect: "manual",
+      signal: controller.signal,
+    });
+
+    const { text, truncated } = await readDiscoveryText(response, 200_000);
+    const parsed = parseDiscoveryResponseText(text, response);
+    return {
+      ok: response.ok,
+      httpStatus: response.status,
+      contentType: response.headers.get("content-type"),
+      bodyTruncated: truncated,
+      ...parsed,
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function readDiscoveryText(response: Response, maxBytes: number) {
+  const reader = response.body?.getReader();
+  if (!reader) {
+    const text = await response.text();
+    return {
+      text: text.slice(0, maxBytes),
+      truncated: text.length > maxBytes,
+    };
+  }
+
+  const decoder = new TextDecoder();
+  let received = 0;
+  let text = "";
+  let truncated = false;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+    received += value.byteLength;
+    if (received > maxBytes) {
+      truncated = true;
+      const remaining = Math.max(0, maxBytes - (received - value.byteLength));
+      if (remaining > 0) text += decoder.decode(value.slice(0, remaining));
+      await reader.cancel().catch(() => undefined);
+      break;
+    }
+    text += decoder.decode(value, { stream: true });
+  }
+
+  text += decoder.decode();
+  return { text, truncated };
+}
+
+function parseDiscoveryResponseText(text: string, response: Response): {
+  data: any;
+  responseType: SupplementalResponseDiagnostics["response_type"];
+} {
+  const trimmed = text.trim();
+  if (!trimmed) return { data: null, responseType: "null" };
+
+  const contentType = response.headers.get("content-type") || "";
+  const looksJson =
+    contentType.toLowerCase().includes("json") ||
+    trimmed.startsWith("{") ||
+    trimmed.startsWith("[") ||
+    trimmed === "null";
+
+  if (looksJson) {
+    try {
+      const data = JSON.parse(trimmed);
+      if (Array.isArray(data)) return { data, responseType: "array" };
+      if (data === null) return { data, responseType: "null" };
+      if (typeof data === "object") return { data, responseType: "object" };
+      return { data: null, responseType: "text" };
+    } catch {
+      return { data: null, responseType: "error" };
+    }
+  }
+
+  if (
+    contentType.toLowerCase().includes("html") ||
+    /<html[\s>]/i.test(trimmed) ||
+    /<!doctype html/i.test(trimmed)
+  ) {
+    return { data: null, responseType: "html" };
+  }
+
+  return { data: null, responseType: "text" };
+}
+
+function stripUnsafeDiscoveryHeaders(headers: Record<string, string>) {
+  const blocked = new Set([
+    "host",
+    "cookie",
+    "set-cookie",
+    "x-forwarded-for",
+    "x-forwarded-host",
+    "x-forwarded-proto",
+    "x-real-ip",
+    "forwarded",
+  ]);
+
+  return Object.fromEntries(
+    Object.entries(headers).filter(
+      ([key]) => !blocked.has(key.toLowerCase())
+    )
+  );
+}
+
+function normalizeDiscoveryMethod(method: any) {
+  const value = String(method || "GET").toUpperCase();
+  return value === "POST" ? "POST" : "GET";
+}
+
+function detectUsefulDiscoveryFields(data: any, rows: any[]) {
+  const source = rows.length > 0 ? rows.slice(0, 3) : data;
+  const keys = new Map<string, string>();
+  collectSafeKeyNames(source, keys, 0);
+
+  const detected: string[] = [];
+  for (const field of DISCOVERY_USEFUL_FIELD_ALIASES) {
+    const match = field.aliases.find((alias) =>
+      keys.has(normalizeProviderKey(alias))
+    );
+    if (match) {
+      const originalKey = keys.get(normalizeProviderKey(match));
+      detected.push(originalKey ? `${field.label}: ${originalKey}` : field.label);
+    }
+  }
+
+  return detected.slice(0, 50);
+}
+
+function buildSanitizedSampleShape(value: any, depth = 0): any {
+  if (depth > 3) return "[truncated]";
+  if (value === null || value === undefined) return value === null ? "null" : "undefined";
+  if (Array.isArray(value)) {
+    return value.length === 0
+      ? "array(empty)"
+      : [`array(${value.length})`, buildSanitizedSampleShape(value[0], depth + 1)];
+  }
+  if (typeof value !== "object") return typeof value;
+
+  const output: Record<string, any> = {};
+  for (const [key, nested] of Object.entries(value).slice(0, 30)) {
+    const normalized = normalizeProviderKey(key);
+    if (!normalized || isSensitiveProviderKey(normalized)) continue;
+    output[key] = buildSanitizedSampleShape(nested, depth + 1);
+  }
+  return output;
+}
+
+function buildDiscoverySetupBlocker(input: {
+  httpStatus: number;
+  responseType: SupplementalResponseDiagnostics["response_type"];
+  rowsDetected: number;
+  usefulFields: string[];
+  endpoint: ProviderDiscoveryEndpointConfig;
+}) {
+  if (input.httpStatus === 401 || input.httpStatus === 403) {
+    return "Provider rejected this endpoint. Confirm the auth method, token placement, and report API access.";
+  }
+  if (input.httpStatus >= 400) {
+    return `Endpoint returned HTTP ${input.httpStatus}. Confirm the report URL and required request shape.`;
+  }
+  if (input.responseType === "html") {
+    return "Endpoint returned HTML, not a provider API response. Confirm this is an API URL, not a web page.";
+  }
+  if (input.responseType === "text" || input.responseType === "error") {
+    return "Endpoint did not return readable JSON. Ask the provider for the JSON report endpoint and sample response.";
+  }
+  if (input.rowsDetected === 0) {
+    return "No vehicle/report row array was detected. Confirm the row path or ask the provider for the report response sample.";
+  }
+  if (input.usefulFields.length === 0) {
+    return "Rows were detected, but no useful telemetry or report fields were found from safe key names.";
+  }
+  return undefined;
+}
+
+function validateSafeDiscoveryUrl(rawUrl: string) {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return "Endpoint URL is invalid.";
+  }
+
+  if (!["http:", "https:"].includes(parsed.protocol)) {
+    return "Only HTTP or HTTPS provider API URLs can be tested.";
+  }
+  if (process.env.NODE_ENV === "production" && parsed.protocol !== "https:") {
+    return "HTTPS is required for provider discovery in production.";
+  }
+
+  const hostname = parsed.hostname.toLowerCase();
+  if (isPrivateOrInternalDiscoveryHost(hostname)) {
+    return "Private, local, link-local, or metadata endpoints cannot be tested.";
+  }
+
+  return null;
+}
+
+function isPrivateOrInternalDiscoveryHost(hostname: string) {
+  if (!hostname) return true;
+  const trimmed = hostname.replace(/^\[|\]$/g, "");
+  if (
+    trimmed === "localhost" ||
+    trimmed.endsWith(".localhost") ||
+    trimmed.endsWith(".local") ||
+    trimmed === "::1" ||
+    trimmed === "0:0:0:0:0:0:0:1"
+  ) {
+    return true;
+  }
+
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(trimmed)) {
+    const parts = trimmed.split(".").map((part) => Number(part));
+    const [a, b] = parts;
+    return (
+      a === 0 ||
+      a === 10 ||
+      a === 127 ||
+      (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168)
+    );
+  }
+
+  return !trimmed.includes(".");
+}
+
+function sanitizeDiscoveryUrl(rawUrl: string) {
+  try {
+    const parsed = new URL(rawUrl);
+    for (const key of Array.from(parsed.searchParams.keys())) {
+      const normalized = normalizeProviderKey(key);
+      parsed.searchParams.set(
+        key,
+        isSensitiveProviderKey(normalized) || normalized.includes("hash")
+          ? "[redacted]"
+          : "[set]"
+      );
+    }
+    return parsed.toString();
+  } catch {
+    return String(rawUrl || "")
+      .replace(
+        /([?&](?:token|access_token|user_api_hash|api_key|apikey|hash|jwt|bearer)=)[^&\s]+/gi,
+        "$1[redacted]"
+      )
+      .slice(0, 120);
+  }
+}
+
+function describeDiscoveryAuth(
+  provider: ProviderRecord,
+  endpoint: ProviderDiscoveryEndpointConfig
+) {
+  if (endpoint.supplementalConfig?.auth_profile) {
+    return `supplemental auth profile: ${endpoint.supplementalConfig.auth_profile}`;
+  }
+
+  const authType = String(provider.auth_type || "POST_LOGIN").toUpperCase();
+  if (authType === "POST_LOGIN") return "saved POST login token";
+  if (authType === "API_KEY") return "saved API key";
+  if (authType === "BEARER") return "saved bearer token";
+  if (authType === "BASIC_AUTH") return "saved basic auth";
+  if (authType === "NONE") return "no auth";
+  return "saved provider auth";
+}
+
+function buildNoAdditionalReportEndpointMessage(provider: ProviderRecord) {
+  const name = normalizeProviderKey(provider.provider_name || "");
+  if (name.includes("bluetrax")) {
+    return "No additional BlueTrax report endpoints configured yet. Ask BlueTrax for trip/report endpoint, auth method, token path, row path, and sample response.";
+  }
+  return "No additional provider report endpoints configured yet. Ask the provider for trip/report endpoint, auth method, token path, row path, and sample response.";
+}
+
+const DISCOVERY_USEFUL_FIELD_ALIASES = [
+  {
+    label: "vehicle/reg/truck",
+    aliases: ["vehicle", "truck", "truck_id", "reg", "reg_no", "registration", "plate", "unit_id"],
+  },
+  { label: "latitude", aliases: ["latitude", "lat", "gps_lat", "y"] },
+  { label: "longitude", aliases: ["longitude", "lng", "lon", "gps_lng", "gps_lon", "x"] },
+  { label: "speed", aliases: ["speed", "velocity", "kph", "speed_kph"] },
+  {
+    label: "timestamp",
+    aliases: ["timestamp", "time", "fixtime", "currenttime", "current_time", "recorded_at", "gps_time", "startlocationtime", "endlocationtime"],
+  },
+  { label: "location label", aliases: ["location", "currentlocation", "address", "place", "label", "startlocation", "endlocation"] },
+  { label: "odometer", aliases: ["odometer", "odo", "odometerkm", "startodometer", "endodometer"] },
+  { label: "mileage", aliases: ["mileage", "distance", "distancekm", "tripdistance", "provider_mileage"] },
+  { label: "start odometer", aliases: ["startodometer", "start_odometer", "start_odometer_km"] },
+  { label: "end odometer", aliases: ["endodometer", "end_odometer", "end_odometer_km"] },
+  { label: "motion duration", aliases: ["motionduration", "motion_duration", "duration", "movingtime"] },
+  { label: "violations", aliases: ["violations", "violationcount", "violations_count", "alerts"] },
+  { label: "ignition/ACC", aliases: ["ignition", "ignition_on", "acc", "accstatus", "engine_on"] },
+  { label: "RPM", aliases: ["rpm", "engine_rpm", "enginerpm"] },
+  { label: "fuel level", aliases: ["fuel", "fuellevel", "currentfuellevel", "fuel_level"] },
+  { label: "fuel rate", aliases: ["fuelrate", "fuel_rate", "fuelconsumption"] },
+  { label: "driver", aliases: ["driver", "drivername", "driver_name"] },
+  { label: "route/trip/report id", aliases: ["route", "routeid", "trip", "tripid", "reportid", "provider_trip_key"] },
+];
 
 function buildSyncMessage(
   syncedCount: number,
@@ -3707,6 +4465,11 @@ function sanitizeDiagnosticMessage(message: any) {
   return String(message || "Supplemental feed auth failed")
     .replace(/bearer\s+[a-z0-9._~+/=-]+/gi, "bearer [redacted]")
     .replace(/token['"]?\s*[:=]\s*['"]?[^,'"\s}]+/gi, "token=[redacted]")
+    .replace(
+      /([?&](?:token|access_token|user_api_hash|api_key|apikey|hash|jwt|bearer)=)[^&\s]+/gi,
+      "$1[redacted]"
+    )
+    .replace(/authorization['"]?\s*[:=]\s*['"]?[^,'"\s}]+/gi, "authorization=[redacted]")
     .slice(0, 240);
 }
 

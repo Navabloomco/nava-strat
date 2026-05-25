@@ -146,7 +146,7 @@ The main product principle is convenience. Every user-facing page should make th
 | --- | --- |
 | `GET/POST /api/providers` | Provider Vault list/create. Supports platform-owner `companyId` context. Sanitizes provider credentials in responses. POST supports public template creation and structured self-serve custom API provider creation; raw advanced config remains platform-owner-only. New provider connections are created inactive by default. |
 | `GET/PATCH /api/providers/[id]` | Provider detail/update and explicit sync activation. Supports platform-owner `companyId` context for safe tenant-scoped updates. Platform-owner-only advanced fleet config including supplemental feeds and auth profiles. Customer owners/admins may update credentials and activate/deactivate sync for their company only after a successful connection test. |
-| `POST /api/providers/[id]/test` | Tests provider sync in the resolved tenant context and returns sanitized diagnostics, including safe telemetry capability and automated distance-report dry-run counts when available. It must not expose provider secrets or raw payloads. |
+| `POST /api/providers/[id]/test` | Tests provider sync in the resolved tenant context and returns sanitized diagnostics, including safe telemetry capability and automated distance-report dry-run counts when available. It also supports discovery-only diagnostics for configured endpoints and explicitly entered report endpoint candidates. It must not expose provider secrets or raw payloads. |
 | `POST /api/providers/test-endpoint` | Owner/admin/platform-owner-only custom provider setup helper. Tests one HTTPS provider endpoint with strict SSRF protections, timeout, response-size cap, safe headers, and sanitized structure detection for token paths, row paths, and field mapping suggestions. It does not create, activate, or persist provider config. |
 | `POST /api/providers/[id]/distance-import` | Provider-scoped admin CSV distance report fallback/backfill import. Dry-run previews BlueTrax-style report rows, asset matches, odometer health, and rows that would write; commit writes matched rows to `provider_trip_summaries` only. |
 | `GET /api/providers/templates` | Role-aware provider templates. Customer owners/admins receive only public/supported self-serve templates; platform owners additionally receive internal setup-only templates marked as platform setup only. No live credentials. |
@@ -544,6 +544,7 @@ Provider Vault should separate provider declarations from observed row evidence:
 - Observed row capability comes from normalized test/sync rows and should be counted separately, for example `GPS Intelligence - 21 rows`.
 - Supported engine/tank signals should show declared meaningful signals only, not field names that are present but unsupported.
 - Placeholder zero signals should be reported as safe counts/key names and must not upgrade the asset or provider capability.
+- Data Discovery Diagnostics may test configured provider endpoints and explicitly entered candidate report endpoints using saved credentials server-side. It reports only sanitized shape evidence: masked endpoint URL, auth method label, HTTP status, response type, top-level keys, candidate row paths, array counts, useful field names, and value-type sample shape. It must not write telemetry/trip summaries, activate sync, expose raw payloads, or display credentials/tokens.
 
 BlueTrax/JLCL current state is GPS Intelligence: the primary feed supports location/speed/timestamp movement intelligence, while engine-on idling, exact fuel burn, tank volume, and fuel-theft conclusions remain unverified until ignition/CAN/tank signals are explicitly proven.
 
@@ -600,6 +601,7 @@ Current limitation:
 
 - BlueTrax current fuel will not ingest until the configured supplemental auth profile successfully captures the correct web analytics token or BlueTrax provides official report/API access for that endpoint.
 - BlueTrax distance summaries should use provider-reported `Mileage` when odometer values are static or zero; do not treat `StartOdometer = 0` and `EndOdometer = 0` as proof that the truck did not move when `Mileage` is non-zero.
+- Provider Vault Data Discovery Diagnostics can test the configured public fleet endpoint and any explicitly supplied BlueTrax report/trip endpoint candidate. If no additional report endpoint is configured, the correct setup blocker is to ask BlueTrax for trip/report endpoint, auth method, token path, row path, and sample response.
 - Do not paste browser cookies, session tokens, or Authorization values into config, chat, logs, or docs.
 - Do not scrape the visual UI unless explicitly approved as a separate product/security decision.
 

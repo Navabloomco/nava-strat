@@ -3,6 +3,7 @@ import { supabase } from "../../../../../lib/supabase";
 import { supabaseAdmin } from "../../../../../lib/supabaseAdmin";
 import {
   ProviderRecord,
+  runProviderDataDiscovery,
   runProviderSync,
 } from "../../../../../lib/providers/engine";
 import { recordAnalyticsEvent } from "../../../../../lib/api/analyticsEvents";
@@ -385,6 +386,43 @@ function sanitizeCountMap(value: any) {
   );
 }
 
+function normalizeDiscoveryEndpointInputs(value: any) {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map((entry) => {
+      if (typeof entry === "string") {
+        return { url: entry.trim() };
+      }
+      if (!entry || typeof entry !== "object") return null;
+      return {
+        name:
+          typeof entry.name === "string"
+            ? entry.name.trim().slice(0, 80)
+            : undefined,
+        url: typeof entry.url === "string" ? entry.url.trim() : "",
+        method:
+          typeof entry.method === "string" &&
+          entry.method.trim().toUpperCase() === "POST"
+            ? "POST"
+            : "GET",
+        row_paths: Array.isArray(entry.row_paths)
+          ? entry.row_paths
+              .map((path: any) => String(path || "").trim())
+              .filter(Boolean)
+              .slice(0, 20)
+          : undefined,
+      };
+    })
+    .filter((entry) => Boolean(entry?.url))
+    .slice(0, 6) as Array<{
+      url: string;
+      name?: string;
+      method?: string;
+      row_paths?: string[];
+    }>;
+}
+
 function sanitizeResultPathMap(value: any) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
 
@@ -572,6 +610,24 @@ export async function POST(
         { success: false, error: "Provider not found" },
         { status: 404 }
       );
+    }
+
+    if (body.dataDiscoveryOnly) {
+      const discoveryDiagnostics = await runProviderDataDiscovery(
+        provider as ProviderRecord,
+        {
+          candidateEndpoints: normalizeDiscoveryEndpointInputs(
+            body.dataDiscoveryEndpoints
+          ),
+        }
+      );
+
+      return NextResponse.json({
+        success: true,
+        provider_id: provider.id,
+        provider_name: provider.provider_name,
+        data_discovery_diagnostics: discoveryDiagnostics,
+      });
     }
 
     const result = await runProviderSync(provider as ProviderRecord, {

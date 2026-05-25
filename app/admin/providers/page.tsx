@@ -427,6 +427,11 @@ function ProviderCard({
       <ProviderCapabilityDiagnostics summary={testResult?.capability_summary} />
       <ProviderSecondSourceDiagnostics result={testResult} />
       <ProviderDistanceDiagnostics diagnostics={testResult?.distance_diagnostics} />
+      <ProviderDataDiscoveryDiagnostics
+        providerId={form.id}
+        selectedCompanyId={selectedCompanyId}
+        canRun={capabilities.can_test_provider}
+      />
       <DistanceReportImport
         providerId={form.id}
         selectedCompanyId={selectedCompanyId}
@@ -699,6 +704,239 @@ function ProviderDistanceDiagnostics({ diagnostics }: { diagnostics: any }) {
       />
     </section>
   );
+}
+
+function ProviderDataDiscoveryDiagnostics({
+  providerId,
+  selectedCompanyId,
+  canRun,
+}: {
+  providerId: string;
+  selectedCompanyId: string;
+  canRun: boolean;
+}) {
+  const [candidateEndpoints, setCandidateEndpoints] = useState("");
+  const [isRunning, setIsRunning] = useState(false);
+  const [result, setResult] = useState<any>(null);
+
+  if (!canRun) return null;
+
+  async function runDiscovery() {
+    setIsRunning(true);
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        throw new Error("Session expired. Please log in again.");
+      }
+
+      const endpoints = parseDiscoveryEndpointText(candidateEndpoints);
+      const res = await fetch(`/api/providers/${providerId}/test`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          ...(selectedCompanyId ? { companyId: selectedCompanyId } : {}),
+          dataDiscoveryOnly: true,
+          dataDiscoveryEndpoints: endpoints,
+        }),
+      });
+      const payload = await res.json();
+      if (!res.ok || !payload.success) {
+        throw new Error(payload.error || "Data discovery failed");
+      }
+      setResult(payload.data_discovery_diagnostics);
+    } catch (err: any) {
+      alert(err.message || "Data discovery failed");
+    } finally {
+      setIsRunning(false);
+    }
+  }
+
+  return (
+    <section style={diagnosticsStyle}>
+      <div style={diagnosticsHeaderStyle}>
+        <div>
+          <div style={diagnosticsEyebrowStyle}>Provider data discovery</div>
+          <h4 style={diagnosticsTitleStyle}>Data Discovery Diagnostics</h4>
+        </div>
+        <div style={diagnosticsMetaStyle}>diagnostic only</div>
+      </div>
+
+      <div style={diagnosticsEmptyStyle}>
+        Test the configured provider endpoint and any explicit report endpoint
+        candidates. This does not activate sync and does not write telemetry or
+        trip summaries.
+      </div>
+
+      <div style={discoveryInputPanelStyle}>
+        <div>
+          <label style={labelStyle}>Candidate report endpoints</label>
+          <textarea
+            style={{ ...textareaStyle, minHeight: 88 }}
+            value={candidateEndpoints}
+            placeholder="Optional: one report/trip endpoint URL per line"
+            onChange={(event) => setCandidateEndpoints(event.target.value)}
+          />
+          <div style={diagnosticsSmallTextStyle}>
+            Leave blank to test only configured endpoints. Add BlueTrax
+            report/trip URLs only after the provider supplies them.
+          </div>
+        </div>
+        <div style={distanceImportActionRowStyle}>
+          <button
+            type="button"
+            onClick={runDiscovery}
+            disabled={isRunning}
+            style={testBtn}
+          >
+            {isRunning ? "DISCOVERING..." : "RUN DISCOVERY"}
+          </button>
+        </div>
+      </div>
+
+      {result && (
+        <div style={distanceImportPreviewStyle}>
+          <div style={diagnosticsSummaryGridStyle}>
+            <DiagnosticMetric
+              label="Endpoints"
+              value={result.endpoints_configured}
+            />
+            <DiagnosticMetric
+              label="Attempted"
+              value={result.endpoints_attempted}
+            />
+            <DiagnosticMetric
+              label="Succeeded"
+              value={result.endpoints_succeeded}
+            />
+            <DiagnosticMetric
+              label="Useful fields"
+              value={(result.useful_fields_detected || []).length}
+            />
+          </div>
+
+          <DiagnosticFieldBlock
+            title="Useful fields detected"
+            value={result.useful_fields_detected}
+            mutedEmpty="No useful telemetry/report fields detected yet."
+          />
+          <DiagnosticFieldBlock
+            title="Setup blockers"
+            value={result.setup_blockers}
+            mutedEmpty="No setup blockers detected."
+          />
+
+          <div style={diagnosticsFeedListStyle}>
+            {(result.endpoints || []).map((endpoint: any, index: number) => (
+              <div key={`${endpoint.name}-${index}`} style={diagnosticsFeedStyle}>
+                <div style={diagnosticsFeedHeaderStyle}>
+                  <div>
+                    <strong>{endpoint.name}</strong>
+                    <div style={diagnosticsSmallTextStyle}>
+                      {endpoint.endpoint_source} · {endpoint.auth_used}
+                    </div>
+                  </div>
+                  <span style={feedStatusStyle(endpoint.success)}>
+                    {endpoint.success ? "Reached" : "Blocked"}
+                  </span>
+                </div>
+                <div style={diagnosticsMiniGridStyle}>
+                  <DiagnosticMetric
+                    compact
+                    label="HTTP"
+                    value={endpoint.http_status || 0}
+                  />
+                  <DiagnosticMetric
+                    compact
+                    label="Rows"
+                    value={endpoint.rows_detected || 0}
+                  />
+                  <DiagnosticMetric
+                    compact
+                    label="Arrays"
+                    value={Object.keys(endpoint.candidate_row_paths_found || {}).length}
+                  />
+                  <DiagnosticMetric
+                    compact
+                    label="Fields"
+                    value={(endpoint.detected_useful_fields || []).length}
+                  />
+                </div>
+                <DiagnosticFieldBlock
+                  title="Endpoint tested"
+                  value={[endpoint.endpoint_tested]}
+                />
+                <DiagnosticFieldBlock
+                  title="Response shape"
+                  value={[
+                    endpoint.response_type
+                      ? `type: ${endpoint.response_type}`
+                      : "",
+                    endpoint.content_type
+                      ? `content-type: ${endpoint.content_type}`
+                      : "",
+                    endpoint.body_truncated ? "body was truncated for safety" : "",
+                  ]}
+                  mutedEmpty="No response shape available."
+                />
+                <DiagnosticFieldBlock
+                  title="Top-level keys"
+                  value={endpoint.top_level_keys}
+                  mutedEmpty="No safe top-level keys detected."
+                />
+                <DiagnosticFieldBlock
+                  title="Candidate row paths"
+                  value={endpoint.candidate_row_paths}
+                  mutedEmpty="No row paths checked."
+                />
+                <DiagnosticFieldBlock
+                  title="Array paths found"
+                  value={endpoint.candidate_row_paths_found}
+                  mutedEmpty="No array paths found."
+                  includeZeroCounts
+                />
+                <DiagnosticFieldBlock
+                  title="Useful fields"
+                  value={endpoint.detected_useful_fields}
+                  mutedEmpty="No useful fields detected."
+                />
+                {endpoint.setup_blocker && (
+                  <div style={diagnosticsErrorStyle}>
+                    {endpoint.setup_blocker}
+                  </div>
+                )}
+                <details style={advancedDetailsStyle}>
+                  <summary style={advancedSummaryStyle}>
+                    Sanitized sample shape
+                    <span style={advancedSummaryHintStyle}>
+                      keys and value types only
+                    </span>
+                  </summary>
+                  <pre style={sanitizedShapeStyle}>
+                    {JSON.stringify(endpoint.sanitized_sample_shape || {}, null, 2)}
+                  </pre>
+                </details>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function parseDiscoveryEndpointText(value: string) {
+  return value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(0, 6)
+    .map((url) => ({ url, method: "GET" }));
 }
 
 function DistanceReportImport({
@@ -1679,6 +1917,10 @@ const distanceImportPanelStyle = {
   padding: 14,
   marginBottom: 14,
 };
+const discoveryInputPanelStyle = {
+  ...distanceImportPanelStyle,
+  marginTop: 14,
+};
 const distanceImportActionRowStyle = {
   display: "flex",
   flexWrap: "wrap" as const,
@@ -1727,6 +1969,17 @@ const diagnosticsPillStyle = {
   padding: "5px 8px",
   fontSize: 12,
   fontWeight: 750,
+};
+const sanitizedShapeStyle = {
+  margin: "12px 0 0 0",
+  border: "1px solid #e2e8f0",
+  backgroundColor: "#0f172a",
+  color: "#e2e8f0",
+  borderRadius: 8,
+  padding: 12,
+  overflowX: "auto" as const,
+  fontSize: 12,
+  lineHeight: 1.5,
 };
 const feedStatusStyle = (success: boolean) => ({
   border: success ? "1px solid #99f6e4" : "1px solid #fde68a",
