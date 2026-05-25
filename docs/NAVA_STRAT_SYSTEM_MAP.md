@@ -1,6 +1,6 @@
 # Nava Strat System Map
 
-Last updated: 2026-05-21
+Last updated: 2026-05-25
 
 This document is the repo source of truth for the current Nava Strat product surface. Keep it current when routes, tenant rules, provider sync, asset review, or role behavior changes.
 
@@ -54,7 +54,7 @@ The main product principle is convenience. Every user-facing page should make th
 | Route | Purpose |
 | --- | --- |
 | `/dashboard` | Customer-facing app dashboard and navigation hub for fleet tenants. Platform owners default to the Nava Bloom Co./Navabloomco platform operator workspace on first load. Durable detection uses `companies.company_type = platform_operator`, with the older Navabloomco slug/name heuristic only as a transition fallback when `company_type` is missing. For the platform/operator workspace, platform owners see a platform workspace home with safe aggregate KPIs, grouped platform/tenant/product actions, customer workspace cards, and a presentation-only sensitive metric toggle instead of empty fleet metrics. Customer tenants remain selectable from the company switcher. Includes Nava Eye Watch items built from safe dashboard summaries, and an embedded Nava Eye widget for customer fleet tenants that may pass safe page context for visible dashboard follow-ups. |
-| `/nava-eye` | Nava Eye assistant UI with company-scoped investigation conversation threads. Threads are separate from durable Nava Eye memory and can be closed when the investigation is handled. |
+| `/nava-eye` | Nava Eye assistant UI with company-scoped investigation conversation threads. Threads are separate from durable Nava Eye memory and can be closed when the investigation is handled. The page preserves selected company, selected conversation, and open/closed tab through URL query state on ordinary refresh without storing message content in localStorage. Closed conversations are archived/read-only for MVP and remain accessible under Closed conversations; future retention can become configurable, such as 90 days. |
 | `/tracking/live` | Live tracking view for enabled intelligence assets. |
 | `/tracking/link` | Tracking link helper page. |
 | `/tracking/processor` | Tracking processing/admin helper page. |

@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../../lib/supabase";
 import {
   EmptyState,
@@ -37,6 +37,8 @@ type NavaEyeMessage = {
   created_at: string;
 };
 
+type ConversationStatusTab = "open" | "closed";
+
 export default function NavaEyeChatPage() {
   const [question, setQuestion] = useState("");
   const [errorDetail, setErrorDetail] = useState("");
@@ -50,7 +52,12 @@ export default function NavaEyeChatPage() {
   const [openConversations, setOpenConversations] = useState<NavaEyeConversation[]>([]);
   const [closedConversations, setClosedConversations] = useState<NavaEyeConversation[]>([]);
   const [selectedConversationId, setSelectedConversationId] = useState("");
+  const [conversationStatusTab, setConversationStatusTab] =
+    useState<ConversationStatusTab>("open");
   const [messages, setMessages] = useState<NavaEyeMessage[]>([]);
+  const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const pendingConversationIdRef = useRef("");
 
   useEffect(() => {
     initialize();
@@ -58,11 +65,24 @@ export default function NavaEyeChatPage() {
 
   useEffect(() => {
     if (selectedCompanyId) {
-      loadConversationLists(selectedCompanyId);
-      setSelectedConversationId("");
-      setMessages([]);
+      loadConversationLists(selectedCompanyId, {
+        preserveSelected: true,
+        conversationId: pendingConversationIdRef.current,
+      });
     }
   }, [selectedCompanyId]);
+
+  useEffect(() => {
+    if (initializing) return;
+    syncUrlState();
+  }, [initializing, selectedCompanyId, selectedConversationId, conversationStatusTab]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "end",
+    });
+  }, [messages.length, loading]);
 
   async function initialize() {
     setInitializing(true);
@@ -88,9 +108,24 @@ export default function NavaEyeChatPage() {
     }
 
     const nextCompanies = json.companies || [];
+    const params =
+      typeof window !== "undefined"
+        ? new URLSearchParams(window.location.search)
+        : new URLSearchParams();
+    const requestedCompanyId = params.get("companyId") || "";
+    const requestedConversationId = params.get("conversationId") || "";
+    const requestedStatus = normalizeConversationStatus(
+      params.get("status")
+    );
+    pendingConversationIdRef.current = requestedConversationId;
     setCompanies(nextCompanies);
     setIsPlatformOwner(Boolean(json.is_platform_owner));
-    setSelectedCompanyId(nextCompanies[0]?.id || "");
+    setConversationStatusTab(requestedStatus || "open");
+    setSelectedCompanyId(
+      nextCompanies.some((company: CompanyOption) => company.id === requestedCompanyId)
+        ? requestedCompanyId
+        : nextCompanies[0]?.id || ""
+    );
     setInitializing(false);
   }
 
@@ -101,8 +136,15 @@ export default function NavaEyeChatPage() {
     return session?.access_token || "";
   }
 
-  async function loadConversationLists(companyId = selectedCompanyId) {
-    if (!companyId) return;
+  async function loadConversationLists(
+    companyId = selectedCompanyId,
+    options: {
+      preserveSelected?: boolean;
+      conversationId?: string;
+      skipSelectionUpdate?: boolean;
+    } = {}
+  ) {
+    if (!companyId) return null;
     setConversationLoading(true);
     setSetupRequired("");
     setErrorDetail("");
@@ -129,7 +171,7 @@ export default function NavaEyeChatPage() {
       setOpenConversations([]);
       setClosedConversations([]);
       setConversationLoading(false);
-      return;
+      return null;
     }
 
     if (!openRes.ok || !openJson.success) {
@@ -144,7 +186,39 @@ export default function NavaEyeChatPage() {
       setClosedConversations(closedJson.conversations || []);
     }
 
+    const nextOpen = openRes.ok && openJson.success ? openJson.conversations || [] : [];
+    const nextClosed = closedRes.ok && closedJson.success ? closedJson.conversations || [] : [];
+    const nextAll = [...nextOpen, ...nextClosed];
+    const requestedConversationId = options.conversationId || "";
+
+    if (!options.skipSelectionUpdate) {
+      if (requestedConversationId) {
+        const requestedConversation = nextAll.find(
+          (conversation: NavaEyeConversation) =>
+            conversation.id === requestedConversationId
+        );
+        pendingConversationIdRef.current = "";
+        if (requestedConversation) {
+          setConversationStatusTab(requestedConversation.status);
+          await loadConversation(requestedConversation.id);
+        } else if (!options.preserveSelected) {
+          setSelectedConversationId("");
+          setMessages([]);
+        }
+      } else if (options.preserveSelected && selectedConversationId) {
+        const stillAccessible = nextAll.some(
+          (conversation: NavaEyeConversation) =>
+            conversation.id === selectedConversationId
+        );
+        if (!stillAccessible) {
+          setSelectedConversationId("");
+          setMessages([]);
+        }
+      }
+    }
+
     setConversationLoading(false);
+    return { open: nextOpen, closed: nextClosed };
   }
 
   async function loadConversation(conversationId: string) {
@@ -177,6 +251,9 @@ export default function NavaEyeChatPage() {
     }
 
     setSelectedConversationId(conversationId);
+    if (json.conversation?.status === "open" || json.conversation?.status === "closed") {
+      setConversationStatusTab(json.conversation.status);
+    }
     setMessages(json.messages || []);
     setConversationLoading(false);
   }
@@ -213,6 +290,7 @@ export default function NavaEyeChatPage() {
 
     await loadConversationLists(selectedCompanyId);
     setSelectedConversationId(json.conversation.id);
+    setConversationStatusTab("open");
     setMessages([]);
     return json.conversation as NavaEyeConversation;
   }
@@ -221,6 +299,7 @@ export default function NavaEyeChatPage() {
     setQuestion("");
     setMessages([]);
     setSelectedConversationId("");
+    setConversationStatusTab("open");
     await createConversation();
   }
 
@@ -291,8 +370,14 @@ export default function NavaEyeChatPage() {
     setLoading(false);
   }
 
+  function requestCloseConversation() {
+    if (!selectedConversationId || selectedConversation?.status === "closed") return;
+    setCloseConfirmOpen(true);
+  }
+
   async function closeConversation() {
     if (!selectedConversationId || selectedConversation?.status === "closed") return;
+    const closingConversationId = selectedConversationId;
     setLoading(true);
     setErrorDetail("");
 
@@ -300,6 +385,7 @@ export default function NavaEyeChatPage() {
     if (!token) {
       setErrorDetail("Session expired. Please log in again.");
       setLoading(false);
+      setCloseConfirmOpen(false);
       return;
     }
 
@@ -316,12 +402,39 @@ export default function NavaEyeChatPage() {
     if (!res.ok || !json.success) {
       setErrorDetail(json.error || "Unable to close this conversation.");
       setLoading(false);
+      setCloseConfirmOpen(false);
       return;
     }
 
-    await loadConversationLists(selectedCompanyId);
-    await loadConversation(selectedConversationId);
+    const lists = await loadConversationLists(selectedCompanyId, {
+      skipSelectionUpdate: true,
+    });
+    const nextOpen = (lists?.open || []).find(
+      (conversation: NavaEyeConversation) =>
+        conversation.id !== closingConversationId
+    );
+    if (nextOpen) {
+      setConversationStatusTab("open");
+      await loadConversation(nextOpen.id);
+    } else {
+      setConversationStatusTab("open");
+      setSelectedConversationId("");
+      setMessages([]);
+    }
+    setCloseConfirmOpen(false);
     setLoading(false);
+  }
+
+  function syncUrlState() {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (selectedCompanyId) params.set("companyId", selectedCompanyId);
+    else params.delete("companyId");
+    if (selectedConversationId) params.set("conversationId", selectedConversationId);
+    else params.delete("conversationId");
+    params.set("status", conversationStatusTab);
+    const nextUrl = `${window.location.pathname}?${params.toString()}`;
+    window.history.replaceState(null, "", nextUrl);
   }
 
   const showCompanySelector = isPlatformOwner || companies.length > 1;
@@ -344,6 +457,11 @@ export default function NavaEyeChatPage() {
     "Is KDQ265 siphoning fuel?",
     "Why is KDQ265 always stopping?",
   ];
+  const visibleConversations =
+    conversationStatusTab === "open" ? openConversations : closedConversations;
+  const selectedConversationHasAssistantMessage = messages.some(
+    (message) => message.sender === "assistant"
+  );
 
   if (initializing) {
     return (
@@ -370,8 +488,8 @@ export default function NavaEyeChatPage() {
           }
         />
 
-        <div className="mt-8 grid gap-6 lg:grid-cols-[320px_minmax(0,1fr)]">
-          <Panel dark className="p-5">
+        <div className="mt-8 grid min-w-0 gap-6 lg:grid-cols-[320px_minmax(0,1fr)]">
+          <Panel dark className="min-w-0 p-4 sm:p-5">
             <div className="flex items-center justify-between gap-3">
               <div>
                 <p className="text-xs font-bold uppercase tracking-[0.18em] text-cyan-200">
@@ -408,23 +526,37 @@ export default function NavaEyeChatPage() {
               <p className="mt-5 text-sm text-slate-400">Loading conversations...</p>
             )}
 
+            <div className="mt-5 grid grid-cols-2 gap-2 rounded-lg border border-white/10 bg-white/[0.03] p-1">
+              {(["open", "closed"] as ConversationStatusTab[]).map((status) => (
+                <button
+                  key={status}
+                  type="button"
+                  onClick={() => setConversationStatusTab(status)}
+                  className={`rounded-md px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] transition ${
+                    conversationStatusTab === status
+                      ? "bg-cyan-300/15 text-cyan-100"
+                      : "text-slate-400 hover:bg-white/[0.04] hover:text-slate-200"
+                  }`}
+                >
+                  {status === "open" ? "Open" : "Closed"}
+                </button>
+              ))}
+            </div>
+
             <ConversationGroup
-              title="Open"
-              emptyText="No open threads yet."
-              conversations={openConversations}
-              selectedConversationId={selectedConversationId}
-              onSelect={loadConversation}
-            />
-            <ConversationGroup
-              title="Closed"
-              emptyText="No closed threads yet."
-              conversations={closedConversations}
+              title={conversationStatusTab === "open" ? "Open conversations" : "Closed conversations"}
+              emptyText={
+                conversationStatusTab === "open"
+                  ? "No open threads yet."
+                  : "No closed threads yet."
+              }
+              conversations={visibleConversations}
               selectedConversationId={selectedConversationId}
               onSelect={loadConversation}
             />
           </Panel>
 
-          <Panel dark className="flex min-h-[640px] flex-col p-0">
+          <Panel dark className="flex min-h-[75vh] min-w-0 flex-col overflow-hidden p-0 lg:min-h-[640px]">
             <div className="flex flex-col gap-3 border-b border-white/10 p-5 sm:flex-row sm:items-center sm:justify-between">
               <div className="min-w-0">
                 <p className="text-xs font-bold uppercase tracking-[0.18em] text-cyan-200">
@@ -439,7 +571,7 @@ export default function NavaEyeChatPage() {
               </div>
               <div className="flex flex-wrap gap-2">
                 {selectedConversation?.status === "open" && (
-                  <SecondaryButton type="button" onClick={closeConversation} disabled={loading}>
+                  <SecondaryButton type="button" onClick={requestCloseConversation} disabled={loading}>
                     Close conversation
                   </SecondaryButton>
                 )}
@@ -449,7 +581,7 @@ export default function NavaEyeChatPage() {
               </div>
             </div>
 
-            <div className="flex-1 space-y-4 overflow-y-auto p-5">
+            <div className="flex-1 space-y-4 overflow-y-auto p-4 sm:p-5">
               {setupRequired && (
                 <Panel dark className="border-amber-300/30 bg-amber-500/10 p-5">
                   <p className="text-sm font-semibold text-amber-100">Conversation setup required</p>
@@ -477,7 +609,7 @@ export default function NavaEyeChatPage() {
               {messages.map((message) => (
                 <div
                   key={message.id}
-                  className={`rounded-lg border p-4 ${
+                  className={`min-w-0 rounded-lg border p-4 ${
                     message.sender === "user"
                       ? "border-cyan-300/20 bg-cyan-300/10"
                       : "border-white/10 bg-white/[0.04]"
@@ -500,20 +632,38 @@ export default function NavaEyeChatPage() {
                   Nava Eye is checking the current company data...
                 </div>
               )}
+
+              {selectedConversation?.status === "open" &&
+                selectedConversationHasAssistantMessage && (
+                  <div className="rounded-lg border border-white/10 bg-white/[0.03] p-4">
+                    <p className="text-sm text-slate-300">
+                      Done with this investigation?
+                    </p>
+                    <SecondaryButton
+                      type="button"
+                      onClick={requestCloseConversation}
+                      disabled={loading}
+                      className="mt-3 w-full sm:w-auto"
+                    >
+                      Close conversation
+                    </SecondaryButton>
+                  </div>
+                )}
+              <div ref={messagesEndRef} />
             </div>
 
-            <form onSubmit={askNavaEye} className="border-t border-white/10 p-5">
-              <FormField label="Question" dark>
+            <form onSubmit={askNavaEye} className="border-t border-white/10 p-4 sm:p-5">
+              <FormField label="Message" dark>
                 <textarea
                   value={question}
                   onChange={(e) => setQuestion(e.target.value)}
                   placeholder={
                     selectedConversation?.status === "closed"
                       ? "This conversation is closed."
-                      : "Ask Nava Eye, or reply yes to continue the pending follow-up in this thread."
+                      : "Type here..."
                   }
                   disabled={selectedConversation?.status === "closed" || loading || Boolean(setupRequired)}
-                  className="min-h-[120px] w-full resize-y rounded-md border border-white/10 bg-slate-900 px-4 py-3 text-sm leading-6 text-white outline-none placeholder:text-slate-500 focus:border-cyan-300 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="min-h-[104px] w-full resize-y rounded-md border border-white/10 bg-slate-900 px-4 py-3 text-sm leading-6 text-white outline-none placeholder:text-slate-500 focus:border-cyan-300 disabled:cursor-not-allowed disabled:opacity-60 sm:min-h-[120px]"
                 />
               </FormField>
 
@@ -543,7 +693,7 @@ export default function NavaEyeChatPage() {
                   }
                   className="w-full sm:w-auto"
                 >
-                  {loading ? "Checking..." : selectedConversationId ? "Send" : "Start thread"}
+                  {loading ? "Checking..." : "Send"}
                 </PrimaryButton>
                 {question && (
                   <SecondaryButton
@@ -565,6 +715,13 @@ export default function NavaEyeChatPage() {
           </Panel>
         </div>
       </div>
+      {closeConfirmOpen && (
+        <CloseConversationDialog
+          loading={loading}
+          onCancel={() => setCloseConfirmOpen(false)}
+          onConfirm={closeConversation}
+        />
+      )}
     </main>
   );
 }
@@ -616,6 +773,46 @@ function ConversationGroup({
   );
 }
 
+function CloseConversationDialog({
+  loading,
+  onCancel,
+  onConfirm,
+}: {
+  loading: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/80 px-4 py-5 sm:items-center">
+      <div className="w-full max-w-md rounded-lg border border-white/10 bg-slate-900 p-5 shadow-2xl">
+        <h2 className="text-lg font-semibold text-white">Close this conversation?</h2>
+        <p className="mt-2 text-sm leading-6 text-slate-300">
+          This removes it from your active conversations. You can still find it
+          under Closed conversations.
+        </p>
+        <div className="mt-5 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+          <SecondaryButton
+            type="button"
+            onClick={onCancel}
+            disabled={loading}
+            className="w-full sm:w-auto"
+          >
+            Cancel
+          </SecondaryButton>
+          <PrimaryButton
+            type="button"
+            onClick={onConfirm}
+            disabled={loading}
+            className="w-full sm:w-auto"
+          >
+            {loading ? "Closing..." : "Close conversation"}
+          </PrimaryButton>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function formatMessageTime(value: string) {
   if (!value) return "";
   const date = new Date(value);
@@ -626,4 +823,10 @@ function formatMessageTime(value: string) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(date);
+}
+
+function normalizeConversationStatus(value: string | null): ConversationStatusTab | null {
+  const status = String(value || "").trim().toLowerCase();
+  if (status === "open" || status === "closed") return status;
+  return null;
 }

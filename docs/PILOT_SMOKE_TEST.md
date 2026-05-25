@@ -193,6 +193,11 @@ Open `/nava-eye` and ask:
 - [ ] "Why is KDQ265 always stopping?"
 - [ ] Ask "Where is KCW 103Z?", then reply "yes" and confirm the follow-up stays on KCW 103Z.
 - [ ] Close the conversation and confirm the thread becomes read-only.
+- [ ] Refresh `/nava-eye` and confirm the selected company, selected thread, and open/closed tab remain stable.
+- [ ] Close an open conversation from the bottom action after the latest assistant answer.
+- [ ] Confirm closing requires confirmation and then removes the thread from Open conversations.
+- [ ] Reopen the same thread from Closed conversations and confirm it is read-only.
+- [ ] In a mobile viewport, confirm the conversation list, message body, input, close actions, and long answers do not overflow horizontally and remain reachable.
 
 Expected result:
 
@@ -207,6 +212,7 @@ Expected result:
 - [ ] If BlueTrax current fuel is not yet ingesting, Nava Eye explains the provider data limitation carefully.
 - [ ] Investigation answers include practical next checks instead of stopping at "no data."
 - [ ] Current role permissions still apply on every message inside a conversation.
+- [ ] Closed conversations are archived, not hard-deleted, and remain accessible under Closed conversations.
 
 ## 9. Client Visibility Smoke Test
 
