@@ -198,6 +198,12 @@ export async function POST(req: Request) {
       roleCapabilities,
       dashboardContext,
     });
+    context.conversation_followup = {
+      used_active_topic: pendingFollowupResolution.usedActiveTopic,
+      used_pending_followup: pendingFollowupResolution.usedPendingFollowup,
+      original_question: question,
+      effective_question: effectiveQuestion,
+    };
 
     await recordAnalyticsEvent({
       companyId: company.id,
@@ -1123,6 +1129,7 @@ function buildTruckScopedFollowupQuestion(question: string, activeTopic: any) {
   const truckId = activeTopic.truck_id;
   const fallbackTimeframe = activeTopic.timeframe || null;
   const timeframe = resolveTruckTimelineTimeframe(normalized, fallbackTimeframe);
+  const withoutTerminalPunctuation = trimmed.replace(/[.!?]+$/g, "");
   const hasExplicitTimeframe = questionHasExplicitTimeframe(normalized);
   const timeframeSuffix =
     !hasExplicitTimeframe && timeframe?.requested === "yesterday"
@@ -1143,6 +1150,16 @@ function buildTruckScopedFollowupQuestion(question: string, activeTopic: any) {
     return `Show detailed timeline for ${truckId}${timeframeSuffix}.`;
   }
 
+  if (isMileageDistanceQuestion(normalized)) {
+    const scoped = withoutTerminalPunctuation
+      .replace(/\bit\b/gi, truckId)
+      .replace(/\bthis truck\b/gi, truckId)
+      .replace(/\bthe truck\b/gi, truckId);
+    return scoped.includes(truckId)
+      ? `${scoped}?`.slice(0, 500)
+      : `${scoped} for ${truckId}?`.slice(0, 500);
+  }
+
   if (/\bis\s+it\s+idling\b/.test(normalized) || /\bidle\s+risk\b/.test(normalized)) {
     return `Is ${truckId} idling?`;
   }
@@ -1151,7 +1168,6 @@ function buildTruckScopedFollowupQuestion(question: string, activeTopic: any) {
     return `Is ${truckId} moving?`;
   }
 
-  const withoutTerminalPunctuation = trimmed.replace(/[.!?]+$/g, "");
   return `${withoutTerminalPunctuation} for ${truckId}${timeframeSuffix}?`.slice(0, 500);
 }
 
@@ -1182,7 +1198,27 @@ function isEllipticalTruckQuestion(question: string) {
     /\bwhere\s+did\s+it\s+go\b/.test(lower) ||
     /\bis\s+it\s+(?:moving|idling|stopped|stationary)\b/.test(lower) ||
     /\bidle\s+risk\b/.test(lower) ||
+    isMileageDistanceQuestion(lower) ||
     isDetailedTimelineRequest(lower)
+  );
+}
+
+function isMileageDistanceQuestion(question: string) {
+  const lower = String(question || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[’]/g, "'");
+  return (
+    /\b(how much mileage|mileage covered|covered mileage|mileage today|mileage yesterday)\b/.test(
+      lower
+    ) ||
+    /\b(distance covered|covered distance|distance today|distance yesterday)\b/.test(
+      lower
+    ) ||
+    /\bhow far\b/.test(lower) ||
+    /\bhow many\s+km\b/.test(lower) ||
+    /\bkm\s+covered\b/.test(lower) ||
+    /\bkilomet(?:er|re)s?\s+covered\b/.test(lower)
   );
 }
 
@@ -1604,6 +1640,10 @@ function buildBusinessMetricAnswer(context: any) {
   const label = formatBusinessMetricLabel(context, metric);
   const timeframe = formatBusinessMetricTimeframe(metric.timeframe || context.business_metric_timeframe);
 
+  if (type === "distance_covered") {
+    return buildDistanceCoveredAnswer(context, metric, timeframe);
+  }
+
   if (type === "odometer_reliability" || type === "distance_status") {
     return buildOdometerReliabilityAnswer(label, metric, timeframe);
   }
@@ -1613,6 +1653,60 @@ function buildBusinessMetricAnswer(context: any) {
   }
 
   return buildContributionReadinessAnswer(label, metric, timeframe, type);
+}
+
+function buildDistanceCoveredAnswer(context: any, metric: any, timeframe: string) {
+  const distance = metric.distance || {};
+  const label = formatBusinessMetricLabel(context, metric);
+  const distanceKm = Number(distance.distance_km || 0);
+  const source = String(distance.primary_distance_source || distance.distance_source || "unknown");
+  const parts: string[] = [];
+
+  if (context.conversation_followup?.used_active_topic) {
+    parts.push(`${label} is the active truck in this thread.`);
+  }
+
+  if (distanceKm <= 0) {
+    parts.push(
+      `${label} mileage is not available for ${timeframe}. Provider trip summaries are missing and there are not enough valid telemetry points to estimate GPS distance.`
+    );
+    return parts.join("\n");
+  }
+
+  if (source === "provider_mileage") {
+    parts.push(
+      `${label} covered ${formatMetricKm(distanceKm)} for ${timeframe} from provider-reported mileage.`
+    );
+    parts.push(
+      "This is provider-reported trip/report mileage, not dashboard odometer mileage unless the provider explicitly ties it to the physical odometer."
+    );
+    return parts.join("\n");
+  }
+
+  if (source === "gps_estimated") {
+    parts.push(
+      `Provider-reported mileage is not available for ${timeframe}, so I calculated GPS-estimated distance from telemetry pings.`
+    );
+    parts.push(
+      `${label} GPS-estimated movement is ${formatMetricKm(distanceKm)}. Treat this as route-distance evidence, not dashboard odometer mileage.`
+    );
+    if (distance.gps_fallback?.rows_truncated) {
+      parts.push("The telemetry query hit the safety cap, so this estimate may be partial.");
+    }
+    return parts.join("\n");
+  }
+
+  if (source === "physical_odometer") {
+    parts.push(
+      `${label} covered ${formatMetricKm(distanceKm)} for ${timeframe} from dashboard odometer movement.`
+    );
+    parts.push("Treat this as odometer mileage and cross-check if odometer health is not marked reliable.");
+    return parts.join("\n");
+  }
+
+  parts.push(`${label} distance evidence for ${timeframe}: ${formatMetricKm(distanceKm)}.`);
+  parts.push(`Source: ${formatDistanceSourceLabel(distance.distance_source)}.`);
+  return parts.join("\n");
 }
 
 function buildContributionReadinessAnswer(
@@ -1794,7 +1888,9 @@ function formatMetricKm(value: any) {
 function formatDistanceSourceLabel(value: any) {
   const source = String(value || "unknown");
   if (source === "provider_mileage") return "provider-reported mileage";
+  if (source === "gps_estimated") return "GPS-estimated distance";
   if (source === "physical_odometer") return "physical odometer";
+  if (source === "can_odometer") return "CAN odometer";
   if (source === "mixed") return "mixed distance sources";
   return "available distance evidence";
 }

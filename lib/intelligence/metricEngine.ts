@@ -11,6 +11,7 @@ export type BusinessMetricIntent =
   | "profit_readiness"
   | "contribution_per_km"
   | "moved_without_revenue"
+  | "distance_covered"
   | "odometer_reliability"
   | "distance_status"
   | "missing_profit_data";
@@ -52,6 +53,10 @@ export function detectBusinessMetricIntent(input: string): BusinessMetricIntent 
     /\b(no revenue|without revenue|missing revenue|unbilled|not billed)\b/.test(lower)
   ) {
     return "moved_without_revenue";
+  }
+
+  if (asksForMileageOrDistanceCovered(lower)) {
+    return "distance_covered";
   }
 
   if (
@@ -159,7 +164,11 @@ export async function buildBusinessMetricContext(input: {
     };
   }
 
-  if (input.intent === "odometer_reliability" || input.intent === "distance_status") {
+  if (
+    input.intent === "distance_covered" ||
+    input.intent === "odometer_reliability" ||
+    input.intent === "distance_status"
+  ) {
     return {
       type: input.intent,
       timeframe: input.timeframe || null,
@@ -191,12 +200,18 @@ export async function calculateDistanceSummary(filters: MetricFilters) {
 
   const rows = summaries.rows;
   const evidenceRows = rows.filter((row: any) => effectiveDistanceKm(row) > 0);
-  const distanceKm = roundMetric(
+  let distanceKm = roundMetric(
     evidenceRows.reduce((sum: number, row: any) => sum + effectiveDistanceKm(row), 0)
   );
+  const gpsFallback =
+    distanceKm > 0 ? null : await calculateGpsDerivedDistance(filters);
   const sourceCounts = countBy(
     evidenceRows.map((row: any) => row.distance_source || inferDistanceSource(row))
   );
+  if (gpsFallback && gpsFallback.distance_km > 0) {
+    distanceKm = gpsFallback.distance_km;
+    sourceCounts.gps_estimated = gpsFallback.truck_count || 1;
+  }
   const odometerHealthValues = [
     ...rows.map((row: any) => normalizeMetricText(row.odometer_health)),
     normalizeMetricText(asset?.odometer_health),
@@ -211,24 +226,42 @@ export async function calculateDistanceSummary(filters: MetricFilters) {
   const missing: string[] = [];
 
   if (summaries.missing) missing.push(DISTANCE_TABLE_ERROR);
-  if (!rows.length) {
-    missing.push("provider trip summaries or GPS-derived distance evidence");
+  if (!rows.length && (!gpsFallback || gpsFallback.distance_km <= 0)) {
+    missing.push("provider trip summaries or enough valid telemetry points for GPS distance");
   } else if (distanceKm <= 0) {
     missing.push("positive distance evidence");
   }
 
   return {
     distance_km: distanceKm,
-    evidence_count: rows.length,
     distance_source:
-      Object.keys(sourceCounts).length === 1
-        ? Object.keys(sourceCounts)[0]
-        : Object.keys(sourceCounts).length > 1
-          ? "mixed"
-          : "unknown",
+      gpsFallback && gpsFallback.distance_km > 0
+        ? "gps_estimated"
+        : Object.keys(sourceCounts).length === 1
+          ? Object.keys(sourceCounts)[0]
+          : Object.keys(sourceCounts).length > 1
+            ? "mixed"
+            : "unknown",
+    primary_distance_source:
+      gpsFallback && gpsFallback.distance_km > 0
+        ? "gps_estimated"
+        : evidenceRows.some((row: any) => Number(row.provider_mileage_km || 0) > 0)
+          ? "provider_mileage"
+          : evidenceRows.some((row: any) => Number(row.odometer_delta_km || 0) > 0)
+            ? "physical_odometer"
+            : "unknown",
+    provider_distance_available: evidenceRows.length > 0,
+    gps_fallback: gpsFallback,
+    evidence_count:
+      rows.length + (gpsFallback && gpsFallback.distance_km > 0 ? gpsFallback.segment_count : 0),
+    provider_summary_count: rows.length,
+    telemetry_point_count: gpsFallback?.point_count || 0,
     source_counts: sourceCounts,
     odometer_health: odometerHealth,
-    distance_quality: distanceQuality,
+    distance_quality:
+      gpsFallback && gpsFallback.distance_km > 0 && distanceQuality === "unknown"
+        ? "estimated"
+        : distanceQuality,
     reliability_wording: distanceEvidenceWording({
       odometerHealth,
       distanceSource: representative?.distance_source || null,
@@ -238,8 +271,261 @@ export async function calculateDistanceSummary(filters: MetricFilters) {
     asset: sanitizeAsset(asset),
     timeframe: filters.timeframe || null,
     missing,
-    setup_issue: summaries.error || null,
+    setup_issue: summaries.error || gpsFallback?.setup_issue || null,
   };
+}
+
+async function calculateGpsDerivedDistance(filters: MetricFilters) {
+  const assetRows = await fetchDistanceAssets(filters);
+  const assetTruckIds = Array.from(
+    new Set(
+      assetRows
+        .flatMap((asset: any) => [asset.truck_id, asset.registration])
+        .filter(Boolean)
+    )
+  );
+
+  if (!assetTruckIds.length) {
+    return {
+      distance_km: 0,
+      source: "gps_estimated",
+      point_count: 0,
+      segment_count: 0,
+      truck_count: 0,
+      skipped_invalid_points: 0,
+      skipped_unrealistic_segments: 0,
+      skipped_stationary_jitter_segments: 0,
+      missing: ["enabled intelligence asset for GPS distance"],
+    };
+  }
+
+  const telemetryResult = await fetchDistanceTelemetry(filters, assetTruckIds);
+  const rows = telemetryResult.rows;
+  if (telemetryResult.missing) {
+    return {
+      distance_km: 0,
+      source: "gps_estimated",
+      point_count: 0,
+      segment_count: 0,
+      truck_count: 0,
+      skipped_invalid_points: 0,
+      skipped_unrealistic_segments: 0,
+      skipped_stationary_jitter_segments: 0,
+      missing: ["telemetry logs for GPS distance"],
+      setup_issue: telemetryResult.error || null,
+    };
+  }
+
+  const rowsByTruck = new Map<string, any[]>();
+  for (const row of rows) {
+    const truckKey = normalizeVehicleKey(row.truck_id);
+    if (!truckKey) continue;
+    const group = rowsByTruck.get(truckKey) || [];
+    group.push(row);
+    rowsByTruck.set(truckKey, group);
+  }
+
+  let distanceKm = 0;
+  let pointCount = 0;
+  let segmentCount = 0;
+  let skippedInvalidPoints = 0;
+  let skippedUnrealisticSegments = 0;
+  let skippedStationaryJitterSegments = 0;
+  const truckSummaries: Array<{ truck_id: string; distance_km: number; points: number }> = [];
+
+  for (const groupRows of Array.from(rowsByTruck.values())) {
+    const sorted = groupRows
+      .slice()
+      .sort((a: any, b: any) => new Date(a.recorded_at).getTime() - new Date(b.recorded_at).getTime());
+    let previous: any = null;
+    let truckDistanceKm = 0;
+    let truckPointCount = 0;
+
+    for (const row of sorted) {
+      const point = normalizeGpsPoint(row);
+      if (!point) {
+        skippedInvalidPoints += 1;
+        continue;
+      }
+      pointCount += 1;
+      truckPointCount += 1;
+
+      if (!previous) {
+        previous = point;
+        continue;
+      }
+
+      const elapsedHours = (point.timestampMs - previous.timestampMs) / 3600000;
+      if (!Number.isFinite(elapsedHours) || elapsedHours <= 0) {
+        previous = point;
+        continue;
+      }
+
+      const segmentKm = haversineDistanceKm(previous, point);
+      const impliedSpeed = segmentKm / elapsedHours;
+      const bothStationary =
+        Number(previous.speed || 0) <= 5 && Number(point.speed || 0) <= 5;
+
+      if (segmentKm <= 0) {
+        previous = point;
+        continue;
+      }
+      if (bothStationary && segmentKm <= 0.05) {
+        skippedStationaryJitterSegments += 1;
+        previous = point;
+        continue;
+      }
+      if (impliedSpeed > 160) {
+        skippedUnrealisticSegments += 1;
+        previous = point;
+        continue;
+      }
+
+      truckDistanceKm += segmentKm;
+      segmentCount += 1;
+      previous = point;
+    }
+
+    if (truckDistanceKm > 0) {
+      truckSummaries.push({
+        truck_id: String(sorted[0]?.truck_id || "").toUpperCase(),
+        distance_km: roundMetric(truckDistanceKm),
+        points: truckPointCount,
+      });
+      distanceKm += truckDistanceKm;
+    }
+  }
+
+  return {
+    distance_km: roundMetric(distanceKm),
+    source: "gps_estimated",
+    point_count: pointCount,
+    segment_count: segmentCount,
+    truck_count: truckSummaries.length,
+    truck_summaries: truckSummaries.slice(0, 20),
+    skipped_invalid_points: skippedInvalidPoints,
+    skipped_unrealistic_segments: skippedUnrealisticSegments,
+    skipped_stationary_jitter_segments: skippedStationaryJitterSegments,
+    rows_truncated: rows.length >= 12000,
+    missing:
+      pointCount < 2 || segmentCount === 0
+        ? ["enough valid telemetry points to estimate GPS distance"]
+        : [],
+  };
+}
+
+async function fetchDistanceAssets(filters: MetricFilters) {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from("fleet_assets")
+      .select("id, truck_id, registration")
+      .eq("company_id", filters.companyId)
+      .eq("status", "active")
+      .eq("intelligence_enabled", true)
+      .limit(1000);
+
+    if (error) {
+      if (isMissingSchemaError(error)) return [];
+      throw error;
+    }
+
+    const truckKey = normalizeVehicleKey(filters.truckId || "");
+    if (!truckKey) return data || [];
+    return (data || []).filter(
+      (asset: any) =>
+        normalizeVehicleKey(asset.truck_id) === truckKey ||
+        normalizeVehicleKey(asset.registration) === truckKey
+    );
+  } catch (err: any) {
+    if (isMissingSchemaError(err)) return [];
+    throw err;
+  }
+}
+
+async function fetchDistanceTelemetry(
+  filters: MetricFilters,
+  truckIds: string[]
+): Promise<QueryResult<any>> {
+  try {
+    let query = supabaseAdmin
+      .from("telemetry_logs")
+      .select("truck_id, recorded_at, latitude, longitude, speed")
+      .eq("company_id", filters.companyId)
+      .in("truck_id", truckIds)
+      .order("recorded_at", { ascending: true })
+      .limit(12000);
+
+    if (filters.timeframe?.day_start_utc) {
+      query = query.gte("recorded_at", filters.timeframe.day_start_utc);
+    }
+    if (filters.timeframe?.day_end_utc) {
+      query = query.lt("recorded_at", filters.timeframe.day_end_utc);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      if (!isMissingSchemaError(error)) throw error;
+      return { rows: [], missing: true, error: safeErrorMessage(error) };
+    }
+
+    return { rows: data || [] };
+  } catch (err: any) {
+    if (isMissingSchemaError(err)) {
+      return { rows: [], missing: true, error: safeErrorMessage(err) };
+    }
+    throw err;
+  }
+}
+
+function normalizeGpsPoint(row: any) {
+  const latitude = Number(row?.latitude);
+  const longitude = Number(row?.longitude);
+  const timestampMs = new Date(row?.recorded_at || 0).getTime();
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) return null;
+  if (latitude === 0 && longitude === 0) return null;
+  if (!Number.isFinite(timestampMs)) return null;
+
+  return {
+    latitude,
+    longitude,
+    timestampMs,
+    speed: Number.isFinite(Number(row?.speed)) ? Number(row.speed) : null,
+  };
+}
+
+function haversineDistanceKm(first: any, second: any) {
+  const radiusKm = 6371;
+  const deltaLat = toRadians(second.latitude - first.latitude);
+  const deltaLon = toRadians(second.longitude - first.longitude);
+  const lat1 = toRadians(first.latitude);
+  const lat2 = toRadians(second.latitude);
+  const a =
+    Math.sin(deltaLat / 2) * Math.sin(deltaLat / 2) +
+    Math.cos(lat1) *
+      Math.cos(lat2) *
+      Math.sin(deltaLon / 2) *
+      Math.sin(deltaLon / 2);
+  return radiusKm * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function toRadians(value: number) {
+  return (value * Math.PI) / 180;
+}
+
+function asksForMileageOrDistanceCovered(lower: string) {
+  return (
+    /\b(how much mileage|mileage covered|covered mileage|mileage today|mileage yesterday)\b/.test(
+      lower
+    ) ||
+    /\b(distance covered|covered distance|distance today|distance yesterday)\b/.test(
+      lower
+    ) ||
+    /\bhow far\b/.test(lower) ||
+    /\bhow many\s+km\b/.test(lower) ||
+    /\bkm\s+covered\b/.test(lower) ||
+    /\bkilomet(?:er|re)s?\s+covered\b/.test(lower)
+  );
 }
 
 export async function calculateFinanceDataReadiness(filters: MetricFilters) {

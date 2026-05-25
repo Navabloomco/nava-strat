@@ -192,6 +192,9 @@ Open `/nava-eye` and ask:
 - [ ] "Is KDQ265 siphoning fuel?"
 - [ ] "Why is KDQ265 always stopping?"
 - [ ] Ask "Where is KCW 103Z?", then reply "yes" and confirm the follow-up stays on KCW 103Z.
+- [ ] Ask "Where is KDQ265?", then ask "How much mileage has it covered today?" and confirm the answer stays on KDQ 265T instead of switching to fleet-wide.
+- [ ] "How many km has KCW 103Z covered today?" and confirm explicit truck mileage works with provider-reported mileage or GPS-estimated distance.
+- [ ] "How much mileage has the fleet covered today?" and confirm a fleet-wide distance answer only happens when fleet/all-truck scope is explicit.
 - [ ] "Did KCW 103Z make money yesterday?" and confirm the answer either calculates from linked revenue/cost/distance or clearly lists missing data.
 - [ ] "What is contribution per km for KCW 103Z?" and confirm Nava Eye does not invent revenue, cost, or profit if records are missing.
 - [ ] "Which trucks moved but have no revenue?" and confirm it requires reliable trip/revenue linking before producing an exception list.
