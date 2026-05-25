@@ -31,6 +31,7 @@ import {
   telemetryCapabilityWording,
 } from "../../../../lib/telemetry/capabilities";
 import { resolveNavaEyeConversationFollowup } from "../../../../lib/intelligence/conversationResolver";
+import { applyNavaEyeAnswerQualityGuardrails } from "../../../../lib/intelligence/answerQuality";
 
 export async function POST(req: Request) {
   try {
@@ -288,6 +289,7 @@ export async function POST(req: Request) {
 
     let aiUsed = false;
     let answer = "";
+    let answerQualityWarnings: string[] = [];
     let storePromises = [];
 
     // 6. Try AI if key exists and we have context
@@ -360,6 +362,15 @@ export async function POST(req: Request) {
     if (!aiUsed) {
       answer = buildFallbackAnswer(context);
     }
+
+    const answerQuality = applyNavaEyeAnswerQualityGuardrails({
+      answer,
+      question: effectiveQuestion,
+      originalQuestion: question,
+      context,
+    });
+    answer = answerQuality.answer;
+    answerQualityWarnings = answerQuality.warnings;
 
     // 8. Store new memories based on critical findings (only if they are likely new/actionable)
     //    We'll deduplicate inside storeMemory using memory_hash.
@@ -465,6 +476,7 @@ export async function POST(req: Request) {
         metadata: {
           ai_used: aiUsed,
           pending_followup_offered: Object.keys(nextPendingFollowup).length > 0,
+          answer_quality_warnings: answerQualityWarnings,
         },
       });
 

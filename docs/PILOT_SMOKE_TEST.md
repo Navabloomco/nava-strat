@@ -184,6 +184,8 @@ Confirm workflow behavior:
 
 ## 8. Nava Eye Smoke Test
 
+Run the detailed Nava Eye regression pack in `docs/NAVA_EYE_REGRESSION_TESTS.md` before changing routing, timeline intelligence, metric answers, provider capability wording, or conversation thread UX.
+
 Open `/nava-eye` and ask:
 
 - [ ] Create a new Nava Eye conversation.
