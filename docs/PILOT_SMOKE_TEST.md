@@ -192,12 +192,17 @@ Open `/nava-eye` and ask:
 - [ ] "Is KDQ265 siphoning fuel?"
 - [ ] "Why is KDQ265 always stopping?"
 - [ ] Ask "Where is KCW 103Z?", then reply "yes" and confirm the follow-up stays on KCW 103Z.
+- [ ] Ask "Where is KDQ265?", then ask "How about KDQ266" and confirm Nava Eye answers that truck if it exists, or suggests the closest workspace match instead of returning generic limited context.
+- [ ] Ask "How about KCW103Z" after a truck-status answer and confirm Nava Eye inherits current-status intent for KCW 103Z.
 - [ ] Ask "Where is KDQ265?", then ask "How much mileage has it covered today?" and confirm the answer stays on KDQ 265T instead of switching to fleet-wide.
+- [ ] After the KDQ265 mileage answer, ask "What about KCW 103Z?" and confirm Nava Eye inherits the mileage intent for KCW 103Z.
 - [ ] After the KDQ265 mileage answer, say "The 307km was covered today the 25th" and confirm Nava Eye refers to the previous KDQ 265T metric, resolved date, and exact GPS-estimated distance instead of losing context.
 - [ ] Ask "Is that odometer mileage?" and confirm Nava Eye says GPS-estimated route distance is not dashboard odometer mileage when that was the previous source.
 - [ ] "How many km has KCW 103Z covered today?" and confirm explicit truck mileage works with provider-reported mileage or GPS-estimated distance.
 - [ ] "How much mileage has the fleet covered today?" and confirm a fleet-wide distance answer only happens when fleet/all-truck scope is explicit.
+- [ ] Ask "What are yesterday's movements for KCW 103Z?", then "What about KCV020P?" and confirm Nava Eye inherits the yesterday timeline intent for KCV020P.
 - [ ] "Did KCW 103Z make money yesterday?" and confirm the answer either calculates from linked revenue/cost/distance or clearly lists missing data.
+- [ ] After a profit readiness answer, ask "What about KDQ265T?" and confirm Nava Eye inherits the profit readiness intent only for roles allowed to see it.
 - [ ] "What is contribution per km for KCW 103Z?" and confirm Nava Eye does not invent revenue, cost, or profit if records are missing.
 - [ ] "Which trucks moved but have no revenue?" and confirm it requires reliable trip/revenue linking before producing an exception list.
 - [ ] "Can we trust KCW 103Z odometer?" and confirm the answer uses odometer health/distance quality evidence.
