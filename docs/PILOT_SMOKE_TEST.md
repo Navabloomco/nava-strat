@@ -192,6 +192,11 @@ Open `/nava-eye` and ask:
 - [ ] "Is KDQ265 siphoning fuel?"
 - [ ] "Why is KDQ265 always stopping?"
 - [ ] Ask "Where is KCW 103Z?", then reply "yes" and confirm the follow-up stays on KCW 103Z.
+- [ ] "Did KCW 103Z make money yesterday?" and confirm the answer either calculates from linked revenue/cost/distance or clearly lists missing data.
+- [ ] "What is contribution per km for KCW 103Z?" and confirm Nava Eye does not invent revenue, cost, or profit if records are missing.
+- [ ] "Which trucks moved but have no revenue?" and confirm it requires reliable trip/revenue linking before producing an exception list.
+- [ ] "Can we trust KCW 103Z odometer?" and confirm the answer uses odometer health/distance quality evidence.
+- [ ] As an `ops` user, ask a profit/revenue/contribution question and confirm Nava Eye shows a role boundary without leaking finance values.
 - [ ] Close the conversation and confirm the thread becomes read-only.
 - [ ] Refresh `/nava-eye` and confirm the selected company, selected thread, and open/closed tab remain stable.
 - [ ] Close an open conversation from the bottom action after the latest assistant answer.

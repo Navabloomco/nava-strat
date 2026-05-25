@@ -286,6 +286,7 @@ export async function POST(req: Request) {
       apiKey &&
       Object.keys(context).length > 0 &&
       !context.profit_simulation &&
+      !context.business_metric &&
       !context.spares &&
       !context.investigation_case_file &&
       !context.fuel_investigation &&
@@ -293,6 +294,7 @@ export async function POST(req: Request) {
       context.intent !== "truck_status" &&
       context.intent !== "truck_compound" &&
       context.intent !== "fleet_movement" &&
+      context.intent !== "business_metrics" &&
       !context.asset_access_restricted &&
       !context.no_enabled_intelligence_assets &&
       !context.permission_boundary
@@ -540,6 +542,9 @@ function buildFallbackAnswer(context: any): string {
   }
   if (context.investigation_case_file) {
     return buildInvestigationFallbackAnswer(context);
+  }
+  if (context.business_metric) {
+    return buildBusinessMetricAnswer(context);
   }
   if (context.financial_access_restricted) {
     return "Operational context is available for this role, but financial values are restricted. Ask an owner, admin, finance, management, or platform owner user to review profitability.";
@@ -1591,6 +1596,224 @@ function buildFleetMovementInterpretation(summary: any) {
   }
 
   return sentences.join(" ");
+}
+
+function buildBusinessMetricAnswer(context: any) {
+  const metric = context.business_metric || {};
+  const type = metric.type || context.business_metric_intent;
+  const label = formatBusinessMetricLabel(context, metric);
+  const timeframe = formatBusinessMetricTimeframe(metric.timeframe || context.business_metric_timeframe);
+
+  if (type === "odometer_reliability" || type === "distance_status") {
+    return buildOdometerReliabilityAnswer(label, metric, timeframe);
+  }
+
+  if (type === "moved_without_revenue") {
+    return buildMovedWithoutRevenueAnswer(context, metric, timeframe);
+  }
+
+  return buildContributionReadinessAnswer(label, metric, timeframe, type);
+}
+
+function buildContributionReadinessAnswer(
+  label: string,
+  metric: any,
+  timeframe: string,
+  type: string
+) {
+  const contribution = metric.contribution || {};
+  const distance = metric.distance || {};
+  const finance = metric.finance || {};
+  const missing = formatMetricMissingList(contribution.missing || []);
+  const parts: string[] = [];
+  const distanceKm = Number(distance.distance_km || 0);
+
+  if (contribution.calculable) {
+    parts.push(
+      `${label} contribution per km is ${formatMoney(
+        contribution.contribution_per_km
+      )}/km for ${timeframe}.`
+    );
+    parts.push(
+      `Revenue is ${formatMoney(contribution.revenue)}, variable costs are ${formatMoney(
+        contribution.variable_costs
+      )}, and contribution is ${formatMoney(contribution.contribution)} across ${formatMetricKm(
+        contribution.distance_km
+      )}.`
+    );
+    parts.push(
+      `Revenue per km: ${formatMoney(contribution.revenue_per_km)}/km. Cost per km: ${formatMoney(
+        contribution.cost_per_km
+      )}/km.`
+    );
+    return parts.join("\n");
+  }
+
+  if (distanceKm > 0) {
+    parts.push(
+      `${label} has distance evidence for ${timeframe}: ${formatMetricKm(
+        distanceKm
+      )} from ${formatDistanceSourceLabel(distance.distance_source)}.`
+    );
+  } else {
+    parts.push(`${label} does not yet have reliable distance evidence for ${timeframe}.`);
+  }
+
+  if (type === "missing_profit_data") {
+    parts.push("Profit readiness is incomplete.");
+  } else {
+    parts.push("Profit and contribution per km cannot be calculated yet.");
+  }
+
+  parts.push(`Missing: ${missing || "linked revenue, linked costs, or reliable distance"}.`);
+
+  if (finance.journey_count || finance.revenue_record_count || finance.fuel_record_count || finance.expense_record_count) {
+    parts.push(
+      `Current finance trail: ${Number(finance.journey_count || 0).toLocaleString()} journey(s), ${Number(
+        finance.revenue_record_count || 0
+      ).toLocaleString()} revenue record(s), ${Number(finance.fuel_record_count || 0).toLocaleString()} fuel cost record(s), and ${Number(
+        finance.expense_record_count || 0
+      ).toLocaleString()} expense record(s) matched to this scope.`
+    );
+  }
+
+  if (distance.odometer_health && distance.odometer_health !== "unknown") {
+    parts.push(`Distance reliability: ${formatOdometerStatusLabel(distance.odometer_health)}.`);
+  }
+
+  return parts.join("\n");
+}
+
+function buildMovedWithoutRevenueAnswer(context: any, metric: any, timeframe: string) {
+  const result = metric.moved_without_revenue || {};
+  const companyName = context.company?.name || "This fleet";
+  const parts: string[] = [];
+
+  if (result.can_complete_reliably) {
+    const trucks = Array.isArray(result.candidate_trucks_without_revenue)
+      ? result.candidate_trucks_without_revenue
+      : [];
+    parts.push(`${companyName} moved-without-revenue check for ${timeframe}.`);
+    if (!trucks.length) {
+      parts.push("No moved trucks without matched revenue were found in the reliable linked data.");
+      return parts.join("\n");
+    }
+    parts.push(
+      ...trucks.slice(0, 10).map((truck: any) => {
+        return `- ${truck.truck_id}: ${formatMetricKm(truck.distance_km)} movement evidence, no matched revenue.`;
+      })
+    );
+    return parts.join("\n");
+  }
+
+  parts.push(`${companyName} moved-without-revenue check is not reliable yet for ${timeframe}.`);
+  if (Number(result.moved_truck_count || 0) > 0) {
+    parts.push(
+      `${Number(result.moved_truck_count || 0).toLocaleString()} truck(s) have movement or distance evidence, but revenue is not linked tightly enough to those provider distance summaries to produce a trustworthy exception list.`
+    );
+  } else {
+    parts.push("No movement/distance evidence was found in the selected window.");
+  }
+  parts.push(
+    "Needed: journey or revenue records tied to the same truck and operating date/trip as the movement evidence."
+  );
+
+  const sample = Array.isArray(result.evidence_sample) ? result.evidence_sample.slice(0, 5) : [];
+  if (sample.length) {
+    parts.push(
+      `Movement evidence sample: ${sample
+        .map((truck: any) => `${truck.truck_id} ${formatMetricKm(truck.distance_km)}`)
+        .join(", ")}.`
+    );
+  }
+
+  return parts.join("\n");
+}
+
+function buildOdometerReliabilityAnswer(label: string, metric: any, timeframe: string) {
+  const odometer = metric.odometer || {};
+  const distance = metric.distance || {};
+  const status = odometer.status || "unknown";
+  const parts: string[] = [];
+
+  parts.push(`${label} odometer reliability: ${formatOdometerStatusLabel(status)}.`);
+  if (odometer.wording) {
+    parts.push(odometer.wording);
+  }
+  if (Number(distance.distance_km || 0) > 0) {
+    parts.push(
+      `Distance evidence for ${timeframe}: ${formatMetricKm(
+        distance.distance_km
+      )} from ${formatDistanceSourceLabel(distance.distance_source)}.`
+    );
+  } else if (odometer.missing?.length) {
+    parts.push(`Missing: ${formatMetricMissingList(odometer.missing)}.`);
+  }
+
+  return parts.join("\n");
+}
+
+function formatBusinessMetricLabel(context: any, metric: any) {
+  const asset =
+    metric.distance?.asset ||
+    metric.odometer?.asset ||
+    context.vehicle_match ||
+    {};
+  return (
+    asset.registration ||
+    asset.truck_id ||
+    context.vehicle_match?.matched_registration ||
+    context.vehicle_match?.matched_truck_id ||
+    context.detected_truck_id ||
+    context.company?.name ||
+    "This scope"
+  );
+}
+
+function formatBusinessMetricTimeframe(timeframe: any) {
+  if (!timeframe) return "all available records";
+  if (timeframe.display_label) return String(timeframe.display_label);
+  if (timeframe.local_day) return String(timeframe.local_day);
+  return timeframe.requested === "all_available" ? "all available records" : String(timeframe.requested || "selected records");
+}
+
+function formatMetricMissingList(values: any[]) {
+  return (values || [])
+    .map((value) => String(value || "").trim())
+    .filter(Boolean)
+    .filter((value, index, list) => list.indexOf(value) === index)
+    .join(", ");
+}
+
+function formatMetricKm(value: any) {
+  return `${Number(value || 0).toLocaleString(undefined, {
+    maximumFractionDigits: 2,
+  })} km`;
+}
+
+function formatDistanceSourceLabel(value: any) {
+  const source = String(value || "unknown");
+  if (source === "provider_mileage") return "provider-reported mileage";
+  if (source === "physical_odometer") return "physical odometer";
+  if (source === "mixed") return "mixed distance sources";
+  return "available distance evidence";
+}
+
+function formatOdometerStatusLabel(value: any) {
+  const status = String(value || "unknown");
+  const labels: Record<string, string> = {
+    reliable: "reliable",
+    caution: "use caution",
+    unreliable: "unreliable",
+    valid: "reliable",
+    static_zero: "unreliable, static zero",
+    static_nonzero: "unreliable, static reading",
+    rollover_suspected: "use caution, rollover suspected",
+    mismatch: "use caution, distance mismatch",
+    unknown: "unknown",
+    suspect: "use caution",
+  };
+  return labels[status] || status.replace(/_/g, " ");
 }
 
 function buildCompoundTruckAnswer(context: any) {

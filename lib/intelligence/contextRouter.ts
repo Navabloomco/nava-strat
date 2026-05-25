@@ -24,6 +24,11 @@ import {
 } from "../timeFormatting";
 import { resolveOperationalLocation } from "../location/resolveOperationalLocation";
 import { buildTruckTimelineIntelligence } from "./truckTimelineService";
+import {
+  buildBusinessMetricContext,
+  detectBusinessMetricIntent,
+  resolveBusinessMetricTimeframe,
+} from "./metricEngine";
 
 export type ContextIntent =
   | "fleet_health"
@@ -36,6 +41,7 @@ export type ContextIntent =
   | "country_trucks"
   | "profit_simulation"
   | "profitability"
+  | "business_metrics"
   | "investigation_context"
   | "spares_context"
   | "dashboard_followup"
@@ -70,7 +76,11 @@ export async function routeContext(
   const operationalTimeZone = resolveOperationalTimeZone(company);
   const lower = question.toLowerCase();
   const detectedCountryName = detectSupportedCountryName(question);
-  let intent = detectIntent(lower, detectedCountryName);
+  const businessMetricIntent = detectBusinessMetricIntent(lower);
+  const businessMetricTimeframe = businessMetricIntent
+    ? resolveBusinessMetricTimeframe(question, company)
+    : null;
+  let intent = detectIntent(lower, detectedCountryName, businessMetricIntent);
   const dashboardReference = resolveDashboardReference(
     lower,
     options.dashboardContext,
@@ -137,6 +147,8 @@ export async function routeContext(
     raw_idle_markers_requested: detectRawIdleMarkerRequest(lower),
     timeline_history_requested: timelineHistoryRequest,
     timeline_timeframe: resolveTruckTimelineTimeframe(lower),
+    business_metric_intent: businessMetricIntent,
+    business_metric_timeframe: businessMetricTimeframe,
     compound_truck_request: compoundTruckRequest,
     capabilities: sanitizeCapabilities(roleCapabilities),
     permission_boundary: permissionBoundary,
@@ -349,6 +361,16 @@ export async function routeContext(
       context.financial_access_message =
         "Financial values are available to owner, admin, finance, management, and platform owner roles.";
     }
+  }
+  if (intent === "business_metrics" && businessMetricIntent && !context.asset_access_restricted) {
+    context.business_metric = await buildBusinessMetricContext({
+      companyId,
+      company,
+      intent: businessMetricIntent,
+      truckId,
+      timeframe: businessMetricTimeframe,
+    });
+    return context;
   }
   if (intent === "spares_context" && !context.asset_access_restricted) {
     context.spares = await fetchSparesContext(
@@ -659,13 +681,20 @@ function asksForFinance(lower: string) {
 
 function detectIntent(
   lower: string,
-  detectedCountryName: string | null
+  detectedCountryName: string | null,
+  businessMetricIntent: ReturnType<typeof detectBusinessMetricIntent> = null
 ): ContextIntent {
   if (detectedCountryName) {
     return "country_trucks";
   }
+  if (businessMetricIntent && !detectHypotheticalProfitSimulation(lower)) {
+    return "business_metrics";
+  }
   if (detectProfitSimulation(lower)) {
     return "profit_simulation";
+  }
+  if (businessMetricIntent) {
+    return "business_metrics";
   }
   if (asksForFleetMovement(lower)) {
     return "fleet_movement";
@@ -733,6 +762,21 @@ function detectIntent(
     return "journey_context";
   }
   return "general";
+}
+
+function detectHypotheticalProfitSimulation(lower: string) {
+  return (
+    lower.includes("what if") ||
+    lower.includes("if i get paid") ||
+    lower.includes("if we get paid") ||
+    lower.includes("if i charge") ||
+    lower.includes("if we charge") ||
+    lower.includes("would i make") ||
+    lower.includes("would we make") ||
+    lower.includes("simulate") ||
+    /\bper\s+(tonne|ton)\b/.test(lower) ||
+    /\/\s*(tonne|ton)\b/.test(lower)
+  );
 }
 
 function asksForFleetMovement(lower: string) {
