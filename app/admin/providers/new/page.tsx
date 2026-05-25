@@ -30,15 +30,15 @@ const KNOWN_FLEET_ENDPOINTS = [
   "/get_reports",
 ] as const;
 const CONNECT_PROGRESS_DEFINITIONS = [
-  { id: "prepare", label: "Preparing secure test" },
-  { id: "login", label: "Checking login endpoint" },
-  { id: "token", label: "Finding access token/hash" },
-  { id: "fleet", label: "Testing vehicle endpoint" },
-  { id: "rows", label: "Detecting vehicle rows" },
-  { id: "mapping", label: "Mapping fields" },
-  { id: "capability", label: "Reviewing signal capability" },
+  { id: "prepare", label: "Checking secure connection" },
+  { id: "login", label: "Signing in" },
+  { id: "token", label: "Confirming access" },
+  { id: "fleet", label: "Finding vehicles" },
+  { id: "rows", label: "Matching trucks" },
+  { id: "mapping", label: "Checking location fields" },
+  { id: "capability", label: "Checking signal quality" },
   { id: "create", label: "Creating inactive provider" },
-  { id: "ready", label: "Ready for Provider Vault review" },
+  { id: "ready", label: "Ready for review" },
 ] as const;
 
 type ProgressStepState =
@@ -94,6 +94,7 @@ const INITIAL_CUSTOM_PROVIDER_FORM = {
 export default function NewProviderPage() {
   const [templates, setTemplates] = useState<any[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
+  const [providerSearch, setProviderSearch] = useState("");
   const [selectedCompanyId, setSelectedCompanyId] = useState("");
   const [company, setCompany] = useState<any>(null);
   const [capabilities, setCapabilities] = useState<any>({
@@ -198,6 +199,8 @@ export default function NewProviderPage() {
   const customApiSelected = selectedTemplateId === CUSTOM_API_OPTION;
   const publicTemplates = templates.filter((template) => !template.internal_template);
   const internalTemplates = templates.filter((template) => template.internal_template);
+  const searchedPublicTemplates = filterTemplates(publicTemplates, providerSearch);
+  const searchedInternalTemplates = filterTemplates(internalTemplates, providerSearch);
   const selectedTemplateIsSetupOnly = Boolean(
     selectedTemplate?.setup_only || selectedTemplate?.fleet_config?.setup_only
   );
@@ -405,6 +408,7 @@ export default function NewProviderPage() {
   function buildCustomProviderCreateBody(
     formInput: typeof INITIAL_CUSTOM_PROVIDER_FORM
   ) {
+    const simpleCredential = formInput.password || formInput.api_key;
     return {
       provider_mode: "custom_api",
       custom_provider: {
@@ -417,10 +421,10 @@ export default function NewProviderPage() {
         auth_method: formInput.auth_method,
         login_credential_placement: formInput.login_credential_placement,
         api_key_header: formInput.api_key_header.trim() || "x-api-key",
-        api_key: formInput.api_key,
+        api_key: formInput.api_key || simpleCredential,
         bearer_token: formInput.bearer_token,
         username: formInput.username,
-        password: formInput.password,
+        password: formInput.password || simpleCredential,
         login_url: formInput.login_url.trim(),
         login_token_path: formInput.login_token_path.trim(),
         login_username_field:
@@ -691,16 +695,16 @@ export default function NewProviderPage() {
 
     if (showProgress) {
       resetConnectProgress();
-      updateConnectStep("prepare", "running", "Preparing a secure endpoint test.");
-      updateConnectStep("prepare", "success", "Secure test prepared.");
+      updateConnectStep("prepare", "running", "Checking the provider link safely.");
+      updateConnectStep("prepare", "success", "Secure check prepared.");
       if (formInput.auth_method === "post_login") {
-        updateConnectStep("login", "running", "Trying common login patterns.");
-        updateConnectStep("token", "running", "Looking for a token/hash path.");
+        updateConnectStep("login", "running", "Signing in with the supplied access details.");
+        updateConnectStep("token", "running", "Confirming access without showing secrets.");
       } else {
-        updateConnectStep("login", "skipped", "Static credential auth selected.");
-        updateConnectStep("token", "skipped", "No login token needed yet.");
+        updateConnectStep("login", "skipped", "Using the supplied key/password.");
+        updateConnectStep("token", "skipped", "No separate sign-in step needed.");
       }
-      updateConnectStep("fleet", "running", "Testing likely vehicle endpoints.");
+      updateConnectStep("fleet", "running", "Looking for vehicles.");
     }
 
     setTestingEndpoint("auto");
@@ -817,42 +821,42 @@ export default function NewProviderPage() {
       login: {
         state: loginState,
         detail: result.login
-          ? "Login endpoint accepted."
+          ? "Sign-in accepted."
           : result.suggested_auth_method === "post_login"
-            ? "This provider appears to use a login-token/hash flow."
-            : "Static credential auth selected.",
+            ? "This provider appears to need username/password sign-in."
+            : "Using the supplied key/password.",
       },
       token: {
         state: tokenState,
         detail: result.login
-          ? "Access token found."
+          ? "Access confirmed."
           : result.suggested_auth_method === "post_login"
-            ? "Switch to POST login token setup."
-            : "No login token needed for this auth method.",
+            ? "Try the advanced sign-in setup."
+            : "No separate access step needed.",
       },
       fleet: {
         state: result.fleet ? "success" : "failed",
         detail: result.fleet
-          ? "Vehicle endpoint responded."
+          ? "Vehicle list found."
           : setupFixMessage({ setup_blockers: blockers }),
       },
       rows: {
         state: result.fleet?.detected_vehicle_count ? "success" : "failed",
         detail: result.fleet?.detected_vehicle_count
-          ? `Vehicles detected: ${result.fleet.detected_vehicle_count}.`
-          : "No vehicle rows found. Ask provider for get_devices response sample.",
+          ? `Vehicles found: ${result.fleet.detected_vehicle_count}.`
+          : "Nava signed in but could not find vehicles. Ask your provider for the vehicle list endpoint.",
       },
       mapping: {
         state: coreFields.length === 4 ? "success" : "warning",
         detail:
           coreFields.length === 4
-            ? "Core fields mapped: vehicle, latitude, longitude, timestamp."
-            : `Core fields need review: ${coreFields.join(", ") || "none"} detected.`,
+            ? "Location tracking fields found."
+            : "Vehicles were found, but required location fields need review.",
       },
       capability: {
         state: result.fleet ? "success" : "waiting",
         detail: result.fleet
-          ? "Signal capability ready for Provider Vault review."
+          ? "Signal quality ready for review."
           : "",
       },
       create: {
@@ -871,10 +875,10 @@ export default function NewProviderPage() {
     setConnectRunning(true);
 
     try {
-      updateConnectStep("prepare", "running", "Normalizing provider setup.");
+      updateConnectStep("prepare", "running", "Checking the provider link safely.");
       const prepared = prepareSimpleConnectForm(customForm);
       setCustomForm(prepared);
-      updateConnectStep("prepare", "success", "Secure test prepared.");
+      updateConnectStep("prepare", "success", "Secure check prepared.");
 
       const autoResult = await runCustomAutoTest(prepared, true);
       if (!autoResult?.fleet) {
@@ -890,7 +894,7 @@ export default function NewProviderPage() {
         updateConnectStep(
           "mapping",
           "failed",
-          `Core fields missing: ${coreMissing.join(", ")}. Ask provider for a get_devices response sample.`
+          "Vehicles were found, but the required location fields were missing."
         );
         throw new Error("Core field mapping is incomplete.");
       }
@@ -1017,9 +1021,8 @@ export default function NewProviderPage() {
         <div style={eyebrowStyle}>Provider onboarding</div>
         <h1 style={titleStyle}>Connect your tracking provider</h1>
         <p style={subtitleStyle}>
-          Choose a supported template, add the access details supplied by your
-          provider, test safely, then activate sync only after the connection is
-          verified.
+          Choose a provider, enter the access details supplied by your provider,
+          and let Nava verify the connection before anything is activated.
         </p>
       </header>
 
@@ -1062,14 +1065,20 @@ export default function NewProviderPage() {
           <>
             {loadError && <div style={errorStyle}>{loadError}</div>}
             <div style={fieldGroup}>
-              <label style={labelStyle}>Supported Provider</label>
+              <label style={labelStyle}>Choose or search provider</label>
+              <input
+                style={inputStyle}
+                value={providerSearch}
+                placeholder="Search provider name..."
+                onChange={(event) => setProviderSearch(event.target.value)}
+              />
               <select
                 style={inputStyle}
                 value={selectedTemplateId}
                 onChange={(e) => handleProviderSelection(e.target.value)}
               >
                 <option value="">Choose provider...</option>
-                {publicTemplates.map((template) => (
+                {searchedPublicTemplates.map((template) => (
                   <option key={template.id} value={template.id}>
                     {template.display_name}
                   </option>
@@ -1079,9 +1088,9 @@ export default function NewProviderPage() {
                   Request assisted setup
                 </option>
                 {capabilities.can_edit_advanced_provider_config &&
-                  internalTemplates.length > 0 && (
+                  searchedInternalTemplates.length > 0 && (
                     <optgroup label="Internal templates - platform setup only">
-                      {internalTemplates.map((template) => (
+                      {searchedInternalTemplates.map((template) => (
                         <option key={template.id} value={template.id}>
                           {template.display_name} - Internal template
                         </option>
@@ -1130,6 +1139,7 @@ export default function NewProviderPage() {
                 connectRunning={connectRunning}
                 connectedProviderId={connectedProviderId}
                 providerVaultHref={`/admin/providers${companyQuery(selectedCompanyId)}`}
+                onRequestAssistedSetup={() => setRequestOpen(true)}
                 canShowDebug={Boolean(
                   capabilities.can_edit_advanced_provider_config
                 )}
@@ -1197,10 +1207,10 @@ export default function NewProviderPage() {
 function WizardSteps() {
   const steps = [
     "Choose provider",
-    "Enter credentials",
-    "Test connection",
-    "Review vehicles and signals",
-    "Activate sync",
+    "Enter access",
+    "Find vehicles",
+    "Create inactive connection",
+    "Review and activate",
   ];
 
   return (
@@ -1346,6 +1356,16 @@ function capabilityLabel(value: string) {
   return labels[String(value || "UNKNOWN").toUpperCase()] || "Unknown Capability";
 }
 
+function filterTemplates(templates: any[], search: string) {
+  const query = search.trim().toLowerCase();
+  if (!query) return templates;
+  return templates.filter((template) =>
+    String(template.display_name || template.name || "")
+      .toLowerCase()
+      .includes(query)
+  );
+}
+
 function validateCustomProviderForm(form: typeof INITIAL_CUSTOM_PROVIDER_FORM) {
   if (!form.base_url.trim()) return "API base URL is required.";
   if (!form.provider_name.trim()) return "Provider name is required.";
@@ -1472,6 +1492,10 @@ function prepareSimpleConnectForm(form: typeof INITIAL_CUSTOM_PROVIDER_FORM) {
   }
   if (fleetTrackLike) {
     Object.assign(prepared, buildLoginTokenSetupPatch(baseUrl, prepared, true));
+  } else if (prepared.username.trim() && prepared.password.trim()) {
+    prepared.auth_method = "post_login";
+    prepared.login_url = prepared.login_url.trim() || `${baseUrl}/login`;
+    prepared.login_token_path = prepared.login_token_path.trim() || "token";
   } else if (!prepared.endpoint_url.trim()) {
     prepared.endpoint_url = `${baseUrl}/get_devices`;
   }
@@ -1497,15 +1521,18 @@ function setupFixMessage(result: any) {
     : [];
   const text = String(result?.error || blockers[0] || "").toLowerCase();
   if (text.includes("422") || text.includes("login request shape")) {
-    return "Login rejected. Check email/password or whether login uses query parameters.";
+    return "Login failed. Check username/password.";
   }
   if (text.includes("401") || text.includes("user_api_hash")) {
-    return "Vehicle endpoint rejected token. Confirm token is sent as user_api_hash.";
+    return "Nava signed in but the provider rejected vehicle access. Ask your provider how vehicle access should be authorized.";
   }
   if (text.includes("vehicle rows") || text.includes("row array")) {
-    return "No vehicle rows found. Ask provider for get_devices response sample.";
+    return "Nava signed in but could not find vehicles. Ask your provider for the vehicle list endpoint.";
   }
-  return result?.error || blockers[0] || "Connection setup failed. Check the API link and credentials.";
+  if (text.includes("latitude") || text.includes("longitude") || text.includes("timestamp")) {
+    return "Vehicles were found, but the required location fields were missing.";
+  }
+  return "Connection failed. Check the provider link and credentials.";
 }
 
 function normalizeBaseUrl(value: string) {
@@ -1718,6 +1745,7 @@ function CustomApiProviderForm({
   connectRunning,
   connectedProviderId,
   providerVaultHref,
+  onRequestAssistedSetup,
   canShowDebug,
 }: {
   form: typeof INITIAL_CUSTOM_PROVIDER_FORM;
@@ -1738,8 +1766,10 @@ function CustomApiProviderForm({
   connectRunning: boolean;
   connectedProviderId: string;
   providerVaultHref: string;
+  onRequestAssistedSetup: () => void;
   canShowDebug: boolean;
 }) {
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const isPost = form.http_method === "POST";
   const loginTokenHint = isFleetTrackLike(form, normalizeBaseUrl(form.base_url));
   const simpleSecretValue =
@@ -1765,9 +1795,9 @@ function CustomApiProviderForm({
         <div>
           <h2 style={providerWizardSectionTitleStyle}>Simple Connect</h2>
           <p style={providerWizardSectionCopyStyle}>
-            Enter the provider link and credentials. Nava will test common API
-            patterns, detect vehicles, map core fields, and create the provider
-            inactive for review.
+            Enter the provider link and access details. Nava will check the
+            connection, find vehicles, and create the provider inactive for
+            review.
           </p>
         </div>
         <div style={gridStyle}>
@@ -1778,7 +1808,7 @@ function CustomApiProviderForm({
             required
           />
           <TextField
-            label="API link / base URL"
+            label="Provider website or API link"
             value={form.base_url}
             onChange={(value) => updateForm({ base_url: value })}
             onBlur={onBaseUrlBlur}
@@ -1808,44 +1838,64 @@ function CustomApiProviderForm({
           >
             {connectRunning ? "CONNECTING PROVIDER..." : "CONNECT PROVIDER"}
           </button>
-          <button type="button" style={secondaryButtonStyle} onClick={onAutoFill}>
-            LET NAVA TRY COMMON API PATTERNS
-          </button>
-          {loginTokenHint && (
-            <button
-              type="button"
-              style={secondaryButtonStyle}
-              onClick={onUseLoginTokenSetup}
-            >
-              USE DETECTED LOGIN-TOKEN SETUP
-            </button>
-          )}
-          <button
-            type="button"
-            style={buttonInlineStyle}
-            disabled={testingEndpoint === "auto" || connectRunning}
-            onClick={onAutoTest}
-          >
-            {testingEndpoint === "auto" ? "AUTO-TESTING SETUP..." : "AUTO-TEST SETUP"}
-          </button>
         </div>
         <ConnectProgressRunner
           steps={connectSteps}
           providerVaultHref={providerVaultHref}
           connectedProviderId={connectedProviderId}
         />
-        <AutoSetupDetectionResult
+        <ConnectOutcomePanel
+          steps={connectSteps}
           result={detectResults.auto}
-          canShowDebug={canShowDebug}
-          onApply={onApplyAutoDetection}
-          onUseLoginTokenSetup={onUseLoginTokenSetup}
+          connectedProviderId={connectedProviderId}
+          providerVaultHref={providerVaultHref}
+          onOpenAdvanced={() => setAdvancedOpen(true)}
+          onRequestAssistedSetup={onRequestAssistedSetup}
         />
       </section>
 
-      <details style={templateAdvancedStyle}>
+      <details
+        style={templateAdvancedStyle}
+        open={advancedOpen}
+        onToggle={(event) =>
+          setAdvancedOpen((event.currentTarget as HTMLDetailsElement).open)
+        }
+      >
         <summary style={templateAdvancedSummaryStyle}>
-          Advanced setup
+          Advanced troubleshooting
         </summary>
+      <div style={advancedTroubleshootingIntroStyle}>
+        Use these tools only when Simple Connect cannot find vehicles or your
+        provider has supplied exact technical setup details.
+      </div>
+      <div style={autoActionsStyle}>
+        <button type="button" style={secondaryButtonStyle} onClick={onAutoFill}>
+          Try common endpoint patterns
+        </button>
+        {loginTokenHint && (
+          <button
+            type="button"
+            style={secondaryButtonStyle}
+            onClick={onUseLoginTokenSetup}
+          >
+            Use detected sign-in setup
+          </button>
+        )}
+        <button
+          type="button"
+          style={buttonInlineStyle}
+          disabled={testingEndpoint === "auto" || connectRunning}
+          onClick={onAutoTest}
+        >
+          {testingEndpoint === "auto" ? "Testing setup..." : "Test setup"}
+        </button>
+      </div>
+      <AutoSetupDetectionResult
+        result={detectResults.auto}
+        canShowDebug={canShowDebug}
+        onApply={onApplyAutoDetection}
+        onUseLoginTokenSetup={onUseLoginTokenSetup}
+      />
       <ProviderWizardSection
         title="Provider identity"
         copy="Name the tracking system and choose the provider timezone used for timestamp interpretation."
@@ -2235,7 +2285,7 @@ function ConnectProgressRunner({
         <div style={progressHeaderStyle}>
           <div style={detectionTitleStyle}>Connection progress</div>
           <div style={detectionMetaStyle}>
-            The secure setup checklist will appear here when testing starts.
+            The setup checklist will appear here when testing starts.
           </div>
         </div>
       </div>
@@ -2248,7 +2298,7 @@ function ConnectProgressRunner({
         <div>
           <div style={detectionTitleStyle}>Connection progress</div>
           <div style={detectionMetaStyle}>
-            Tokens and provider payloads stay hidden while setup runs.
+            Access details and provider responses stay hidden while setup runs.
           </div>
         </div>
         {connectedProviderId && (
@@ -2269,6 +2319,82 @@ function ConnectProgressRunner({
             </span>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+function ConnectOutcomePanel({
+  steps,
+  result,
+  connectedProviderId,
+  providerVaultHref,
+  onOpenAdvanced,
+  onRequestAssistedSetup,
+}: {
+  steps: ProgressStep[];
+  result: any;
+  connectedProviderId: string;
+  providerVaultHref: string;
+  onOpenAdvanced: () => void;
+  onRequestAssistedSetup: () => void;
+}) {
+  const failedStep = steps.find((step) => step.state === "failed");
+  if (connectedProviderId) {
+    const fleet = result?.fleet || {};
+    const vehiclesFound = Number(fleet.detected_vehicle_count || 0);
+    const matched = Number(fleet.matched_existing_assets || 0);
+    const unmatched = Number(
+      fleet.unmatched_vehicle_count ?? Math.max(0, vehiclesFound - matched)
+    );
+
+    return (
+      <div style={successPanelStyle}>
+        <div style={outcomeTitleStyle}>Provider created inactive</div>
+        <div style={outcomeCopyStyle}>
+          Review detected vehicles and activate sync from Provider Vault when
+          you are ready.
+        </div>
+        <div style={outcomeGridStyle}>
+          <PreviewMetric label="Vehicles found" value={String(vehiclesFound)} />
+          <PreviewMetric label="Matched existing trucks" value={String(matched)} />
+          <PreviewMetric label="New/unmatched vehicles" value={String(unmatched)} />
+          <PreviewMetric
+            label="Tracking verified"
+            value={fleet.tracking_verified ? "yes" : "needs review"}
+          />
+          <PreviewMetric
+            label="Engine/fuel signals verified"
+            value={fleet.engine_fuel_verified ? "yes" : "not yet"}
+          />
+          <PreviewMetric label="Sync status" value="inactive" />
+        </div>
+        <Link href={providerVaultHref} style={buttonStyle}>
+          Review in Provider Vault
+        </Link>
+      </div>
+    );
+  }
+
+  if (!failedStep) return null;
+
+  return (
+    <div style={failurePanelStyle}>
+      <div style={outcomeTitleStyle}>Connection needs attention</div>
+      <div style={outcomeCopyStyle}>
+        {failedStep.detail || "Connection failed. Check the provider link and credentials."}
+      </div>
+      <div style={outcomeActionRowStyle}>
+        <button type="button" style={secondaryButtonStyle} onClick={onOpenAdvanced}>
+          Try advanced troubleshooting
+        </button>
+        <button
+          type="button"
+          style={secondaryButtonStyle}
+          onClick={onRequestAssistedSetup}
+        >
+          Request assisted setup
+        </button>
       </div>
     </div>
   );
@@ -3140,6 +3266,56 @@ const progressTextStyle = {
   color: "#334155",
   fontSize: 12,
   lineHeight: 1.45,
+};
+
+const successPanelStyle = {
+  marginTop: 14,
+  border: "1px solid #bbf7d0",
+  background: "#f0fdf4",
+  borderRadius: 12,
+  padding: 16,
+};
+
+const failurePanelStyle = {
+  marginTop: 14,
+  border: "1px solid #fecaca",
+  background: "#fef2f2",
+  borderRadius: 12,
+  padding: 16,
+};
+
+const outcomeTitleStyle = {
+  color: "#0f172a",
+  fontSize: 15,
+  fontWeight: 850,
+};
+
+const outcomeCopyStyle = {
+  marginTop: 6,
+  color: "#475569",
+  fontSize: 13,
+  lineHeight: 1.6,
+};
+
+const outcomeGridStyle = {
+  display: "grid",
+  gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+  gap: 10,
+  marginTop: 14,
+};
+
+const outcomeActionRowStyle = {
+  display: "flex",
+  gap: 10,
+  flexWrap: "wrap" as const,
+  marginTop: 12,
+};
+
+const advancedTroubleshootingIntroStyle = {
+  marginTop: 12,
+  color: "#475569",
+  fontSize: 13,
+  lineHeight: 1.6,
 };
 
 function progressDotStyle(state: ProgressStepState) {

@@ -68,7 +68,7 @@ export async function POST(req: Request) {
     }
 
     if (body.mode === "auto_setup") {
-      const autoResult = await autoTestSetup(body);
+      const autoResult = await autoTestSetup(body, resolved.companyId);
       if (autoResult.error) {
         return noStoreJson(
           { success: false, error: autoResult.error },
@@ -207,7 +207,7 @@ async function resolveAccess(
   };
 }
 
-async function autoTestSetup(body: any) {
+async function autoTestSetup(body: any, companyId: string) {
   const baseResult = await validateBaseUrl(body.base_url);
   if (baseResult.error) return { error: baseResult.error };
 
@@ -326,13 +326,29 @@ async function autoTestSetup(body: any) {
       const rows = getByPath(result.analysis.parsed, rowPath);
       const detectedVehicleCount = Array.isArray(rows) ? rows.length : 0;
       if (detectedVehicleCount < 1) continue;
+      const matchSummary = await summarizeDetectedAssetMatches(
+        companyId,
+        rows,
+        result.analysis.field_mapping_suggestions?.vehicle || undefined
+      );
+      const fieldSuggestions = result.analysis.field_mapping_suggestions || {};
+      const trackingVerified = Boolean(
+        fieldSuggestions.vehicle &&
+          fieldSuggestions.latitude &&
+          fieldSuggestions.longitude &&
+          fieldSuggestions.timestamp
+      );
 
       fleetResult = {
         endpoint_url: buildSavedFleetEndpointUrl(fleetUrl, authCandidate.token_placement),
         token_placement: authCandidate.token_placement,
         row_path: rowPath,
-        field_mapping_suggestions: result.analysis.field_mapping_suggestions,
+        field_mapping_suggestions: fieldSuggestions,
         detected_vehicle_count: detectedVehicleCount,
+        matched_existing_assets: matchSummary.matched,
+        unmatched_vehicle_count: matchSummary.unmatched,
+        tracking_verified: trackingVerified,
+        engine_fuel_verified: false,
         status_code: result.response.status,
         setup_blockers: buildSetupBlockers(
           result.response,
@@ -382,6 +398,63 @@ async function autoTestSetup(body: any) {
         : []),
     ],
   };
+}
+
+async function summarizeDetectedAssetMatches(
+  companyId: string,
+  rows: any[],
+  vehiclePath?: string
+) {
+  if (!companyId || !vehiclePath || rows.length === 0) {
+    return {
+      matched: 0,
+      unmatched: rows.length,
+    };
+  }
+
+  const detectedKeys = new Set(
+    rows
+      .map((row) => normalizeVehicleMatchKey(getByPath(row, vehiclePath)))
+      .filter(Boolean)
+  );
+
+  if (detectedKeys.size === 0) {
+    return {
+      matched: 0,
+      unmatched: rows.length,
+    };
+  }
+
+  const { data, error } = await supabaseAdmin
+    .from("fleet_assets")
+    .select("truck_id, registration")
+    .eq("company_id", companyId);
+
+  if (error) throw error;
+
+  const assetKeys = new Set<string>();
+  for (const asset of data || []) {
+    const truckKey = normalizeVehicleMatchKey(asset.truck_id);
+    const registrationKey = normalizeVehicleMatchKey(asset.registration);
+    if (truckKey) assetKeys.add(truckKey);
+    if (registrationKey) assetKeys.add(registrationKey);
+  }
+
+  let matched = 0;
+  for (const key of Array.from(detectedKeys)) {
+    if (assetKeys.has(key)) matched++;
+  }
+
+  return {
+    matched,
+    unmatched: Math.max(0, detectedKeys.size - matched),
+  };
+}
+
+function normalizeVehicleMatchKey(value: any) {
+  return String(value || "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
 }
 
 async function resolveTemplatedEndpoint(body: any) {
