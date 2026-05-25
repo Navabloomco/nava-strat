@@ -193,6 +193,8 @@ Open `/nava-eye` and ask:
 - [ ] "Why is KDQ265 always stopping?"
 - [ ] Ask "Where is KCW 103Z?", then reply "yes" and confirm the follow-up stays on KCW 103Z.
 - [ ] Ask "Where is KDQ265?", then ask "How much mileage has it covered today?" and confirm the answer stays on KDQ 265T instead of switching to fleet-wide.
+- [ ] After the KDQ265 mileage answer, say "The 307km was covered today the 25th" and confirm Nava Eye refers to the previous KDQ 265T metric, resolved date, and exact GPS-estimated distance instead of losing context.
+- [ ] Ask "Is that odometer mileage?" and confirm Nava Eye says GPS-estimated route distance is not dashboard odometer mileage when that was the previous source.
 - [ ] "How many km has KCW 103Z covered today?" and confirm explicit truck mileage works with provider-reported mileage or GPS-estimated distance.
 - [ ] "How much mileage has the fleet covered today?" and confirm a fleet-wide distance answer only happens when fleet/all-truck scope is explicit.
 - [ ] "Did KCW 103Z make money yesterday?" and confirm the answer either calculates from linked revenue/cost/distance or clearly lists missing data.

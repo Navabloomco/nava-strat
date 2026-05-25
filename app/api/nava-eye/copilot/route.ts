@@ -188,19 +188,23 @@ export async function POST(req: Request) {
           used_pending_followup: pendingFollowupResolution.usedPendingFollowup,
           pending_followup_type: pendingFollowupResolution.pendingType || null,
           used_active_topic: pendingFollowupResolution.usedActiveTopic,
+          used_metric_topic: pendingFollowupResolution.usedMetricTopic || false,
         },
       });
     }
 
-    // 2. Get deterministic context from router
-    const context = await routeContext(effectiveQuestion, company.slug, {
-      roles: companyRoles,
-      roleCapabilities,
-      dashboardContext,
-    });
+    // 2. Get deterministic context from router, or answer a safe metric follow-up from conversation metadata.
+    const context = pendingFollowupResolution.metricFollowup
+      ? buildMetricFollowupContext(company, roleCapabilities, pendingFollowupResolution)
+      : await routeContext(effectiveQuestion, company.slug, {
+          roles: companyRoles,
+          roleCapabilities,
+          dashboardContext,
+        });
     context.conversation_followup = {
       used_active_topic: pendingFollowupResolution.usedActiveTopic,
       used_pending_followup: pendingFollowupResolution.usedPendingFollowup,
+      used_metric_topic: pendingFollowupResolution.usedMetricTopic || false,
       original_question: question,
       effective_question: effectiveQuestion,
     };
@@ -221,6 +225,7 @@ export async function POST(req: Request) {
         has_conversation: Boolean(conversation),
         used_pending_followup: pendingFollowupResolution.usedPendingFollowup,
         used_active_topic: pendingFollowupResolution.usedActiveTopic,
+        used_metric_topic: pendingFollowupResolution.usedMetricTopic || false,
       },
     });
 
@@ -551,6 +556,9 @@ function buildFallbackAnswer(context: any): string {
   }
   if (context.business_metric) {
     return buildBusinessMetricAnswer(context);
+  }
+  if (context.metric_followup) {
+    return buildMetricFollowupAnswer(context);
   }
   if (context.financial_access_restricted) {
     return "Operational context is available for this role, but financial values are restricted. Ask an owner, admin, finance, management, or platform owner user to review profitability.";
@@ -974,6 +982,7 @@ function resolvePendingFollowupQuestion(
 ) {
   const pending = sanitizeConversationMetadata(pendingFollowup || {});
   const activeTopic = getActiveTruckTopic(pending, options.companyId);
+  const activeMetricTopic = getActiveMetricTopic(pending, options.companyId);
   const prompt = typeof pending.prompt === "string" ? pending.prompt.trim() : "";
   const normalizedQuestion = String(question || "")
     .toLowerCase()
@@ -983,7 +992,34 @@ function resolvePendingFollowupQuestion(
   const explicitFleetScope = asksForExplicitFleetScope(question);
   const explicitVehicleInput = containsVehicleLikeInput(question);
   const ellipticalTruckQuestion = isEllipticalTruckQuestion(question);
+  const metricFollowupType = detectMetricFollowupType(question);
   const explicitTimeframe = questionHasExplicitTimeframe(normalizedQuestion);
+
+  if (metricFollowupType && activeMetricTopic && !explicitVehicleInput && !explicitFleetScope) {
+    return {
+      question,
+      usedPendingFollowup: false,
+      usedActiveTopic: activeMetricTopic.entity_type === "truck",
+      usedMetricTopic: true,
+      metricFollowup: true,
+      metricFollowupType,
+      metricTopic: activeMetricTopic,
+      pendingType: typeof pending.type === "string" ? pending.type : "business_metric_followup",
+    };
+  }
+
+  if (metricFollowupType && !activeMetricTopic && !explicitVehicleInput && !explicitFleetScope) {
+    return {
+      question,
+      usedPendingFollowup: false,
+      usedActiveTopic: false,
+      usedMetricTopic: false,
+      pendingType: null,
+      needsClarification: true,
+      clarificationReason: "missing_metric_topic",
+      clarification: "Which mileage figure should I check?",
+    };
+  }
 
   if (
     detailedTimelineRequest &&
@@ -1090,8 +1126,78 @@ function getActiveTruckTopic(pending: any, companyId?: string | null) {
     company_id: topicCompanyId || companyId || null,
     timeframe: sanitizeTopicTimeframe(topic.timeframe),
     last_intent: typeof topic.last_intent === "string" ? topic.last_intent.slice(0, 80) : null,
+    metric_intent: sanitizeMetricIntent(topic.metric_intent),
+    result_summary: sanitizeMetricResultSummary(topic.result_summary),
     detail_mode_available: Boolean(topic.detail_mode_available),
   };
+}
+
+function getActiveMetricTopic(pending: any, companyId?: string | null) {
+  const topic = pending?.active_topic;
+  if (!topic || typeof topic !== "object") return null;
+  const metricIntent = sanitizeMetricIntent(topic.metric_intent);
+  if (!metricIntent) return null;
+
+  const entityType = String(topic.entity_type || "").trim().toLowerCase();
+  if (entityType !== "truck" && entityType !== "fleet") return null;
+  const truckId = entityType === "truck" ? String(topic.truck_id || "").trim() : null;
+  if (entityType === "truck" && (!truckId || truckId.length > 80)) return null;
+
+  const topicCompanyId = String(topic.company_id || "").trim();
+  if (companyId && topicCompanyId && topicCompanyId !== companyId) return null;
+
+  return {
+    entity_type: entityType,
+    truck_id: truckId,
+    company_id: topicCompanyId || companyId || null,
+    last_intent: typeof topic.last_intent === "string" ? topic.last_intent.slice(0, 80) : null,
+    metric_intent: metricIntent,
+    timeframe: sanitizeTopicTimeframe(topic.timeframe),
+    result_summary: sanitizeMetricResultSummary(topic.result_summary),
+    updated_at: typeof topic.updated_at === "string" ? topic.updated_at.slice(0, 40) : null,
+  };
+}
+
+function sanitizeMetricIntent(value: any) {
+  const intent = String(value || "").trim().toLowerCase();
+  const allowed = [
+    "distance_covered",
+    "contribution_per_km",
+    "profit_readiness",
+    "missing_profit_data",
+    "odometer_reliability",
+    "distance_status",
+    "moved_without_revenue",
+  ];
+  return allowed.includes(intent) ? intent : null;
+}
+
+function sanitizeMetricResultSummary(value: any) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const distanceKm = Number(value.distance_km);
+  return {
+    distance_km: Number.isFinite(distanceKm) ? distanceKm : null,
+    distance_source: sanitizeDistanceSource(value.distance_source),
+    date_label: typeof value.date_label === "string" ? value.date_label.slice(0, 80) : null,
+    display_date_label:
+      typeof value.display_date_label === "string" ? value.display_date_label.slice(0, 80) : null,
+    odometer_status:
+      typeof value.odometer_status === "string" ? value.odometer_status.slice(0, 80) : null,
+    available: value.available === undefined ? null : Boolean(value.available),
+  };
+}
+
+function sanitizeDistanceSource(value: any) {
+  const source = String(value || "").trim().toLowerCase();
+  const allowed = [
+    "provider_reported_mileage",
+    "gps_estimated_distance",
+    "dashboard_odometer",
+    "can_odometer",
+    "mixed_distance_sources",
+    "unavailable",
+  ];
+  return allowed.includes(source) ? source : "unavailable";
 }
 
 function sanitizeTopicTimeframe(value: any) {
@@ -1222,6 +1328,35 @@ function isMileageDistanceQuestion(question: string) {
   );
 }
 
+function detectMetricFollowupType(question: string) {
+  const lower = String(question || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[’]/g, "'");
+  if (!lower) return null;
+
+  if (
+    /\b(?:is|was)\s+(?:that|it)\s+(?:dashboard\s+)?odometer\s+mileage\b/.test(lower) ||
+    /\b(?:is|was)\s+(?:that|it)\s+(?:odometer|dashboard odometer|odo)\b/.test(lower) ||
+    /\bodometer\s+mileage\b/.test(lower)
+  ) {
+    return "source_check";
+  }
+
+  if (
+    /\b(?:the\s+)?\d+(?:\.\d+)?\s*(?:km|kms|kilometers|kilometres)\b/.test(lower) ||
+    /\b(?:that|this)\s+(?:distance|number|mileage|figure|km)\b/.test(lower) ||
+    /\b(?:was|is)\s+(?:that|it)\s+today\b/.test(lower) ||
+    /\b(?:was|is)\s+that\s+(?:mileage|distance)\s+today\b/.test(lower) ||
+    /\b(?:was|is)\s+(?:that|it)\s+yesterday\b/.test(lower) ||
+    /\bcovered\s+(?:today|yesterday)\b/.test(lower)
+  ) {
+    return "timeframe_confirmation";
+  }
+
+  return null;
+}
+
 function asksForExplicitFleetScope(question: string) {
   const lower = String(question || "").toLowerCase();
   return /\b(fleet|all trucks|all vehicles|whole fleet|every truck|every vehicle|all assets|company-wide)\b/.test(
@@ -1309,6 +1444,20 @@ function buildPendingFollowup(context: any, answer: string) {
       active_topic: buildActiveTruckTopic(context, truckLabel, timeframeOverride),
     };
   };
+
+  if (context.metric_followup?.active_topic) {
+    return {
+      type: "business_metric_followup",
+      active_topic: context.metric_followup.active_topic,
+    };
+  }
+
+  if (context.business_metric) {
+    return {
+      type: "business_metric_followup",
+      active_topic: buildActiveMetricTopic(context, truckLabel),
+    };
+  }
 
   if (
     context.truck_timeline_comparison &&
@@ -1406,6 +1555,74 @@ function buildActiveTruckTopic(context: any, truckLabel: string, timeframeOverri
     detail_mode_available: hasTimelineContext,
     updated_at: new Date().toISOString(),
   };
+}
+
+function buildActiveMetricTopic(context: any, truckLabel: string | null) {
+  const metric = context.business_metric || {};
+  const metricIntent = sanitizeMetricIntent(metric.type || context.business_metric_intent);
+  const metricTimeframe = sanitizeBusinessMetricTopicTimeframe(
+    metric.timeframe || context.business_metric_timeframe
+  );
+  const entityType = truckLabel ? "truck" : "fleet";
+
+  return {
+    entity_type: entityType,
+    truck_id: truckLabel || null,
+    company_id: context.company?.id || null,
+    last_intent: "business_metrics",
+    metric_intent: metricIntent || "distance_covered",
+    timeframe: metricTimeframe,
+    result_summary: buildMetricResultSummary(metric),
+    updated_at: new Date().toISOString(),
+  };
+}
+
+function sanitizeBusinessMetricTopicTimeframe(timeframe: any) {
+  if (!timeframe || typeof timeframe !== "object") return null;
+  const requested = String(timeframe.requested || "").trim().toLowerCase();
+  if (requested !== "today" && requested !== "yesterday") return null;
+  return {
+    requested,
+    dayOffset: Number.isFinite(Number(timeframe.dayOffset))
+      ? Number(timeframe.dayOffset)
+      : requested === "yesterday"
+        ? -1
+        : 0,
+    local_day: timeframe.local_day ? String(timeframe.local_day).slice(0, 20) : null,
+    day_start_utc: timeframe.day_start_utc ? String(timeframe.day_start_utc).slice(0, 40) : null,
+    day_end_utc: timeframe.day_end_utc ? String(timeframe.day_end_utc).slice(0, 40) : null,
+    display_date_label: timeframe.display_label
+      ? String(timeframe.display_label).slice(0, 80)
+      : timeframe.local_day
+        ? String(timeframe.local_day).slice(0, 20)
+        : requested,
+  };
+}
+
+function buildMetricResultSummary(metric: any) {
+  const distance = metric.distance || {};
+  const odometer = metric.odometer || {};
+  const distanceKm = Number(distance.distance_km || 0);
+  const hasDistance = Number.isFinite(distanceKm) && distanceKm > 0;
+
+  return {
+    available: hasDistance || Boolean(odometer.status),
+    distance_km: hasDistance ? distanceKm : null,
+    distance_source: hasDistance ? metricDistanceSourceForTopic(distance) : "unavailable",
+    date_label: metric.timeframe?.local_day || null,
+    display_date_label: metric.timeframe?.display_label || null,
+    odometer_status: odometer.status || null,
+  };
+}
+
+function metricDistanceSourceForTopic(distance: any) {
+  const source = String(distance.primary_distance_source || distance.distance_source || "unknown");
+  if (source === "provider_mileage") return "provider_reported_mileage";
+  if (source === "gps_estimated") return "gps_estimated_distance";
+  if (source === "physical_odometer") return "dashboard_odometer";
+  if (source === "can_odometer") return "can_odometer";
+  if (source === "mixed") return "mixed_distance_sources";
+  return "unavailable";
 }
 
 function sanitizeTimelineTimeframe(timeline: any) {
@@ -1632,6 +1849,149 @@ function buildFleetMovementInterpretation(summary: any) {
   }
 
   return sentences.join(" ");
+}
+
+function buildMetricFollowupContext(company: any, roleCapabilities: any, resolution: any) {
+  const topic = resolution.metricTopic || {};
+  const metricIntent = sanitizeMetricIntent(topic.metric_intent);
+  const financeMetric = [
+    "contribution_per_km",
+    "profit_readiness",
+    "missing_profit_data",
+    "moved_without_revenue",
+  ].includes(metricIntent || "");
+
+  return {
+    company,
+    intent: "business_metrics",
+    capabilities: {
+      canViewFinance: Boolean(roleCapabilities?.canViewFinance),
+      canViewOps: Boolean(roleCapabilities?.canViewOps),
+      canViewFuel: Boolean(roleCapabilities?.canViewFuel),
+      isPlatformOwner: Boolean(roleCapabilities?.isPlatformOwner),
+    },
+    permission_boundary:
+      financeMetric && !roleCapabilities?.canViewFinance
+        ? {
+            category: "finance",
+            message:
+              "I can help with operational context, but revenue, rates, profit, and margin data are restricted for your role.",
+          }
+        : null,
+    metric_followup: {
+      active_topic: topic,
+      followup_type: resolution.metricFollowupType || "metric_confirmation",
+      original_question: resolution.question || null,
+    },
+    generated_at: new Date().toISOString(),
+  };
+}
+
+function buildMetricFollowupAnswer(context: any) {
+  const followup = context.metric_followup || {};
+  const topic = followup.active_topic || {};
+  const summary = topic.result_summary || {};
+  const metricIntent = sanitizeMetricIntent(topic.metric_intent);
+  const label =
+    topic.entity_type === "fleet"
+      ? `${context.company?.name || "This fleet"}`
+      : topic.truck_id || "This truck";
+
+  if (metricIntent === "distance_covered") {
+    return buildDistanceMetricFollowupAnswer(label, topic, summary, followup.followup_type);
+  }
+
+  if (metricIntent === "odometer_reliability" || metricIntent === "distance_status") {
+    const status = summary.odometer_status
+      ? formatOdometerStatusLabel(summary.odometer_status)
+      : "not enough evidence yet";
+    return `${label} odometer/distance status from the previous answer: ${status}. I can rerun the distance check if you want the latest evidence.`;
+  }
+
+  return `I still have the previous ${metricIntent || "metric"} context for ${label}, but I need the metric question again to answer safely.`;
+}
+
+function buildDistanceMetricFollowupAnswer(
+  label: string,
+  topic: any,
+  summary: any,
+  followupType: string
+) {
+  const distanceKm = Number(summary.distance_km || 0);
+  const source = sanitizeDistanceSource(summary.distance_source);
+  const datePhrase = formatMetricTopicDatePhrase(topic, summary);
+  const distanceText = distanceKm > 0 ? formatStoredMetricKm(distanceKm) : "that mileage figure";
+  const sourceText = metricTopicSourceLabel(source);
+
+  if (distanceKm <= 0 || source === "unavailable") {
+    return `${label} was the previous mileage scope, but that mileage figure is not available in this thread. Ask the mileage question again and I will recalculate it from current distance evidence.`;
+  }
+
+  if (followupType === "source_check") {
+    if (source === "gps_estimated_distance") {
+      return `No — ${distanceText} is GPS-estimated route distance from telemetry pings for ${label} for ${datePhrase}. It is not dashboard odometer mileage.`;
+    }
+    if (source === "dashboard_odometer") {
+      return `Yes — ${distanceText} came from dashboard odometer movement for ${label} for ${datePhrase}. Cross-check odometer health before treating it as mechanically reliable.`;
+    }
+    if (source === "can_odometer") {
+      return `${distanceText} came from CAN odometer distance for ${label} for ${datePhrase}.`;
+    }
+    return `${distanceText} came from ${sourceText} for ${label} for ${datePhrase}. It is not raw GPS coordinates or a provider payload.`;
+  }
+
+  const parts = [
+    `Correct — ${distanceText} was calculated for ${label} for ${datePhrase} using ${sourceText}.`,
+  ];
+
+  if (source === "gps_estimated_distance") {
+    parts.push("It is not dashboard odometer mileage.");
+  } else if (source === "provider_reported_mileage") {
+    parts.push("It is provider-reported trip/report mileage, not dashboard odometer mileage unless the provider ties it to the physical odometer.");
+  }
+
+  return parts.join("\n");
+}
+
+function formatMetricTopicDatePhrase(topic: any, summary: any) {
+  const timeframe = topic.timeframe || {};
+  const cleanDate = cleanMetricDateLabel(
+    summary.display_date_label ||
+      timeframe.display_date_label ||
+      summary.date_label ||
+      timeframe.local_day ||
+      "the selected operating day"
+  );
+
+  if (timeframe.requested === "today") return `today, ${cleanDate}`;
+  if (timeframe.requested === "yesterday") return `yesterday, ${cleanDate}`;
+  return cleanDate;
+}
+
+function cleanMetricDateLabel(value: any) {
+  const text = String(value || "the selected operating day")
+    .replace(/\s*\((?:EAT|Kenya time|EAT \(Kenya time\))\)\s*/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return text || "the selected operating day";
+}
+
+function formatStoredMetricKm(value: any) {
+  const number = Number(value || 0);
+  const hasDecimal = Number.isFinite(number) && !Number.isInteger(number);
+  return `${number.toLocaleString(undefined, {
+    minimumFractionDigits: hasDecimal ? 2 : 0,
+    maximumFractionDigits: 2,
+  })} km`;
+}
+
+function metricTopicSourceLabel(source: string) {
+  if (source === "provider_reported_mileage") return "provider-reported mileage";
+  if (source === "gps_estimated_distance") return "GPS-estimated route distance from telemetry pings";
+  if (source === "dashboard_odometer") return "dashboard odometer mileage";
+  if (source === "can_odometer") return "CAN odometer distance";
+  if (source === "mixed_distance_sources") return "mixed distance evidence";
+  return "available distance evidence";
 }
 
 function buildBusinessMetricAnswer(context: any) {
