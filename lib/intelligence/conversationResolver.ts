@@ -40,6 +40,7 @@ export async function resolveNavaEyeConversationFollowup(
   const metricFollowupType = detectMetricFollowupType(question);
   const detailedTimelineRequest = isDetailedTimelineRequest(question);
   const rawIdleMarkerRequest = isRawIdleMarkerRequest(question);
+  const locationEvidenceRequest = isLocationEvidenceRequest(question);
   const ellipticalTruckQuestion = isEllipticalTruckQuestion(question);
 
   if (vehicleResolution.ambiguous.length) {
@@ -161,6 +162,38 @@ export async function resolveNavaEyeConversationFollowup(
       usedActiveTopic: true,
       usedMetricTopic: false,
       pendingType: typeof pending.type === "string" ? pending.type : "active_truck_topic",
+    };
+  }
+
+  if (locationEvidenceRequest && activeTopic && !explicitVehicleInput && !explicitFleetScope) {
+    const timeframe = explicitTimeframe
+      ? resolveTruckTimelineTimeframe(normalizedQuestion, activeTopic.timeframe)
+      : sanitizeTopicTimeframe(activeTopic.timeframe) || resolveTruckTimelineTimeframe(normalizedQuestion);
+
+    return {
+      question: buildLocationEvidenceQuestion(question, activeTopic, timeframe),
+      usedPendingFollowup: false,
+      usedActiveTopic: true,
+      usedMetricTopic: false,
+      pendingType: typeof pending.type === "string" ? pending.type : "active_truck_topic",
+    };
+  }
+
+  if (
+    locationEvidenceRequest &&
+    !activeTopic &&
+    !explicitVehicleInput &&
+    !explicitFleetScope
+  ) {
+    return {
+      question,
+      usedPendingFollowup: false,
+      usedActiveTopic: false,
+      usedMetricTopic: false,
+      pendingType: null,
+      needsClarification: true,
+      clarificationReason: "missing_active_truck_location_topic",
+      clarification: "Which truck should I check for location evidence?",
     };
   }
 
@@ -669,6 +702,10 @@ function buildTruckScopedFollowupQuestion(question: string, activeTopic: any) {
     return `Show detailed timeline for ${truckId}${timeframeSuffix}.`;
   }
 
+  if (isLocationEvidenceRequest(normalized)) {
+    return buildLocationEvidenceQuestion(question, activeTopic, timeframe);
+  }
+
   if (isMileageDistanceQuestion(normalized)) {
     const scoped = withoutTerminalPunctuation
       .replace(/\bit\b/gi, truckId)
@@ -688,6 +725,16 @@ function buildTruckScopedFollowupQuestion(question: string, activeTopic: any) {
   }
 
   return `${withoutTerminalPunctuation} for ${truckId}${timeframeSuffix}?`.slice(0, 500);
+}
+
+function buildLocationEvidenceQuestion(question: string, activeTopic: any, timeframe: any) {
+  const normalized = normalizeQuestion(question);
+  const truckId = activeTopic.truck_id;
+  const suffix = formatTimeframeQuestionSuffix(timeframe);
+  const mapContext = asksForMapOrExactLocation(normalized)
+    ? " Include a map pin for the main location."
+    : "";
+  return `Show operational location evidence for ${truckId}${suffix}.${mapContext}`.slice(0, 500);
 }
 
 function questionHasExplicitTimeframe(lower: string) {
@@ -714,9 +761,31 @@ function isEllipticalTruckQuestion(question: string) {
     /\bwhere\s+did\s+it\s+go\b/.test(lower) ||
     /\bis\s+it\s+(?:moving|idling|stopped|stationary)\b/.test(lower) ||
     /\bidle\s+risk\b/.test(lower) ||
+    isLocationEvidenceRequest(lower) ||
     isMileageDistanceQuestion(lower) ||
     isDetailedTimelineRequest(lower)
   );
+}
+
+function isLocationEvidenceRequest(question: string) {
+  const lower = normalizeQuestion(question);
+  return (
+    /\bwhere\s+exactly\s+(?:was|is)\s+(?:it|that truck|this truck|the truck)?\b/.test(lower) ||
+    /\bshow\s+me\s+where\s+(?:it|that truck|this truck|the truck)\s+(?:was|is)\b/.test(lower) ||
+    /\bwhere\s+was\s+(?:it|that truck|this truck|the truck)\s+(?:today|yesterday)\b/.test(lower) ||
+    /\bshow\s+me\s+on\s+the\s+map\b/.test(lower) ||
+    /\blocation\s+evidence\b/.test(lower) ||
+    /\bwhere\s+did\s+(?:it|that truck|this truck|the truck)\s+spend\b/.test(lower) ||
+    /\bwhere\s+(?:did\s+)?(?:it|that truck|this truck|the truck)\s+spend\s+the\s+day\b/.test(lower) ||
+    /\bwhere\s+was\s+(?:it|that truck|this truck|the truck)\s+(?:parked|stopped)\b/.test(lower) ||
+    normalizeQuestion(lower) === "map" ||
+    /^map\s+(?:it|that|this|there)?$/.test(lower)
+  );
+}
+
+function asksForMapOrExactLocation(question: string) {
+  const lower = normalizeQuestion(question);
+  return /\b(map|pin|exact|exactly|coordinates?|gps)\b/.test(lower);
 }
 
 function isMileageDistanceQuestion(question: string) {

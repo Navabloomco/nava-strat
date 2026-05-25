@@ -21,7 +21,7 @@ const FOLLOWUP_REFERENCE =
   /\b(how about|what about|that truck|this truck|that one|that number|that mileage|that distance|covered today|was that today|is that today|is it today|is that odometer mileage|the\s+\d+(?:\.\d+)?\s*km)\b/i;
 
 const COORDINATE_REQUEST =
-  /\b(coordinate|coordinates|gps|latitude|longitude|lat\/long|lat long|map pin|exact point|map link)\b/i;
+  /\b(coordinate|coordinates|gps|latitude|longitude|lat\/long|lat long|map|map pin|exact point|map link)\b/i;
 
 const LIMITED_CONTEXT =
   /Nava Eye found limited context\. Ask about fleet health, offline trucks, fuel risk, truck status, driver activity, or journeys\./i;

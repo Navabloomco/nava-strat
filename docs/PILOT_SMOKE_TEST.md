@@ -203,6 +203,8 @@ Open `/nava-eye` and ask:
 - [ ] "How many km has KCW 103Z covered today?" and confirm explicit truck mileage works with provider-reported mileage or GPS-estimated distance.
 - [ ] "How much mileage has the fleet covered today?" and confirm a fleet-wide distance answer only happens when fleet/all-truck scope is explicit.
 - [ ] Ask "What are yesterday's movements for KCW 103Z?", then "What about KCV020P?" and confirm Nava Eye inherits the yesterday timeline intent for KCV020P.
+- [ ] Ask "What are yesterday's movements for KCX 113Y?", then "Can you show me exactly where it was yesterday?" and confirm Nava Eye gives operational location evidence plus a map pin when available.
+- [ ] Ask "Where did KCW 103Z spend most of yesterday?" and confirm Nava Eye summarizes major stop/location anchors instead of returning a generic fallback.
 - [ ] "Did KCW 103Z make money yesterday?" and confirm the answer either calculates from linked revenue/cost/distance or clearly lists missing data.
 - [ ] After a profit readiness answer, ask "What about KDQ265T?" and confirm Nava Eye inherits the profit readiness intent only for roles allowed to see it.
 - [ ] "What is contribution per km for KCW 103Z?" and confirm Nava Eye does not invent revenue, cost, or profit if records are missing.

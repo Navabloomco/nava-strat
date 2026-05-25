@@ -2294,6 +2294,19 @@ function buildTruckTimelineComparisonAnswer(context: any) {
     return buildEmptyTimelineWindowAnswer(label, timeframe);
   }
 
+  if (context.location_evidence_requested) {
+    return buildOperationalLocationEvidenceAnswer({
+      context,
+      label,
+      timeZone,
+      timeline,
+      dayStory,
+      summary,
+      latest,
+      timeframe,
+    });
+  }
+
   const rollover = isNewDayRolloverWindow(timeframe, dayStory, summary);
 
   parts.push(buildLogisticsTimelineOpening(label, dayStory, summary, continuity, latest, timeZone, timeframe));
@@ -2381,6 +2394,234 @@ function buildEmptyTimelineWindowAnswer(label: string, timeframe: any) {
   }
 
   return `${label} has no telemetry history in this operating window, so the route cannot be reconstructed from movement logs.`;
+}
+
+function buildOperationalLocationEvidenceAnswer({
+  context,
+  label,
+  timeZone,
+  timeline,
+  dayStory,
+  summary,
+  latest,
+  timeframe,
+}: any) {
+  const parts: string[] = [];
+  const stopSummary = dayStory.stop_summary || {};
+  const dateLabel = timeline.local_day
+    ? formatTimelineDateLabel(timeline.local_day, timeZone)
+    : timeframe?.requested === "yesterday"
+      ? "yesterday"
+      : "today";
+  const anchors = buildLocationEvidenceAnchors(timeline, dayStory);
+  const mainAnchor = anchors[0] || buildPointAnchor("Latest location", dayStory.latest_seen || latest);
+  const mainLocation = mainAnchor?.locationText || "its latest known GPS point";
+  const stationaryRead = isStationaryLocationEvidence(summary, stopSummary, anchors);
+  const routePlaces = cleanRoutePlaces(dayStory.route_progression || []);
+
+  if (stationaryRead) {
+    parts.push(
+      `${label} spent ${dateLabel} concentrated ${mainLocation}. This was a stationary/holding day, not a corridor movement day.`
+    );
+  } else if (anchors.length > 1) {
+    parts.push(
+      `${label} had several operational location anchors on ${dateLabel}: ${formatAndList(
+        anchors.slice(0, 5).map((anchor: any) => stripLeadingPlacePrefix(anchor.locationText))
+      )}.`
+    );
+  } else if (routePlaces.length >= 2) {
+    parts.push(`${label} moved ${formatCorridorRoute(routePlaces)} on ${dateLabel}.`);
+  } else {
+    parts.push(
+      `${label}'s location evidence for ${dateLabel} is centered ${mainLocation}.`
+    );
+  }
+
+  parts.push(formatTimelineTimeNote(timeZone));
+  parts.push("");
+  parts.push("Operational evidence");
+  parts.push(`- Visible window: ${formatLocationEvidenceWindow(dayStory, timeZone)}.`);
+  parts.push(`- Movement pattern: ${formatLocationEvidencePattern(summary, stopSummary)}.`);
+
+  const longest = stopSummary.longest_stop || null;
+  const longestLocation = formatNarrativeLocation(longest?.location);
+  if (longest?.duration_minutes) {
+    parts.push(
+      `- Longest stop: about ${formatDurationWords(longest.duration_minutes)}${
+        longestLocation ? ` ${longestLocation}` : ""
+      }.`
+    );
+  }
+
+  const latestSeen = dayStory.latest_seen || latest || null;
+  const latestLocation = formatNarrativeLocation(
+    latestSeen?.location || latest?.location_resolution
+  );
+  if (latestSeen?.recorded_at) {
+    parts.push(
+      `- Final read: ${latestLocation || "latest known GPS point"} at ${formatTimelineClock(
+        latestSeen.recorded_at,
+        timeZone
+      )}${formatSpeedSuffix(latestSeen.speed)}.`
+    );
+  }
+
+  if (context.location_pin_requested || context.coordinate_request) {
+    parts.push("");
+    parts.push(...formatLocationEvidencePins(anchors, mainAnchor));
+  }
+
+  parts.push("");
+  parts.push("Engine/fuel note");
+  parts.push(formatHardwareNote(latest || dayStory.latest_seen || {}));
+
+  return parts.join("\n");
+}
+
+function buildLocationEvidenceAnchors(timeline: any, dayStory: any) {
+  const anchors: any[] = [];
+  const stopSummary = dayStory.stop_summary || {};
+  const notableStops = Array.isArray(timeline.notable_stops) ? timeline.notable_stops : [];
+
+  if (stopSummary.longest_stop) {
+    anchors.push(buildStopAnchor("Longest stop", stopSummary.longest_stop));
+  }
+
+  for (const stop of notableStops) {
+    if (!["major_stop", "medium_stop"].includes(String(stop.severity || ""))) continue;
+    anchors.push(buildStopAnchor(formatStopSeverityLabel(stop.severity), stop));
+  }
+
+  anchors.push(buildPointAnchor("Final read", dayStory.latest_seen));
+  anchors.push(buildPointAnchor("First read", dayStory.first_seen));
+
+  const seen = new Set<string>();
+  return anchors
+    .filter(Boolean)
+    .filter((anchor) => {
+      const key = locationEvidenceAnchorKey(anchor);
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 5);
+}
+
+function buildStopAnchor(label: string, stop: any) {
+  const location = stop?.location || null;
+  const locationText = formatNarrativeLocation(location);
+  if (!locationText && !location?.map_url) return null;
+  return {
+    label,
+    start_at: stop.start_at || null,
+    end_at: stop.end_at || null,
+    duration_minutes: stop.duration_minutes ?? null,
+    location,
+    locationText: locationText || "a GPS point",
+    map_url: location?.map_url || "",
+  };
+}
+
+function buildPointAnchor(label: string, point: any) {
+  if (!point) return null;
+  const location = point.location || point.location_resolution || null;
+  const locationText = formatNarrativeLocation(location);
+  if (!locationText && !location?.map_url) return null;
+  return {
+    label,
+    start_at: point.recorded_at || null,
+    end_at: point.recorded_at || null,
+    duration_minutes: null,
+    location,
+    locationText: locationText || "a GPS point",
+    map_url: location?.map_url || "",
+  };
+}
+
+function locationEvidenceAnchorKey(anchor: any) {
+  const location = anchor?.location || {};
+  const placeKey = routePlaceKey(anchor?.locationText || "");
+  if (placeKey && placeKey !== "agpspoint") return placeKey;
+  if (location.map_url) return String(location.map_url);
+  return placeKey;
+}
+
+function isStationaryLocationEvidence(summary: any, stopSummary: any, anchors: any[]) {
+  const movingBlocks = Number(summary.movement_blocks || 0);
+  const moving = finiteNumberOrNull(stopSummary.total_moving_minutes) || 0;
+  const stopped = finiteNumberOrNull(stopSummary.total_stopped_minutes) || 0;
+  const majorStops = Number(stopSummary.major_stop_count || 0);
+  return movingBlocks === 0 || (anchors.length <= 2 && stopped > 0 && stopped >= moving * 3 && majorStops <= 1);
+}
+
+function formatLocationEvidenceWindow(dayStory: any, timeZone: string) {
+  if (dayStory.coverage_start_at && dayStory.coverage_end_at) {
+    return `${formatTimelineClock(dayStory.coverage_start_at, timeZone)} to ${formatTimelineClock(
+      dayStory.coverage_end_at,
+      timeZone
+    )}`;
+  }
+  return "no usable telemetry window";
+}
+
+function formatLocationEvidencePattern(summary: any, stopSummary: any) {
+  const moving = finiteNumberOrNull(stopSummary.total_moving_minutes);
+  const stopped = finiteNumberOrNull(stopSummary.total_stopped_minutes);
+  const movementBlocks = Number(summary.movement_blocks || 0);
+
+  if (movementBlocks === 0 && Number(stopped || 0) > 0) {
+    return `no meaningful corridor movement detected; about ${formatDurationWords(
+      stopped
+    )} of stationary/holding time is visible`;
+  }
+
+  if (moving !== null && stopped !== null) {
+    return `about ${formatDurationWords(moving)} moving against about ${formatDurationWords(
+      stopped
+    )} stationary/rest`;
+  }
+
+  if (movementBlocks > 0) {
+    return `${movementBlocks.toLocaleString()} movement block(s) with location changes visible`;
+  }
+
+  return "not enough movement history to classify the operating pattern";
+}
+
+function formatLocationEvidencePins(anchors: any[], mainAnchor: any) {
+  const pinAnchors = (anchors.length ? anchors : [mainAnchor])
+    .filter(Boolean)
+    .filter((anchor: any) => anchor.map_url)
+    .slice(0, 5);
+
+  if (!pinAnchors.length) {
+    return ["I have the location label but no GPS pin for that period."];
+  }
+
+  if (pinAnchors.length === 1) {
+    return [`Map pin available: ${pinAnchors[0].map_url}`];
+  }
+
+  return [
+    "Map pins available:",
+    ...pinAnchors.map(
+      (anchor: any) =>
+        `- ${anchor.label}: ${stripLeadingPlacePrefix(anchor.locationText)} - ${anchor.map_url}`
+    ),
+  ];
+}
+
+function formatStopSeverityLabel(value: any) {
+  const text = String(value || "");
+  if (text === "major_stop") return "Major stop";
+  if (text === "medium_stop") return "Medium stop";
+  if (text === "short_stop") return "Short stop";
+  return "Stop";
+}
+
+function formatSpeedSuffix(value: any) {
+  const speed = finiteNumberOrNull(value);
+  return speed === null ? "" : `, speed ${formatNumber(speed)}`;
 }
 
 function formatNarrativeCoverageNote(dayStory: any, summary: any, timeZone: string, timeframe: any = {}) {

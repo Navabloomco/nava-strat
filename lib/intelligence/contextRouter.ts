@@ -81,6 +81,7 @@ export async function routeContext(
     ? resolveBusinessMetricTimeframe(question, company)
     : null;
   let intent = detectIntent(lower, detectedCountryName, businessMetricIntent);
+  const locationEvidenceRequest = detectLocationEvidenceRequest(lower);
   const dashboardReference = resolveDashboardReference(
     lower,
     options.dashboardContext,
@@ -90,7 +91,8 @@ export async function routeContext(
     intent = "dashboard_followup";
   }
   const vehicleMatch = await matchVehicleInFleet(question, companyId);
-  const timelineHistoryRequest = detectTimelineHistoryRequest(lower);
+  const timelineHistoryRequest =
+    detectTimelineHistoryRequest(lower) || locationEvidenceRequest;
   const compoundTruckRequest = vehicleMatch.input
     ? detectCompoundTruckRequest(lower)
     : null;
@@ -141,7 +143,9 @@ export async function routeContext(
       fleetAssetCounts.imported_assets > 0 && fleetAssetCounts.enabled_assets === 0,
     spares_cost_visible: sparesCostVisible,
     financials_visible: financialsVisible,
-    coordinate_request: detectCoordinateRequest(lower),
+    coordinate_request: detectCoordinateRequest(lower) || detectLocationPinRequest(lower),
+    location_evidence_requested: locationEvidenceRequest,
+    location_pin_requested: detectLocationPinRequest(lower),
     live_status_idle_focus: /\b(idle|idling|excessive idle|stopped|stationary)\b/.test(lower),
     timeline_detail_requested: detectDetailedTimelineRequest(lower),
     raw_idle_markers_requested: detectRawIdleMarkerRequest(lower),
@@ -829,8 +833,29 @@ function detectInvestigationFocus(lower: string) {
 }
 
 function detectCoordinateRequest(lower: string) {
-  return /\b(coordinate|coordinates|gps|latitude|longitude|lat\/long|lat long|map pin|exact point|exact location|map link)\b/.test(
+  return /\b(coordinate|coordinates|gps|latitude|longitude|lat\/long|lat long|map|map pin|exact point|exact location|map link)\b/.test(
     lower
+  );
+}
+
+function detectLocationPinRequest(lower: string) {
+  return /\b(map|pin|exact|exactly|coordinates?|gps|map link|map pin)\b/.test(lower);
+}
+
+function detectLocationEvidenceRequest(lower: string) {
+  const normalized = String(lower || "").toLowerCase().replace(/[’]/g, "'");
+  return (
+    /\boperational\s+location\s+evidence\b/.test(normalized) ||
+    /\blocation\s+evidence\b/.test(normalized) ||
+    /\bwhere\s+exactly\s+(?:was|is)\b/.test(normalized) ||
+    /\bshow\s+me\s+where\b/.test(normalized) ||
+    /\bshow\s+me\s+on\s+the\s+map\b/.test(normalized) ||
+    /\bwhere\s+was\b.*\b(today|yesterday|previous day|last operating day)\b/.test(normalized) ||
+    /\bwhere\s+did\b.*\bspend\b/.test(normalized) ||
+    /\bspend\s+(?:most\s+of\s+)?(?:today|yesterday|the day)\b/.test(normalized) ||
+    /\bwhere\s+was\b.*\b(parked|stopped)\b/.test(normalized) ||
+    /^map\b/.test(normalized.trim()) ||
+    /\bmap\s+pin\b/.test(normalized)
   );
 }
 

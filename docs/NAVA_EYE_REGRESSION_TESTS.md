@@ -109,7 +109,37 @@ Expected:
 
 - Individual markers may appear, but they remain cleanly formatted and tenant-safe.
 
-## F. Compound Questions
+## F. Operational Location Evidence
+
+Prompt sequence:
+
+```text
+What are yesterday's movements for KCX 113Y?
+Can you show me exactly where it was yesterday?
+```
+
+Expected:
+
+- Inherits KCX 113Y and yesterday from the previous timeline answer.
+- Leads with operational meaning, such as stationary/holding day versus corridor movement day.
+- Includes main resolved place, visible time window, movement/stationary pattern, longest or final stop, and hardware capability boundary.
+- Provides a map pin when available because the user asked for exact/map context.
+- Does not dump a coordinate series or raw provider payload.
+- Does not return a generic limited-context fallback.
+
+Prompt:
+
+```text
+Where did KCW 103Z spend most of yesterday?
+```
+
+Expected:
+
+- Resolves KCW 103Z directly from the current prompt.
+- Summarizes major stop/location anchors for yesterday.
+- Uses map pins only when map/exact/pin context is requested.
+
+## G. Compound Questions
 
 Prompt:
 
@@ -131,7 +161,7 @@ Expected:
 - Does not let detailed timeline override earlier requested summaries.
 - Keeps all sections scoped to KCW 103Z.
 
-## G. Fleet Versus Truck Scope
+## H. Fleet Versus Truck Scope
 
 Prompt sequence:
 
@@ -146,7 +176,7 @@ Expected:
 - Second answer switches to KCW 103Z because an explicit truck in the current prompt overrides stale fleet context.
 - The resolved "yesterday" date is consistent in both answers.
 
-## H. Business Math Readiness
+## I. Business Math Readiness
 
 Prompts:
 
@@ -164,7 +194,7 @@ Expected:
 - Finance/profit/contribution answers respect role boundaries.
 - Ops users get a permission boundary without leaked numbers.
 
-## I. Provider Capability
+## J. Provider Capability
 
 Prompt:
 
@@ -179,7 +209,7 @@ Expected:
 - Ignition/CAN/tank-sensor claims appear only when the asset/provider capability is verified and the signal is available.
 - Placeholder zero RPM/fuel values do not upgrade capability.
 
-## J. Coordinates
+## K. Coordinates
 
 Prompt:
 
@@ -203,7 +233,7 @@ Expected:
 - Coordinates are allowed because the user explicitly requested them.
 - Coordinates are labeled and not mixed with raw provider payloads.
 
-## K. Mobile Thread UX
+## L. Mobile Thread UX
 
 Manual mobile viewport checks:
 
