@@ -680,6 +680,7 @@ export async function POST(
       matchedExistingTrucks: result.matched_vehicle_rows ?? null,
       capabilitySummary: sanitizedCapabilitySummary,
       distanceDiagnostics: sanitizedDistanceDiagnostics,
+      vehicleMatchReview: result.vehicle_match_review,
       testedAt,
       source: "test_connection",
     });
@@ -714,6 +715,7 @@ export async function POST(
       matched_vehicle_rows: result.matched_vehicle_rows ?? null,
       matched_existing_trucks: testSummary.matched_existing_trucks,
       unmatched_vehicles: testSummary.unmatched_vehicles,
+      vehicle_match_review: testSummary.vehicle_match_review,
       live_location_verified: testSummary.live_location_verified,
       engine_fuel_verified: testSummary.engine_fuel_verified,
       report_feed_configured: testSummary.report_feed_configured,

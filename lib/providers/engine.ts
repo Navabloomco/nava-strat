@@ -56,6 +56,7 @@ export type SyncResult = {
   failure_stage?: ProviderExecutionFailureStage;
   skipped_missing_identifier?: number;
   matched_vehicle_rows?: number;
+  vehicle_match_review?: ProviderVehicleMatchReview;
   cross_provider_asset_matches?: number;
   cross_provider_asset_match_samples?: Array<{
     truck_id: string;
@@ -73,6 +74,25 @@ export type SyncResult = {
 type ProviderSyncOptions = {
   writeDistanceSummaries?: boolean;
 };
+
+type ProviderVehicleMatchReviewRow = {
+  provider_vehicle_label: string;
+  matched_truck_id: string | null;
+  match_source: string;
+  confidence: "high" | "needs_review";
+  status: "matched" | "unmatched" | "needs_review";
+};
+
+type ProviderVehicleMatchReview = {
+  total_rows: number;
+  matched_rows: number;
+  unmatched_rows: number;
+  needs_review_rows: number;
+  rows: ProviderVehicleMatchReviewRow[];
+  truncated: boolean;
+};
+
+const VEHICLE_MATCH_REVIEW_LIMIT = 100;
 
 export type ProviderDiscoveryEndpointInput = {
   name?: string;
@@ -513,6 +533,11 @@ export async function runProviderSync(
     const meaningfulSignalCounts: Record<string, number> = {};
     const errors: string[] = [];
     const matchedVehicleRowKeys = new Set<string>();
+    const unmatchedVehicleRowKeys = new Set<string>();
+    const vehicleMatchReviewKeys = new Set<string>();
+    const vehicleMatchReviewRows: ProviderVehicleMatchReviewRow[] = [];
+    let needsReviewVehicleRows = 0;
+    let vehicleMatchReviewTruncated = false;
     const crossProviderAssetMatchSamples: SyncResult["cross_provider_asset_match_samples"] = [];
     const providerAssetLookup = await loadProviderAssetLookup(provider.company_id);
 
@@ -527,6 +552,21 @@ export async function runProviderSync(
 
         if (normalized.validation.missing_fields.includes("truck_id")) {
           skippedMissingIdentifier++;
+          needsReviewVehicleRows++;
+          addVehicleMatchReviewRow(
+            vehicleMatchReviewRows,
+            vehicleMatchReviewKeys,
+            {
+              provider_vehicle_label: "Vehicle identifier missing",
+              matched_truck_id: null,
+              match_source: "missing_vehicle_identifier",
+              confidence: "needs_review",
+              status: "needs_review",
+            }
+          );
+          if (vehicleMatchReviewRows.length >= VEHICLE_MATCH_REVIEW_LIMIT) {
+            vehicleMatchReviewTruncated = true;
+          }
           continue;
         }
 
@@ -567,6 +607,29 @@ export async function runProviderSync(
         const currentVehicleMatchKey = normalizeDistanceTruckKey(normalized.truck_id);
         if ((existingAsset || crossProviderAsset) && currentVehicleMatchKey) {
           matchedVehicleRowKeys.add(currentVehicleMatchKey);
+        } else if (currentVehicleMatchKey) {
+          unmatchedVehicleRowKeys.add(currentVehicleMatchKey);
+        }
+        const matchedAsset = existingAsset || crossProviderAsset;
+        const reviewAdded = addVehicleMatchReviewRow(
+          vehicleMatchReviewRows,
+          vehicleMatchReviewKeys,
+          {
+            provider_vehicle_label: normalized.truck_id,
+            matched_truck_id: matchedAsset
+              ? matchedAsset.truck_id || matchedAsset.registration || null
+              : null,
+            match_source: existingAsset
+              ? "same_provider_registration_match"
+              : crossProviderAsset
+                ? "cross_provider_registration_match"
+                : "no_existing_asset_match",
+            confidence: matchedAsset ? "high" : "needs_review",
+            status: matchedAsset ? "matched" : "unmatched",
+          }
+        );
+        if (!reviewAdded && vehicleMatchReviewRows.length >= VEHICLE_MATCH_REVIEW_LIMIT) {
+          vehicleMatchReviewTruncated = true;
         }
 
         const assetPayload: Record<string, any> = {
@@ -701,6 +764,14 @@ export async function runProviderSync(
       vehicleCount: syncedCount,
       skipped_missing_identifier: skippedMissingIdentifier,
       matched_vehicle_rows: Math.min(matchedVehicleRowKeys.size, syncedCount),
+      vehicle_match_review: {
+        total_rows: fleet.vehicles.length,
+        matched_rows: Math.min(matchedVehicleRowKeys.size, syncedCount),
+        unmatched_rows: unmatchedVehicleRowKeys.size,
+        needs_review_rows: needsReviewVehicleRows,
+        rows: vehicleMatchReviewRows,
+        truncated: vehicleMatchReviewTruncated,
+      },
       cross_provider_asset_matches: crossProviderAssetMatches,
       cross_provider_asset_match_samples: crossProviderAssetMatchSamples,
       capability_upgrades_applied: capabilityUpgradesApplied,
@@ -2101,6 +2172,37 @@ function getAssetMatchKeys(asset: any) {
   return [asset?.truck_id, asset?.registration]
     .map((value) => normalizeDistanceTruckKey(value))
     .filter(Boolean);
+}
+
+function addVehicleMatchReviewRow(
+  rows: ProviderVehicleMatchReviewRow[],
+  seenKeys: Set<string>,
+  row: ProviderVehicleMatchReviewRow
+) {
+  const matchKey =
+    normalizeDistanceTruckKey(row.provider_vehicle_label) ||
+    `${row.status}:${rows.length + 1}`;
+  if (seenKeys.has(matchKey)) return false;
+  seenKeys.add(matchKey);
+  if (rows.length >= VEHICLE_MATCH_REVIEW_LIMIT) return false;
+
+  rows.push({
+    provider_vehicle_label: safeVehicleReviewText(row.provider_vehicle_label),
+    matched_truck_id: row.matched_truck_id
+      ? safeVehicleReviewText(row.matched_truck_id)
+      : null,
+    match_source: safeVehicleReviewText(row.match_source),
+    confidence: row.confidence,
+    status: row.status,
+  });
+  return true;
+}
+
+function safeVehicleReviewText(value: any) {
+  return String(value || "")
+    .replace(/[^\w\s./-]/g, "")
+    .trim()
+    .slice(0, 80);
 }
 
 async function maybeUpgradeCanonicalAssetCapability(

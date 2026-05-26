@@ -7,8 +7,26 @@ export type ProviderTestSummary = {
   live_location_verified?: boolean | null;
   engine_fuel_verified?: boolean | null;
   report_feed_configured?: boolean | null;
+  vehicle_match_review?: ProviderVehicleMatchReview | null;
   tested_at?: string | null;
   source?: string | null;
+};
+
+export type ProviderVehicleMatchReviewRow = {
+  provider_vehicle_label: string;
+  matched_truck_id: string | null;
+  match_source: string;
+  confidence: "high" | "needs_review";
+  status: "matched" | "unmatched" | "needs_review";
+};
+
+export type ProviderVehicleMatchReview = {
+  total_rows: number;
+  matched_rows: number;
+  unmatched_rows: number;
+  needs_review_rows: number;
+  rows: ProviderVehicleMatchReviewRow[];
+  truncated: boolean;
 };
 
 const SUMMARY_VERSION = 2;
@@ -30,6 +48,13 @@ function finiteNumber(value: any): number | null {
 
 function optionalBoolean(value: any): boolean | null {
   return typeof value === "boolean" ? value : null;
+}
+
+function safeShortText(value: any, fallback = "") {
+  const text = String(value || "")
+    .replace(/[^\w\s./-]/g, "")
+    .trim();
+  return (text || fallback).slice(0, 80);
 }
 
 function normalizeSignalKey(value: any) {
@@ -104,6 +129,9 @@ export function sanitizeProviderTestSummary(summary: any): ProviderTestSummary |
     : summary.report_feed_configured === false
       ? false
       : null;
+  const vehicleMatchReview = sanitizeVehicleMatchReview(
+    summary.vehicle_match_review
+  );
 
   if (summaryVersion !== null) safeSummary.summary_version = summaryVersion;
   if (typeof summary.status === "string") safeSummary.status = summary.status;
@@ -121,6 +149,7 @@ export function sanitizeProviderTestSummary(summary: any): ProviderTestSummary |
   if (reportFeedConfigured !== null) {
     safeSummary.report_feed_configured = reportFeedConfigured;
   }
+  if (vehicleMatchReview) safeSummary.vehicle_match_review = vehicleMatchReview;
   if (typeof summary.tested_at === "string") safeSummary.tested_at = summary.tested_at;
   if (typeof summary.source === "string") safeSummary.source = summary.source;
 
@@ -150,6 +179,7 @@ export function createProviderTestSummary({
   matchedExistingTrucks,
   capabilitySummary,
   distanceDiagnostics,
+  vehicleMatchReview,
   testedAt,
   source,
 }: {
@@ -158,6 +188,7 @@ export function createProviderTestSummary({
   matchedExistingTrucks: any;
   capabilitySummary?: any;
   distanceDiagnostics?: any;
+  vehicleMatchReview?: any;
   testedAt: string;
   source: string;
 }): ProviderTestSummary {
@@ -176,8 +207,69 @@ export function createProviderTestSummary({
     live_location_verified: status === "success" && vehiclesFound > 0,
     engine_fuel_verified: hasVerifiedEngineFuelSignals(capabilitySummary),
     report_feed_configured: hasVerifiedDistanceReportFeed(distanceDiagnostics),
+    vehicle_match_review: sanitizeVehicleMatchReview(vehicleMatchReview),
     tested_at: testedAt,
     source,
+  };
+}
+
+function sanitizeVehicleMatchReview(review: any): ProviderVehicleMatchReview | null {
+  if (!review || typeof review !== "object" || Array.isArray(review)) return null;
+  const rows: ProviderVehicleMatchReviewRow[] = Array.isArray(review.rows)
+    ? review.rows
+        .map(sanitizeVehicleMatchReviewRow)
+        .filter(isVehicleMatchReviewRow)
+        .slice(0, 100)
+    : [];
+  const totalRows = sanitizeNonNegativeInteger(review.total_rows) ?? rows.length;
+  const matchedRows = Math.min(
+    sanitizeNonNegativeInteger(review.matched_rows) ?? rows.filter((row) => row.status === "matched").length,
+    totalRows
+  );
+  const unmatchedRows = Math.min(
+    sanitizeNonNegativeInteger(review.unmatched_rows) ?? rows.filter((row) => row.status === "unmatched").length,
+    Math.max(totalRows - matchedRows, 0)
+  );
+  const needsReviewRows = Math.min(
+    sanitizeNonNegativeInteger(review.needs_review_rows) ??
+      rows.filter((row) => row.status === "needs_review").length,
+    Math.max(totalRows - matchedRows - unmatchedRows, 0)
+  );
+
+  return {
+    total_rows: totalRows,
+    matched_rows: matchedRows,
+    unmatched_rows: unmatchedRows,
+    needs_review_rows: needsReviewRows,
+    rows,
+    truncated: Boolean(review.truncated || rows.length < totalRows),
+  };
+}
+
+function isVehicleMatchReviewRow(
+  row: ProviderVehicleMatchReviewRow | null
+): row is ProviderVehicleMatchReviewRow {
+  return Boolean(row);
+}
+
+function sanitizeVehicleMatchReviewRow(row: any): ProviderVehicleMatchReviewRow | null {
+  if (!row || typeof row !== "object" || Array.isArray(row)) return null;
+  const status = ["matched", "unmatched", "needs_review"].includes(String(row.status))
+    ? (String(row.status) as ProviderVehicleMatchReviewRow["status"])
+    : "needs_review";
+  const confidence = row.confidence === "high" ? "high" : "needs_review";
+
+  return {
+    provider_vehicle_label: safeShortText(
+      row.provider_vehicle_label,
+      "Unknown provider vehicle"
+    ),
+    matched_truck_id: row.matched_truck_id
+      ? safeShortText(row.matched_truck_id)
+      : null,
+    match_source: safeShortText(row.match_source, "not_available"),
+    confidence,
+    status,
   };
 }
 

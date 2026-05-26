@@ -63,6 +63,7 @@ export async function GET(req: Request) {
         matchedExistingTrucks: result.matched_vehicle_rows ?? null,
         capabilitySummary: result.capability_summary,
         distanceDiagnostics: result.distance_diagnostics,
+        vehicleMatchReview: result.vehicle_match_review,
         testedAt: syncedAt,
         source: "provider_sync",
       });
@@ -88,6 +89,7 @@ export async function GET(req: Request) {
         vehicle_count: result.vehicleCount,
         matched_vehicle_rows: result.matched_vehicle_rows ?? null,
         test_summary: testSummary,
+        vehicle_match_review: testSummary.vehicle_match_review,
         skipped_missing_identifier: result.skipped_missing_identifier || 0,
         cross_provider_asset_matches: result.cross_provider_asset_matches || 0,
         capability_upgrades_applied: result.capability_upgrades_applied || 0,

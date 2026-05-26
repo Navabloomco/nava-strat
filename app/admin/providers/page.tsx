@@ -326,6 +326,13 @@ function ProviderCard({
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<any>(null);
   const statusSummary = buildProviderStatusSummary(form, testResult);
+  const vehicleMatchReview = getProviderVehicleMatchReview(form, testResult);
+  const [vehicleReviewConfirmed, setVehicleReviewConfirmed] = useState(false);
+  const vehicleReviewRequired =
+    Boolean(statusSummary.testPassed) && !Boolean(form.is_active);
+  const activationBlocked =
+    statusSummary.requiresReviewBeforeActivation ||
+    (vehicleReviewRequired && !vehicleReviewConfirmed);
 
   async function handleTestConnection() {
     setIsTesting(true);
@@ -350,6 +357,7 @@ function ProviderCard({
 
       const result = await res.json();
       setTestResult(result);
+      setVehicleReviewConfirmed(false);
 
       if (result.success) {
         setForm((current: any) => ({
@@ -417,6 +425,16 @@ function ProviderCard({
         selectedCompanyId={selectedCompanyId}
       />
 
+      <ProviderVehicleMatchReview
+        review={vehicleMatchReview}
+        testPassed={Boolean(statusSummary.testPassed)}
+        isActive={Boolean(form.is_active)}
+        reviewConfirmed={vehicleReviewConfirmed}
+        onReviewConfirmed={setVehicleReviewConfirmed}
+        onRunTest={capabilities.can_test_provider ? handleTestConnection : undefined}
+        isTesting={isTesting}
+      />
+
       {capabilities.can_edit_advanced_provider_config ? (
         <AdvancedProviderEditor
           provider={provider}
@@ -445,13 +463,19 @@ function ProviderCard({
         <ProviderActivationPanel
           provider={form}
           isSaving={isSaving}
-          activationBlocked={statusSummary.requiresReviewBeforeActivation}
-          onActivate={(nextActive) =>
+          activationBlocked={activationBlocked}
+          onActivate={(nextActive) => {
+            if (
+              nextActive &&
+              !confirmProviderActivation(form, vehicleMatchReview)
+            ) {
+              return;
+            }
             onSave({
               ...form,
               is_active: nextActive,
-            })
-          }
+            });
+          }}
         />
       )}
 
@@ -574,6 +598,200 @@ function BusinessMetric({ label, value }: { label: string; value: any }) {
   );
 }
 
+function ProviderVehicleMatchReview({
+  review,
+  testPassed,
+  isActive,
+  reviewConfirmed,
+  onReviewConfirmed,
+  onRunTest,
+  isTesting,
+}: {
+  review: any;
+  testPassed: boolean;
+  isActive: boolean;
+  reviewConfirmed: boolean;
+  onReviewConfirmed: (confirmed: boolean) => void;
+  onRunTest?: () => void;
+  isTesting: boolean;
+}) {
+  const [showAll, setShowAll] = useState(false);
+  if (!testPassed) return null;
+
+  const rows = Array.isArray(review?.rows) ? review.rows : [];
+  if (isActive && rows.length === 0) return null;
+  const visibleRows = showAll ? rows : rows.slice(0, 12);
+  const totalRows = Number.isFinite(Number(review?.total_rows))
+    ? Number(review.total_rows)
+    : rows.length;
+  const matchedRows = Number.isFinite(Number(review?.matched_rows))
+    ? Number(review.matched_rows)
+    : rows.filter((row: any) => row.status === "matched").length;
+  const unmatchedRows = Number.isFinite(Number(review?.unmatched_rows))
+    ? Number(review.unmatched_rows)
+    : rows.filter((row: any) => row.status === "unmatched").length;
+  const needsReviewRows = Number.isFinite(Number(review?.needs_review_rows))
+    ? Number(review.needs_review_rows)
+    : rows.filter((row: any) => row.status === "needs_review").length;
+
+  return (
+    <section style={vehicleReviewStyle}>
+      <div style={vehicleReviewHeaderStyle}>
+        <div>
+          <div style={businessEyebrowStyle}>Vehicle match review</div>
+          <h4 style={vehicleReviewTitleStyle}>Confirm provider vehicles before activation</h4>
+        </div>
+        <div style={businessStatusBadgeStyle(isActive ? "success" : reviewConfirmed ? "success" : "neutral")}>
+          {isActive ? "Active provider" : reviewConfirmed ? "Reviewed" : "Review required"}
+        </div>
+      </div>
+
+      <p style={vehicleReviewCopyStyle}>
+        Review the provider vehicle labels against the canonical fleet assets before
+        activating sync. This prevents a second provider from updating the wrong
+        truck record.
+      </p>
+
+      <div style={vehicleReviewMetricGridStyle}>
+        <BusinessMetric label="Rows checked" value={totalRows} />
+        <BusinessMetric label="Matched" value={matchedRows} />
+        <BusinessMetric label="Unmatched" value={unmatchedRows} />
+        <BusinessMetric label="Needs review" value={needsReviewRows} />
+      </div>
+
+      {rows.length === 0 ? (
+        <div style={businessWarningStyle}>
+          Safe vehicle match rows are not available yet. Run Test Connection again
+          before activating this provider.
+          {onRunTest && (
+            <div style={{ marginTop: 10 }}>
+              <button
+                type="button"
+                onClick={onRunTest}
+                disabled={isTesting}
+                style={testBtn}
+              >
+                {isTesting ? "Testing..." : "Run test again"}
+              </button>
+            </div>
+          )}
+        </div>
+      ) : (
+        <>
+          <div style={vehicleReviewTableWrapStyle}>
+            <table style={vehicleReviewTableStyle}>
+              <thead>
+                <tr>
+                  <th style={vehicleReviewThStyle}>Provider vehicle</th>
+                  <th style={vehicleReviewThStyle}>Matched fleet asset</th>
+                  <th style={vehicleReviewThStyle}>Match source</th>
+                  <th style={vehicleReviewThStyle}>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visibleRows.map((row: any, index: number) => (
+                  <tr key={`${row.provider_vehicle_label}-${index}`}>
+                    <td style={vehicleReviewTdStyle}>
+                      {row.provider_vehicle_label || "Unknown provider vehicle"}
+                    </td>
+                    <td style={vehicleReviewTdStyle}>
+                      {row.matched_truck_id || "No existing asset matched"}
+                    </td>
+                    <td style={vehicleReviewTdStyle}>
+                      {formatMatchSource(row.match_source, row.confidence)}
+                    </td>
+                    <td style={vehicleReviewTdStyle}>
+                      <span style={vehicleReviewStatusStyle(row.status)}>
+                        {formatMatchStatus(row.status)}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {(rows.length > visibleRows.length || showAll) && (
+            <button
+              type="button"
+              onClick={() => setShowAll((current) => !current)}
+              style={secondaryActionButtonStyle}
+            >
+              {showAll ? "Show fewer" : `Show all ${rows.length}`}
+            </button>
+          )}
+
+          {!isActive && (
+            <label style={vehicleReviewConfirmStyle}>
+              <input
+                type="checkbox"
+                checked={reviewConfirmed}
+                onChange={(event) => onReviewConfirmed(event.target.checked)}
+              />
+              <span>I reviewed these vehicle matches.</span>
+            </label>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+function getProviderVehicleMatchReview(provider: any, testResult: any) {
+  return (
+    testResult?.vehicle_match_review ||
+    testResult?.test_summary?.vehicle_match_review ||
+    provider?.test_summary?.vehicle_match_review ||
+    provider?.fleet_config?.test_summary?.vehicle_match_review ||
+    null
+  );
+}
+
+function confirmProviderActivation(provider: any, review: any) {
+  const totalRows = Number.isFinite(Number(review?.total_rows))
+    ? Number(review.total_rows)
+    : Number(provider?.test_summary?.vehicles_found || 0);
+  const matchedRows = Number.isFinite(Number(review?.matched_rows))
+    ? Number(review.matched_rows)
+    : Number(provider?.test_summary?.matched_existing_trucks || 0);
+  const unmatchedRows = Number.isFinite(Number(review?.unmatched_rows))
+    ? Number(review.unmatched_rows)
+    : 0;
+  const needsReviewRows = Number.isFinite(Number(review?.needs_review_rows))
+    ? Number(review.needs_review_rows)
+    : 0;
+
+  return window.confirm(
+    [
+      `${totalRows.toLocaleString()} provider vehicle${totalRows === 1 ? "" : "s"} will be connected to this workspace.`,
+      `${matchedRows.toLocaleString()} matched existing fleet asset${matchedRows === 1 ? "" : "s"}.`,
+      unmatchedRows > 0 || needsReviewRows > 0
+        ? `${unmatchedRows.toLocaleString()} unmatched and ${needsReviewRows.toLocaleString()} need review.`
+        : "No unmatched vehicles were reported in the latest test.",
+      "Continue activating sync?",
+    ].join("\n")
+  );
+}
+
+function formatMatchSource(source: any, confidence: any) {
+  const sourceText = String(source || "");
+  const label =
+    sourceText === "same_provider_registration_match"
+      ? "Existing provider asset"
+      : sourceText === "cross_provider_registration_match"
+        ? "Existing fleet asset from another provider"
+        : sourceText === "missing_vehicle_identifier"
+          ? "Missing provider identifier"
+          : "No existing asset match";
+  return confidence === "high" ? `${label} - high confidence` : `${label} - review`;
+}
+
+function formatMatchStatus(status: any) {
+  if (status === "matched") return "Matched";
+  if (status === "unmatched") return "Unmatched";
+  return "Needs review";
+}
+
 function buildProviderStatusSummary(provider: any, testResult: any) {
   const isActive = Boolean(provider?.is_active);
   const hasFreshTest = Boolean(testResult);
@@ -634,13 +852,14 @@ function buildProviderStatusSummary(provider: any, testResult: any) {
     testPassed &&
     !isActive &&
     (derivedUnmatchedVehicles === null || derivedUnmatchedVehicles > 0);
+  const inactiveProviderNeedsReview = testPassed && !isActive;
   const nextAction = testFailed
     ? "Fix connection"
     : !testPassed
       ? "Run test"
       : isActive
         ? "Monitor provider health"
-        : needsVehicleReview
+        : inactiveProviderNeedsReview
           ? "Review vehicles before activation"
           : "Activate sync";
   const connectionTone = testFailed ? "warning" : isActive ? "success" : "neutral";
@@ -684,6 +903,7 @@ function buildProviderStatusSummary(provider: any, testResult: any) {
     connectionTone,
     testTone,
     message,
+    testPassed,
     vehiclesFound: vehiclesFound ?? "Not refreshed yet",
     matchedTrucks: matchedTrucks ?? "Review needed",
     unmatchedVehicles: derivedUnmatchedVehicles ?? "Review needed",
@@ -2773,6 +2993,42 @@ const businessActionRowStyle = { marginTop: 14, display: "flex", justifyContent:
 const businessNextActionStyle = { color: "#334155", fontSize: 13 };
 const businessButtonRowStyle = { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" as const };
 const secondaryInlineLinkStyle = { display: "inline-flex", alignItems: "center", justifyContent: "center", border: "1px solid #cbd5e1", color: "#0f172a", backgroundColor: "#fff", borderRadius: 6, padding: "8px 14px", fontSize: 13, fontWeight: 800, textDecoration: "none", whiteSpace: "nowrap" as const };
+const vehicleReviewStyle = { border: "1px solid #d1fae5", backgroundColor: "#f7fefb", borderRadius: 12, padding: 18, marginBottom: 18 };
+const vehicleReviewHeaderStyle = { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 14, marginBottom: 10 };
+const vehicleReviewTitleStyle = { margin: 0, color: "#0f172a", fontSize: 17, fontWeight: 900 };
+const vehicleReviewCopyStyle = { margin: "0 0 14px 0", color: "#475569", fontSize: 13, lineHeight: 1.65 };
+const vehicleReviewMetricGridStyle = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 10, marginBottom: 14 };
+const vehicleReviewTableWrapStyle = { overflowX: "auto" as const, border: "1px solid #e2e8f0", borderRadius: 10, backgroundColor: "#fff", marginBottom: 12 };
+const vehicleReviewTableStyle = { width: "100%", borderCollapse: "collapse" as const, minWidth: 680 };
+const vehicleReviewThStyle = { textAlign: "left" as const, padding: "10px 12px", color: "#475569", fontSize: 11, fontWeight: 900, textTransform: "uppercase" as const, letterSpacing: "0.04em", borderBottom: "1px solid #e2e8f0", backgroundColor: "#f8fafc" };
+const vehicleReviewTdStyle = { padding: "11px 12px", color: "#0f172a", fontSize: 13, borderBottom: "1px solid #f1f5f9", verticalAlign: "top" as const };
+const vehicleReviewConfirmStyle = { marginTop: 12, display: "flex", alignItems: "center", gap: 8, color: "#0f172a", fontSize: 13, fontWeight: 800 };
+const vehicleReviewStatusStyle = (status: string) => ({
+  display: "inline-flex",
+  border:
+    status === "matched"
+      ? "1px solid #bbf7d0"
+      : status === "unmatched"
+        ? "1px solid #fed7aa"
+        : "1px solid #fde68a",
+  backgroundColor:
+    status === "matched"
+      ? "#f0fdf4"
+      : status === "unmatched"
+        ? "#fff7ed"
+        : "#fffbeb",
+  color:
+    status === "matched"
+      ? "#15803d"
+      : status === "unmatched"
+        ? "#c2410c"
+        : "#92400e",
+  borderRadius: 999,
+  padding: "4px 8px",
+  fontSize: 12,
+  fontWeight: 900,
+  whiteSpace: "nowrap" as const,
+});
 const advancedDiagnosticsDetailsStyle = { marginTop: 18, border: "1px solid #e2e8f0", backgroundColor: "#f8fafc", borderRadius: 12, padding: 14 };
 const advancedDiagnosticsSummaryStyle = { cursor: "pointer", color: "#0f172a", fontSize: 14, fontWeight: 900 };
 const advancedDiagnosticsHintStyle = { display: "block", marginTop: 4, color: "#64748b", fontSize: 12, fontWeight: 650, lineHeight: 1.45 };
