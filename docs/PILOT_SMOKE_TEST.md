@@ -91,6 +91,8 @@ Open `/admin/providers?companyId=<id>`.
 - [ ] Confirm Test Connection displays sanitized diagnostics.
 - [ ] Confirm Provider Vault shows Current vehicle feed and Report/distance feed as separate connection channels.
 - [ ] Confirm Provider Vault cards lead with a clean customer-ready summary: connection status, last test result, vehicles found, matched/unmatched trucks, live location tracking, engine/fuel signal verification, report/distance feed status, and next action.
+- [ ] Confirm provider summary metrics show actual counts or plain placeholders such as `Not refreshed yet` / `Needs review`, not action labels such as `Run test`.
+- [ ] Confirm username/password/token fields are hidden under collapsed Manage credentials and saved secrets are not echoed.
 - [ ] Confirm Provider Vault technical panels such as connection contract, row path, response shape, data discovery, enrichment diagnostics, and CSV fallback/backfill import are collapsed under Advanced diagnostics by default.
 - [ ] Confirm a Simple Connect provider created from a login-token flow can be replayed by Provider Vault Test Connection without re-entering endpoint/token details.
 - [ ] Confirm Test Connection shows plain-language failure states such as Sign-in failed, Access token not found, Vehicle endpoint rejected access, No vehicle rows found, Required location fields missing, Report endpoint not configured, or Report endpoint rejected parameters.

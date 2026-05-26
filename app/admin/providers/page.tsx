@@ -379,29 +379,9 @@ function ProviderCard({
       <div style={headerStyle}>
         <div>
           <h3 style={{ margin: 0 }}>{provider.provider_name}</h3>
-          <p style={statusText}>
-            Connection:{" "}
-            <span style={{ color: form.is_active ? "#10b981" : "#64748b" }}>
-              {form.is_active ? "Active sync" : "Inactive until activated"}
-            </span>
-            {" · "}
-            Test: <span style={{ color: form.last_test_status === 'success' ? '#10b981' : '#ef4444' }}>
-              {form.last_test_status || "Pending"}
-            </span>
-          </p>
         </div>
-        <div style={{ display: 'flex', gap: '10px' }}>
-          {capabilities.can_test_provider && (
-            <button onClick={handleTestConnection} disabled={isTesting} style={testBtn}>
-              {isTesting ? "COMMUNICATING..." : "TEST CONNECTION"}
-            </button>
-          )}
-          {(capabilities.can_update_provider_credentials ||
-            capabilities.can_edit_advanced_provider_config) && (
-            <button onClick={() => onSave(form)} disabled={isSaving} style={saveBtn}>
-              {isSaving ? "SAVING..." : "SAVE CHANGES"}
-            </button>
-          )}
+        <div style={businessStatusBadgeStyle(statusSummary.tone)}>
+          {statusSummary.connectionStatus}
         </div>
       </div>
 
@@ -409,12 +389,25 @@ function ProviderCard({
         summary={statusSummary}
         onRunTest={capabilities.can_test_provider ? handleTestConnection : undefined}
         isTesting={isTesting}
+        selectedCompanyId={selectedCompanyId}
       />
 
       {capabilities.can_edit_advanced_provider_config ? (
-        <AdvancedProviderEditor provider={provider} form={form} setForm={setForm} />
+        <AdvancedProviderEditor
+          provider={provider}
+          form={form}
+          setForm={setForm}
+          isSaving={isSaving}
+          onSave={() => onSave(form)}
+        />
       ) : capabilities.can_update_provider_credentials ? (
-        <CredentialProviderEditor provider={provider} form={form} setForm={setForm} />
+        <CredentialProviderEditor
+          provider={provider}
+          form={form}
+          setForm={setForm}
+          isSaving={isSaving}
+          onSave={() => onSave(form)}
+        />
       ) : (
         <div style={statusOnlyStyle}>
           You can view provider status, but provider administration is limited
@@ -427,6 +420,7 @@ function ProviderCard({
         <ProviderActivationPanel
           provider={form}
           isSaving={isSaving}
+          activationBlocked={statusSummary.requiresReviewBeforeActivation}
           onActivate={(nextActive) =>
             onSave({
               ...form,
@@ -439,8 +433,8 @@ function ProviderCard({
       {capabilities.can_test_provider && (
         <details style={advancedDiagnosticsDetailsStyle}>
           <summary style={advancedDiagnosticsSummaryStyle}>
-            Advanced diagnostics
-            <span style={advancedSummaryHintStyle}>
+            <span>Advanced diagnostics</span>
+            <span style={advancedDiagnosticsHintStyle}>
               Connection channels, discovery tools, report imports, and safe response-shape details
             </span>
           </summary>
@@ -491,10 +485,12 @@ function ProviderBusinessStatusSummary({
   summary,
   onRunTest,
   isTesting,
+  selectedCompanyId,
 }: {
   summary: ReturnType<typeof buildProviderStatusSummary>;
   onRunTest?: () => void;
   isTesting: boolean;
+  selectedCompanyId: string;
 }) {
   return (
     <section style={businessStatusStyle}>
@@ -529,16 +525,26 @@ function ProviderBusinessStatusSummary({
         <div style={businessNextActionStyle}>
           Next action: <strong>{summary.nextAction}</strong>
         </div>
-        {onRunTest && (
-          <button
-            type="button"
-            onClick={onRunTest}
-            disabled={isTesting}
-            style={testBtn}
-          >
-            {isTesting ? "Testing..." : "Run test"}
-          </button>
-        )}
+        <div style={businessButtonRowStyle}>
+          {summary.canReviewVehicles && (
+            <Link
+              href={`/admin/assets${companyQuery(selectedCompanyId)}`}
+              style={secondaryInlineLinkStyle}
+            >
+              Review vehicles
+            </Link>
+          )}
+          {onRunTest && (
+            <button
+              type="button"
+              onClick={onRunTest}
+              disabled={isTesting}
+              style={testBtn}
+            >
+              {isTesting ? "Testing..." : summary.testButtonLabel}
+            </button>
+          )}
+        </div>
       </div>
     </section>
   );
@@ -594,20 +600,28 @@ function buildProviderStatusSummary(provider: any, testResult: any) {
   const lastTestResult = testPassed
     ? "Connection test passed"
     : testFailed
-      ? "Connection test failed"
-      : "Run test";
+      ? "Connection needs attention"
+      : "Not tested yet";
+  const needsVehicleReview =
+    testPassed &&
+    !isActive &&
+    (unmatchedVehicles === null || unmatchedVehicles > 0);
   const nextAction = testFailed
     ? "Fix connection"
     : !testPassed
       ? "Run test"
-      : !isActive
-        ? "Activate sync"
-        : "Review vehicles";
+      : isActive
+        ? "Monitor provider health"
+        : needsVehicleReview
+          ? "Review vehicles before activation"
+          : "Activate sync";
   const tone = testFailed ? "warning" : testPassed ? "success" : "neutral";
   const vehiclesText =
     vehiclesFound !== null
       ? `${vehiclesFound.toLocaleString()} vehicle${vehiclesFound === 1 ? "" : "s"} were found.`
-      : "Run a connection test to refresh vehicle counts.";
+      : isActive
+        ? ""
+        : "Vehicle counts need refresh.";
   const liveTrackingText = liveTrackingVerified
     ? "Live location tracking is available"
     : "Live location tracking is not verified yet";
@@ -621,9 +635,16 @@ function buildProviderStatusSummary(provider: any, testResult: any) {
     ? ""
     : "Provider remains inactive until you activate sync.";
   const message = testPassed
-    ? `${isActive ? "Provider sync is active." : "Connection test passed."} ${vehiclesText} ${liveTrackingText}. ${engineFuelText}. ${reportText}.${syncActivationText ? ` ${syncActivationText}` : ""}`
+    ? [
+        isActive ? "Provider sync is active." : "Connection test passed.",
+        vehiclesText,
+        `${liveTrackingText}.`,
+        `${engineFuelText}.`,
+        `${reportText}.`,
+        syncActivationText,
+      ].filter(Boolean).join(" ")
     : testFailed
-      ? `${provider?.last_test_message || testResult?.message || "Connection test failed."} ${reportText}.`
+      ? `${testResult?.message || provider?.last_test_message || "Connection test failed."} ${reportText}.`
       : `${provider?.provider_name || "This provider"} has not passed a connection test yet. ${reportText}.`;
 
   return {
@@ -631,14 +652,17 @@ function buildProviderStatusSummary(provider: any, testResult: any) {
     lastTestResult,
     tone,
     message,
-    vehiclesFound: vehiclesFound ?? "Run test",
-    matchedTrucks: matchedTrucks ?? "Run test",
-    unmatchedVehicles: unmatchedVehicles ?? "Run test",
+    vehiclesFound: vehiclesFound ?? "Not refreshed yet",
+    matchedTrucks: matchedTrucks ?? "Needs review",
+    unmatchedVehicles: unmatchedVehicles ?? "Needs review",
     liveTracking: liveTrackingVerified ? "verified" : "not verified",
     engineFuelSignals: engineFuelVerified ? "verified" : "not verified",
     reportDistanceFeed: reportConfigured ? "configured" : "not configured",
     nextAction,
     inactiveWarning: !isActive,
+    canReviewVehicles: testPassed,
+    testButtonLabel: testPassed ? "Run test again" : "Run test",
+    requiresReviewBeforeActivation: needsVehicleReview,
   };
 }
 
@@ -720,10 +744,12 @@ function ProviderCapabilityDiagnostics({ summary }: { summary: any }) {
 function ProviderActivationPanel({
   provider,
   isSaving,
+  activationBlocked,
   onActivate,
 }: {
   provider: any;
   isSaving: boolean;
+  activationBlocked: boolean;
   onActivate: (nextActive: boolean) => void;
 }) {
   const testedSuccessfully = provider.last_test_status === "success";
@@ -736,6 +762,8 @@ function ProviderActivationPanel({
         <div style={activationTitleStyle}>
           {isActive
             ? "Provider sync is active"
+            : activationBlocked
+              ? "Review vehicles before activation"
             : testedSuccessfully
               ? "Connection tested. Sync can be activated."
               : "Test connection before activation"}
@@ -759,12 +787,12 @@ function ProviderActivationPanel({
         ) : (
           <button
             type="button"
-            disabled={isSaving || !testedSuccessfully}
+            disabled={isSaving || !testedSuccessfully || activationBlocked}
             onClick={() => onActivate(true)}
             style={{
               ...saveBtn,
-              opacity: isSaving || !testedSuccessfully ? 0.55 : 1,
-              cursor: isSaving || !testedSuccessfully ? "not-allowed" : "pointer",
+              opacity: isSaving || !testedSuccessfully || activationBlocked ? 0.55 : 1,
+              cursor: isSaving || !testedSuccessfully || activationBlocked ? "not-allowed" : "pointer",
             }}
           >
             Activate sync
@@ -2121,16 +2149,24 @@ function AdvancedProviderEditor({
   provider,
   form,
   setForm,
+  isSaving,
+  onSave,
 }: {
   provider: any;
   form: any;
   setForm: (form: any) => void;
+  isSaving: boolean;
+  onSave: () => void;
 }) {
   return (
     <>
-      <div style={formGrid}>
-        <CredentialProviderFields provider={provider} form={form} setForm={setForm} />
-      </div>
+      <ManageCredentialsPanel
+        provider={provider}
+        form={form}
+        setForm={setForm}
+        isSaving={isSaving}
+        onSave={onSave}
+      />
 
       <details style={advancedDetailsStyle}>
         <summary style={advancedSummaryStyle}>
@@ -2222,6 +2258,11 @@ function AdvancedProviderEditor({
             />
           </div>
         </div>
+        <div style={editorActionRowStyle}>
+          <button type="button" onClick={onSave} disabled={isSaving} style={saveBtn}>
+            {isSaving ? "Saving..." : "Save advanced settings"}
+          </button>
+        </div>
       </details>
     </>
   );
@@ -2251,15 +2292,59 @@ function CredentialProviderEditor({
   provider,
   form,
   setForm,
+  isSaving,
+  onSave,
 }: {
   provider: any;
   form: any;
   setForm: (form: any) => void;
+  isSaving: boolean;
+  onSave: () => void;
 }) {
   return (
-    <div style={formGrid}>
-      <CredentialProviderFields provider={provider} form={form} setForm={setForm} />
-    </div>
+    <ManageCredentialsPanel
+      provider={provider}
+      form={form}
+      setForm={setForm}
+      isSaving={isSaving}
+      onSave={onSave}
+    />
+  );
+}
+
+function ManageCredentialsPanel({
+  provider,
+  form,
+  setForm,
+  isSaving,
+  onSave,
+}: {
+  provider: any;
+  form: any;
+  setForm: (form: any) => void;
+  isSaving: boolean;
+  onSave: () => void;
+}) {
+  return (
+    <details style={credentialDetailsStyle}>
+      <summary style={advancedSummaryStyle}>
+        Manage credentials
+        <span style={advancedSummaryHintStyle}>
+          Update provider access details without showing saved secrets
+        </span>
+      </summary>
+      <div style={formGrid}>
+        <CredentialProviderFields provider={provider} form={form} setForm={setForm} />
+      </div>
+      <div style={credentialNoteStyle}>
+        Saved passwords, tokens, and API keys are never displayed. Leave a secret field blank to keep the existing value.
+      </div>
+      <div style={editorActionRowStyle}>
+        <button type="button" onClick={onSave} disabled={isSaving} style={saveBtn}>
+          {isSaving ? "Saving..." : "Save credentials"}
+        </button>
+      </div>
+    </details>
   );
 }
 
@@ -2588,7 +2673,6 @@ const stepStyle = { display: "grid", gridTemplateColumns: "30px 1fr", gap: 12, a
 const stepNumberStyle = { width: 30, height: 30, borderRadius: 999, background: "#67e8f9", color: "#0f172a", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 900 };
 const stepTextStyle = { color: "#e2e8f0", fontSize: 13, lineHeight: 1.5 };
 const headerStyle = { display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #f1f5f9", paddingBottom: "16px", marginBottom: "20px" };
-const statusText = { fontSize: "12px", color: "#64748b", margin: "4px 0 0 0", fontWeight: "500" };
 const labelStyle = { display: "block", fontSize: "11px", fontWeight: "bold", color: "#475569", marginBottom: "4px", textTransform: "uppercase" as "uppercase" };
 const inputStyle = { width: "100%", padding: "10px", borderRadius: "6px", border: "1px solid #cbd5e1", marginBottom: "10px", fontSize: "14px" };
 const textareaStyle = { width: "100%", minHeight: "120px", padding: "12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontFamily: "monospace", fontSize: "12px", backgroundColor: "#f8fafc" };
@@ -2596,6 +2680,9 @@ const formGrid = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "15px" 
 const advancedDetailsStyle = { marginTop: 14, border: "1px solid #e2e8f0", backgroundColor: "#f8fafc", borderRadius: 10, padding: 14 };
 const advancedSummaryStyle = { cursor: "pointer", color: "#0f172a", fontSize: 13, fontWeight: 850 };
 const advancedSummaryHintStyle = { marginLeft: 10, color: "#64748b", fontSize: 12, fontWeight: 650 };
+const credentialDetailsStyle = { marginTop: 14, border: "1px solid #e2e8f0", backgroundColor: "#fff", borderRadius: 10, padding: 14 };
+const credentialNoteStyle = { marginTop: 10, color: "#64748b", fontSize: 12, lineHeight: 1.55 };
+const editorActionRowStyle = { display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 14 };
 const saveBtn = { backgroundColor: "#0f172a", color: "#fff", border: "none", padding: "8px 24px", borderRadius: "6px", fontWeight: "bold", cursor: "pointer" };
 const testBtn = { backgroundColor: "#fff", color: "#0f172a", border: "1px solid #cbd5e1", padding: "8px 20px", borderRadius: "6px", fontWeight: "bold", cursor: "pointer" };
 const statusOnlyStyle = { border: "1px solid #e2e8f0", backgroundColor: "#f8fafc", color: "#64748b", borderRadius: 8, padding: 14, fontSize: 13, lineHeight: 1.6 };
@@ -2642,5 +2729,8 @@ const businessMetricLabelStyle = { marginTop: 4, color: "#64748b", fontSize: 11,
 const businessWarningStyle = { marginTop: 12, border: "1px solid #fde68a", backgroundColor: "#fffbeb", color: "#92400e", borderRadius: 10, padding: 12, fontSize: 13, lineHeight: 1.55, fontWeight: 700 };
 const businessActionRowStyle = { marginTop: 14, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" as const };
 const businessNextActionStyle = { color: "#334155", fontSize: 13 };
+const businessButtonRowStyle = { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" as const };
+const secondaryInlineLinkStyle = { display: "inline-flex", alignItems: "center", justifyContent: "center", border: "1px solid #cbd5e1", color: "#0f172a", backgroundColor: "#fff", borderRadius: 6, padding: "8px 14px", fontSize: 13, fontWeight: 800, textDecoration: "none", whiteSpace: "nowrap" as const };
 const advancedDiagnosticsDetailsStyle = { marginTop: 18, border: "1px solid #e2e8f0", backgroundColor: "#f8fafc", borderRadius: 12, padding: 14 };
 const advancedDiagnosticsSummaryStyle = { cursor: "pointer", color: "#0f172a", fontSize: 14, fontWeight: 900 };
+const advancedDiagnosticsHintStyle = { display: "block", marginTop: 4, color: "#64748b", fontSize: 12, fontWeight: 650, lineHeight: 1.45 };
