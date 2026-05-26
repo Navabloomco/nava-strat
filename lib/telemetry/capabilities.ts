@@ -248,6 +248,7 @@ export function buildCapabilitySummary(input: {
   rows_processed: number;
   capability_counts: Record<string, number>;
   placeholder_zero_signal_counts?: Record<string, number>;
+  meaningful_signal_counts?: Record<string, number>;
   providerProfile?: ProviderCapabilityProfile | null;
 }) {
   const counts = input.capability_counts || {};
@@ -269,6 +270,12 @@ export function buildCapabilitySummary(input: {
     ),
     placeholder_zero_signal_counts: Object.fromEntries(
       Object.entries(input.placeholder_zero_signal_counts || {}).map(([key, count]) => [
+        normalizeSignalKey(key),
+        Number(count || 0),
+      ])
+    ),
+    meaningful_signal_counts: Object.fromEntries(
+      Object.entries(input.meaningful_signal_counts || {}).map(([key, count]) => [
         normalizeSignalKey(key),
         Number(count || 0),
       ])

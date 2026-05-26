@@ -92,6 +92,9 @@ Open `/admin/providers?companyId=<id>`.
 - [ ] Confirm Provider Vault shows Current vehicle feed and Report/distance feed as separate connection channels.
 - [ ] Confirm Provider Vault cards lead with a clean customer-ready summary: connection status badge, last test badge, vehicles found, matched/unmatched trucks, live location tracking, engine/fuel signal verification, report/distance feed status, and next action.
 - [ ] Confirm provider summary metrics use latest successful test/sync counts when available, such as 36 FleetTrack vehicles or 21 BlueTrax vehicles, and otherwise show plain placeholders such as `Not refreshed yet` / `Review needed`.
+- [ ] Confirm matched existing trucks never exceeds vehicles found; if legacy or uncertain counts are impossible, the card shows `Review needed`.
+- [ ] Confirm GPS-only providers keep Engine/fuel signals as `not verified` unless supported ignition, engine/CAN, or tank signals have meaningful non-placeholder values.
+- [ ] Confirm Report/distance feed is `not configured` for placeholder report URLs until endpoint, row path, distance mapping, and required report parameters are configured well enough to write provider trip summaries.
 - [ ] Confirm the card does not repeat status copy such as `Inactive until activated` or `Connection test passed` inside both badges and the summary sentence.
 - [ ] Confirm username/password/token fields are hidden under collapsed Manage credentials and saved secrets are not echoed.
 - [ ] Confirm Provider Vault technical panels such as connection contract, row path, response shape, data discovery, enrichment diagnostics, and CSV fallback/backfill import are collapsed under Advanced diagnostics by default.

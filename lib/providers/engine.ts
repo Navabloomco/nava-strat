@@ -55,6 +55,7 @@ export type SyncResult = {
   vehicleCount: number;
   failure_stage?: ProviderExecutionFailureStage;
   skipped_missing_identifier?: number;
+  matched_vehicle_rows?: number;
   cross_provider_asset_matches?: number;
   cross_provider_asset_match_samples?: Array<{
     truck_id: string;
@@ -509,7 +510,9 @@ export async function runProviderSync(
     let capabilityUpgradesApplied = 0;
     const capabilityCounts: Record<string, number> = {};
     const placeholderZeroSignalCounts: Record<string, number> = {};
+    const meaningfulSignalCounts: Record<string, number> = {};
     const errors: string[] = [];
+    const matchedVehicleRowKeys = new Set<string>();
     const crossProviderAssetMatchSamples: SyncResult["cross_provider_asset_match_samples"] = [];
     const providerAssetLookup = await loadProviderAssetLookup(provider.company_id);
 
@@ -545,6 +548,9 @@ export async function runProviderSync(
           placeholderZeroSignalCounts[signal] =
             (placeholderZeroSignalCounts[signal] || 0) + 1;
         }
+        for (const signal of normalized.signal_quality?.meaningful_signals || []) {
+          meaningfulSignalCounts[signal] = (meaningfulSignalCounts[signal] || 0) + 1;
+        }
 
         const existingAsset = findProviderAssetMatch(
           providerAssetLookup,
@@ -558,6 +564,10 @@ export async function runProviderSync(
               provider.id,
               normalized.truck_id
             );
+        const currentVehicleMatchKey = normalizeDistanceTruckKey(normalized.truck_id);
+        if ((existingAsset || crossProviderAsset) && currentVehicleMatchKey) {
+          matchedVehicleRowKeys.add(currentVehicleMatchKey);
+        }
 
         const assetPayload: Record<string, any> = {
           provider_id: provider.id,
@@ -690,6 +700,7 @@ export async function runProviderSync(
         ),
       vehicleCount: syncedCount,
       skipped_missing_identifier: skippedMissingIdentifier,
+      matched_vehicle_rows: Math.min(matchedVehicleRowKeys.size, syncedCount),
       cross_provider_asset_matches: crossProviderAssetMatches,
       cross_provider_asset_match_samples: crossProviderAssetMatchSamples,
       capability_upgrades_applied: capabilityUpgradesApplied,
@@ -699,6 +710,7 @@ export async function runProviderSync(
         rows_processed: capabilityRowsProcessed,
         capability_counts: capabilityCounts,
         placeholder_zero_signal_counts: placeholderZeroSignalCounts,
+        meaningful_signal_counts: meaningfulSignalCounts,
         providerProfile: providerCapabilityProfile,
       }),
       distance_diagnostics: distanceDiagnostics,
@@ -711,6 +723,7 @@ export async function runProviderSync(
           rows_processed: capabilityRowsProcessed,
           capability_counts: capabilityCounts,
           placeholder_zero_signal_counts: placeholderZeroSignalCounts,
+          meaningful_signal_counts: meaningfulSignalCounts,
           providerProfile: providerCapabilityProfile,
         }),
         distance_diagnostics: distanceDiagnostics,

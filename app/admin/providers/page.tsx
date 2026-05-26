@@ -607,13 +607,10 @@ function buildProviderStatusSummary(provider: any, testResult: any) {
       : vehiclesFound !== null && matchedTrucks !== null
         ? Math.max(vehiclesFound - matchedTrucks, 0)
         : null;
-  const supportedEngineTankSignals =
-    testResult?.capability_summary?.supported_engine_tank_signals || [];
   const reportConfigured = Boolean(
     provider?.feed_summary?.report_feed?.configured ||
       testResult?.report_feed_configured ||
-      savedTestSummary?.report_feed_configured ||
-      testResult?.distance_diagnostics?.automated_distance_feeds_configured
+      savedTestSummary?.report_feed_configured
   );
   const liveTrackingVerified = hasFreshTest
     ? Boolean(testResult?.live_location_verified) ||
@@ -622,9 +619,7 @@ function buildProviderStatusSummary(provider: any, testResult: any) {
       ((testPassed && Number(vehiclesFound || 0) > 0) || isActive);
   const engineFuelVerified =
     Boolean(testResult?.engine_fuel_verified) ||
-    Boolean(savedTestSummary?.engine_fuel_verified) ||
-    Array.isArray(supportedEngineTankSignals) &&
-    supportedEngineTankSignals.length > 0;
+    Boolean(savedTestSummary?.engine_fuel_verified);
   const connectionStatus = isActive
     ? "Active sync"
     : testFailed

@@ -254,15 +254,10 @@ function buildSafeProviderFeedSummary(provider: any) {
     fleetConfig.distance_report_url ||
     fleetConfig.trip_summary_url ||
     null;
-  const reportConfigured = Boolean(
-    reportEndpoint &&
-      reportFeed.active !== false &&
-      ((reportFeed.row_path || reportFeed.row_paths?.length) ||
-        fleetConfig.distance_report_vehicle_paths?.length ||
-        fleetConfig.trip_summary_vehicle_paths?.length) &&
-      (Object.keys(reportFeed.mapping || {}).length > 0 ||
-        Object.keys(fleetConfig.distance_report_mapping || {}).length > 0 ||
-        Object.keys(fleetConfig.trip_summary_mapping || {}).length > 0)
+  const reportConfigured = isReportDistanceFeedReady(
+    fleetConfig,
+    reportFeed,
+    reportEndpoint
   );
 
   return {
@@ -315,6 +310,126 @@ function buildSafeProviderFeedSummary(provider: any) {
 
 function uniqueNormalizedRowPaths(values: any[]) {
   return dedupeRowPaths(values);
+}
+
+function isReportDistanceFeedReady(
+  fleetConfig: any,
+  reportFeed: any,
+  reportEndpoint: any
+) {
+  if (!reportEndpoint || reportFeed?.active === false) return false;
+  const hasRowPath = Boolean(
+    reportFeed?.row_path ||
+      reportFeed?.row_paths?.length ||
+      fleetConfig?.distance_report_vehicle_paths?.length ||
+      fleetConfig?.trip_summary_vehicle_paths?.length
+  );
+  const mapping = {
+    ...(fleetConfig?.distance_report_mapping || {}),
+    ...(fleetConfig?.trip_summary_mapping || {}),
+    ...(reportFeed?.mapping || {}),
+  };
+
+  return (
+    hasRowPath &&
+    hasDistanceSummaryMapping(mapping) &&
+    hasConcreteReportParameters(fleetConfig, reportFeed, reportEndpoint)
+  );
+}
+
+function hasDistanceSummaryMapping(mapping: Record<string, any>) {
+  const fields = new Set(Object.keys(mapping || {}).map((key) => String(key)));
+  return [
+    "truck_id",
+    "start_time",
+    "end_time",
+    "start_odometer_km",
+    "end_odometer_km",
+    "provider_mileage_km",
+    "motion_duration_minutes",
+    "violations_count",
+  ].some((field) => fields.has(field));
+}
+
+function hasConcreteReportParameters(fleetConfig: any, reportFeed: any, endpoint: any) {
+  if (reportFeed?.required_params_configured === true) {
+    return true;
+  }
+
+  if (
+    hasConcreteReportParameterKeys(reportFeed?.params) ||
+    hasConcreteReportParameterKeys(reportFeed?.parameters) ||
+    hasConcreteReportParameterKeys(reportFeed?.payload) ||
+    hasConcreteReportParameterKeys(fleetConfig?.distance_report_payload) ||
+    hasConcreteReportParameterKeys(fleetConfig?.trip_summary_payload) ||
+    hasConcreteReportParameterKeys(fleetConfig?.distance_report_params) ||
+    hasConcreteReportParameterKeys(fleetConfig?.trip_summary_params)
+  ) {
+    return true;
+  }
+
+  try {
+    const url = new URL(String(endpoint));
+    const keys = new Set<string>();
+    url.searchParams.forEach((value, key) => {
+      if (hasConcreteParameterValue(value)) keys.add(normalizeReportParameterKey(key));
+    });
+    return hasReportDateKey(keys) && hasReportScopeKey(keys);
+  } catch {
+    return false;
+  }
+}
+
+function hasConcreteReportParameterKeys(value: any) {
+  const keys = new Set<string>();
+  collectConcreteReportParameterKeys(value, keys);
+  return hasReportDateKey(keys) && hasReportScopeKey(keys);
+}
+
+function collectConcreteReportParameterKeys(value: any, keys: Set<string>, key = "") {
+  if (value === undefined || value === null) return;
+  if (Array.isArray(value)) {
+    value.forEach((entry) => collectConcreteReportParameterKeys(entry, keys, key));
+    return;
+  }
+  if (typeof value === "object") {
+    for (const [childKey, childValue] of Object.entries(value)) {
+      collectConcreteReportParameterKeys(childValue, keys, childKey);
+    }
+    return;
+  }
+  if (key && hasConcreteParameterValue(value)) {
+    keys.add(normalizeReportParameterKey(key));
+  }
+}
+
+function hasReportDateKey(keys: Set<string>) {
+  return ["date", "from", "to", "start", "end", "startdate", "enddate"].some((key) =>
+    keys.has(key)
+  );
+}
+
+function hasReportScopeKey(keys: Set<string>) {
+  return ["report", "reporttype", "type", "device", "deviceid", "vehicle", "vehicleid"].some(
+    (key) => keys.has(key)
+  );
+}
+
+function normalizeReportParameterKey(value: any) {
+  return String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function hasConcreteParameterValue(value: any): boolean {
+  if (value === undefined || value === null) return false;
+  if (Array.isArray(value)) return value.some(hasConcreteParameterValue);
+  if (typeof value === "object") {
+    return Object.values(value).some(hasConcreteParameterValue);
+  }
+  const text = String(value).trim();
+  if (!text) return false;
+  if (/^\{\{.*\}\}$/.test(text)) return false;
+  if (/^\[.*\]$/.test(text)) return false;
+  return true;
 }
 
 function sanitizeFleetConfigForResponse(fleetConfig: any) {

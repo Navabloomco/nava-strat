@@ -114,6 +114,7 @@ function sanitizeCapabilitySummary(summary: any) {
     placeholder_zero_signal_counts: sanitizeCountMap(
       summary.placeholder_zero_signal_counts
     ),
+    meaningful_signal_counts: sanitizeCountMap(summary.meaningful_signal_counts),
   };
 }
 
@@ -676,10 +677,7 @@ export async function POST(
     const testSummary = createProviderTestSummary({
       status: result.success ? "success" : "failure",
       vehicleCount: result.vehicleCount,
-      matchedExistingTrucks: Math.max(
-        assetsCount || 0,
-        result.cross_provider_asset_matches || 0
-      ),
+      matchedExistingTrucks: result.matched_vehicle_rows ?? null,
       capabilitySummary: sanitizedCapabilitySummary,
       distanceDiagnostics: sanitizedDistanceDiagnostics,
       testedAt,
@@ -713,6 +711,7 @@ export async function POST(
         result.cross_provider_asset_match_samples || [],
       capability_upgrades_applied: result.capability_upgrades_applied || 0,
       assets_count: assetsCount || 0,
+      matched_vehicle_rows: result.matched_vehicle_rows ?? null,
       matched_existing_trucks: testSummary.matched_existing_trucks,
       unmatched_vehicles: testSummary.unmatched_vehicles,
       live_location_verified: testSummary.live_location_verified,
@@ -745,6 +744,7 @@ export async function POST(
         vehicles_found: result.vehicleCount,
         skipped_missing_identifier: result.skipped_missing_identifier || 0,
         cross_provider_asset_matches: result.cross_provider_asset_matches || 0,
+        matched_vehicle_rows: result.matched_vehicle_rows ?? null,
         capability_upgrades_applied: result.capability_upgrades_applied || 0,
         assets_count: assetsCount || 0,
         telemetry_count: telemetryCount || 0,
