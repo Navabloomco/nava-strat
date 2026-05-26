@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "../../../../lib/supabaseAdmin";
 import { runProviderSync, ProviderRecord } from "../../../../lib/providers/engine";
+import {
+  createProviderTestSummary,
+  mergeProviderTestSummaryIntoFleetConfig,
+} from "../../../../lib/providers/testSummary";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -52,13 +56,35 @@ export async function GET(req: Request) {
     for (const provider of providers || []) {
       const providerStartedAt = Date.now();
       const result = await runProviderSync(provider as ProviderRecord);
+      const { count: assetsCount } = await supabaseAdmin
+        .from("fleet_assets")
+        .select("truck_id", { count: "exact", head: true })
+        .eq("company_id", provider.company_id)
+        .eq("provider_id", provider.id);
+      const syncedAt = new Date().toISOString();
+      const testSummary = createProviderTestSummary({
+        status: result.success ? "success" : "failure",
+        vehicleCount: result.vehicleCount,
+        matchedExistingTrucks: Math.max(
+          assetsCount || 0,
+          result.cross_provider_asset_matches || 0
+        ),
+        capabilitySummary: result.capability_summary,
+        distanceDiagnostics: result.distance_diagnostics,
+        testedAt: syncedAt,
+        source: "provider_sync",
+      });
 
       await supabaseAdmin
         .from("tracking_providers")
         .update({
           last_test_status: result.success ? "success" : "failure",
           last_test_message: result.message,
-          last_test_at: new Date().toISOString(),
+          last_test_at: syncedAt,
+          fleet_config: mergeProviderTestSummaryIntoFleetConfig(
+            provider.fleet_config,
+            testSummary
+          ),
         })
         .eq("id", provider.id);
 
@@ -68,6 +94,7 @@ export async function GET(req: Request) {
         success: result.success,
         message: result.message,
         vehicle_count: result.vehicleCount,
+        test_summary: testSummary,
         skipped_missing_identifier: result.skipped_missing_identifier || 0,
         cross_provider_asset_matches: result.cross_provider_asset_matches || 0,
         capability_upgrades_applied: result.capability_upgrades_applied || 0,

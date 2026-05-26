@@ -8,6 +8,10 @@ import {
 } from "../../../../../lib/providers/engine";
 import { recordAnalyticsEvent } from "../../../../../lib/api/analyticsEvents";
 import { telemetryCapabilityLabel } from "../../../../../lib/telemetry/capabilities";
+import {
+  createProviderTestSummary,
+  mergeProviderTestSummaryIntoFleetConfig,
+} from "../../../../../lib/providers/testSummary";
 
 export const dynamic = "force-dynamic";
 
@@ -634,16 +638,6 @@ export async function POST(
       writeDistanceSummaries: false,
     });
 
-    await supabaseAdmin
-      .from("tracking_providers")
-      .update({
-        last_test_status: result.success ? "success" : "failure",
-        last_test_message: result.message,
-        last_test_at: new Date().toISOString(),
-      })
-      .eq("id", provider.id)
-      .eq("company_id", resolved.company.id);
-
     const [
       { count: assetsCount },
       { count: telemetryCount },
@@ -672,6 +666,39 @@ export async function POST(
 
     const latestTelemetryAt =
       telemetryResult.data?.[0]?.recorded_at || null;
+    const sanitizedCapabilitySummary = sanitizeCapabilitySummary(
+      result.capability_summary
+    );
+    const sanitizedDistanceDiagnostics = sanitizeDistanceDiagnostics(
+      result.distance_diagnostics
+    );
+    const testedAt = new Date().toISOString();
+    const testSummary = createProviderTestSummary({
+      status: result.success ? "success" : "failure",
+      vehicleCount: result.vehicleCount,
+      matchedExistingTrucks: Math.max(
+        assetsCount || 0,
+        result.cross_provider_asset_matches || 0
+      ),
+      capabilitySummary: sanitizedCapabilitySummary,
+      distanceDiagnostics: sanitizedDistanceDiagnostics,
+      testedAt,
+      source: "test_connection",
+    });
+
+    await supabaseAdmin
+      .from("tracking_providers")
+      .update({
+        last_test_status: result.success ? "success" : "failure",
+        last_test_message: result.message,
+        last_test_at: testedAt,
+        fleet_config: mergeProviderTestSummaryIntoFleetConfig(
+          provider.fleet_config,
+          testSummary
+        ),
+      })
+      .eq("id", provider.id)
+      .eq("company_id", resolved.company.id);
 
     const responseBody: Record<string, any> = {
       success: result.success,
@@ -686,10 +713,16 @@ export async function POST(
         result.cross_provider_asset_match_samples || [],
       capability_upgrades_applied: result.capability_upgrades_applied || 0,
       assets_count: assetsCount || 0,
+      matched_existing_trucks: testSummary.matched_existing_trucks,
+      unmatched_vehicles: testSummary.unmatched_vehicles,
+      live_location_verified: testSummary.live_location_verified,
+      engine_fuel_verified: testSummary.engine_fuel_verified,
+      report_feed_configured: testSummary.report_feed_configured,
+      test_summary: testSummary,
       telemetry_count: telemetryCount || 0,
       latest_telemetry_at: latestTelemetryAt,
-      capability_summary: sanitizeCapabilitySummary(result.capability_summary),
-      distance_diagnostics: sanitizeDistanceDiagnostics(result.distance_diagnostics),
+      capability_summary: sanitizedCapabilitySummary,
+      distance_diagnostics: sanitizedDistanceDiagnostics,
     };
 
     responseBody.supplemental_diagnostics = sanitizeSupplementalDiagnostics(

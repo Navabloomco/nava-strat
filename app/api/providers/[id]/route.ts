@@ -7,6 +7,7 @@ import {
   normalizeProviderConnectionConfig,
   normalizeRowPath,
 } from "../../../../lib/providers/configNormalization";
+import { buildSafeProviderTestSummary } from "../../../../lib/providers/testSummary";
 
 export const dynamic = "force-dynamic";
 
@@ -193,6 +194,7 @@ function sanitizeProvider(provider: any, capabilities: ProviderCapabilities) {
     created_at: provider.created_at || null,
     updated_at: provider.updated_at || null,
     feed_summary: buildSafeProviderFeedSummary(provider),
+    test_summary: buildSafeProviderTestSummary(provider),
   };
 
   if (

@@ -7,6 +7,10 @@ import {
   normalizeFieldMappingsRelativeToRow,
   normalizeRowPath,
 } from "../../../lib/providers/configNormalization";
+import {
+  parseVehicleCountFromMessage,
+  sanitizeProviderTestSummary,
+} from "../../../lib/providers/testSummary";
 
 function companyIdFromLocation() {
   if (typeof window === "undefined") return "";
@@ -353,6 +357,14 @@ function ProviderCard({
           last_test_status: "success",
           last_test_message: result.message || current.last_test_message,
           last_test_at: new Date().toISOString(),
+          test_summary: result.test_summary || current.test_summary,
+          fleet_config:
+            current.fleet_config && result.test_summary
+              ? {
+                  ...current.fleet_config,
+                  test_summary: result.test_summary,
+                }
+              : current.fleet_config,
         }));
       } else {
         setForm((current: any) => ({
@@ -360,6 +372,14 @@ function ProviderCard({
           last_test_status: "failure",
           last_test_message: result.message || result.error || current.last_test_message,
           last_test_at: new Date().toISOString(),
+          test_summary: result.test_summary || current.test_summary,
+          fleet_config:
+            current.fleet_config && result.test_summary
+              ? {
+                  ...current.fleet_config,
+                  test_summary: result.test_summary,
+                }
+              : current.fleet_config,
         }));
       }
     } catch (err: any) {
@@ -380,8 +400,13 @@ function ProviderCard({
         <div>
           <h3 style={{ margin: 0 }}>{provider.provider_name}</h3>
         </div>
-        <div style={businessStatusBadgeStyle(statusSummary.tone)}>
-          {statusSummary.connectionStatus}
+        <div style={providerHeaderBadgeRowStyle}>
+          <div style={businessStatusBadgeStyle(statusSummary.connectionTone)}>
+            {statusSummary.connectionStatus}
+          </div>
+          <div style={businessStatusBadgeStyle(statusSummary.testTone)}>
+            {statusSummary.testStatus}
+          </div>
         </div>
       </div>
 
@@ -494,16 +519,6 @@ function ProviderBusinessStatusSummary({
 }) {
   return (
     <section style={businessStatusStyle}>
-      <div style={businessStatusHeaderStyle}>
-        <div>
-          <div style={businessEyebrowStyle}>Provider status</div>
-          <h4 style={businessStatusTitleStyle}>{summary.connectionStatus}</h4>
-        </div>
-        <div style={businessStatusBadgeStyle(summary.tone)}>
-          {summary.lastTestResult}
-        </div>
-      </div>
-
       <p style={businessStatusCopyStyle}>{summary.message}</p>
 
       <div style={businessMetricGridStyle}>
@@ -562,34 +577,52 @@ function BusinessMetric({ label, value }: { label: string; value: any }) {
 function buildProviderStatusSummary(provider: any, testResult: any) {
   const isActive = Boolean(provider?.is_active);
   const hasFreshTest = Boolean(testResult);
+  const savedTestSummary =
+    sanitizeProviderTestSummary(testResult?.test_summary) ||
+    sanitizeProviderTestSummary(provider?.test_summary) ||
+    sanitizeProviderTestSummary(provider?.fleet_config?.test_summary);
   const testPassed = hasFreshTest
     ? Boolean(testResult?.success)
-    : provider?.last_test_status === "success";
+    : (savedTestSummary?.status || provider?.last_test_status) === "success";
   const testFailed = hasFreshTest
     ? testResult && !testResult.success
-    : provider?.last_test_status === "failure";
-  const vehiclesFound =
-    testResult && Number.isFinite(Number(testResult.vehicles_found))
-      ? Number(testResult.vehicles_found)
-      : null;
-  const matchedTrucks =
-    testResult && Number.isFinite(Number(testResult.assets_count))
-      ? Number(testResult.assets_count)
-      : null;
-  const unmatchedVehicles =
-    vehiclesFound !== null && matchedTrucks !== null
-      ? Math.max(vehiclesFound - matchedTrucks, 0)
-      : null;
+    : (savedTestSummary?.status || provider?.last_test_status) === "failure";
+  const vehiclesFound = firstFiniteNumber([
+    testResult?.vehicles_found,
+    savedTestSummary?.vehicles_found,
+    parseVehicleCountFromMessage(provider?.last_test_message),
+  ]);
+  const matchedTrucks = firstFiniteNumber([
+    testResult?.matched_existing_trucks,
+    testResult?.assets_count,
+    savedTestSummary?.matched_existing_trucks,
+  ]);
+  const unmatchedVehicles = firstFiniteNumber([
+    testResult?.unmatched_vehicles,
+    savedTestSummary?.unmatched_vehicles,
+  ]);
+  const derivedUnmatchedVehicles =
+    unmatchedVehicles !== null
+      ? unmatchedVehicles
+      : vehiclesFound !== null && matchedTrucks !== null
+        ? Math.max(vehiclesFound - matchedTrucks, 0)
+        : null;
   const supportedEngineTankSignals =
     testResult?.capability_summary?.supported_engine_tank_signals || [];
   const reportConfigured = Boolean(
     provider?.feed_summary?.report_feed?.configured ||
+      testResult?.report_feed_configured ||
+      savedTestSummary?.report_feed_configured ||
       testResult?.distance_diagnostics?.automated_distance_feeds_configured
   );
   const liveTrackingVerified = hasFreshTest
-    ? testPassed && Number(vehiclesFound || 0) > 0
-    : testPassed || isActive;
+    ? Boolean(testResult?.live_location_verified) ||
+      (testPassed && Number(vehiclesFound || 0) > 0)
+    : savedTestSummary?.live_location_verified ??
+      ((testPassed && Number(vehiclesFound || 0) > 0) || isActive);
   const engineFuelVerified =
+    Boolean(testResult?.engine_fuel_verified) ||
+    Boolean(savedTestSummary?.engine_fuel_verified) ||
     Array.isArray(supportedEngineTankSignals) &&
     supportedEngineTankSignals.length > 0;
   const connectionStatus = isActive
@@ -597,7 +630,7 @@ function buildProviderStatusSummary(provider: any, testResult: any) {
     : testFailed
       ? "Needs attention"
       : "Inactive until activated";
-  const lastTestResult = testPassed
+  const testStatus = testPassed
     ? "Connection test passed"
     : testFailed
       ? "Connection needs attention"
@@ -605,7 +638,7 @@ function buildProviderStatusSummary(provider: any, testResult: any) {
   const needsVehicleReview =
     testPassed &&
     !isActive &&
-    (unmatchedVehicles === null || unmatchedVehicles > 0);
+    (derivedUnmatchedVehicles === null || derivedUnmatchedVehicles > 0);
   const nextAction = testFailed
     ? "Fix connection"
     : !testPassed
@@ -615,13 +648,14 @@ function buildProviderStatusSummary(provider: any, testResult: any) {
         : needsVehicleReview
           ? "Review vehicles before activation"
           : "Activate sync";
-  const tone = testFailed ? "warning" : testPassed ? "success" : "neutral";
+  const connectionTone = testFailed ? "warning" : isActive ? "success" : "neutral";
+  const testTone = testFailed ? "warning" : testPassed ? "success" : "neutral";
   const vehiclesText =
     vehiclesFound !== null
       ? `${vehiclesFound.toLocaleString()} vehicle${vehiclesFound === 1 ? "" : "s"} were found.`
-      : isActive
-        ? ""
-        : "Vehicle counts need refresh.";
+      : testPassed
+        ? "Vehicle counts need refresh."
+        : "";
   const liveTrackingText = liveTrackingVerified
     ? "Live location tracking is available"
     : "Live location tracking is not verified yet";
@@ -636,8 +670,10 @@ function buildProviderStatusSummary(provider: any, testResult: any) {
     : "Provider remains inactive until you activate sync.";
   const message = testPassed
     ? [
-        isActive ? "Provider sync is active." : "Connection test passed.",
-        vehiclesText,
+        isActive ? "Provider sync is active." : "",
+        isActive && vehiclesFound !== null
+          ? `${vehiclesFound.toLocaleString()} vehicle${vehiclesFound === 1 ? "" : "s"} were found in the latest successful sync/test.`
+          : vehiclesText,
         `${liveTrackingText}.`,
         `${engineFuelText}.`,
         `${reportText}.`,
@@ -649,12 +685,13 @@ function buildProviderStatusSummary(provider: any, testResult: any) {
 
   return {
     connectionStatus,
-    lastTestResult,
-    tone,
+    testStatus,
+    connectionTone,
+    testTone,
     message,
     vehiclesFound: vehiclesFound ?? "Not refreshed yet",
-    matchedTrucks: matchedTrucks ?? "Needs review",
-    unmatchedVehicles: unmatchedVehicles ?? "Needs review",
+    matchedTrucks: matchedTrucks ?? "Review needed",
+    unmatchedVehicles: derivedUnmatchedVehicles ?? "Review needed",
     liveTracking: liveTrackingVerified ? "verified" : "not verified",
     engineFuelSignals: engineFuelVerified ? "verified" : "not verified",
     reportDistanceFeed: reportConfigured ? "configured" : "not configured",
@@ -664,6 +701,15 @@ function buildProviderStatusSummary(provider: any, testResult: any) {
     testButtonLabel: testPassed ? "Run test again" : "Run test",
     requiresReviewBeforeActivation: needsVehicleReview,
   };
+}
+
+function firstFiniteNumber(values: any[]) {
+  for (const value of values) {
+    if (value === null || value === undefined || value === "") continue;
+    const numberValue = Number(value);
+    if (Number.isFinite(numberValue)) return numberValue;
+  }
+  return null;
 }
 
 function formatBusinessMetricValue(value: any) {
@@ -2673,6 +2719,7 @@ const stepStyle = { display: "grid", gridTemplateColumns: "30px 1fr", gap: 12, a
 const stepNumberStyle = { width: 30, height: 30, borderRadius: 999, background: "#67e8f9", color: "#0f172a", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 900 };
 const stepTextStyle = { color: "#e2e8f0", fontSize: 13, lineHeight: 1.5 };
 const headerStyle = { display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #f1f5f9", paddingBottom: "16px", marginBottom: "20px" };
+const providerHeaderBadgeRowStyle = { display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" as const };
 const labelStyle = { display: "block", fontSize: "11px", fontWeight: "bold", color: "#475569", marginBottom: "4px", textTransform: "uppercase" as "uppercase" };
 const inputStyle = { width: "100%", padding: "10px", borderRadius: "6px", border: "1px solid #cbd5e1", marginBottom: "10px", fontSize: "14px" };
 const textareaStyle = { width: "100%", minHeight: "120px", padding: "12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontFamily: "monospace", fontSize: "12px", backgroundColor: "#f8fafc" };
