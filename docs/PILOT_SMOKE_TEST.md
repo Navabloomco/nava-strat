@@ -100,8 +100,11 @@ Open `/admin/providers?companyId=<id>`.
 - [ ] Click "Apply suggested vehicle path" and confirm the saved current feed row path and safe field mappings update, provider sync remains inactive/retest-required, and no credentials or raw payloads are exposed.
 - [ ] Run Test Connection again and confirm it uses the applied row path and reports the larger vehicle count.
 - [ ] Confirm saved JSONPath row paths such as `$.items` work for root-array wrapper responses such as `[{ "items": [...] }]`.
+- [ ] Confirm field mappings are saved relative to the selected row path: with row path `$.items`, mappings are `truck: name`, `latitude: lat`, `longitude: lng`, not `items.name`, `items.lat`, or `items.lng`.
+- [ ] Confirm vague/high-stakes fields such as `inaccuracy` and `fuel_measurement_id` are not mapped as ignition, engine, fuel, or tank signals unless explicitly verified by provider-supported signals.
+- [ ] Confirm generic Provider Vault helper copy says "provider report/trip URLs" and does not mention a specific provider unless inside that provider's card/template or platform-owner setup context.
 - [ ] Confirm sanitized endpoint display preserves safe query values such as `lang=en` while redacting `user_api_hash`.
-- [ ] If no BlueTrax report endpoint is configured, confirm the setup blocker says to ask BlueTrax for trip/report endpoint, auth method, token path, row path, and sample response.
+- [ ] If no automated report endpoint is configured, confirm the setup blocker says to ask the provider for trip/report endpoint, auth method, token path, row path, and sample response.
 - [ ] Confirm capability diagnostics separate provider default capability from observed row capability.
 - [ ] Confirm observed BlueTrax/JLCL rows show `GPS Intelligence` unless ignition/CAN/tank signals have been explicitly verified.
 - [ ] Confirm supported engine/tank signals show `none declared` for GPS-only providers.

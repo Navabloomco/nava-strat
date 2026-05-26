@@ -17,6 +17,13 @@ import {
   type DistanceDiagnostics,
   type ProviderTripSummary,
 } from "../telemetry/distance";
+import {
+  dedupeRowPaths,
+  extractRowsByPath as extractRowsByNormalizedPath,
+  isVehicleLikeRow as isNormalizedVehicleLikeRow,
+  normalizeFieldMappingsRelativeToRow,
+  normalizeRowPath,
+} from "./configNormalization";
 
 export type ProviderRecord = {
   id: string;
@@ -488,6 +495,7 @@ export async function runProviderSync(
       };
     }
 
+    const currentVehicleFieldMapping = buildCurrentVehicleFieldMapping(provider);
     const supplemental = await fetchSupplementalFeeds(
       provider,
       auth.token || null,
@@ -509,7 +517,7 @@ export async function runProviderSync(
       try {
         const normalized = normalizeVehicle(
           rawVehicle,
-          provider.field_mapping || {},
+          currentVehicleFieldMapping,
           provider.provider_name,
           providerCapabilityProfile
         );
@@ -522,7 +530,7 @@ export async function runProviderSync(
         mergeSupplementalData(
           normalized,
           rawVehicle,
-          provider.field_mapping || {},
+          currentVehicleFieldMapping,
           supplemental.feeds,
           supplemental.diagnostics,
           providerCapabilityProfile
@@ -905,7 +913,7 @@ export async function executeProviderRequest(
   );
   const rowPaths =
     Array.isArray(feedConfig.row_paths) && feedConfig.row_paths.length > 0
-      ? feedConfig.row_paths.map((path) => String(path)).filter(Boolean)
+      ? dedupeRowPaths(feedConfig.row_paths)
       : feedType === "current_vehicles"
         ? defaultVehiclePaths()
         : defaultSupplementalVehiclePaths();
@@ -1007,9 +1015,7 @@ function buildVehicleRowsNotFoundMessage(
   rowPaths: string[],
   responseDiagnostics: SupplementalResponseDiagnostics
 ) {
-  const configuredPaths = Array.from(
-    new Set(rowPaths.map(normalizeProviderRowPath).filter(Boolean))
-  );
+  const configuredPaths = dedupeRowPaths(rowPaths);
   const configured =
     configuredPaths.length > 0 ? configuredPaths.join(", ") : "not set";
   const alternatives = Object.entries(
@@ -1112,11 +1118,8 @@ function buildProviderDiscoveryEndpoints(
 }
 
 function buildDiscoveryCandidateRowPaths(paths: any) {
-  const configured = Array.isArray(paths)
-    ? paths.map(normalizeProviderRowPath).filter(Boolean)
-    : [];
-  return Array.from(
-    new Set([
+  const configured = Array.isArray(paths) ? dedupeRowPaths(paths) : [];
+  return dedupeRowPaths([
       ...configured,
       ...defaultSupplementalVehiclePaths(),
       "reports",
@@ -1128,8 +1131,7 @@ function buildDiscoveryCandidateRowPaths(paths: any) {
       "result.reports",
       "result.trips",
       "result.records",
-    ])
-  ).slice(0, 40);
+    ]).slice(0, 40);
 }
 
 function buildCurrentVehicleRowPaths(provider: ProviderRecord) {
@@ -1140,25 +1142,34 @@ function buildCurrentVehicleRowPaths(provider: ProviderRecord) {
     ...(Array.isArray(currentFeed.row_paths) ? currentFeed.row_paths : []),
     ...(Array.isArray(config.vehicle_paths) ? config.vehicle_paths : []),
     config.data_group,
-  ]
-    .map(normalizeProviderRowPath)
-    .filter(Boolean);
+  ];
+  const normalizedPaths = dedupeRowPaths(paths);
 
-  return paths.length > 0 ? Array.from(new Set(paths)) : defaultVehiclePaths();
+  return normalizedPaths.length > 0 ? normalizedPaths : defaultVehiclePaths();
+}
+
+function buildCurrentVehicleFieldMapping(provider: ProviderRecord) {
+  const config = provider.fleet_config || {};
+  const currentFeed = config.current_vehicle_feed || {};
+  const rowPath = buildCurrentVehicleRowPaths(provider)[0] || "$";
+  const feedMapping =
+    currentFeed.mapping && typeof currentFeed.mapping === "object"
+      ? currentFeed.mapping
+      : {};
+  const topLevelMapping =
+    provider.field_mapping && typeof provider.field_mapping === "object"
+      ? provider.field_mapping
+      : {};
+  const rawMapping =
+    Object.keys(topLevelMapping).length > 0
+      ? { ...feedMapping, ...topLevelMapping }
+      : feedMapping;
+
+  return normalizeFieldMappingsRelativeToRow(rawMapping, rowPath);
 }
 
 function normalizeProviderRowPath(value: any) {
-  let path = String(value || "").trim();
-  if (!path) return "";
-  path = path.replace(/\[\]\.?/g, ".");
-  path = path.replace(/\.+/g, ".");
-  path = path.replace(/\.$/, "");
-  path = path.replace(/^\$\$+\./, "$.");
-  path = path.replace(/^\$\$+$/, "$");
-  while (path.startsWith("$.$.")) {
-    path = "$." + path.slice(4);
-  }
-  return path;
+  return normalizeRowPath(value);
 }
 
 function toDisplayJsonPath(path: string) {
@@ -1860,11 +1871,7 @@ function describeDiscoveryAuth(
   return "saved provider auth";
 }
 
-function buildNoAdditionalReportEndpointMessage(provider: ProviderRecord) {
-  const name = normalizeProviderKey(provider.provider_name || "");
-  if (name.includes("bluetrax")) {
-    return "No additional BlueTrax report endpoints configured yet. Ask BlueTrax for trip/report endpoint, auth method, token path, row path, and sample response.";
-  }
+function buildNoAdditionalReportEndpointMessage(_provider: ProviderRecord) {
   return "No additional provider report endpoints configured yet. Ask the provider for trip/report endpoint, auth method, token path, row path, and sample response.";
 }
 
@@ -3288,11 +3295,14 @@ function getSupplementalFeedConfigs(provider: ProviderRecord): SupplementalFeedC
     });
   }
 
-  return dedupeSupplementalFeeds(feeds);
+  return dedupeSupplementalFeeds(feeds).map(normalizeSupplementalFeedRowContract);
 }
 
 function normalizeSupplementalFeedConfig(feed: any): SupplementalFeedConfig | null {
   if (!feed || typeof feed !== "object" || !feed.url) return null;
+  const vehiclePaths = Array.isArray(feed.vehicle_paths)
+    ? dedupeRowPaths(feed.vehicle_paths)
+    : undefined;
 
   return {
     name: String(feed.name || "supplemental").trim() || "supplemental",
@@ -3304,10 +3314,29 @@ function normalizeSupplementalFeedConfig(feed: any): SupplementalFeedConfig | nu
     method: feed.method || "GET",
     headers: feed.headers || {},
     payload: feed.payload || {},
-    vehicle_paths: Array.isArray(feed.vehicle_paths) ? feed.vehicle_paths : undefined,
+    vehicle_paths: vehiclePaths,
     match_keys: Array.isArray(feed.match_keys) ? feed.match_keys : undefined,
-    mapping: feed.mapping || {},
+    mapping: normalizeFieldMappingsRelativeToRow(
+      feed.mapping || {},
+      vehiclePaths?.[0]
+    ),
     api_key_header: feed.api_key_header,
+  };
+}
+
+function normalizeSupplementalFeedRowContract(
+  feed: SupplementalFeedConfig
+): SupplementalFeedConfig {
+  const vehiclePaths = Array.isArray(feed.vehicle_paths)
+    ? dedupeRowPaths(feed.vehicle_paths)
+    : undefined;
+  return {
+    ...feed,
+    vehicle_paths: vehiclePaths,
+    mapping: normalizeFieldMappingsRelativeToRow(
+      feed.mapping || {},
+      vehiclePaths?.[0]
+    ),
   };
 }
 
@@ -4439,24 +4468,7 @@ function normalizeRows(value: any): any[] {
 }
 
 function extractRowsByPath(responseData: any, rowPath: string) {
-  const path = normalizeProviderRowPath(rowPath) || "$";
-  const candidates = [getByPath(responseData, path)];
-
-  if (Array.isArray(responseData) && path !== "$") {
-    const childPath = path.startsWith("$.") ? path.slice(2) : path;
-    for (const wrapper of responseData.slice(0, 10)) {
-      if (wrapper && typeof wrapper === "object" && !Array.isArray(wrapper)) {
-        candidates.push(getByPath(wrapper, childPath));
-      }
-    }
-  }
-
-  for (const candidate of candidates) {
-    const rows = normalizeRows(candidate);
-    if (rows.length > 0) return rows;
-  }
-
-  return [];
+  return extractRowsByNormalizedPath(responseData, rowPath);
 }
 
 function getRowsByPaths(data: any, paths: string[]) {
@@ -4469,6 +4481,7 @@ function getRowsByPaths(data: any, paths: string[]) {
 }
 
 function isVehicleLikeRow(value: any) {
+  if (isNormalizedVehicleLikeRow(value)) return true;
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
 
   const hasIdentifier = hasAnyProviderField(value, [

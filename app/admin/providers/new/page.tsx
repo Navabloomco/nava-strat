@@ -594,16 +594,24 @@ export default function NewProviderPage() {
     if (result.row_path_suggestions?.[0]) {
       patch.row_path = result.row_path_suggestions[0];
     }
-    if (suggestions.vehicle) patch.vehicle_field = suggestions.vehicle;
+    if (suggestions.truck || suggestions.vehicle) {
+      patch.vehicle_field = suggestions.truck || suggestions.vehicle;
+    }
     if (suggestions.latitude) patch.latitude_field = suggestions.latitude;
     if (suggestions.longitude) patch.longitude_field = suggestions.longitude;
-    if (suggestions.timestamp) patch.timestamp_field = suggestions.timestamp;
+    if (suggestions.recorded_at || suggestions.timestamp) {
+      patch.timestamp_field = suggestions.recorded_at || suggestions.timestamp;
+    }
     if (suggestions.speed) patch.speed_field = suggestions.speed;
     if (suggestions.location_label) patch.location_label_field = suggestions.location_label;
     if (suggestions.fuel_level) patch.fuel_level_field = suggestions.fuel_level;
-    if (suggestions.ignition) patch.ignition_field = suggestions.ignition;
+    if (suggestions.ignition_on || suggestions.ignition) {
+      patch.ignition_field = suggestions.ignition_on || suggestions.ignition;
+    }
     if (suggestions.engine_rpm) patch.rpm_field = suggestions.engine_rpm;
-    if (suggestions.odometer) patch.odometer_field = suggestions.odometer;
+    if (suggestions.odometer_km || suggestions.odometer) {
+      patch.odometer_field = suggestions.odometer_km || suggestions.odometer;
+    }
     updateCustomForm(patch);
   }
 
@@ -838,9 +846,12 @@ export default function NewProviderPage() {
     }
 
     const suggestions = result?.fleet?.field_mapping_suggestions || {};
-    const coreFields = ["vehicle", "latitude", "longitude", "timestamp"].filter(
-      (field) => Boolean(suggestions[field])
-    );
+    const coreFields = [
+      suggestions.truck || suggestions.vehicle ? "vehicle" : "",
+      suggestions.latitude ? "latitude" : "",
+      suggestions.longitude ? "longitude" : "",
+      suggestions.recorded_at || suggestions.timestamp ? "timestamp" : "",
+    ].filter(Boolean);
     const blockers = result?.setup_blockers || [];
     const authIsLogin = formInput.auth_method === "post_login";
     const loginNeedsSwitch =
@@ -1589,16 +1600,24 @@ function buildAutoDetectionPatch(
     patch.fleet_token_placement =
       result.fleet.token_placement || sourceForm.fleet_token_placement;
     const suggestions = result.fleet.field_mapping_suggestions || {};
-    if (suggestions.vehicle) patch.vehicle_field = suggestions.vehicle;
+    if (suggestions.truck || suggestions.vehicle) {
+      patch.vehicle_field = suggestions.truck || suggestions.vehicle;
+    }
     if (suggestions.latitude) patch.latitude_field = suggestions.latitude;
     if (suggestions.longitude) patch.longitude_field = suggestions.longitude;
-    if (suggestions.timestamp) patch.timestamp_field = suggestions.timestamp;
+    if (suggestions.recorded_at || suggestions.timestamp) {
+      patch.timestamp_field = suggestions.recorded_at || suggestions.timestamp;
+    }
     if (suggestions.speed) patch.speed_field = suggestions.speed;
     if (suggestions.location_label) patch.location_label_field = suggestions.location_label;
     if (suggestions.fuel_level) patch.fuel_level_field = suggestions.fuel_level;
-    if (suggestions.ignition) patch.ignition_field = suggestions.ignition;
+    if (suggestions.ignition_on || suggestions.ignition) {
+      patch.ignition_field = suggestions.ignition_on || suggestions.ignition;
+    }
     if (suggestions.engine_rpm) patch.rpm_field = suggestions.engine_rpm;
-    if (suggestions.odometer) patch.odometer_field = suggestions.odometer;
+    if (suggestions.odometer_km || suggestions.odometer) {
+      patch.odometer_field = suggestions.odometer_km || suggestions.odometer;
+    }
   }
 
   return patch;

@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 import { supabase } from "../../../../lib/supabase";
 import { supabaseAdmin } from "../../../../lib/supabaseAdmin";
+import {
+  dedupeRowPaths,
+  normalizeFieldMappingsRelativeToRow,
+  normalizeProviderConnectionConfig,
+  normalizeRowPath,
+} from "../../../../lib/providers/configNormalization";
 
 export const dynamic = "force-dynamic";
 
@@ -123,15 +129,20 @@ const BLOCKED_HEADER_TEMPLATE_MACROS = new Set([
 const SAFE_PROVIDER_ROW_PATH = /^(\$|[A-Za-z0-9_]+)(\.[A-Za-z0-9_]+|\[\]){0,8}$/;
 const SAFE_VEHICLE_MAPPING_TARGETS = new Set([
   "truck",
+  "vehicle",
   "latitude",
   "longitude",
   "speed",
   "recorded_at",
+  "timestamp",
   "location_label",
   "driver",
   "ignition_on",
+  "ignition",
   "engine_rpm",
+  "rpm",
   "fuel_level",
+  "odometer",
 ]);
 
 function getProviderCapabilities(roles: string[], isPlatformOwner: boolean) {
@@ -195,6 +206,10 @@ function sanitizeProvider(provider: any, capabilities: ProviderCapabilities) {
   }
 
   if (capabilities.can_edit_advanced_provider_config) {
+    const normalizedConnection = normalizeProviderConnectionConfig(
+      provider.fleet_config || {},
+      provider.field_mapping || {}
+    );
     baseProvider.company_id = provider.company_id;
     baseProvider.provider_type =
       provider.provider_type || provider.provider_slug || null;
@@ -204,9 +219,9 @@ function sanitizeProvider(provider: any, capabilities: ProviderCapabilities) {
     baseProvider.login_url = provider.login_url || null;
     baseProvider.fleet_url = provider.fleet_url || null;
     baseProvider.is_active = Boolean(provider.is_active);
-    baseProvider.field_mapping = provider.field_mapping || {};
+    baseProvider.field_mapping = normalizedConnection.field_mapping || {};
     baseProvider.fleet_config = sanitizeFleetConfigForResponse(
-      provider.fleet_config || {}
+      normalizedConnection.fleet_config || {}
     );
     baseProvider.capability_profile = sanitizeOptionalObject(
       provider.capability_profile
@@ -282,13 +297,13 @@ function buildSafeProviderFeedSummary(provider: any) {
           fleetConfig.trip_summary_method ||
           "GET"
       ).toUpperCase(),
-      row_paths: reportFeed.row_path
-        ? [String(reportFeed.row_path)]
-        : Array.isArray(reportFeed.row_paths)
-          ? reportFeed.row_paths.map((path: any) => String(path)).slice(0, 10)
-          : Array.isArray(fleetConfig.distance_report_vehicle_paths)
-            ? fleetConfig.distance_report_vehicle_paths.map((path: any) => String(path)).slice(0, 10)
-            : [],
+      row_paths: uniqueNormalizedRowPaths([
+        reportFeed.row_path,
+        ...(Array.isArray(reportFeed.row_paths) ? reportFeed.row_paths : []),
+        ...(Array.isArray(fleetConfig.distance_report_vehicle_paths)
+          ? fleetConfig.distance_report_vehicle_paths
+          : []),
+      ]).slice(0, 10),
       setup_message: reportConfigured
         ? "Report/distance feed is configured for dry-run testing."
         : "Report endpoint not configured yet. Ask provider for get_reports parameters: date range, report type, vehicle id, row path, and sample JSON.",
@@ -297,9 +312,7 @@ function buildSafeProviderFeedSummary(provider: any) {
 }
 
 function uniqueNormalizedRowPaths(values: any[]) {
-  return Array.from(
-    new Set(values.map(normalizeProviderRowPath).filter(Boolean))
-  );
+  return dedupeRowPaths(values);
 }
 
 function sanitizeFleetConfigForResponse(fleetConfig: any) {
@@ -1065,6 +1078,25 @@ export async function PATCH(
       updates.provider_timezone = sanitizeProviderTimezone(updates.provider_timezone);
     }
 
+    if (
+      Object.prototype.hasOwnProperty.call(updates, "fleet_config") ||
+      Object.prototype.hasOwnProperty.call(updates, "field_mapping")
+    ) {
+      const normalizedConnection = normalizeProviderConnectionConfig(
+        Object.prototype.hasOwnProperty.call(updates, "fleet_config")
+          ? updates.fleet_config
+          : existingProvider.fleet_config,
+        Object.prototype.hasOwnProperty.call(updates, "field_mapping")
+          ? updates.field_mapping
+          : existingProvider.field_mapping
+      );
+      updates.fleet_config = preserveRedactedUsernameOverrides(
+        normalizedConnection.fleet_config,
+        existingProvider.fleet_config
+      );
+      updates.field_mapping = normalizedConnection.field_mapping;
+    }
+
     if (Object.keys(updates).length === 0) {
       return NextResponse.json({
         success: true,
@@ -1149,8 +1181,11 @@ async function applySuggestedVehiclePath({
     );
   }
 
-  const mappingSuggestions = sanitizeVehicleFieldMapping(
-    body.field_mapping || body.mapping_suggestions || {}
+  const mappingSuggestions = normalizeFieldMappingsRelativeToRow(
+    sanitizeVehicleFieldMapping(
+      body.field_mapping || body.mapping_suggestions || {}
+    ),
+    rowPathResult.path
   );
   const currentFleetConfig = clonePlainObject(existingProvider.fleet_config);
   const currentVehicleFeed = clonePlainObject(
@@ -1231,17 +1266,7 @@ function sanitizeSuggestedVehicleRowPath(value: any) {
 }
 
 function normalizeProviderRowPath(value: any) {
-  let path = String(value || "").trim();
-  if (!path) return "";
-  path = path.replace(/\[\]\.?/g, ".");
-  path = path.replace(/\.+/g, ".");
-  path = path.replace(/\.$/, "");
-  path = path.replace(/^\$\$+\./, "$.");
-  path = path.replace(/^\$\$+$/, "$");
-  while (path.startsWith("$.$.")) {
-    path = "$." + path.slice(4);
-  }
-  return path;
+  return normalizeRowPath(value);
 }
 
 function sanitizeVehicleFieldMapping(value: any) {

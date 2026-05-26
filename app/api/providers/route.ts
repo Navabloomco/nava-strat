@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 import { supabase } from "../../../lib/supabase";
 import { supabaseAdmin } from "../../../lib/supabaseAdmin";
+import {
+  dedupeRowPaths,
+  normalizeFieldMappingsRelativeToRow,
+  normalizeProviderConnectionConfig,
+  normalizeRowPath,
+} from "../../../lib/providers/configNormalization";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -132,6 +138,10 @@ function sanitizeProvider(provider: any, capabilities: ProviderCapabilities) {
   }
 
   if (capabilities.can_edit_advanced_provider_config) {
+    const normalizedConnection = normalizeProviderConnectionConfig(
+      provider.fleet_config || {},
+      provider.field_mapping || {}
+    );
     baseProvider.company_id = provider.company_id;
     baseProvider.provider_type =
       provider.provider_type || provider.provider_slug || null;
@@ -141,9 +151,9 @@ function sanitizeProvider(provider: any, capabilities: ProviderCapabilities) {
     baseProvider.login_url = provider.login_url || null;
     baseProvider.fleet_url = provider.fleet_url || null;
     baseProvider.is_active = Boolean(provider.is_active);
-    baseProvider.field_mapping = provider.field_mapping || {};
+    baseProvider.field_mapping = normalizedConnection.field_mapping || {};
     baseProvider.fleet_config = sanitizeFleetConfigForResponse(
-      provider.fleet_config || {}
+      normalizedConnection.fleet_config || {}
     );
     baseProvider.capability_profile = sanitizeOptionalObject(
       provider.capability_profile
@@ -240,13 +250,13 @@ function buildSafeProviderFeedSummary(provider: any) {
           fleetConfig.trip_summary_method ||
           "GET"
       ).toUpperCase(),
-      row_paths: reportFeed.row_path
-        ? [String(reportFeed.row_path)]
-        : Array.isArray(reportFeed.row_paths)
-          ? reportFeed.row_paths.map((path: any) => String(path)).slice(0, 10)
-          : Array.isArray(fleetConfig.distance_report_vehicle_paths)
-            ? fleetConfig.distance_report_vehicle_paths.map((path: any) => String(path)).slice(0, 10)
-            : [],
+      row_paths: uniqueNormalizedRowPaths([
+        reportFeed.row_path,
+        ...(Array.isArray(reportFeed.row_paths) ? reportFeed.row_paths : []),
+        ...(Array.isArray(fleetConfig.distance_report_vehicle_paths)
+          ? fleetConfig.distance_report_vehicle_paths
+          : []),
+      ]).slice(0, 10),
       setup_message: reportConfigured
         ? "Report/distance feed is configured for dry-run testing."
         : "Report endpoint not configured yet. Ask provider for get_reports parameters: date range, report type, vehicle id, row path, and sample JSON.",
@@ -255,23 +265,11 @@ function buildSafeProviderFeedSummary(provider: any) {
 }
 
 function uniqueNormalizedRowPaths(values: any[]) {
-  return Array.from(
-    new Set(values.map(normalizeProviderRowPath).filter(Boolean))
-  );
+  return dedupeRowPaths(values);
 }
 
 function normalizeProviderRowPath(value: any) {
-  let path = String(value || "").trim();
-  if (!path) return "";
-  path = path.replace(/\[\]\.?/g, ".");
-  path = path.replace(/\.+/g, ".");
-  path = path.replace(/\.$/, "");
-  path = path.replace(/^\$\$+\./, "$.");
-  path = path.replace(/^\$\$+$/, "$");
-  while (path.startsWith("$.$.")) {
-    path = "$." + path.slice(4);
-  }
-  return path;
+  return normalizeRowPath(value);
 }
 
 function validateSupplementalUsernameOverrides(
@@ -409,9 +407,13 @@ function buildCustomApiProviderConfig(input: any) {
     return { error: "Choose a supported authentication method." };
   }
   if (fieldMapping.error) return { error: fieldMapping.error };
+  const normalizedFieldMapping = normalizeFieldMappingsRelativeToRow(
+    fieldMapping.mapping,
+    rowPath.path
+  );
   const capabilityMappingError = validateCapabilityMapping(
     capability,
-    fieldMapping.mapping
+    normalizedFieldMapping
   );
   if (capabilityMappingError) return { error: capabilityMappingError };
 
@@ -425,7 +427,7 @@ function buildCustomApiProviderConfig(input: any) {
   if (authResult.error) return { error: authResult.error };
 
   const supportedSignals = buildCustomSupportedSignals(
-    fieldMapping.mapping,
+    normalizedFieldMapping,
     capability
   );
   const tokenPlacement = normalizeFleetTokenPlacement(
@@ -446,7 +448,7 @@ function buildCustomApiProviderConfig(input: any) {
     method,
     row_path: rowPath.path,
     token_placement: tokenPlacement || undefined,
-    mapping: fieldMapping.mapping,
+    mapping: normalizedFieldMapping,
   };
   const reportFeed = buildReportFeedPlaceholder({
     baseUrl: normalizedBase || originFromUrl(endpoint),
@@ -507,7 +509,7 @@ function buildCustomApiProviderConfig(input: any) {
       auth_type: authResult.auth_type,
       auth_config: authResult.auth_config,
       fleet_config: removeUndefinedKeys(fleetConfig),
-      field_mapping: fieldMapping.mapping,
+      field_mapping: normalizedFieldMapping,
       capability_profile: {
         default_capability: capability,
         supported_signals: supportedSignals,
@@ -1293,14 +1295,19 @@ export async function POST(req: Request) {
       );
     }
 
+    const normalizedConnection = normalizeProviderConnectionConfig(
+      effectiveFleetConfig,
+      effectiveFieldMapping
+    );
+
     const insertPayload: Record<string, any> = {
       company_id: resolved.company.id,
       provider_name: providerName,
       provider_slug: providerType,
       auth_type: authType,
       auth_config: effectiveAuthConfig || null,
-      fleet_config: effectiveFleetConfig || null,
-      field_mapping: effectiveFieldMapping || {},
+      fleet_config: normalizedConnection.fleet_config || null,
+      field_mapping: normalizedConnection.field_mapping || {},
       username: body.username || null,
       api_key: body.api_key || null,
       password: body.password || null,

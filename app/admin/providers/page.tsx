@@ -3,6 +3,10 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { supabase } from "../../../lib/supabase";
+import {
+  normalizeFieldMappingsRelativeToRow,
+  normalizeRowPath,
+} from "../../../lib/providers/configNormalization";
 
 function companyIdFromLocation() {
   if (typeof window === "undefined") return "";
@@ -975,7 +979,7 @@ function ProviderDataDiscoveryDiagnostics({
             onChange={(event) => setCandidateEndpoints(event.target.value)}
           />
           <div style={diagnosticsSmallTextStyle}>
-            Leave blank to test only configured endpoints. Add BlueTrax
+            Leave blank to test only configured endpoints. Add provider
             report/trip URLs only after the provider supplies them.
           </div>
         </div>
@@ -1231,7 +1235,10 @@ function findBestVehicleRowPathSuggestion(result: any, currentRowPaths: string[]
         count: endpointBest.count,
         currentPath: current?.path || normalizedCurrentPaths[0] || "$",
         currentCount: Number(current?.count || 0),
-        mapping: buildFieldMappingSuggestion(endpoint),
+        mapping: normalizeFieldMappingsRelativeToRow(
+          buildFieldMappingSuggestion(endpoint),
+          endpointBest.path
+        ),
       };
       if (!best || suggestion.count > best.count) best = suggestion;
     }
@@ -1254,17 +1261,7 @@ function normalizeRowPathCountMap(value: any) {
 }
 
 function normalizeProviderRowPath(value: any) {
-  let path = String(value || "").trim();
-  if (!path) return "";
-  path = path.replace(/\[\]\.?/g, ".");
-  path = path.replace(/\.+/g, ".");
-  path = path.replace(/\.$/, "");
-  path = path.replace(/^\$\$+\./, "$.");
-  path = path.replace(/^\$\$+$/, "$");
-  while (path.startsWith("$.$.")) {
-    path = "$." + path.slice(4);
-  }
-  return path;
+  return normalizeRowPath(value);
 }
 
 function buildFieldMappingSuggestion(endpoint: any) {

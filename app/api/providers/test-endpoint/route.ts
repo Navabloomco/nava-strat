@@ -4,6 +4,13 @@ import net from "node:net";
 import { NextResponse } from "next/server";
 import { supabase } from "../../../../lib/supabase";
 import { supabaseAdmin } from "../../../../lib/supabaseAdmin";
+import {
+  extractRowsByPath as extractRowsByNormalizedPath,
+  isVehicleLikeRow as isNormalizedVehicleLikeRow,
+  normalizeFieldMappingsRelativeToRow,
+  normalizeRowPath,
+  rankCandidateRowPaths,
+} from "../../../../lib/providers/configNormalization";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -359,17 +366,17 @@ async function autoTestSetup(body: any, companyId: string) {
       const rows = extractRowsByPath(result.analysis.parsed, rowPath);
       const detectedVehicleCount = rows.length;
       if (detectedVehicleCount < 1) continue;
+      const fieldSuggestions = result.analysis.field_mapping_suggestions || {};
       const matchSummary = await summarizeDetectedAssetMatches(
         companyId,
         rows,
-        result.analysis.field_mapping_suggestions?.vehicle || undefined
+        fieldSuggestions.truck || fieldSuggestions.vehicle || undefined
       );
-      const fieldSuggestions = result.analysis.field_mapping_suggestions || {};
       const trackingVerified = Boolean(
-        fieldSuggestions.vehicle &&
+        (fieldSuggestions.truck || fieldSuggestions.vehicle) &&
           fieldSuggestions.latitude &&
           fieldSuggestions.longitude &&
-          fieldSuggestions.timestamp
+          (fieldSuggestions.recorded_at || fieldSuggestions.timestamp)
       );
 
       fleetResult = {
@@ -1085,6 +1092,7 @@ function analyzeResponseBody(text: string, contentType: string) {
     parsed === null ? [] : findTokenLikePaths(parsed).slice(0, MAX_SUGGESTIONS);
   const rowPathSuggestions = suggestRowPaths(parsed, arrayPaths);
   const sampleRow = sampleRowForSuggestions(parsed, rowPathSuggestions);
+  const selectedRowPath = rowPathSuggestions[0] || "$";
 
   return {
     parsed,
@@ -1093,7 +1101,10 @@ function analyzeResponseBody(text: string, contentType: string) {
     array_paths: arrayPaths,
     token_like_paths: tokenLikePaths,
     row_path_suggestions: rowPathSuggestions,
-    field_mapping_suggestions: suggestFieldMappings(sampleRow || parsed),
+    field_mapping_suggestions: normalizeFieldMappingsRelativeToRow(
+      suggestFieldMappings(sampleRow || parsed),
+      selectedRowPath
+    ),
     sanitized_sample: sanitizeSample(parsed),
   };
 }
@@ -1155,25 +1166,13 @@ function findTokenLikePaths(value: any, path = "$", output: string[] = []) {
 }
 
 function suggestRowPaths(parsed: any, arrayPaths: string[]) {
-  const candidatePaths = Array.from(
-    new Set([
-      ...(Array.isArray(parsed) ? ["$"] : []),
-      ...arrayPaths.map(normalizeProviderRowPath),
-    ].filter(Boolean))
-  );
-  const scored = candidatePaths
-    .map((path) => {
-      const rows = extractRowsByPath(parsed, path);
-      const first = rows[0] || null;
-      const objectScore = first && typeof first === "object" ? 5 : 0;
-      const nameScore = /vehicle|device|asset|truck|item|data|result/i.test(path) ? 3 : 0;
-      const lengthScore = rows.length > 0 ? 2 : 0;
-      return { path, score: objectScore + nameScore + lengthScore };
-    })
-    .filter((entry) => entry.score > 0)
-    .sort((a, b) => b.score - a.score)
-    .map((entry) => entry.path);
-  return Array.from(new Set(scored)).slice(0, 5);
+  const candidatePaths = [
+    ...(Array.isArray(parsed) ? ["$"] : []),
+    ...arrayPaths.map(normalizeProviderRowPath),
+  ].filter(Boolean);
+  return rankCandidateRowPaths(parsed, candidatePaths)
+    .map((entry) => entry.path)
+    .slice(0, 5);
 }
 
 function sampleRowForSuggestions(parsed: any, rowPaths: string[]) {
@@ -1331,24 +1330,7 @@ function getByPath(obj: any, path: string) {
 }
 
 function extractRowsByPath(responseData: any, rowPath: string) {
-  const path = normalizeProviderRowPath(rowPath) || "$";
-  const candidates = [getByPath(responseData, path)];
-
-  if (Array.isArray(responseData) && path !== "$") {
-    const childPath = path.startsWith("$.") ? path.slice(2) : path;
-    for (const wrapper of responseData.slice(0, 10)) {
-      if (wrapper && typeof wrapper === "object" && !Array.isArray(wrapper)) {
-        candidates.push(getByPath(wrapper, childPath));
-      }
-    }
-  }
-
-  for (const candidate of candidates) {
-    const rows = normalizeVehicleRows(candidate);
-    if (rows.length > 0) return rows;
-  }
-
-  return [];
+  return extractRowsByNormalizedPath(responseData, rowPath);
 }
 
 function normalizeVehicleRows(value: any) {
@@ -1358,6 +1340,7 @@ function normalizeVehicleRows(value: any) {
 }
 
 function isVehicleLikeRow(value: any) {
+  if (isNormalizedVehicleLikeRow(value)) return true;
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   if (
     hasAnyProviderField(value, [
@@ -1431,17 +1414,7 @@ function hasAnyProviderField(value: any, aliases: string[], depth = 0): boolean 
 }
 
 function normalizeProviderRowPath(value: any) {
-  let path = String(value || "").trim();
-  if (!path) return "";
-  path = path.replace(/\[\]\.?/g, ".");
-  path = path.replace(/\.+/g, ".");
-  path = path.replace(/\.$/, "");
-  path = path.replace(/^\$\$+\./, "$.");
-  path = path.replace(/^\$\$+$/, "$");
-  while (path.startsWith("$.$.")) {
-    path = "$." + path.slice(4);
-  }
-  return path;
+  return normalizeRowPath(value);
 }
 
 function isBlockedHostname(hostname: string) {
