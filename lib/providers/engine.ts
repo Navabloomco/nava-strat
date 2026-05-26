@@ -968,7 +968,7 @@ export async function executeProviderRequest(
   if (requireRows && rows.length === 0) {
     const message =
       feedType === "current_vehicles"
-        ? "No vehicle rows found. Check the vehicle endpoint and row path."
+        ? buildVehicleRowsNotFoundMessage(rowPaths, responseDiagnostics)
         : "No report rows found. Check report parameters and row path.";
     return {
       success: false,
@@ -1001,6 +1001,34 @@ export async function executeProviderRequest(
     response_diagnostics: responseDiagnostics,
     effective_url_masked: effectiveUrlMasked,
   };
+}
+
+function buildVehicleRowsNotFoundMessage(
+  rowPaths: string[],
+  responseDiagnostics: SupplementalResponseDiagnostics
+) {
+  const configuredPaths = Array.from(
+    new Set(rowPaths.map(normalizeProviderRowPath).filter(Boolean))
+  );
+  const configured =
+    configuredPaths.length > 0 ? configuredPaths.join(", ") : "not set";
+  const alternatives = Object.entries(
+    responseDiagnostics.first_array_paths_found || {}
+  )
+    .filter(([path, count]) => {
+      const normalizedPath = normalizeProviderRowPath(path);
+      return (
+        Number(count || 0) > 0 &&
+        !configuredPaths.includes(normalizedPath)
+      );
+    })
+    .sort((a, b) => Number(b[1] || 0) - Number(a[1] || 0))
+    .slice(0, 4)
+    .map(([path, count]) => `${normalizeProviderRowPath(path)} (${Number(count || 0)} rows)`);
+
+  return alternatives.length > 0
+    ? `Configured row path ${configured} did not resolve to vehicle rows. Safe discovered alternatives: ${alternatives.join(", ")}.`
+    : `Configured row path ${configured} did not resolve to vehicle rows.`;
 }
 
 type ProviderDiscoveryEndpointConfig = {
@@ -1122,6 +1150,9 @@ function buildCurrentVehicleRowPaths(provider: ProviderRecord) {
 function normalizeProviderRowPath(value: any) {
   let path = String(value || "").trim();
   if (!path) return "";
+  path = path.replace(/\[\]\.?/g, ".");
+  path = path.replace(/\.+/g, ".");
+  path = path.replace(/\.$/, "");
   path = path.replace(/^\$\$+\./, "$.");
   path = path.replace(/^\$\$+$/, "$");
   while (path.startsWith("$.$.")) {
@@ -4402,14 +4433,27 @@ function normalizeMatchValue(value: any) {
 }
 
 function normalizeRows(value: any): any[] {
-  if (Array.isArray(value)) return value.filter((item) => item && typeof item === "object");
-  if (!value || typeof value !== "object") return [];
+  if (Array.isArray(value)) return value.filter(isVehicleLikeRow);
+  if (isVehicleLikeRow(value)) return [value];
+  return [];
+}
 
-  for (const key of ["data", "result", "vehicles", "items", "rows"]) {
-    const nested = value[key];
-    if (Array.isArray(nested)) {
-      return nested.filter((item) => item && typeof item === "object");
+function extractRowsByPath(responseData: any, rowPath: string) {
+  const path = normalizeProviderRowPath(rowPath) || "$";
+  const candidates = [getByPath(responseData, path)];
+
+  if (Array.isArray(responseData) && path !== "$") {
+    const childPath = path.startsWith("$.") ? path.slice(2) : path;
+    for (const wrapper of responseData.slice(0, 10)) {
+      if (wrapper && typeof wrapper === "object" && !Array.isArray(wrapper)) {
+        candidates.push(getByPath(wrapper, childPath));
+      }
     }
+  }
+
+  for (const candidate of candidates) {
+    const rows = normalizeRows(candidate);
+    if (rows.length > 0) return rows;
   }
 
   return [];
@@ -4417,11 +4461,89 @@ function normalizeRows(value: any): any[] {
 
 function getRowsByPaths(data: any, paths: string[]) {
   for (const path of paths) {
-    const rows = normalizeRows(getByPath(data, path));
+    const rows = extractRowsByPath(data, path);
     if (rows.length > 0) return rows;
   }
 
   return [];
+}
+
+function isVehicleLikeRow(value: any) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+
+  const hasIdentifier = hasAnyProviderField(value, [
+    "vehicle",
+    "truck",
+    "truck_id",
+    "reg",
+    "reg_no",
+    "registration",
+    "plate",
+    "unit_id",
+    "device",
+    "device_id",
+  ]);
+  if (hasIdentifier) return true;
+
+  const hasLatitude = hasAnyProviderField(value, [
+    "latitude",
+    "lat",
+    "gps_lat",
+    "y",
+  ]);
+  const hasLongitude = hasAnyProviderField(value, [
+    "longitude",
+    "lng",
+    "lon",
+    "gps_lng",
+    "gps_lon",
+    "x",
+  ]);
+  const hasMovementContext = hasAnyProviderField(value, [
+    "speed",
+    "velocity",
+    "kph",
+    "speed_kph",
+    "timestamp",
+    "time",
+    "fixtime",
+    "currenttime",
+    "current_time",
+    "recorded_at",
+    "gps_time",
+  ]);
+
+  return hasLatitude && hasLongitude && hasMovementContext;
+}
+
+function hasAnyProviderField(value: any, aliases: string[], depth = 0): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value) || depth > 2) {
+    return false;
+  }
+
+  const normalizedAliases = new Set(aliases.map(normalizeProviderKey));
+  for (const [key, entry] of Object.entries(value)) {
+    const normalizedKey = normalizeProviderKey(key);
+    if (
+      normalizedAliases.has(normalizedKey) &&
+      entry !== null &&
+      entry !== undefined &&
+      String(entry).trim() !== ""
+    ) {
+      return true;
+    }
+
+    if (
+      entry &&
+      typeof entry === "object" &&
+      !Array.isArray(entry) &&
+      hasAnyProviderField(entry, aliases, depth + 1)
+    ) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function getValueByCaseInsensitivePath(raw: any, path?: string): any {

@@ -99,6 +99,7 @@ Open `/admin/providers?companyId=<id>`.
 - [ ] Confirm the suggested path is normalized as `$.items`, not `$.$.items` or `$$.items`.
 - [ ] Click "Apply suggested vehicle path" and confirm the saved current feed row path and safe field mappings update, provider sync remains inactive/retest-required, and no credentials or raw payloads are exposed.
 - [ ] Run Test Connection again and confirm it uses the applied row path and reports the larger vehicle count.
+- [ ] Confirm saved JSONPath row paths such as `$.items` work for root-array wrapper responses such as `[{ "items": [...] }]`.
 - [ ] Confirm sanitized endpoint display preserves safe query values such as `lang=en` while redacting `user_api_hash`.
 - [ ] If no BlueTrax report endpoint is configured, confirm the setup blocker says to ask BlueTrax for trip/report endpoint, auth method, token path, row path, and sample response.
 - [ ] Confirm capability diagnostics separate provider default capability from observed row capability.

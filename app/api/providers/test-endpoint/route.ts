@@ -356,8 +356,8 @@ async function autoTestSetup(body: any, companyId: string) {
       if (result.error || !result.response?.ok) continue;
       const rowPath = result.analysis.row_path_suggestions[0];
       if (!rowPath) continue;
-      const rows = getByPath(result.analysis.parsed, rowPath);
-      const detectedVehicleCount = Array.isArray(rows) ? rows.length : 0;
+      const rows = extractRowsByPath(result.analysis.parsed, rowPath);
+      const detectedVehicleCount = rows.length;
       if (detectedVehicleCount < 1) continue;
       const matchSummary = await summarizeDetectedAssetMatches(
         companyId,
@@ -1155,32 +1155,33 @@ function findTokenLikePaths(value: any, path = "$", output: string[] = []) {
 }
 
 function suggestRowPaths(parsed: any, arrayPaths: string[]) {
-  if (Array.isArray(parsed)) return ["$"];
-  const scored = arrayPaths
-    .filter((path) => !path.endsWith("[]"))
+  const candidatePaths = Array.from(
+    new Set([
+      ...(Array.isArray(parsed) ? ["$"] : []),
+      ...arrayPaths.map(normalizeProviderRowPath),
+    ].filter(Boolean))
+  );
+  const scored = candidatePaths
     .map((path) => {
-      const value = getByPath(parsed, path);
-      const first = Array.isArray(value) ? value[0] : null;
+      const rows = extractRowsByPath(parsed, path);
+      const first = rows[0] || null;
       const objectScore = first && typeof first === "object" ? 5 : 0;
       const nameScore = /vehicle|device|asset|truck|item|data|result/i.test(path) ? 3 : 0;
-      const lengthScore = Array.isArray(value) && value.length > 0 ? 2 : 0;
+      const lengthScore = rows.length > 0 ? 2 : 0;
       return { path, score: objectScore + nameScore + lengthScore };
     })
+    .filter((entry) => entry.score > 0)
     .sort((a, b) => b.score - a.score)
     .map((entry) => entry.path);
   return Array.from(new Set(scored)).slice(0, 5);
 }
 
 function sampleRowForSuggestions(parsed: any, rowPaths: string[]) {
-  if (Array.isArray(parsed)) return parsed.find((entry) => entry && typeof entry === "object");
   for (const path of rowPaths) {
-    const value = getByPath(parsed, path);
-    if (Array.isArray(value)) {
-      const row = value.find((entry) => entry && typeof entry === "object");
-      if (row) return row;
-    }
+    const rows = extractRowsByPath(parsed, path);
+    if (rows[0]) return rows[0];
   }
-  return parsed && typeof parsed === "object" ? parsed : null;
+  return isVehicleLikeRow(parsed) ? parsed : null;
 }
 
 function suggestFieldMappings(sample: any) {
@@ -1329,9 +1330,112 @@ function getByPath(obj: any, path: string) {
   return lookupPath.split(".").reduce((current, part) => current?.[part], obj);
 }
 
+function extractRowsByPath(responseData: any, rowPath: string) {
+  const path = normalizeProviderRowPath(rowPath) || "$";
+  const candidates = [getByPath(responseData, path)];
+
+  if (Array.isArray(responseData) && path !== "$") {
+    const childPath = path.startsWith("$.") ? path.slice(2) : path;
+    for (const wrapper of responseData.slice(0, 10)) {
+      if (wrapper && typeof wrapper === "object" && !Array.isArray(wrapper)) {
+        candidates.push(getByPath(wrapper, childPath));
+      }
+    }
+  }
+
+  for (const candidate of candidates) {
+    const rows = normalizeVehicleRows(candidate);
+    if (rows.length > 0) return rows;
+  }
+
+  return [];
+}
+
+function normalizeVehicleRows(value: any) {
+  if (Array.isArray(value)) return value.filter(isVehicleLikeRow);
+  if (isVehicleLikeRow(value)) return [value];
+  return [];
+}
+
+function isVehicleLikeRow(value: any) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  if (
+    hasAnyProviderField(value, [
+      "vehicle",
+      "truck",
+      "truck_id",
+      "reg",
+      "reg_no",
+      "registration",
+      "plate",
+      "unit_id",
+      "device",
+      "device_id",
+    ])
+  ) {
+    return true;
+  }
+
+  const hasLatitude = hasAnyProviderField(value, ["latitude", "lat", "gps_lat", "y"]);
+  const hasLongitude = hasAnyProviderField(value, [
+    "longitude",
+    "lng",
+    "lon",
+    "gps_lng",
+    "gps_lon",
+    "x",
+  ]);
+  const hasMovementContext = hasAnyProviderField(value, [
+    "speed",
+    "velocity",
+    "kph",
+    "speed_kph",
+    "timestamp",
+    "time",
+    "fixtime",
+    "currenttime",
+    "current_time",
+    "recorded_at",
+    "gps_time",
+  ]);
+  return hasLatitude && hasLongitude && hasMovementContext;
+}
+
+function hasAnyProviderField(value: any, aliases: string[], depth = 0): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value) || depth > 2) {
+    return false;
+  }
+
+  const normalizedAliases = new Set(aliases.map(normalizeKey));
+  for (const [key, entry] of Object.entries(value)) {
+    if (
+      normalizedAliases.has(normalizeKey(key)) &&
+      entry !== null &&
+      entry !== undefined &&
+      String(entry).trim() !== ""
+    ) {
+      return true;
+    }
+
+    if (
+      entry &&
+      typeof entry === "object" &&
+      !Array.isArray(entry) &&
+      hasAnyProviderField(entry, aliases, depth + 1)
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function normalizeProviderRowPath(value: any) {
   let path = String(value || "").trim();
   if (!path) return "";
+  path = path.replace(/\[\]\.?/g, ".");
+  path = path.replace(/\.+/g, ".");
+  path = path.replace(/\.$/, "");
   path = path.replace(/^\$\$+\./, "$.");
   path = path.replace(/^\$\$+$/, "$");
   while (path.startsWith("$.$.")) {

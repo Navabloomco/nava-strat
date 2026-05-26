@@ -1256,6 +1256,9 @@ function normalizeRowPathCountMap(value: any) {
 function normalizeProviderRowPath(value: any) {
   let path = String(value || "").trim();
   if (!path) return "";
+  path = path.replace(/\[\]\.?/g, ".");
+  path = path.replace(/\.+/g, ".");
+  path = path.replace(/\.$/, "");
   path = path.replace(/^\$\$+\./, "$.");
   path = path.replace(/^\$\$+$/, "$");
   while (path.startsWith("$.$.")) {

@@ -217,18 +217,16 @@ function buildSafeProviderFeedSummary(provider: any) {
     current_vehicle_feed: {
       configured: Boolean(fleetUrl),
       method: String(currentFeed.method || fleetConfig.method || "GET").toUpperCase(),
-      row_paths: Array.isArray(currentFeed.row_paths)
-        ? [
+      row_paths: (currentFeed.row_path || Array.isArray(currentFeed.row_paths))
+        ? uniqueNormalizedRowPaths([
             currentFeed.row_path,
-            ...currentFeed.row_paths,
-          ].map(normalizeProviderRowPath).filter(Boolean).slice(0, 10)
-        : currentFeed.row_path
-          ? [normalizeProviderRowPath(currentFeed.row_path)]
-          : Array.isArray(fleetConfig.vehicle_paths)
-            ? fleetConfig.vehicle_paths.map(normalizeProviderRowPath).filter(Boolean).slice(0, 10)
-            : fleetConfig.data_group
-              ? [normalizeProviderRowPath(fleetConfig.data_group)]
-              : [],
+            ...(Array.isArray(currentFeed.row_paths) ? currentFeed.row_paths : []),
+          ]).slice(0, 10)
+        : Array.isArray(fleetConfig.vehicle_paths)
+          ? uniqueNormalizedRowPaths(fleetConfig.vehicle_paths).slice(0, 10)
+          : fleetConfig.data_group
+            ? uniqueNormalizedRowPaths([fleetConfig.data_group])
+            : [],
       token_placement:
         currentFeed.token_placement || fleetConfig.token_placement || null,
     },
@@ -256,9 +254,18 @@ function buildSafeProviderFeedSummary(provider: any) {
   };
 }
 
+function uniqueNormalizedRowPaths(values: any[]) {
+  return Array.from(
+    new Set(values.map(normalizeProviderRowPath).filter(Boolean))
+  );
+}
+
 function normalizeProviderRowPath(value: any) {
   let path = String(value || "").trim();
   if (!path) return "";
+  path = path.replace(/\[\]\.?/g, ".");
+  path = path.replace(/\.+/g, ".");
+  path = path.replace(/\.$/, "");
   path = path.replace(/^\$\$+\./, "$.");
   path = path.replace(/^\$\$+$/, "$");
   while (path.startsWith("$.$.")) {
