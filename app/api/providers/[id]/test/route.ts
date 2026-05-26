@@ -676,6 +676,7 @@ export async function POST(
     const responseBody: Record<string, any> = {
       success: result.success,
       message: result.message,
+      failure_stage: result.failure_stage || null,
       provider_id: provider.id,
       provider_name: provider.provider_name,
       vehicles_found: result.vehicleCount,

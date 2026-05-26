@@ -118,6 +118,7 @@ function sanitizeProvider(provider: any, capabilities: ProviderCapabilities) {
     last_sync_at: provider.last_sync_at || provider.last_test_at || null,
     created_at: provider.created_at || null,
     updated_at: provider.updated_at || null,
+    feed_summary: buildSafeProviderFeedSummary(provider),
   };
 
   if (
@@ -178,6 +179,76 @@ function sanitizeFleetConfigForResponse(fleetConfig: any) {
   }
 
   return safeConfig;
+}
+
+function buildSafeProviderFeedSummary(provider: any) {
+  const fleetConfig = provider?.fleet_config || {};
+  const currentFeed = fleetConfig.current_vehicle_feed || {};
+  const reportFeed = fleetConfig.report_feed || {};
+  const fleetUrl =
+    provider?.fleet_url ||
+    fleetConfig.fleet_url ||
+    currentFeed.endpoint_url ||
+    null;
+  const reportEndpoint =
+    reportFeed.endpoint_url ||
+    fleetConfig.distance_report_url ||
+    fleetConfig.trip_summary_url ||
+    null;
+  const reportConfigured = Boolean(
+    reportEndpoint &&
+      reportFeed.active !== false &&
+      ((reportFeed.row_path || reportFeed.row_paths?.length) ||
+        fleetConfig.distance_report_vehicle_paths?.length ||
+        fleetConfig.trip_summary_vehicle_paths?.length) &&
+      (Object.keys(reportFeed.mapping || {}).length > 0 ||
+        Object.keys(fleetConfig.distance_report_mapping || {}).length > 0 ||
+        Object.keys(fleetConfig.trip_summary_mapping || {}).length > 0)
+  );
+
+  return {
+    auth_channel: {
+      auth_type: provider?.auth_type || null,
+      login_configured: Boolean(provider?.login_url || provider?.auth_config?.login_url),
+      token_paths: Array.isArray(provider?.auth_config?.token_paths)
+        ? provider.auth_config.token_paths.map((path: any) => String(path)).slice(0, 10)
+        : [],
+    },
+    current_vehicle_feed: {
+      configured: Boolean(fleetUrl),
+      method: String(currentFeed.method || fleetConfig.method || "GET").toUpperCase(),
+      row_paths: Array.isArray(currentFeed.row_paths)
+        ? currentFeed.row_paths.map((path: any) => String(path)).slice(0, 10)
+        : currentFeed.row_path
+          ? [String(currentFeed.row_path)]
+          : Array.isArray(fleetConfig.vehicle_paths)
+            ? fleetConfig.vehicle_paths.map((path: any) => String(path)).slice(0, 10)
+            : [],
+      token_placement:
+        currentFeed.token_placement || fleetConfig.token_placement || null,
+    },
+    report_feed: {
+      endpoint_present: Boolean(reportEndpoint),
+      configured: reportConfigured,
+      active: reportConfigured,
+      method: String(
+        reportFeed.method ||
+          fleetConfig.distance_report_method ||
+          fleetConfig.trip_summary_method ||
+          "GET"
+      ).toUpperCase(),
+      row_paths: reportFeed.row_path
+        ? [String(reportFeed.row_path)]
+        : Array.isArray(reportFeed.row_paths)
+          ? reportFeed.row_paths.map((path: any) => String(path)).slice(0, 10)
+          : Array.isArray(fleetConfig.distance_report_vehicle_paths)
+            ? fleetConfig.distance_report_vehicle_paths.map((path: any) => String(path)).slice(0, 10)
+            : [],
+      setup_message: reportConfigured
+        ? "Report/distance feed is configured for dry-run testing."
+        : "Report endpoint not configured yet. Ask provider for get_reports parameters: date range, report type, vehicle id, row path, and sample JSON.",
+    },
+  };
 }
 
 function validateSupplementalUsernameOverrides(
@@ -346,6 +417,19 @@ function buildCustomApiProviderConfig(input: any) {
     input.base_url || endpointUrl.url
   );
   const websiteUrl = providerWebsite.url || null;
+  const currentVehicleFeed = {
+    feed_type: "current_vehicles",
+    endpoint_url: endpoint,
+    method,
+    row_path: rowPath.path,
+    token_placement: tokenPlacement || undefined,
+    mapping: fieldMapping.mapping,
+  };
+  const reportFeed = buildReportFeedPlaceholder({
+    baseUrl: normalizedBase || originFromUrl(endpoint),
+    authMethod,
+    tokenPlacement,
+  });
   const fleetConfig = {
     fleet_url: endpoint,
     method,
@@ -369,6 +453,27 @@ function buildCustomApiProviderConfig(input: any) {
     source_signal_notes: {
       onboarding_source: "self_serve_custom_api",
       provider_website: websiteUrl,
+    },
+    current_vehicle_feed: currentVehicleFeed,
+    report_feed: reportFeed,
+    connection_contract: {
+      version: 1,
+      auth_channel: {
+        auth_type: authResult.auth_type,
+        login_url: authResult.login_url,
+        credential_placement:
+          authMethod === "post_login"
+            ? String(input.login_credential_placement || "json_body")
+            : null,
+        token_paths:
+          authMethod === "post_login"
+            ? [String(input.login_token_path || "").trim()].filter(Boolean)
+            : [],
+      },
+      feeds: [
+        currentVehicleFeed,
+        ...(reportFeed ? [reportFeed] : []),
+      ],
     },
   };
 
@@ -630,6 +735,45 @@ function applyFleetTokenPlacement(url: string, placement: string) {
     return appendQueryTemplate(url, "token", "{{token}}");
   }
   return url;
+}
+
+function buildReportFeedPlaceholder(input: {
+  baseUrl: string;
+  authMethod: string;
+  tokenPlacement: string;
+}) {
+  const baseUrl = String(input.baseUrl || "").replace(/\/+$/, "");
+  if (!baseUrl) return null;
+
+  const tokenPlacement =
+    input.authMethod === "post_login"
+      ? input.tokenPlacement || "query_user_api_hash"
+      : "";
+  const reportEndpoint =
+    tokenPlacement === "query_user_api_hash"
+      ? appendQueryTemplate(`${baseUrl}/get_reports`, "user_api_hash", "{{user_api_hash}}")
+      : tokenPlacement === "query_token"
+        ? appendQueryTemplate(`${baseUrl}/get_reports`, "token", "{{token}}")
+        : `${baseUrl}/get_reports`;
+
+  return {
+    name: "Report/distance feed",
+    feed_type: "distance_report",
+    endpoint_url: reportEndpoint,
+    method: "GET",
+    active: false,
+    configured: false,
+    setup_required: true,
+    required_parameters: [
+      "date range",
+      "report type",
+      "vehicle/device id if required",
+      "row path",
+      "distance field mapping",
+    ],
+    setup_message:
+      "Report endpoint not configured yet. Ask provider for get_reports parameters: date range, report type, vehicle id, row path, and sample JSON.",
+  };
 }
 
 function appendQueryTemplate(url: string, key: string, value: string) {

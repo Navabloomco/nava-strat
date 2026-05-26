@@ -305,6 +305,12 @@ async function autoTestSetup(body: any, companyId: string) {
       fleet_candidates: fleetUrlCandidates,
       token_path_candidates: tokenPathCandidates,
       row_path_candidates: ["data", "items", "devices", "vehicles", "result.items"],
+      connection_contract: buildAutoSetupConnectionContract({
+        baseUrl,
+        authMethod,
+        loginResult: null,
+        fleetResult: null,
+      }),
       suggested_auth_method: null,
       failure_stage: loginAcceptedWithoutToken ? "token" : "login",
       attempts: {
@@ -397,6 +403,12 @@ async function autoTestSetup(body: any, companyId: string) {
     fleet_candidates: fleetUrlCandidates,
     token_path_candidates: tokenPathCandidates,
     row_path_candidates: ["data", "items", "devices", "vehicles", "result.items"],
+    connection_contract: buildAutoSetupConnectionContract({
+      baseUrl,
+      authMethod,
+      loginResult,
+      fleetResult,
+    }),
     suggested_auth_method:
       authMethod !== "post_login" && loginTokenHint ? "post_login" : null,
     failure_stage: !fleetResult ? "fleet" : null,
@@ -476,6 +488,56 @@ async function summarizeDetectedAssetMatches(
   return {
     matched,
     unmatched: Math.max(0, detectedKeys.size - matched),
+  };
+}
+
+function buildAutoSetupConnectionContract(input: {
+  baseUrl: string;
+  authMethod: string;
+  loginResult: any;
+  fleetResult: any;
+}) {
+  const reportEndpoint =
+    input.authMethod === "post_login"
+      ? appendQueryParams(`${input.baseUrl}/get_reports`, {
+          user_api_hash: "{{user_api_hash}}",
+        })
+      : `${input.baseUrl}/get_reports`;
+
+  return {
+    version: 1,
+    auth_channel: {
+      auth_type: input.authMethod,
+      login_url: input.loginResult?.login_url || null,
+      token_paths: input.loginResult?.token_path
+        ? [input.loginResult.token_path]
+        : [],
+      token_aliases: ["user_api_hash", "token", "access_token", "api_key", "hash"],
+    },
+    feeds: [
+      {
+        feed_type: "current_vehicles",
+        endpoint_url: input.fleetResult?.endpoint_url || null,
+        method: "GET",
+        row_path: input.fleetResult?.row_path || null,
+        token_placement: input.fleetResult?.token_placement || null,
+        mapping: input.fleetResult?.field_mapping_suggestions || {},
+      },
+      {
+        feed_type: "distance_report",
+        endpoint_url: reportEndpoint,
+        method: "GET",
+        active: false,
+        setup_required: true,
+        required_parameters: [
+          "date range",
+          "report type",
+          "vehicle/device id if required",
+          "row path",
+          "distance field mapping",
+        ],
+      },
+    ],
   };
 }
 

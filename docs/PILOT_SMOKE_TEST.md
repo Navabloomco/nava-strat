@@ -89,6 +89,10 @@ Open `/admin/providers?companyId=<id>`.
 - [ ] Confirm ops/finance/management cannot create provider connections.
 - [ ] Confirm provider detail/test actions work or fail safely.
 - [ ] Confirm Test Connection displays sanitized diagnostics.
+- [ ] Confirm Provider Vault shows Current vehicle feed and Report/distance feed as separate connection channels.
+- [ ] Confirm a Simple Connect provider created from a login-token flow can be replayed by Provider Vault Test Connection without re-entering endpoint/token details.
+- [ ] Confirm Test Connection shows plain-language failure states such as Sign-in failed, Access token not found, Vehicle endpoint rejected access, No vehicle rows found, Required location fields missing, Report endpoint not configured, or Report endpoint rejected parameters.
+- [ ] Confirm no raw browser alert displays messages such as `Fleet API returned HTTP 401`; failures appear as sanitized inline Provider Vault status.
 - [ ] Run Provider Vault Data Discovery Diagnostics with no extra endpoint and confirm it tests configured endpoints only, shows sanitized response shape/key/path information, and writes nothing.
 - [ ] Confirm Data Discovery Diagnostics allows one explicitly entered report/trip candidate endpoint at a time or a short explicit list, with masked query values and no raw payload display.
 - [ ] If no BlueTrax report endpoint is configured, confirm the setup blocker says to ask BlueTrax for trip/report endpoint, auth method, token path, row path, and sample response.
@@ -98,6 +102,7 @@ Open `/admin/providers?companyId=<id>`.
 - [ ] Confirm placeholder zero signals are shown as safe counts only and do not upgrade capability.
 - [ ] Confirm distance diagnostics, if provider report rows exist, separate provider-reported mileage from physical odometer values.
 - [ ] Confirm automated distance report feed status is clear: active feed rows/matches when configured, or "No automated distance report feed is active yet" when not configured.
+- [ ] For FleetTrack/Oak and Gold-style setup, confirm `/get_devices` is treated as the current vehicle feed and `/get_reports` is listed as a report-feed placeholder, not active until date range/report type/device parameters, row path, and distance mappings are configured.
 - [ ] If an automated distance/report feed is configured, confirm Test Connection dry-runs rows found, mapped distance fields, matched assets, and rows-would-write without exposing secrets.
 - [ ] If automated feed auth fails, confirm the setup blocker identifies the missing endpoint/auth token path/row path/field mapping requirement without showing tokens or raw payloads.
 - [ ] Upload a provider distance report CSV in fallback/backfill mode and confirm parsed rows, matched assets, unmatched rows, static-zero count, mismatch count, and rows-would-write are shown before import.

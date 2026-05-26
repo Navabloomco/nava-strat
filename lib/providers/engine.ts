@@ -46,6 +46,7 @@ export type SyncResult = {
   success: boolean;
   message: string;
   vehicleCount: number;
+  failure_stage?: ProviderExecutionFailureStage;
   skipped_missing_identifier?: number;
   cross_provider_asset_matches?: number;
   cross_provider_asset_match_samples?: Array<{
@@ -107,6 +108,43 @@ type AuthResult = {
   metadata?: AuthMetadata;
   message?: string;
   debug?: any;
+};
+
+type ProviderExecutionFailureStage =
+  | "auth"
+  | "request"
+  | "feed"
+  | "rows"
+  | "mapping";
+
+export type ProviderFeedExecutionConfig = {
+  name: string;
+  feed_type: "current_vehicles" | "reports" | "trip_summary" | "distance_report" | string;
+  url: string;
+  method?: string;
+  headers?: Record<string, any>;
+  payload?: Record<string, any>;
+  row_paths?: string[];
+  token_placement?: string;
+  api_key_header?: string;
+  require_rows?: boolean;
+};
+
+export type ProviderRequestExecutionResult = {
+  success: boolean;
+  feed_name: string;
+  feed_type: string;
+  failure_stage?: ProviderExecutionFailureStage;
+  message?: string;
+  setup_blocker?: string;
+  http_status?: number;
+  response_type?: SupplementalResponseDiagnostics["response_type"];
+  content_type?: string | null;
+  rows: any[];
+  data: any;
+  request_diagnostics?: SupplementalRequestDiagnostics;
+  response_diagnostics?: SupplementalResponseDiagnostics;
+  effective_url_masked?: string;
 };
 
 type AuthMetadata = {
@@ -430,8 +468,9 @@ export async function runProviderSync(
     if (!auth.success) {
       return {
         success: false,
-        message: auth.message || "Provider authentication failed",
+        message: plainProviderFailureMessage(auth.message || "Provider authentication failed"),
         vehicleCount: 0,
+        failure_stage: "auth",
         debug: auth.debug || null,
       };
     }
@@ -443,6 +482,7 @@ export async function runProviderSync(
         success: false,
         message: fleet.message || "Fleet fetch failed",
         vehicleCount: 0,
+        failure_stage: "feed",
         debug: fleet.debug || null,
       };
     }
@@ -753,6 +793,200 @@ export async function runProviderDataDiscovery(
   return diagnostics;
 }
 
+export async function executeProviderRequest(
+  provider: ProviderRecord,
+  feedConfig: ProviderFeedExecutionConfig,
+  options: {
+    authContext?: SupplementalAuthContext;
+    requireRows?: boolean;
+    fallbackAuthMetadata?: AuthMetadata;
+  } = {}
+): Promise<ProviderRequestExecutionResult> {
+  const feedName = feedConfig.name || "provider_feed";
+  const feedType = feedConfig.feed_type || "current_vehicles";
+  let authContext = options.authContext;
+
+  if (!authContext) {
+    const auth = await authenticateProvider(provider);
+    if (!auth.success) {
+      return {
+        success: false,
+        feed_name: feedName,
+        feed_type: feedType,
+        failure_stage: "auth",
+        message: plainProviderFailureMessage(auth.message || "Provider sign-in failed"),
+        setup_blocker: plainProviderFailureMessage(auth.message || "Provider sign-in failed"),
+        rows: [],
+        data: null,
+      };
+    }
+
+    authContext = {
+      token: auth.token || null,
+      metadata: auth.metadata || {},
+      fallbackMetadata: options.fallbackAuthMetadata || {},
+      authType: (provider.auth_type || "POST_LOGIN").toUpperCase(),
+      profileName: null,
+    };
+  }
+
+  const method = normalizeDiscoveryMethod(feedConfig.method || "GET");
+  const renderedUrlResult = renderTemplateValue(feedConfig.url, {
+    provider,
+    token: authContext.token,
+    authMetadata: authContext.metadata,
+    fallbackAuthMetadata: authContext.fallbackMetadata || {},
+    credentialOverrides: {},
+    now: new Date(),
+  });
+  const renderedUrl = String(renderedUrlResult.value || feedConfig.url || "");
+  const payloadResult = buildPayloadWithDiagnostics(
+    feedConfig.payload || {},
+    provider,
+    authContext.token,
+    authContext.metadata,
+    authContext.fallbackMetadata || {}
+  );
+
+  if (
+    renderedUrlResult.missingMacros.length > 0 ||
+    renderedUrlResult.unknownMacros.length > 0 ||
+    payloadResult.missingMacros.length > 0 ||
+    payloadResult.unknownMacros.length > 0
+  ) {
+    const macros = [
+      ...renderedUrlResult.missingMacros,
+      ...renderedUrlResult.unknownMacros,
+      ...payloadResult.missingMacros,
+      ...payloadResult.unknownMacros,
+    ];
+    const message = `Provider feed setup is missing required value(s): ${Array.from(new Set(macros)).join(", ")}`;
+    return {
+      success: false,
+      feed_name: feedName,
+      feed_type: feedType,
+      failure_stage: "request",
+      message,
+      setup_blocker: sanitizeDiagnosticMessage(message),
+      rows: [],
+      data: null,
+      effective_url_masked: maskUrlToken(renderedUrl, authContext.token),
+    };
+  }
+
+  const headers = buildProviderExecutionHeaders(provider, feedConfig, authContext);
+  const requestUrl = applyProviderTokenPlacementToUrl(
+    renderedUrl,
+    feedConfig.token_placement,
+    authContext.token
+  );
+  const requestHeaders = withJsonContentType(headers);
+  const requestDiagnostics = buildSupplementalRequestDiagnostics(
+    requestUrl,
+    method,
+    requestHeaders,
+    payloadResult.value || {}
+  );
+  const rowPaths =
+    Array.isArray(feedConfig.row_paths) && feedConfig.row_paths.length > 0
+      ? feedConfig.row_paths.map((path) => String(path)).filter(Boolean)
+      : feedType === "current_vehicles"
+        ? defaultVehiclePaths()
+        : defaultSupplementalVehiclePaths();
+
+  let response: Response;
+  try {
+    response = await fetch(requestUrl, {
+      method,
+      headers: requestHeaders,
+      body: method === "GET" ? undefined : JSON.stringify(payloadResult.value || {}),
+      cache: "no-store",
+    });
+  } catch (err: any) {
+    const message = plainProviderFailureMessage(err?.message || "Provider endpoint request failed");
+    return {
+      success: false,
+      feed_name: feedName,
+      feed_type: feedType,
+      failure_stage: "feed",
+      message,
+      setup_blocker: message,
+      rows: [],
+      data: null,
+      request_diagnostics: requestDiagnostics,
+      effective_url_masked: maskUrlToken(requestUrl, authContext.token),
+    };
+  }
+
+  const { data, responseType } = await readSafeSupplementalResponse(response);
+  const responseDiagnostics = buildSupplementalResponseDiagnostics(
+    data,
+    response.status,
+    responseType,
+    rowPaths
+  );
+  const rows = getRowsByPaths(data, rowPaths);
+  const effectiveUrlMasked = maskUrlToken(requestUrl, authContext.token);
+
+  if (!response.ok) {
+    const message = plainProviderHttpFailure(feedType, response.status);
+    return {
+      success: false,
+      feed_name: feedName,
+      feed_type: feedType,
+      failure_stage: "feed",
+      message,
+      setup_blocker: message,
+      http_status: response.status,
+      response_type: responseType,
+      content_type: response.headers.get("content-type"),
+      rows,
+      data,
+      request_diagnostics: requestDiagnostics,
+      response_diagnostics: responseDiagnostics,
+      effective_url_masked: effectiveUrlMasked,
+    };
+  }
+
+  const requireRows = options.requireRows ?? feedConfig.require_rows ?? false;
+  if (requireRows && rows.length === 0) {
+    const message =
+      feedType === "current_vehicles"
+        ? "No vehicle rows found. Check the vehicle endpoint and row path."
+        : "No report rows found. Check report parameters and row path.";
+    return {
+      success: false,
+      feed_name: feedName,
+      feed_type: feedType,
+      failure_stage: "rows",
+      message,
+      setup_blocker: message,
+      http_status: response.status,
+      response_type: responseType,
+      content_type: response.headers.get("content-type"),
+      rows,
+      data,
+      request_diagnostics: requestDiagnostics,
+      response_diagnostics: responseDiagnostics,
+      effective_url_masked: effectiveUrlMasked,
+    };
+  }
+
+  return {
+    success: true,
+    feed_name: feedName,
+    feed_type: feedType,
+    http_status: response.status,
+    response_type: responseType,
+    content_type: response.headers.get("content-type"),
+    rows,
+    data,
+    request_diagnostics: requestDiagnostics,
+    response_diagnostics: responseDiagnostics,
+    effective_url_masked: effectiveUrlMasked,
+  };
+}
+
 type ProviderDiscoveryEndpointConfig = {
   name: string;
   source: ProviderDataDiscoveryEndpointDiagnostics["endpoint_source"];
@@ -974,21 +1208,28 @@ async function testProviderDiscoveryEndpoint(
     };
   }
 
-  const headers = buildDiscoveryHeaders(provider, endpoint, authContext);
-  const method = normalizeDiscoveryMethod(endpoint.method);
-
   try {
-    const response = await fetchDiscoveryResponse(renderedUrl, {
-      method,
-      headers: withJsonContentType(headers),
-      body: method === "GET" ? undefined : JSON.stringify(payloadResult.value || {}),
-    });
+    const execution = await executeProviderRequest(
+      provider,
+      {
+        name: endpoint.name,
+        feed_type: endpoint.supplementalConfig?.feed_type || "discovery",
+        url: renderedUrl,
+        method: endpoint.method,
+        headers: endpoint.headers || {},
+        payload: payloadResult.value || {},
+        row_paths: endpoint.rowPaths,
+        token_placement: endpoint.tokenPlacement,
+        api_key_header: endpoint.apiKeyHeader,
+      },
+      { authContext }
+    );
     const rowPaths = endpoint.rowPaths;
-    const rows = getRowsByPaths(response.data, rowPaths);
-    const usefulFields = detectUsefulDiscoveryFields(response.data, rows);
+    const rows = execution.rows;
+    const usefulFields = detectUsefulDiscoveryFields(execution.data, rows);
     const blocker = buildDiscoverySetupBlocker({
-      httpStatus: response.httpStatus,
-      responseType: response.responseType,
+      httpStatus: execution.http_status || 0,
+      responseType: execution.response_type || "error",
       rowsDetected: rows.length,
       usefulFields,
       endpoint,
@@ -996,18 +1237,17 @@ async function testProviderDiscoveryEndpoint(
 
     return {
       ...baseDiagnostic,
-      endpoint_tested: sanitizeDiscoveryUrl(renderedUrl),
-      http_status: response.httpStatus,
-      success: response.ok,
-      response_type: response.responseType,
-      content_type: response.contentType,
-      top_level_keys: collectTopLevelKeys(response.data),
-      candidate_row_paths_found: collectArrayPathCounts(response.data),
+      endpoint_tested: sanitizeDiscoveryUrl(execution.effective_url_masked || renderedUrl),
+      http_status: execution.http_status,
+      success: execution.success,
+      response_type: execution.response_type,
+      content_type: execution.content_type,
+      top_level_keys: collectTopLevelKeys(execution.data),
+      candidate_row_paths_found: collectArrayPathCounts(execution.data),
       detected_useful_fields: usefulFields,
-      sanitized_sample_shape: buildSanitizedSampleShape(rows[0] || response.data),
+      sanitized_sample_shape: buildSanitizedSampleShape(rows[0] || execution.data),
       rows_detected: rows.length,
-      body_truncated: response.bodyTruncated,
-      setup_blocker: blocker,
+      setup_blocker: blocker || execution.setup_blocker,
     };
   } catch (err: any) {
     const message =
@@ -1078,6 +1318,105 @@ function buildDiscoveryHeaders(
   }
 
   return headers;
+}
+
+function buildProviderExecutionHeaders(
+  provider: ProviderRecord,
+  feedConfig: ProviderFeedExecutionConfig,
+  authContext: SupplementalAuthContext
+) {
+  const headers = buildHeaders(
+    feedConfig.headers || {},
+    provider,
+    authContext.token,
+    authContext.metadata,
+    authContext.fallbackMetadata || {}
+  );
+  const token = authContext.token;
+  if (!token) return headers;
+
+  const tokenPlacement = String(feedConfig.token_placement || "").toLowerCase();
+  const rawUrl = String(feedConfig.url || "");
+  if (
+    tokenPlacement === "query_user_api_hash" ||
+    tokenPlacement === "query_token" ||
+    tokenPlacement === "none" ||
+    /\{\{\s*(token|access_token|user_api_hash|api_key|hash)\s*\}\}/i.test(rawUrl)
+  ) {
+    return headers;
+  }
+
+  if (tokenPlacement === "x_api_key") {
+    headers[feedConfig.api_key_header || "X-API-Key"] = token;
+  } else if (tokenPlacement === "authorization_bearer") {
+    headers.Authorization = `Bearer ${token}`;
+  } else if (authContext.authType === "API_KEY") {
+    headers[feedConfig.api_key_header || "x-api-key"] = token;
+  } else if (authContext.authType === "BASIC_AUTH") {
+    headers.Authorization = `Basic ${token}`;
+  } else {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
+  return headers;
+}
+
+function applyProviderTokenPlacementToUrl(
+  rawUrl: string,
+  tokenPlacement: any,
+  token: string | null
+) {
+  if (!token) return rawUrl;
+  const placement = String(tokenPlacement || "").toLowerCase();
+  if (placement === "query_user_api_hash") {
+    return appendPayloadToUrl(rawUrl, { user_api_hash: token });
+  }
+  if (placement === "query_token") {
+    return appendPayloadToUrl(rawUrl, { token });
+  }
+  return rawUrl;
+}
+
+function plainProviderHttpFailure(feedType: string, status: number) {
+  const normalized = normalizeProviderKey(feedType || "");
+  if (status === 401 || status === 403) {
+    if (normalized.includes("current") || normalized.includes("vehicle")) {
+      return "Provider sign-in worked, but the vehicle endpoint rejected access. Check token placement or vehicle endpoint parameters.";
+    }
+    if (
+      normalized.includes("report") ||
+      normalized.includes("trip") ||
+      normalized.includes("distance")
+    ) {
+      return "Report endpoint rejected access or parameters. Check token placement, date range, report type, vehicle id, and row path.";
+    }
+    return "Provider endpoint rejected access. Check token placement and endpoint parameters.";
+  }
+  if (status >= 400) {
+    if (
+      normalized.includes("report") ||
+      normalized.includes("trip") ||
+      normalized.includes("distance")
+    ) {
+      return "Report endpoint rejected parameters. Ask the provider for get_reports date range, report type, vehicle id, row path, and sample JSON.";
+    }
+    return "Provider endpoint rejected the request. Check the endpoint URL and request shape.";
+  }
+  return "Provider endpoint did not return usable data.";
+}
+
+function plainProviderFailureMessage(message: string) {
+  const text = String(message || "").toLowerCase();
+  if (text.includes("token") && (text.includes("not found") || text.includes("no token"))) {
+    return "Access token not found. Ask the provider which token or hash field is returned after login.";
+  }
+  if (text.includes("login") || text.includes("auth") || text.includes("credential")) {
+    return "Sign-in failed. Check username/password and the provider login request shape.";
+  }
+  if (text.includes("vehicle rows") || text.includes("row path")) {
+    return "No vehicle rows found. Check the vehicle endpoint and row path.";
+  }
+  return sanitizeDiagnosticMessage(message || "Provider connection failed");
 }
 
 async function fetchDiscoveryResponse(
@@ -2040,10 +2379,23 @@ async function authenticateProvider(provider: ProviderRecord): Promise<AuthResul
       : defaultTokenPaths();
     const token = getByPaths(data, tokenPaths);
     const metadata = buildAuthMetadata(provider, data);
-    if (!response.ok || !token) {
+    if (!response.ok) {
       return {
         success: false,
-        message: "No token returned",
+        message: "Sign-in failed. Check username/password and the provider login request shape.",
+        debug: {
+          status: response.status,
+          loginUrl,
+          payload_sent: maskPayload(payload),
+          token_paths_checked: tokenPaths,
+          auth_response_keys: collectSafeResponseKeys(data),
+        },
+      };
+    }
+    if (!token) {
+      return {
+        success: false,
+        message: "Access token not found. Ask the provider which token or hash field is returned after login.",
         debug: {
           status: response.status,
           loginUrl,
@@ -2076,53 +2428,58 @@ async function fetchFleet(
   const authType = (provider.auth_type || "POST_LOGIN").toUpperCase();
   const config = provider.fleet_config || {};
   const method = String(config.method || "POST").toUpperCase();
-  const effectiveFleetUrl = String(
-    renderTemplateValue(fleetUrl, {
-      provider,
-      token,
-      authMetadata,
-      fallbackAuthMetadata: {},
-      credentialOverrides: {},
-      now: new Date(),
-    }).value || fleetUrl
-  );
-  const headers = buildHeaders(config.headers || {}, provider, token, authMetadata);
-  if (token) {
-    const tokenPlacement = String(config.token_placement || "").toLowerCase();
-    if (tokenPlacement === "query_user_api_hash" || tokenPlacement === "query_token" || tokenPlacement === "none") {
-      // Token is already represented in the templated URL, or intentionally omitted.
-    } else if (tokenPlacement === "x_api_key") {
-      headers[config.api_key_header || "X-API-Key"] = token;
-    } else if (tokenPlacement === "authorization_bearer") {
-      headers.Authorization = `Bearer ${token}`;
-    } else if (authType === "API_KEY") headers[config.api_key_header || "x-api-key"] = token;
-    else if (authType === "BASIC_AUTH") headers.Authorization = `Basic ${token}`;
-    else headers.Authorization = `Bearer ${token}`;
-  }
-  const payload = buildPayload(config.payload || {}, provider, token, authMetadata);
-  const response = await fetch(effectiveFleetUrl, {
-    method,
-    headers: withJsonContentType(headers),
-    body: method === "GET" ? undefined : JSON.stringify(payload),
-    cache: "no-store",
-  });
-  const data = await safeJson(response);
-  if (!response.ok) {
-    return {
-      success: false,
-      vehicles: [],
-      message: `Fleet API returned HTTP ${response.status}`,
-      debug: { status: response.status, fleetUrl: maskUrlToken(effectiveFleetUrl, token), fleet_response: data },
-    };
-  }
   const vehiclePaths = Array.isArray(config.vehicle_paths) && config.vehicle_paths.length > 0
     ? config.vehicle_paths
     : defaultVehiclePaths();
-  const vehicles = getByPaths(data, vehiclePaths);
+  const result = await executeProviderRequest(
+    provider,
+    {
+      name: "current_vehicle_feed",
+      feed_type: "current_vehicles",
+      url: fleetUrl,
+      method,
+      headers: config.headers || {},
+      payload: config.payload || {},
+      row_paths: vehiclePaths,
+      token_placement: config.token_placement,
+      api_key_header: config.api_key_header,
+      require_rows: true,
+    },
+    {
+      authContext: {
+        token,
+        metadata: authMetadata,
+        fallbackMetadata: {},
+        authType,
+        profileName: null,
+      },
+      requireRows: true,
+    }
+  );
+
+  if (!result.success) {
+    return {
+      success: false,
+      vehicles: [],
+      message: result.message || "Vehicle feed failed",
+      debug: {
+        status: result.http_status,
+        failure_stage: result.failure_stage,
+        fleetUrl: result.effective_url_masked,
+        response_diagnostics: result.response_diagnostics || null,
+        request_diagnostics: result.request_diagnostics || null,
+      },
+    };
+  }
+
   return {
     success: true,
-    vehicles: Array.isArray(vehicles) ? vehicles : [],
-    debug: { fleetUrl: maskUrlToken(effectiveFleetUrl, token), vehicle_paths_checked: vehiclePaths, fleet_response: data },
+    vehicles: result.rows,
+    debug: {
+      fleetUrl: result.effective_url_masked,
+      vehicle_paths_checked: vehiclePaths,
+      response_diagnostics: result.response_diagnostics,
+    },
   };
 }
 
@@ -2218,10 +2575,12 @@ async function fetchSupplementalFeeds(
 
       if (feedDiagnostics) {
         feedDiagnostics.rendered_request = feedResult.requestDiagnostics;
-        applySupplementalResponseDiagnostics(
-          feedDiagnostics,
-          feedResult.responseDiagnostics
-        );
+        if (feedResult.responseDiagnostics) {
+          applySupplementalResponseDiagnostics(
+            feedDiagnostics,
+            feedResult.responseDiagnostics
+          );
+        }
         feedDiagnostics.success = true;
         feedDiagnostics.rows_found = rows.length;
         feedDiagnostics.unmatched_supplemental_rows = rows.length;
@@ -2266,74 +2625,41 @@ async function fetchSupplementalFeed(
   config: SupplementalFeedConfig,
   payload: any
 ) {
-  const authType = authContext.authType;
-  const token = authContext.token;
-  const method = String(config.method || "GET").toUpperCase();
-  const headers = buildHeaders(
-    config.headers || {},
-    provider,
-    token,
-    authContext.metadata,
-    authContext.fallbackMetadata
-  );
-
-  if (token) {
-    if (authType === "API_KEY") {
-      headers[config.api_key_header || provider.fleet_config?.api_key_header || "x-api-key"] = token;
-    } else if (authType === "BASIC_AUTH") {
-      headers.Authorization = `Basic ${token}`;
-    } else {
-      headers.Authorization = `Bearer ${token}`;
-    }
-  }
-
-  const requestHeaders = withJsonContentType(headers);
-  const requestDiagnostics = buildSupplementalRequestDiagnostics(
-    config.url,
-    method,
-    requestHeaders,
-    payload
-  );
-
-  let response: Response;
-  try {
-    response = await fetch(config.url, {
-      method,
-      headers: requestHeaders,
-      body: method === "GET" ? undefined : JSON.stringify(payload),
-      cache: "no-store",
-    });
-  } catch (err: any) {
-    err.requestDiagnostics = requestDiagnostics;
-    throw err;
-  }
-  const { data, responseType } = await readSafeSupplementalResponse(response);
-
   const paths =
     Array.isArray(config.vehicle_paths) && config.vehicle_paths.length > 0
       ? config.vehicle_paths
       : defaultSupplementalVehiclePaths();
-
-  const responseDiagnostics = buildSupplementalResponseDiagnostics(
-    data,
-    response.status,
-    responseType,
-    paths
+  const result = await executeProviderRequest(
+    provider,
+    {
+      name: config.name,
+      feed_type: config.feed_type || "supplemental",
+      url: config.url,
+      method: config.method || "GET",
+      headers: config.headers || {},
+      payload: payload || {},
+      row_paths: paths,
+      api_key_header:
+        config.api_key_header ||
+        provider.fleet_config?.api_key_header ||
+        "x-api-key",
+    },
+    { authContext }
   );
 
-  if (!response.ok) {
+  if (!result.success) {
     const error = new Error(
-      `Supplemental feed ${config.name} returned HTTP ${response.status}`
+      result.message || `Supplemental feed ${config.name} failed`
     ) as any;
-    error.requestDiagnostics = requestDiagnostics;
-    error.responseDiagnostics = responseDiagnostics;
+    error.requestDiagnostics = result.request_diagnostics;
+    error.responseDiagnostics = result.response_diagnostics;
     throw error;
   }
 
   return {
-    rows: getRowsByPaths(data, paths),
-    requestDiagnostics,
-    responseDiagnostics,
+    rows: result.rows,
+    requestDiagnostics: result.request_diagnostics,
+    responseDiagnostics: result.response_diagnostics,
   };
 }
 
@@ -2770,6 +3096,35 @@ function getSupplementalFeedConfigs(provider: ProviderRecord): SupplementalFeedC
         config.distance_report_api_key_header ||
         config.trip_summary_api_key_header ||
         config.current_status_api_key_header,
+    });
+  }
+
+  const reportFeed = config.report_feed;
+  if (
+    reportFeed &&
+    typeof reportFeed === "object" &&
+    !Array.isArray(reportFeed) &&
+    reportFeed.endpoint_url &&
+    reportFeed.active !== false
+  ) {
+    feeds.push({
+      name: reportFeed.name || "report_feed",
+      url: String(reportFeed.endpoint_url),
+      feed_type: reportFeed.feed_type || "distance_report",
+      auth_profile: reportFeed.auth_profile,
+      method: reportFeed.method || "GET",
+      headers: reportFeed.headers || {},
+      payload: reportFeed.payload || {},
+      vehicle_paths: reportFeed.row_path
+        ? [String(reportFeed.row_path)]
+        : Array.isArray(reportFeed.row_paths)
+          ? reportFeed.row_paths
+          : undefined,
+      match_keys: Array.isArray(reportFeed.match_keys)
+        ? reportFeed.match_keys
+        : undefined,
+      mapping: reportFeed.mapping || {},
+      api_key_header: reportFeed.api_key_header,
     });
   }
 
@@ -4543,7 +4898,25 @@ function maskUrlToken(url: string, token: string | null) {
 }
 
 function defaultTokenPaths() {
-  return ["token", "access_token", "jwt", "bearer_token", "data.token", "data.access_token", "result.token", "result.access_token"];
+  return [
+    "user_api_hash",
+    "token",
+    "access_token",
+    "api_key",
+    "hash",
+    "jwt",
+    "bearer_token",
+    "data.user_api_hash",
+    "data.token",
+    "data.access_token",
+    "data.api_key",
+    "data.hash",
+    "result.user_api_hash",
+    "result.token",
+    "result.access_token",
+    "result.api_key",
+    "result.hash",
+  ];
 }
 
 function defaultVehiclePaths() {

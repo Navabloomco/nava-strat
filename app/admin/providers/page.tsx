@@ -340,17 +340,6 @@ function ProviderCard({
           last_test_message: result.message || current.last_test_message,
           last_test_at: new Date().toISOString(),
         }));
-        const skippedLine = result.skipped_missing_identifier
-          ? `\nSkipped missing identifier: ${result.skipped_missing_identifier}`
-          : "";
-        const crossProviderLine = result.cross_provider_asset_matches
-          ? `\nMatched existing assets from another provider: ${result.cross_provider_asset_matches}`
-          : "";
-        alert(
-          `✅ ${result.message}\nAssets: ${result.assets_count}\nLatest telemetry: ${
-            result.latest_telemetry_at || "none"
-          }${skippedLine}${crossProviderLine}`
-        );
       } else {
         setForm((current: any) => ({
           ...current,
@@ -358,11 +347,14 @@ function ProviderCard({
           last_test_message: result.message || result.error || current.last_test_message,
           last_test_at: new Date().toISOString(),
         }));
-        alert(`❌ ${result.stage || "ERROR"}: ${result.message || result.error}`);
       }
     } catch (err: any) {
       console.error("Test execution error:", err);
-      alert(`Test failed: ${err.message}`);
+      setTestResult({
+        success: false,
+        message: "Connection test failed. Check the provider link and saved credentials.",
+        error: err.message || "Provider test failed",
+      });
     } finally {
       setIsTesting(false);
     }
@@ -424,6 +416,8 @@ function ProviderCard({
         />
       )}
 
+      <ProviderTestOutcome result={testResult} />
+      <ProviderFeedContractSummary summary={form.feed_summary || provider.feed_summary} />
       <ProviderCapabilityDiagnostics summary={testResult?.capability_summary} />
       <ProviderSecondSourceDiagnostics result={testResult} />
       <ProviderDistanceDiagnostics diagnostics={testResult?.distance_diagnostics} />
@@ -574,6 +568,100 @@ function ProviderActivationPanel({
       </div>
     </section>
   );
+}
+
+function ProviderTestOutcome({ result }: { result: any }) {
+  if (!result) return null;
+  const success = Boolean(result.success);
+  const title = success ? "Connection test complete" : "Connection needs attention";
+  const message =
+    result.message ||
+    result.error ||
+    (success
+      ? "Provider connection is returning usable vehicle data."
+      : "Connection test failed. Check the saved provider setup.");
+
+  return (
+    <section style={success ? successPanelStyle : warningPanelStyle}>
+      <div style={diagnosticsEyebrowStyle}>Test connection</div>
+      <h4 style={diagnosticsTitleStyle}>{title}</h4>
+      <p style={panelCopyStyle}>{message}</p>
+      {success ? (
+        <div style={diagnosticsSummaryGridStyle}>
+          <DiagnosticMetric label="Vehicles found" value={result.vehicles_found || 0} />
+          <DiagnosticMetric label="Assets" value={result.assets_count || 0} />
+          <DiagnosticMetric
+            label="Latest telemetry"
+            value={result.latest_telemetry_at ? "available" : "none yet"}
+          />
+        </div>
+      ) : (
+        <div style={panelCopyStyle}>
+          {providerFailureNextStep(result.failure_stage, message)}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ProviderFeedContractSummary({ summary }: { summary: any }) {
+  if (!summary) return null;
+  const currentFeed = summary.current_vehicle_feed || {};
+  const reportFeed = summary.report_feed || {};
+
+  return (
+    <section style={diagnosticsStyle}>
+      <div style={diagnosticsHeaderStyle}>
+        <div>
+          <div style={diagnosticsEyebrowStyle}>Provider connection contract</div>
+          <h4 style={diagnosticsTitleStyle}>Current vehicle feed and report feed</h4>
+        </div>
+      </div>
+      <div style={feedGridStyle}>
+        <div style={feedPanelStyle}>
+          <div style={feedTitleStyle}>Current vehicle feed</div>
+          <p style={panelCopyStyle}>
+            {currentFeed.configured
+              ? "Configured for live/current vehicle rows."
+              : "Current vehicle endpoint is not configured yet."}
+          </p>
+          <DiagnosticMetric label="Method" value={currentFeed.method || "GET"} />
+          <DiagnosticMetric
+            label="Row path"
+            value={(currentFeed.row_paths || []).join(", ") || "not set"}
+          />
+        </div>
+        <div style={feedPanelStyle}>
+          <div style={feedTitleStyle}>Report/distance feed</div>
+          <p style={panelCopyStyle}>
+            {reportFeed.configured
+              ? "Configured separately for report and distance rows."
+              : reportFeed.setup_message ||
+                "Report endpoint not configured yet. Ask provider for get_reports parameters."}
+          </p>
+          <DiagnosticMetric
+            label="Status"
+            value={reportFeed.configured ? "configured" : "not active"}
+          />
+          <DiagnosticMetric label="Method" value={reportFeed.method || "GET"} />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function providerFailureNextStep(stage: string | null, message: string) {
+  const text = String(message || "").toLowerCase();
+  if (stage === "auth" || text.includes("sign-in") || text.includes("token")) {
+    return "Check username/password, login endpoint, token path, and token placement.";
+  }
+  if (text.includes("vehicle endpoint") || text.includes("vehicle rows")) {
+    return "Check the vehicle endpoint, token placement, and row path.";
+  }
+  if (text.includes("report")) {
+    return "Check report endpoint parameters before enabling automated distance ingestion.";
+  }
+  return "Open Advanced settings only if the provider supplied exact endpoint or mapping details.";
 }
 
 function ProviderSecondSourceDiagnostics({ result }: { result: any }) {
@@ -1519,11 +1607,13 @@ function DiagnosticMetric({
   value: any;
   compact?: boolean;
 }) {
+  const displayValue =
+    typeof value === "number"
+      ? Number(value || 0).toLocaleString()
+      : String(value ?? "");
   return (
     <div style={compact ? diagnosticsMiniMetricStyle : diagnosticsMetricStyle}>
-      <div style={diagnosticsMetricValueStyle}>
-        {Number(value || 0).toLocaleString()}
-      </div>
+      <div style={diagnosticsMetricValueStyle}>{displayValue}</div>
       <div style={diagnosticsMetricLabelStyle}>{label}</div>
     </div>
   );
@@ -1831,6 +1921,39 @@ const diagnosticsSummaryGridStyle = {
   gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
   gap: 10,
   marginBottom: 14,
+};
+const feedGridStyle = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+  gap: 12,
+};
+const feedPanelStyle = {
+  border: "1px solid #e2e8f0",
+  backgroundColor: "#fff",
+  borderRadius: 10,
+  padding: 14,
+};
+const feedTitleStyle = {
+  color: "#0f172a",
+  fontSize: 14,
+  fontWeight: 850,
+  marginBottom: 6,
+};
+const panelCopyStyle = {
+  margin: "0 0 12px 0",
+  color: "#475569",
+  fontSize: 13,
+  lineHeight: 1.55,
+};
+const successPanelStyle = {
+  ...diagnosticsStyle,
+  border: "1px solid #bbf7d0",
+  background: "#f0fdf4",
+};
+const warningPanelStyle = {
+  ...diagnosticsStyle,
+  border: "1px solid #fde68a",
+  background: "#fffbeb",
 };
 const diagnosticsMetricStyle = {
   border: "1px solid #e2e8f0",
