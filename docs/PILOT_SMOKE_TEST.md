@@ -95,6 +95,9 @@ Open `/admin/providers?companyId=<id>`.
 - [ ] Confirm no raw browser alert displays messages such as `Fleet API returned HTTP 401`; failures appear as sanitized inline Provider Vault status.
 - [ ] Run Provider Vault Data Discovery Diagnostics with no extra endpoint and confirm it tests configured endpoints only, shows sanitized response shape/key/path information, and writes nothing.
 - [ ] Confirm Data Discovery Diagnostics allows one explicitly entered report/trip candidate endpoint at a time or a short explicit list, with masked query values and no raw payload display.
+- [ ] If Data Discovery finds a better current-vehicle array path, such as saved `$` with 1 row and suggested `$.items` with 36 rows, confirm Provider Vault shows "Apply suggested vehicle path."
+- [ ] Click "Apply suggested vehicle path" and confirm the saved current feed row path and safe field mappings update, provider sync remains inactive/retest-required, and no credentials or raw payloads are exposed.
+- [ ] Run Test Connection again and confirm it uses the applied row path and reports the larger vehicle count.
 - [ ] If no BlueTrax report endpoint is configured, confirm the setup blocker says to ask BlueTrax for trip/report endpoint, auth method, token path, row path, and sample response.
 - [ ] Confirm capability diagnostics separate provider default capability from observed row capability.
 - [ ] Confirm observed BlueTrax/JLCL rows show `GPS Intelligence` unless ignition/CAN/tank signals have been explicitly verified.

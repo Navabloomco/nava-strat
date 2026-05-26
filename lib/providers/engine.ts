@@ -86,6 +86,7 @@ export type ProviderDataDiscoveryEndpointDiagnostics = {
   candidate_row_paths: string[];
   candidate_row_paths_found: Record<string, number>;
   detected_useful_fields: string[];
+  field_mapping_suggestions?: Record<string, string>;
   sanitized_sample_shape: any;
   rows_detected: number;
   body_truncated?: boolean;
@@ -1227,6 +1228,7 @@ async function testProviderDiscoveryEndpoint(
     const rowPaths = endpoint.rowPaths;
     const rows = execution.rows;
     const usefulFields = detectUsefulDiscoveryFields(execution.data, rows);
+    const fieldMappingSuggestions = buildDiscoveryFieldMappingSuggestions(rows);
     const blocker = buildDiscoverySetupBlocker({
       httpStatus: execution.http_status || 0,
       responseType: execution.response_type || "error",
@@ -1245,6 +1247,7 @@ async function testProviderDiscoveryEndpoint(
       top_level_keys: collectTopLevelKeys(execution.data),
       candidate_row_paths_found: collectArrayPathCounts(execution.data),
       detected_useful_fields: usefulFields,
+      field_mapping_suggestions: fieldMappingSuggestions,
       sanitized_sample_shape: buildSanitizedSampleShape(rows[0] || execution.data),
       rows_detected: rows.length,
       setup_blocker: blocker || execution.setup_blocker,
@@ -1562,6 +1565,47 @@ function detectUsefulDiscoveryFields(data: any, rows: any[]) {
   }
 
   return detected.slice(0, 50);
+}
+
+function buildDiscoveryFieldMappingSuggestions(rows: any[]) {
+  const source = rows.length > 0 ? rows.slice(0, 3) : [];
+  const keys = new Map<string, string>();
+  collectSafeKeyNames(source, keys, 0);
+
+  const mappingTargets: Array<{ target: string; aliases: string[] }> = [
+    {
+      target: "truck",
+      aliases: ["vehicle", "truck", "truck_id", "reg", "reg_no", "registration", "plate", "unit_id"],
+    },
+    { target: "latitude", aliases: ["latitude", "lat", "gps_lat", "y"] },
+    { target: "longitude", aliases: ["longitude", "lng", "lon", "gps_lng", "gps_lon", "x"] },
+    { target: "speed", aliases: ["speed", "velocity", "kph", "speed_kph"] },
+    {
+      target: "recorded_at",
+      aliases: ["timestamp", "time", "fixtime", "currenttime", "current_time", "recorded_at", "gps_time"],
+    },
+    {
+      target: "location_label",
+      aliases: ["location", "currentlocation", "address", "place", "label"],
+    },
+    { target: "driver", aliases: ["driver", "drivername", "driver_name"] },
+    { target: "ignition_on", aliases: ["ignition", "ignition_on", "acc", "accstatus", "engine_on"] },
+    { target: "engine_rpm", aliases: ["rpm", "engine_rpm", "enginerpm"] },
+    { target: "fuel_level", aliases: ["fuel", "fuellevel", "currentfuellevel", "fuel_level"] },
+  ];
+
+  const suggestions: Record<string, string> = {};
+  for (const field of mappingTargets) {
+    const match = field.aliases.find((alias) =>
+      keys.has(normalizeProviderKey(alias))
+    );
+    if (match) {
+      const originalKey = keys.get(normalizeProviderKey(match));
+      if (originalKey) suggestions[field.target] = originalKey;
+    }
+  }
+
+  return suggestions;
 }
 
 function buildSanitizedSampleShape(value: any, depth = 0): any {
@@ -2423,14 +2467,23 @@ async function fetchFleet(
   token: string | null,
   authMetadata: AuthMetadata = {}
 ): Promise<FleetResult> {
-  const fleetUrl = provider.fleet_url || provider.fleet_config?.fleet_url || provider.default_fleet_url;
+  const currentFeed = provider.fleet_config?.current_vehicle_feed || {};
+  const fleetUrl =
+    currentFeed.endpoint_url ||
+    provider.fleet_url ||
+    provider.fleet_config?.fleet_url ||
+    provider.default_fleet_url;
   if (!fleetUrl) return { success: false, vehicles: [], message: "Fleet URL missing" };
   const authType = (provider.auth_type || "POST_LOGIN").toUpperCase();
   const config = provider.fleet_config || {};
-  const method = String(config.method || "POST").toUpperCase();
-  const vehiclePaths = Array.isArray(config.vehicle_paths) && config.vehicle_paths.length > 0
-    ? config.vehicle_paths
-    : defaultVehiclePaths();
+  const method = String(currentFeed.method || config.method || "POST").toUpperCase();
+  const vehiclePaths = Array.isArray(currentFeed.row_paths) && currentFeed.row_paths.length > 0
+    ? currentFeed.row_paths
+    : currentFeed.row_path
+      ? [currentFeed.row_path]
+      : Array.isArray(config.vehicle_paths) && config.vehicle_paths.length > 0
+        ? config.vehicle_paths
+        : defaultVehiclePaths();
   const result = await executeProviderRequest(
     provider,
     {
@@ -2438,11 +2491,11 @@ async function fetchFleet(
       feed_type: "current_vehicles",
       url: fleetUrl,
       method,
-      headers: config.headers || {},
-      payload: config.payload || {},
+      headers: currentFeed.headers || config.headers || {},
+      payload: currentFeed.payload || config.payload || {},
       row_paths: vehiclePaths,
-      token_placement: config.token_placement,
-      api_key_header: config.api_key_header,
+      token_placement: currentFeed.token_placement || config.token_placement,
+      api_key_header: currentFeed.api_key_header || config.api_key_header,
       require_rows: true,
     },
     {
@@ -3496,7 +3549,7 @@ function collectArrayPathCounts(data: any) {
     }
 
     if (Array.isArray(value)) {
-      counts[path || "$"] = value.length;
+      counts[path ? `$.${path}` : "$"] = value.length;
 
       for (const item of value.slice(0, 3)) {
         if (item && typeof item === "object") {
@@ -4879,7 +4932,8 @@ function getByPaths(data: any, paths: string[]) {
 
 function getByPath(obj: any, path: string) {
   if (path === "$") return obj;
-  return path.split(".").reduce((current, part) => current?.[part], obj);
+  const normalizedPath = path.startsWith("$.") ? path.slice(2) : path;
+  return normalizedPath.split(".").reduce((current, part) => current?.[part], obj);
 }
 
 function appendPayloadToUrl(url: string, payload: any) {

@@ -120,6 +120,20 @@ const BLOCKED_HEADER_TEMPLATE_MACROS = new Set([
   "token",
 ]);
 
+const SAFE_PROVIDER_ROW_PATH = /^(\$|[A-Za-z0-9_]+)(\.[A-Za-z0-9_]+|\[\]){0,8}$/;
+const SAFE_VEHICLE_MAPPING_TARGETS = new Set([
+  "truck",
+  "latitude",
+  "longitude",
+  "speed",
+  "recorded_at",
+  "location_label",
+  "driver",
+  "ignition_on",
+  "engine_rpm",
+  "fuel_level",
+]);
+
 function getProviderCapabilities(roles: string[], isPlatformOwner: boolean) {
   const normalizedRoles = new Set(roles.map((role) => role.toLowerCase()));
   const isCompanyAdmin =
@@ -167,6 +181,7 @@ function sanitizeProvider(provider: any, capabilities: ProviderCapabilities) {
     last_sync_at: provider.last_sync_at || provider.last_test_at || null,
     created_at: provider.created_at || null,
     updated_at: provider.updated_at || null,
+    feed_summary: buildSafeProviderFeedSummary(provider),
   };
 
   if (
@@ -206,6 +221,76 @@ function sanitizeProvider(provider: any, capabilities: ProviderCapabilities) {
   }
 
   return baseProvider;
+}
+
+function buildSafeProviderFeedSummary(provider: any) {
+  const fleetConfig = provider?.fleet_config || {};
+  const currentFeed = fleetConfig.current_vehicle_feed || {};
+  const reportFeed = fleetConfig.report_feed || {};
+  const fleetUrl =
+    provider?.fleet_url ||
+    fleetConfig.fleet_url ||
+    currentFeed.endpoint_url ||
+    null;
+  const reportEndpoint =
+    reportFeed.endpoint_url ||
+    fleetConfig.distance_report_url ||
+    fleetConfig.trip_summary_url ||
+    null;
+  const reportConfigured = Boolean(
+    reportEndpoint &&
+      reportFeed.active !== false &&
+      ((reportFeed.row_path || reportFeed.row_paths?.length) ||
+        fleetConfig.distance_report_vehicle_paths?.length ||
+        fleetConfig.trip_summary_vehicle_paths?.length) &&
+      (Object.keys(reportFeed.mapping || {}).length > 0 ||
+        Object.keys(fleetConfig.distance_report_mapping || {}).length > 0 ||
+        Object.keys(fleetConfig.trip_summary_mapping || {}).length > 0)
+  );
+
+  return {
+    auth_channel: {
+      auth_type: provider?.auth_type || null,
+      login_configured: Boolean(provider?.login_url || provider?.auth_config?.login_url),
+      token_paths: Array.isArray(provider?.auth_config?.token_paths)
+        ? provider.auth_config.token_paths.map((path: any) => String(path)).slice(0, 10)
+        : [],
+    },
+    current_vehicle_feed: {
+      configured: Boolean(fleetUrl),
+      method: String(currentFeed.method || fleetConfig.method || "GET").toUpperCase(),
+      row_paths: Array.isArray(currentFeed.row_paths)
+        ? currentFeed.row_paths.map((path: any) => String(path)).slice(0, 10)
+        : currentFeed.row_path
+          ? [String(currentFeed.row_path)]
+          : Array.isArray(fleetConfig.vehicle_paths)
+            ? fleetConfig.vehicle_paths.map((path: any) => String(path)).slice(0, 10)
+            : [],
+      token_placement:
+        currentFeed.token_placement || fleetConfig.token_placement || null,
+    },
+    report_feed: {
+      endpoint_present: Boolean(reportEndpoint),
+      configured: reportConfigured,
+      active: reportConfigured,
+      method: String(
+        reportFeed.method ||
+          fleetConfig.distance_report_method ||
+          fleetConfig.trip_summary_method ||
+          "GET"
+      ).toUpperCase(),
+      row_paths: reportFeed.row_path
+        ? [String(reportFeed.row_path)]
+        : Array.isArray(reportFeed.row_paths)
+          ? reportFeed.row_paths.map((path: any) => String(path)).slice(0, 10)
+          : Array.isArray(fleetConfig.distance_report_vehicle_paths)
+            ? fleetConfig.distance_report_vehicle_paths.map((path: any) => String(path)).slice(0, 10)
+            : [],
+      setup_message: reportConfigured
+        ? "Report/distance feed is configured for dry-run testing."
+        : "Report endpoint not configured yet. Ask provider for get_reports parameters: date range, report type, vehicle id, row path, and sample JSON.",
+    },
+  };
 }
 
 function sanitizeFleetConfigForResponse(fleetConfig: any) {
@@ -857,6 +942,15 @@ export async function PATCH(
       );
     }
 
+    if (body.apply_vehicle_path_suggestion) {
+      return applySuggestedVehiclePath({
+        body,
+        existingProvider,
+        resolved,
+        providerId: params.id,
+      });
+    }
+
     const updates: Record<string, any> = {};
     const credentialFields = [
       "username",
@@ -1011,6 +1105,141 @@ export async function PATCH(
       { status: 500 }
     );
   }
+}
+
+async function applySuggestedVehiclePath({
+  body,
+  existingProvider,
+  resolved,
+  providerId,
+}: {
+  body: any;
+  existingProvider: any;
+  resolved: Extract<ResolveCompanyResult, { company: ResolvedCompany }>;
+  providerId: string;
+}) {
+  const rowPathResult = sanitizeSuggestedVehicleRowPath(
+    body.row_path || body.vehicle_row_path || body.suggested_row_path
+  );
+  if (rowPathResult.error) {
+    return NextResponse.json(
+      { success: false, error: rowPathResult.error },
+      { status: 400 }
+    );
+  }
+
+  if (existingProvider.is_active && !body.confirm_active_provider_change) {
+    return NextResponse.json(
+      {
+        success: false,
+        requires_confirmation: true,
+        error:
+          "This changes how vehicle rows are read. Sync remains paused and requires a retest before activation.",
+      },
+      { status: 409 }
+    );
+  }
+
+  const mappingSuggestions = sanitizeVehicleFieldMapping(
+    body.field_mapping || body.mapping_suggestions || {}
+  );
+  const currentFleetConfig = clonePlainObject(existingProvider.fleet_config);
+  const currentVehicleFeed = clonePlainObject(
+    currentFleetConfig.current_vehicle_feed
+  );
+  const existingFieldMapping = clonePlainObject(existingProvider.field_mapping);
+  const currentFeedMapping = clonePlainObject(currentVehicleFeed.mapping);
+  const nextFieldMapping = {
+    ...existingFieldMapping,
+    ...mappingSuggestions,
+  };
+  const nextFleetConfig = {
+    ...currentFleetConfig,
+    data_group: rowPathResult.path,
+    vehicle_paths: [rowPathResult.path],
+    current_vehicle_feed: {
+      ...currentVehicleFeed,
+      row_path: rowPathResult.path,
+      row_paths: [rowPathResult.path],
+      mapping: {
+        ...currentFeedMapping,
+        ...mappingSuggestions,
+      },
+    },
+  };
+
+  const updates: Record<string, any> = {
+    fleet_config: preserveRedactedUsernameOverrides(
+      nextFleetConfig,
+      existingProvider.fleet_config
+    ),
+    field_mapping: nextFieldMapping,
+    is_active: false,
+    last_test_status: "pending",
+    last_test_message: "Vehicle row path updated. Run Test Connection again.",
+    last_test_at: null,
+  };
+
+  const { data: provider, error } = await supabaseAdmin
+    .from("tracking_providers")
+    .update(updates)
+    .eq("id", providerId)
+    .eq("company_id", resolved.company.id)
+    .select("*")
+    .single();
+
+  if (error) throw error;
+
+  return NextResponse.json({
+    success: true,
+    provider: sanitizeProvider(provider, resolved.capabilities),
+    applied_vehicle_path: rowPathResult.path,
+    applied_field_mapping: mappingSuggestions,
+    message: "Vehicle row path updated. Run Test Connection again.",
+  });
+}
+
+function clonePlainObject(value: any) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return JSON.parse(JSON.stringify(value));
+}
+
+function sanitizeSuggestedVehicleRowPath(value: any) {
+  const path = String(value || "").trim();
+  if (!path) return { error: "Suggested vehicle row path is required." };
+  if (
+    path.includes("://") ||
+    /[\s,]/.test(path) ||
+    path.length > 160 ||
+    !SAFE_PROVIDER_ROW_PATH.test(path)
+  ) {
+    return {
+      error:
+        "Use one JSON row path only, for example $, $.items, data, items, or data.vehicles.",
+    };
+  }
+  return { path };
+}
+
+function sanitizeVehicleFieldMapping(value: any) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+
+  const mapping: Record<string, string> = {};
+  for (const [target, rawPath] of Object.entries(value)) {
+    if (!SAFE_VEHICLE_MAPPING_TARGETS.has(target)) continue;
+    const path = String(rawPath || "").trim();
+    if (
+      !path ||
+      path.length > 160 ||
+      path.includes("://") ||
+      /[\s,]/.test(path) ||
+      !SAFE_PROVIDER_ROW_PATH.test(path)
+    ) {
+      continue;
+    }
+    mapping[target] = path;
+  }
+  return mapping;
 }
 
 function sanitizeOptionalObject(value: any) {

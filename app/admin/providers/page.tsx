@@ -201,6 +201,13 @@ export default function ProviderVault() {
             key={p.id} 
             provider={p} 
             onSave={handleSave} 
+            onProviderUpdated={(updatedProvider) =>
+              setProviders((current) =>
+                current.map((provider) =>
+                  provider.id === updatedProvider.id ? updatedProvider : provider
+                )
+              )
+            }
             isSaving={isSaving} 
             capabilities={capabilities}
             selectedCompanyId={selectedCompanyId}
@@ -295,12 +302,14 @@ function EmptyProviderState({
 function ProviderCard({
   provider,
   onSave,
+  onProviderUpdated,
   isSaving,
   capabilities,
   selectedCompanyId,
 }: {
   provider: any;
   onSave: (updatedProvider: any) => void;
+  onProviderUpdated: (updatedProvider: any) => void;
   isSaving: boolean;
   capabilities: any;
   selectedCompanyId: string;
@@ -425,6 +434,19 @@ function ProviderCard({
         providerId={form.id}
         selectedCompanyId={selectedCompanyId}
         canRun={capabilities.can_test_provider}
+        canApply={
+          capabilities.can_update_provider_credentials ||
+          capabilities.can_edit_advanced_provider_config
+        }
+        isActive={Boolean(form.is_active)}
+        currentRowPaths={getCurrentVehicleRowPaths(form)}
+        onApplied={(updatedProvider) => {
+          setForm((current: any) => ({
+            ...current,
+            ...updatedProvider,
+          }));
+          onProviderUpdated(updatedProvider);
+        }}
       />
       <DistanceReportImport
         providerId={form.id}
@@ -798,14 +820,24 @@ function ProviderDataDiscoveryDiagnostics({
   providerId,
   selectedCompanyId,
   canRun,
+  canApply,
+  isActive,
+  currentRowPaths,
+  onApplied,
 }: {
   providerId: string;
   selectedCompanyId: string;
   canRun: boolean;
+  canApply: boolean;
+  isActive: boolean;
+  currentRowPaths: string[];
+  onApplied: (updatedProvider: any) => void;
 }) {
   const [candidateEndpoints, setCandidateEndpoints] = useState("");
   const [isRunning, setIsRunning] = useState(false);
+  const [isApplyingSuggestion, setIsApplyingSuggestion] = useState(false);
   const [result, setResult] = useState<any>(null);
+  const [applyMessage, setApplyMessage] = useState("");
 
   if (!canRun) return null;
 
@@ -838,12 +870,84 @@ function ProviderDataDiscoveryDiagnostics({
         throw new Error(payload.error || "Data discovery failed");
       }
       setResult(payload.data_discovery_diagnostics);
+      setApplyMessage("");
     } catch (err: any) {
       alert(err.message || "Data discovery failed");
     } finally {
       setIsRunning(false);
     }
   }
+
+  async function applySuggestedVehiclePath(suggestion: any, confirmed = false) {
+    if (!suggestion?.path) return;
+    if (
+      isActive &&
+      !confirmed &&
+      !window.confirm(
+        "This changes how vehicle rows are read. Sync remains paused and requires a retest before activation."
+      )
+    ) {
+      return;
+    }
+
+    setIsApplyingSuggestion(true);
+    setApplyMessage("");
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        throw new Error("Session expired. Please log in again.");
+      }
+
+      const res = await fetch(`/api/providers/${providerId}`, {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          ...(selectedCompanyId ? { companyId: selectedCompanyId } : {}),
+          apply_vehicle_path_suggestion: true,
+          row_path: suggestion.path,
+          field_mapping: suggestion.mapping || {},
+          confirm_active_provider_change: confirmed || isActive,
+        }),
+      });
+      const payload = await res.json();
+
+      if (res.status === 409 && payload.requires_confirmation) {
+        if (
+          window.confirm(
+            payload.error ||
+              "This changes how vehicle rows are read. Sync remains paused and requires a retest before activation."
+          )
+        ) {
+          await applySuggestedVehiclePath(suggestion, true);
+        }
+        return;
+      }
+
+      if (!res.ok || !payload.success) {
+        throw new Error(payload.error || "Unable to apply suggested vehicle path.");
+      }
+
+      if (payload.provider) onApplied(payload.provider);
+      setApplyMessage(
+        payload.message || "Vehicle row path updated. Run Test Connection again."
+      );
+    } catch (err: any) {
+      setApplyMessage(err.message || "Unable to apply suggested vehicle path.");
+    } finally {
+      setIsApplyingSuggestion(false);
+    }
+  }
+
+  const suggestedVehiclePath = findBestVehicleRowPathSuggestion(
+    result,
+    currentRowPaths
+  );
 
   return (
     <section style={diagnosticsStyle}>
@@ -918,6 +1022,51 @@ function ProviderDataDiscoveryDiagnostics({
             value={result.setup_blockers}
             mutedEmpty="No setup blockers detected."
           />
+
+          {suggestedVehiclePath && (
+            <section style={warningPanelStyle}>
+              <div style={diagnosticsEyebrowStyle}>Vehicle row path suggestion</div>
+              <h4 style={diagnosticsTitleStyle}>Better vehicle array found</h4>
+              <p style={panelCopyStyle}>
+                Current row path{" "}
+                <code>{suggestedVehiclePath.currentPath || "not set"}</code>{" "}
+                found {suggestedVehiclePath.currentCount.toLocaleString()} row
+                {suggestedVehiclePath.currentCount === 1 ? "" : "s"}. Nava
+                found a better vehicle row path:{" "}
+                <code>{suggestedVehiclePath.path}</code> with{" "}
+                {suggestedVehiclePath.count.toLocaleString()} rows.
+              </p>
+              <DiagnosticFieldBlock
+                title="Field mapping suggestions"
+                value={suggestedVehiclePath.mapping}
+                mutedEmpty="No safe field mapping suggestions were detected."
+              />
+              {canApply ? (
+                <div style={distanceImportActionRowStyle}>
+                  <button
+                    type="button"
+                    onClick={() => applySuggestedVehiclePath(suggestedVehiclePath)}
+                    disabled={isApplyingSuggestion}
+                    style={saveBtn}
+                  >
+                    {isApplyingSuggestion
+                      ? "APPLYING..."
+                      : "APPLY SUGGESTED VEHICLE PATH"}
+                  </button>
+                  <span style={diagnosticsSmallTextStyle}>
+                    This keeps the provider inactive until Test Connection passes again.
+                  </span>
+                </div>
+              ) : (
+                <div style={diagnosticsEmptyStyle}>
+                  Ask a company administrator to apply this suggested row path.
+                </div>
+              )}
+              {applyMessage && (
+                <div style={diagnosticsEmptyStyle}>{applyMessage}</div>
+              )}
+            </section>
+          )}
 
           <div style={diagnosticsFeedListStyle}>
             {(result.endpoints || []).map((endpoint: any, index: number) => (
@@ -1025,6 +1174,97 @@ function parseDiscoveryEndpointText(value: string) {
     .filter(Boolean)
     .slice(0, 6)
     .map((url) => ({ url, method: "GET" }));
+}
+
+function getCurrentVehicleRowPaths(provider: any) {
+  const summaryPaths =
+    provider?.feed_summary?.current_vehicle_feed?.row_paths || [];
+  const currentFeed = provider?.fleet_config?.current_vehicle_feed || {};
+  const paths = [
+    ...summaryPaths,
+    ...(Array.isArray(currentFeed.row_paths) ? currentFeed.row_paths : []),
+    currentFeed.row_path,
+    ...(Array.isArray(provider?.fleet_config?.vehicle_paths)
+      ? provider.fleet_config.vehicle_paths
+      : []),
+  ]
+    .map((path) => String(path || "").trim())
+    .filter(Boolean);
+
+  return Array.from(new Set(paths));
+}
+
+function findBestVehicleRowPathSuggestion(result: any, currentRowPaths: string[]) {
+  if (!result?.endpoints?.length) return null;
+  const normalizedCurrentPaths =
+    currentRowPaths.length > 0 ? currentRowPaths : ["$"];
+  let best: any = null;
+
+  for (const endpoint of result.endpoints || []) {
+    const counts = endpoint?.candidate_row_paths_found || {};
+    const entries = Object.entries(counts)
+      .map(([path, count]) => ({
+        path,
+        count: Number(count || 0),
+      }))
+      .filter((entry) => entry.path && entry.count > 0);
+
+    if (entries.length === 0) continue;
+
+    const currentCounts = normalizedCurrentPaths.map((path) => ({
+      path,
+      count: Number(counts[path] || 0),
+    }));
+    const current =
+      currentCounts.find((entry) => entry.count > 0) || currentCounts[0];
+    const endpointBest = entries.sort((a, b) => b.count - a.count)[0];
+
+    if (
+      endpointBest.path &&
+      !normalizedCurrentPaths.includes(endpointBest.path) &&
+      endpointBest.count > Math.max(Number(current?.count || 0), 1)
+    ) {
+      const suggestion = {
+        path: endpointBest.path,
+        count: endpointBest.count,
+        currentPath: current?.path || normalizedCurrentPaths[0] || "$",
+        currentCount: Number(current?.count || 0),
+        mapping: buildFieldMappingSuggestion(endpoint),
+      };
+      if (!best || suggestion.count > best.count) best = suggestion;
+    }
+  }
+
+  return best;
+}
+
+function buildFieldMappingSuggestion(endpoint: any) {
+  const explicit = endpoint?.field_mapping_suggestions;
+  if (explicit && typeof explicit === "object" && !Array.isArray(explicit)) {
+    return explicit;
+  }
+
+  const mapping: Record<string, string> = {};
+  const fieldLabels: Record<string, string> = {
+    "vehicle/reg/truck": "truck",
+    latitude: "latitude",
+    longitude: "longitude",
+    speed: "speed",
+    timestamp: "recorded_at",
+    "location label": "location_label",
+    "ignition/ACC": "ignition_on",
+    RPM: "engine_rpm",
+    "fuel level": "fuel_level",
+    driver: "driver",
+  };
+
+  for (const entry of endpoint?.detected_useful_fields || []) {
+    const [rawLabel, rawPath] = String(entry).split(":").map((part) => part.trim());
+    const target = fieldLabels[rawLabel];
+    if (target && rawPath) mapping[target] = rawPath;
+  }
+
+  return mapping;
 }
 
 function DistanceReportImport({
