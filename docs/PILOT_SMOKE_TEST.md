@@ -146,6 +146,12 @@ Open `/admin/assets?companyId=<id>`.
 
 - [ ] Confirm imported assets count is visible.
 - [ ] Confirm unreviewed assets are visually obvious.
+- [ ] Confirm FleetTrack/Oak and Gold assets do not display 1970-style `Last seen` dates; invalid provider timestamps show `Provider timestamp invalid` or `Last seen unavailable`.
+- [ ] Confirm the `Needs timestamp review` filter shows assets with invalid, missing, future, or first-seen-conflicting provider timestamps.
+- [ ] Confirm search works by truck ID/plate, provider, category, and review status.
+- [ ] Confirm filters/tabs work for All, Unreviewed, Enabled intelligence, Excluded/disabled, Needs timestamp review, New provider assets, Cars/pickups/motorbikes, Trucks, and Possible duplicates.
+- [ ] Select multiple unreviewed provider assets and bulk exclude cars/pickups/motorbikes with an excluded reason.
+- [ ] Select truck assets and bulk enable only after the confirmation shows projected billable enabled count and planning-only monthly estimate.
 - [ ] Enable one test asset if safe.
 - [ ] Confirm enabled asset gets an asset category, `billing_status = enabled`, `intelligence_enabled = true`, and `billing_enabled_at` present.
 - [ ] Confirm strict billable count includes only assets where all are true:

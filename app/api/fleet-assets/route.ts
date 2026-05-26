@@ -14,6 +14,26 @@ export const revalidate = 0;
 const REVIEW_ROLES = ["owner", "admin", "platform_owner"] as const;
 const COMPANY_SELECT =
   "id, name, slug, subscription_plan, business_type, primary_asset_types, main_billing_unit, operating_regions, primary_use_case, asset_unit_price, billing_currency, included_assets, trial_starts_at, trial_ends_at, billing_cycle_day";
+const ASSET_CATEGORIES = new Set([
+  "unknown",
+  "truck",
+  "trailer",
+  "van",
+  "pickup",
+  "car",
+  "motorcycle",
+  "equipment",
+  "other",
+]);
+const EXCLUDED_REASONS = new Set([
+  "personal_use",
+  "duplicate",
+  "inactive_device",
+  "test_device",
+  "sold_or_removed",
+  "not_used_for_operations",
+  "other",
+]);
 
 type ResolvedCompany = {
   id: string;
@@ -44,6 +64,7 @@ function noStoreJson(body: any, init?: ResponseInit) {
 }
 
 function sanitizeAsset(asset: any) {
+  const timestampQuality = deriveAssetTimestampQuality(asset);
   return {
     id: asset.id,
     registration: asset.registration || null,
@@ -71,6 +92,8 @@ function sanitizeAsset(asset: any) {
     canbus_enabled: Boolean(asset.canbus_enabled),
     fuel_rod_installed: Boolean(asset.fuel_rod_installed),
     fuel_rod_calibration_status: asset.fuel_rod_calibration_status || null,
+    timestamp_quality: timestampQuality,
+    needs_timestamp_review: timestampQuality.status !== "valid",
   };
 }
 
@@ -80,8 +103,8 @@ function sortAssetsForReview(assets: any[]) {
     const bUnreviewed = isPendingAssetReview(b) ? 0 : 1;
     if (aUnreviewed !== bUnreviewed) return aUnreviewed - bUnreviewed;
 
-    const aTime = new Date(a.last_seen_at || a.first_seen_at || 0).getTime();
-    const bTime = new Date(b.last_seen_at || b.first_seen_at || 0).getTime();
+    const aTime = trustedAssetSortTime(a);
+    const bTime = trustedAssetSortTime(b);
     return bTime - aTime;
   });
 }
@@ -105,7 +128,56 @@ function buildSummary(assets: any[]) {
     billable_enabled_count: billableAssets.length,
     excluded_count: assets.filter((asset) => asset.billing_status === "excluded").length,
     disabled_count: assets.filter((asset) => asset.billing_status === "disabled").length,
+    needs_timestamp_review_count: assets.filter(
+      (asset) => deriveAssetTimestampQuality(asset).status !== "valid"
+    ).length,
   };
+}
+
+function trustedAssetSortTime(asset: any) {
+  const timestampQuality = deriveAssetTimestampQuality(asset);
+  const lastSeen = timestampQuality.status === "valid" ? new Date(asset.last_seen_at).getTime() : 0;
+  if (Number.isFinite(lastSeen) && lastSeen > 0) return lastSeen;
+  const firstSeen = new Date(asset.first_seen_at || 0).getTime();
+  return Number.isFinite(firstSeen) ? firstSeen : 0;
+}
+
+function deriveAssetTimestampQuality(asset: any) {
+  const embedded = asset?.telemetry_capabilities?.timestamp_quality;
+  const embeddedStatus = String(embedded?.status || "").toLowerCase();
+  if (["invalid", "suspect", "missing"].includes(embeddedStatus)) {
+    return {
+      status: embeddedStatus,
+      reason: String(embedded?.reason || "provider_timestamp_needs_review"),
+    };
+  }
+
+  if (!asset?.last_seen_at) {
+    return { status: "missing", reason: "last_seen_unavailable" };
+  }
+
+  const lastSeen = new Date(asset.last_seen_at);
+  if (Number.isNaN(lastSeen.getTime())) {
+    return { status: "invalid", reason: "last_seen_unparseable" };
+  }
+  if (lastSeen.getUTCFullYear() < 2000) {
+    return { status: "invalid", reason: "provider_timestamp_before_2000" };
+  }
+  if (lastSeen.getTime() > Date.now() + 48 * 60 * 60 * 1000) {
+    return { status: "invalid", reason: "provider_timestamp_in_future" };
+  }
+
+  if (asset.first_seen_at) {
+    const firstSeen = new Date(asset.first_seen_at);
+    if (
+      Number.isFinite(firstSeen.getTime()) &&
+      lastSeen.getTime() < firstSeen.getTime() - 24 * 60 * 60 * 1000
+    ) {
+      return { status: "invalid", reason: "last_seen_before_first_seen" };
+    }
+  }
+
+  return { status: "valid", reason: embedded?.reason || "provider_timestamp_valid" };
 }
 
 function isMissingOptionalTelemetryColumnError(error: any) {
@@ -236,7 +308,7 @@ export async function GET(req: Request) {
 
     const assetBaseSelect =
       "id, registration, truck_id, provider_name, status, last_seen_at, provider_location_label, asset_category, billing_status, intelligence_enabled, excluded_reason, ai_suggested_category, ai_suggested_reason, ai_confidence, first_seen_at, reviewed_at, billing_enabled_at, billing_disabled_at";
-    const assetCapabilitySelect = `${assetBaseSelect}, telemetry_capability, telemetry_capability_source, canbus_enabled, fuel_rod_installed, fuel_rod_calibration_status`;
+    const assetCapabilitySelect = `${assetBaseSelect}, telemetry_capability, telemetry_capabilities, telemetry_capability_source, canbus_enabled, fuel_rod_installed, fuel_rod_calibration_status`;
     let { data: assets, error } = await supabaseAdmin
       .from("fleet_assets")
       .select(assetCapabilitySelect)
@@ -290,4 +362,168 @@ export async function GET(req: Request) {
       { status: 500 }
     );
   }
+}
+
+export async function PATCH(req: Request) {
+  try {
+    const body = await req.json();
+    const resolved = await resolveReviewAccess(req, body.companyId || null);
+    if (resolved.error) return resolved.error;
+
+    const assetIds = Array.isArray(body.asset_ids)
+      ? body.asset_ids.map((id: any) => String(id || "").trim()).filter(Boolean)
+      : [];
+    const uniqueAssetIds = Array.from(new Set(assetIds)).slice(0, 500);
+    if (uniqueAssetIds.length === 0) {
+      return noStoreJson(
+        { success: false, error: "Select at least one asset to update" },
+        { status: 400 }
+      );
+    }
+
+    const action = String(body.action || "").trim().toLowerCase();
+    const category = validateCategory(body.asset_category);
+    const excludedReason = String(body.excluded_reason || "").trim().toLowerCase();
+
+    if (["enable", "set_category"].includes(action) && (!category || category === "unknown")) {
+      return noStoreJson(
+        { success: false, error: "Choose a specific asset category before applying this bulk action" },
+        { status: 400 }
+      );
+    }
+    if (action === "exclude" && !EXCLUDED_REASONS.has(excludedReason)) {
+      return noStoreJson(
+        { success: false, error: "Choose an excluded reason before applying this bulk action" },
+        { status: 400 }
+      );
+    }
+
+    const { data: assets, error: assetError } = await supabaseAdmin
+      .from("fleet_assets")
+      .select(
+        "id, company_id, status, billing_status, intelligence_enabled, billing_enabled_at, billing_disabled_at"
+      )
+      .eq("company_id", resolved.company.id)
+      .in("id", uniqueAssetIds);
+
+    if (assetError) throw assetError;
+    const scopedAssets = assets || [];
+    if (scopedAssets.length === 0) {
+      return noStoreJson({ success: false, error: "No selected assets found" }, { status: 404 });
+    }
+
+    const now = new Date().toISOString();
+    const errors: string[] = [];
+    let updatedCount = 0;
+
+    for (const asset of scopedAssets) {
+      const updates = buildBulkAssetUpdates(asset, action, {
+        category,
+        excludedReason,
+        now,
+        userId: resolved.userId,
+      });
+      if (!updates) {
+        errors.push(`Unsupported action for asset ${asset.id}`);
+        continue;
+      }
+
+      const { error: updateError } = await supabaseAdmin
+        .from("fleet_assets")
+        .update(updates)
+        .eq("company_id", resolved.company.id)
+        .eq("id", asset.id);
+
+      if (updateError) {
+        errors.push(updateError.message || `Failed to update asset ${asset.id}`);
+      } else {
+        updatedCount++;
+      }
+    }
+
+    return noStoreJson({
+      success: errors.length === 0,
+      updated_count: updatedCount,
+      requested_count: uniqueAssetIds.length,
+      errors,
+    }, errors.length ? { status: 207 } : undefined);
+  } catch (err: any) {
+    console.error("Fleet assets bulk PATCH error:", err);
+    return noStoreJson(
+      { success: false, error: err.message || "Failed to update selected assets" },
+      { status: 500 }
+    );
+  }
+}
+
+function validateCategory(value: any, fallback = "unknown") {
+  const category = String(value || fallback).trim().toLowerCase();
+  return ASSET_CATEGORIES.has(category) ? category : null;
+}
+
+function buildBulkAssetUpdates(
+  asset: any,
+  action: string,
+  context: {
+    category: string | null;
+    excludedReason: string;
+    now: string;
+    userId: string;
+  }
+) {
+  const updates: Record<string, any> = {};
+  if (action === "enable") {
+    updates.asset_category = context.category;
+    updates.billing_status = "enabled";
+    updates.intelligence_enabled = true;
+    updates.excluded_reason = null;
+    updates.reviewed_at = context.now;
+    updates.reviewed_by = context.userId;
+    updates.billing_disabled_at = null;
+    if (!asset.billing_enabled_at) updates.billing_enabled_at = context.now;
+    return updates;
+  }
+  if (action === "exclude") {
+    if (context.category && context.category !== "unknown") {
+      updates.asset_category = context.category;
+    }
+    updates.billing_status = "excluded";
+    updates.intelligence_enabled = false;
+    updates.excluded_reason = context.excludedReason;
+    updates.reviewed_at = context.now;
+    updates.reviewed_by = context.userId;
+    if (shouldSetBillingDisabledAt(asset)) updates.billing_disabled_at = context.now;
+    return updates;
+  }
+  if (action === "disable") {
+    updates.billing_status = "disabled";
+    updates.intelligence_enabled = false;
+    updates.reviewed_at = context.now;
+    updates.reviewed_by = context.userId;
+    if (shouldSetBillingDisabledAt(asset)) updates.billing_disabled_at = context.now;
+    return updates;
+  }
+  if (action === "review_later") {
+    updates.billing_status = "unreviewed";
+    updates.intelligence_enabled = false;
+    updates.excluded_reason = null;
+    if (shouldSetBillingDisabledAt(asset)) updates.billing_disabled_at = context.now;
+    return updates;
+  }
+  if (action === "set_category") {
+    updates.asset_category = context.category;
+    return updates;
+  }
+  return null;
+}
+
+function shouldSetBillingDisabledAt(asset: any) {
+  return (
+    !asset.billing_disabled_at ||
+    asset.billing_status === "enabled" ||
+    Boolean(asset.intelligence_enabled) ||
+    (asset.status === "active" &&
+      asset.billing_status === "enabled" &&
+      Boolean(asset.billing_enabled_at))
+  );
 }

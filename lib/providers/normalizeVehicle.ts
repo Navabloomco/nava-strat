@@ -31,6 +31,7 @@ export type CanonicalVehicle = {
   location_label?: string | null;
 
   recorded_at: string;
+  timestamp_quality: ProviderTimestampQuality;
   telemetry_capability: string;
   telemetry_capabilities: Record<string, any>;
   telemetry_capability_source: string;
@@ -46,6 +47,13 @@ export type CanonicalVehicle = {
     missing_fields: string[];
     warnings: string[];
   };
+};
+
+type ProviderTimestampQuality = {
+  status: "valid" | "missing" | "invalid" | "suspect";
+  source: "provider" | "ingestion_fallback";
+  reason: string;
+  normalized_unit?: "seconds" | "milliseconds" | "datetime";
 };
 
 type MappingConfig = {
@@ -94,7 +102,13 @@ export function normalizeVehicle(
       "Provider timestamp has no timezone; interpreted as Africa/Nairobi local time and should be treated as approximate"
     );
   }
-  const recorded_at = getTimestamp(raw, mapping.recorded_at);
+  const normalizedTimestamp = normalizeProviderTimestamp(recordedAtValue);
+  if (normalizedTimestamp.quality.status !== "valid") {
+    warnings.push(`Provider timestamp ${normalizedTimestamp.quality.reason}; using ingestion time for storage only`);
+  } else if (normalizedTimestamp.quality.reason === "unix_seconds_normalized") {
+    warnings.push("Provider timestamp was normalized from Unix seconds");
+  }
+  const recorded_at = normalizedTimestamp.recorded_at;
 
   // REQUIRED FIELDS
 
@@ -170,6 +184,7 @@ export function normalizeVehicle(
     location_label,
 
     recorded_at,
+    timestamp_quality: normalizedTimestamp.quality,
     telemetry_capability: capabilityResolution.capability,
     telemetry_capabilities: {
       label: capabilityResolution.label,
@@ -179,6 +194,7 @@ export function normalizeVehicle(
       meaningful_signals: Object.keys(observedSignals).filter(
         (signal) => (observedSignals as Record<string, boolean>)[signal]
       ),
+      timestamp_quality: normalizedTimestamp.quality,
     },
     telemetry_capability_source: capabilityResolution.source,
     signal_quality: {
@@ -186,6 +202,7 @@ export function normalizeVehicle(
       capability_source: capabilityResolution.source,
       placeholder_zero_signals: placeholderZeroSignals,
       unsupported_signal_fields_seen: signalInspection.unsupported_signal_fields_seen,
+      timestamp_quality: normalizedTimestamp.quality,
       meaningful_signals: Object.keys(observedSignals).filter(
         (signal) => (observedSignals as Record<string, boolean>)[signal]
       ),
@@ -197,6 +214,7 @@ export function normalizeVehicle(
       ),
       observed_signal_keys: signalInspection.observed_signal_keys,
       placeholder_zero_signals: placeholderZeroSignals,
+      timestamp_quality: normalizedTimestamp.quality,
     },
 
     provider: providerName,
@@ -765,20 +783,137 @@ function normalizeFuelKey(key: string): string {
   return String(key).toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
-function getTimestamp(raw: any, path?: string): string {
-  const value = getValue(raw, path);
+function normalizeProviderTimestamp(value: any): {
+  recorded_at: string;
+  quality: ProviderTimestampQuality;
+} {
+  const fallback = new Date();
+  if (value === undefined || value === null || value === "") {
+    return {
+      recorded_at: fallback.toISOString(),
+      quality: {
+        status: "missing",
+        source: "ingestion_fallback",
+        reason: "missing_provider_timestamp",
+      },
+    };
+  }
 
-  // FALLBACK TO CURRENT TIME
-  if (!value) {
-    return new Date().toISOString();
+  const candidate = parseProviderTimestampCandidate(value);
+  if (!candidate.date || Number.isNaN(candidate.date.getTime())) {
+    return {
+      recorded_at: fallback.toISOString(),
+      quality: {
+        status: "invalid",
+        source: "ingestion_fallback",
+        reason: "unparseable_provider_timestamp",
+      },
+    };
+  }
+
+  const validation = validateProviderTimestamp(candidate.date);
+  if (validation.status !== "valid") {
+    return {
+      recorded_at: fallback.toISOString(),
+      quality: {
+        status: validation.status,
+        source: "ingestion_fallback",
+        reason: validation.reason,
+        normalized_unit: candidate.unit,
+      },
+    };
+  }
+
+  return {
+    recorded_at: candidate.date.toISOString(),
+    quality: {
+      status: "valid",
+      source: "provider",
+      reason: candidate.reason,
+      normalized_unit: candidate.unit,
+    },
+  };
+}
+
+function parseProviderTimestampCandidate(value: any): {
+  date: Date | null;
+  unit: "seconds" | "milliseconds" | "datetime";
+  reason: string;
+} {
+  if (value instanceof Date) {
+    return { date: value, unit: "datetime", reason: "datetime" };
+  }
+
+  const numericValue = parseTimestampNumber(value);
+  if (numericValue !== null) {
+    if (numericValue === 0) {
+      return {
+        date: new Date(0),
+        unit: "milliseconds",
+        reason: "epoch_zero_provider_timestamp",
+      };
+    }
+
+    const secondsDate =
+      numericValue >= 946684800 && numericValue <= 4102444800
+        ? new Date(numericValue * 1000)
+        : null;
+    const millisecondsDate =
+      numericValue >= 946684800000 && numericValue <= 4102444800000
+        ? new Date(numericValue)
+        : null;
+
+    if (secondsDate) {
+      return {
+        date: secondsDate,
+        unit: "seconds",
+        reason: "unix_seconds_normalized",
+      };
+    }
+
+    if (millisecondsDate) {
+      return {
+        date: millisecondsDate,
+        unit: "milliseconds",
+        reason: "unix_milliseconds_normalized",
+      };
+    }
+
+    return {
+      date: new Date(numericValue),
+      unit: "milliseconds",
+      reason: "numeric_timestamp_outside_expected_range",
+    };
   }
 
   const date = parseProviderTimestamp(value, DEFAULT_OPERATIONAL_TIME_ZONE);
+  return { date, unit: "datetime", reason: "datetime" };
+}
 
-  // INVALID DATE FALLBACK
-  if (!date || isNaN(date.getTime())) {
-    return new Date().toISOString();
+function parseTimestampNumber(value: any): number | null {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value !== "string") return null;
+  const text = value.trim();
+  if (!/^-?\d+(?:\.\d+)?$/.test(text)) return null;
+  const parsed = Number(text);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function validateProviderTimestamp(date: Date): { status: "valid" | "invalid" | "suspect"; reason: string } {
+  const time = date.getTime();
+  if (!Number.isFinite(time)) {
+    return { status: "invalid", reason: "unparseable_provider_timestamp" };
   }
 
-  return date.toISOString();
+  const year = date.getUTCFullYear();
+  if (year < 2000) {
+    return { status: "invalid", reason: "provider_timestamp_before_2000" };
+  }
+
+  const farFuture = Date.now() + 48 * 60 * 60 * 1000;
+  if (time > farFuture) {
+    return { status: "invalid", reason: "provider_timestamp_in_future" };
+  }
+
+  return { status: "valid", reason: "provider_timestamp_valid" };
 }

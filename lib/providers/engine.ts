@@ -632,6 +632,8 @@ export async function runProviderSync(
           vehicleMatchReviewTruncated = true;
         }
 
+        const providerTimestampTrusted =
+          normalized.timestamp_quality?.status === "valid";
         const assetPayload: Record<string, any> = {
           provider_id: provider.id,
           provider_name: provider.provider_name,
@@ -641,7 +643,6 @@ export async function runProviderSync(
           status: "active",                              // 🔥 needed for dashboard filtering
           latitude: normalized.latitude,
           longitude: normalized.longitude,
-          last_seen_at: normalized.recorded_at,
           raw_payload: normalized.raw,
           updated_at: new Date().toISOString(),
           telemetry_capability: normalized.telemetry_capability,
@@ -654,6 +655,14 @@ export async function runProviderSync(
             normalized.telemetry_capability === "FUEL_ROD" ||
             normalized.telemetry_capability === "HYBRID_CAN_AND_FUEL_ROD",
         };
+        if (providerTimestampTrusted) {
+          assetPayload.last_seen_at = normalized.recorded_at;
+        } else if (
+          !existingAsset ||
+          isSuspiciousProviderTimestamp(existingAsset.last_seen_at)
+        ) {
+          assetPayload.last_seen_at = null;
+        }
 
         if (!existingAsset && !crossProviderAsset) {
           assetPayload.asset_category = "unknown";
@@ -2107,7 +2116,7 @@ async function loadProviderAssetByExactTruckId(
   if (!companyId || !truckId) return null;
   const { data, error } = await supabaseAdmin
     .from("fleet_assets")
-    .select("id, provider_id, provider_name, truck_id, registration, telemetry_capability, telemetry_capability_source")
+    .select("id, provider_id, provider_name, truck_id, registration, last_seen_at, telemetry_capability, telemetry_capability_source")
     .eq("company_id", companyId)
     .eq("provider_id", providerId)
     .eq("truck_id", truckId)
@@ -2121,8 +2130,8 @@ async function loadProviderAssetLookup(companyId?: string) {
   if (!companyId) return [] as any[];
 
   const capabilitySelect =
-    "id, provider_id, provider_name, truck_id, registration, telemetry_capability, telemetry_capability_source";
-  const baseSelect = "id, provider_id, provider_name, truck_id, registration";
+    "id, provider_id, provider_name, truck_id, registration, last_seen_at, telemetry_capability, telemetry_capability_source";
+  const baseSelect = "id, provider_id, provider_name, truck_id, registration, last_seen_at";
   let { data, error } = await supabaseAdmin
     .from("fleet_assets")
     .select(capabilitySelect)
@@ -2203,6 +2212,14 @@ function safeVehicleReviewText(value: any) {
     .replace(/[^\w\s./-]/g, "")
     .trim()
     .slice(0, 80);
+}
+
+function isSuspiciousProviderTimestamp(value: any) {
+  if (!value) return false;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return true;
+  if (date.getUTCFullYear() < 2000) return true;
+  return date.getTime() > Date.now() + 48 * 60 * 60 * 1000;
 }
 
 async function maybeUpgradeCanonicalAssetCapability(

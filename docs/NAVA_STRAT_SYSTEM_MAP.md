@@ -434,7 +434,7 @@ New provider records must not start active by default, and provider sync must no
 5. Skip rows that do not have a safe vehicle identifier after mapped and fallback keys are checked. Provider sync must not create `UNKNOWN`, blank, or null reviewable assets.
 6. If the same provider has already imported the asset, upsert that provider-owned `fleet_assets` row by `(provider_id, truck_id)`.
 7. If a different provider reports the same normalized registration/truck ID for an existing company asset, treat it as cross-provider telemetry for that asset and do not create a duplicate billable-review asset automatically.
-8. Insert `telemetry_logs` with the incoming `provider_id`, normalized signal quality, and capability flags preserved.
+8. Insert `telemetry_logs` with the incoming `provider_id`, normalized signal quality, timestamp quality, and capability flags preserved. Provider timestamps must be normalized and validated before use: Unix seconds/milliseconds should be interpreted safely when possible, while epoch/default dates, years before 2000, far-future dates, or dates that conflict with asset first-seen evidence must be marked invalid/suspect instead of being displayed as real last-seen telemetry. Asset Review should show `Last seen unavailable` or `Provider timestamp invalid` rather than 1970-style dates.
 9. Do not overwrite reviewed asset classification, billing, or intelligence enablement fields on sync.
 
 ### Second Provider Onboarding
@@ -612,6 +612,8 @@ Current limitation:
 ## 9. Asset Review and Billing Readiness Rules
 
 Asset Review is the gate between imported provider devices and billable Nava intelligence vehicles.
+
+For larger fleets, Asset Review should support batch triage instead of one-by-one scrolling: filters for all, unreviewed, enabled intelligence, excluded/disabled, timestamp review, new provider assets, light vehicles, trucks, and possible duplicates; search by plate/provider/category/status; sortable views; select-all-visible; and bulk actions for enable, exclude, disable, review later, and category updates. Bulk enabling must require confirmation and show the projected strict billable count and planning-only monthly estimate before applying. Do not auto-enable suggested classifications or duplicate/multi-provider assets without user confirmation.
 
 ### Billable Asset Rule
 
