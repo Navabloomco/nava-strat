@@ -96,8 +96,10 @@ Open `/admin/providers?companyId=<id>`.
 - [ ] Run Provider Vault Data Discovery Diagnostics with no extra endpoint and confirm it tests configured endpoints only, shows sanitized response shape/key/path information, and writes nothing.
 - [ ] Confirm Data Discovery Diagnostics allows one explicitly entered report/trip candidate endpoint at a time or a short explicit list, with masked query values and no raw payload display.
 - [ ] If Data Discovery finds a better current-vehicle array path, such as saved `$` with 1 row and suggested `$.items` with 36 rows, confirm Provider Vault shows "Apply suggested vehicle path."
+- [ ] Confirm the suggested path is normalized as `$.items`, not `$.$.items` or `$$.items`.
 - [ ] Click "Apply suggested vehicle path" and confirm the saved current feed row path and safe field mappings update, provider sync remains inactive/retest-required, and no credentials or raw payloads are exposed.
 - [ ] Run Test Connection again and confirm it uses the applied row path and reports the larger vehicle count.
+- [ ] Confirm sanitized endpoint display preserves safe query values such as `lang=en` while redacting `user_api_hash`.
 - [ ] If no BlueTrax report endpoint is configured, confirm the setup blocker says to ask BlueTrax for trip/report endpoint, auth method, token path, row path, and sample response.
 - [ ] Confirm capability diagnostics separate provider default capability from observed row capability.
 - [ ] Confirm observed BlueTrax/JLCL rows show `GPS Intelligence` unless ignition/CAN/tank signals have been explicitly verified.

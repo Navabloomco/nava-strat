@@ -1188,7 +1188,7 @@ function getCurrentVehicleRowPaths(provider: any) {
       ? provider.fleet_config.vehicle_paths
       : []),
   ]
-    .map((path) => String(path || "").trim())
+    .map(normalizeProviderRowPath)
     .filter(Boolean);
 
   return Array.from(new Set(paths));
@@ -1197,14 +1197,16 @@ function getCurrentVehicleRowPaths(provider: any) {
 function findBestVehicleRowPathSuggestion(result: any, currentRowPaths: string[]) {
   if (!result?.endpoints?.length) return null;
   const normalizedCurrentPaths =
-    currentRowPaths.length > 0 ? currentRowPaths : ["$"];
+    currentRowPaths.length > 0
+      ? currentRowPaths.map(normalizeProviderRowPath).filter(Boolean)
+      : ["$"];
   let best: any = null;
 
   for (const endpoint of result.endpoints || []) {
-    const counts = endpoint?.candidate_row_paths_found || {};
+    const counts = normalizeRowPathCountMap(endpoint?.candidate_row_paths_found || {});
     const entries = Object.entries(counts)
       .map(([path, count]) => ({
-        path,
+        path: normalizeProviderRowPath(path),
         count: Number(count || 0),
       }))
       .filter((entry) => entry.path && entry.count > 0);
@@ -1225,7 +1227,7 @@ function findBestVehicleRowPathSuggestion(result: any, currentRowPaths: string[]
       endpointBest.count > Math.max(Number(current?.count || 0), 1)
     ) {
       const suggestion = {
-        path: endpointBest.path,
+        path: normalizeProviderRowPath(endpointBest.path),
         count: endpointBest.count,
         currentPath: current?.path || normalizedCurrentPaths[0] || "$",
         currentCount: Number(current?.count || 0),
@@ -1236,6 +1238,30 @@ function findBestVehicleRowPathSuggestion(result: any, currentRowPaths: string[]
   }
 
   return best;
+}
+
+function normalizeRowPathCountMap(value: any) {
+  const output: Record<string, number> = {};
+  if (!value || typeof value !== "object" || Array.isArray(value)) return output;
+
+  for (const [rawPath, rawCount] of Object.entries(value)) {
+    const path = normalizeProviderRowPath(rawPath);
+    if (!path) continue;
+    output[path] = Math.max(Number(output[path] || 0), Number(rawCount || 0));
+  }
+
+  return output;
+}
+
+function normalizeProviderRowPath(value: any) {
+  let path = String(value || "").trim();
+  if (!path) return "";
+  path = path.replace(/^\$\$+\./, "$.");
+  path = path.replace(/^\$\$+$/, "$");
+  while (path.startsWith("$.$.")) {
+    path = "$." + path.slice(4);
+  }
+  return path;
 }
 
 function buildFieldMappingSuggestion(endpoint: any) {

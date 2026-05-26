@@ -260,12 +260,17 @@ function buildSafeProviderFeedSummary(provider: any) {
       configured: Boolean(fleetUrl),
       method: String(currentFeed.method || fleetConfig.method || "GET").toUpperCase(),
       row_paths: Array.isArray(currentFeed.row_paths)
-        ? currentFeed.row_paths.map((path: any) => String(path)).slice(0, 10)
+        ? [
+            currentFeed.row_path,
+            ...currentFeed.row_paths,
+          ].map(normalizeProviderRowPath).filter(Boolean).slice(0, 10)
         : currentFeed.row_path
-          ? [String(currentFeed.row_path)]
+          ? [normalizeProviderRowPath(currentFeed.row_path)]
           : Array.isArray(fleetConfig.vehicle_paths)
-            ? fleetConfig.vehicle_paths.map((path: any) => String(path)).slice(0, 10)
-            : [],
+            ? fleetConfig.vehicle_paths.map(normalizeProviderRowPath).filter(Boolean).slice(0, 10)
+            : fleetConfig.data_group
+              ? [normalizeProviderRowPath(fleetConfig.data_group)]
+              : [],
       token_placement:
         currentFeed.token_placement || fleetConfig.token_placement || null,
     },
@@ -1175,8 +1180,8 @@ async function applySuggestedVehiclePath({
     ),
     field_mapping: nextFieldMapping,
     is_active: false,
-    last_test_status: "pending",
-    last_test_message: "Vehicle row path updated. Run Test Connection again.",
+    last_test_status: "retest_required",
+    last_test_message: `Vehicle row path updated to ${rowPathResult.path}. Run Test Connection again.`,
     last_test_at: null,
   };
 
@@ -1195,7 +1200,7 @@ async function applySuggestedVehiclePath({
     provider: sanitizeProvider(provider, resolved.capabilities),
     applied_vehicle_path: rowPathResult.path,
     applied_field_mapping: mappingSuggestions,
-    message: "Vehicle row path updated. Run Test Connection again.",
+    message: `Vehicle row path updated to ${rowPathResult.path}. Run Test Connection again.`,
   });
 }
 
@@ -1205,7 +1210,7 @@ function clonePlainObject(value: any) {
 }
 
 function sanitizeSuggestedVehicleRowPath(value: any) {
-  const path = String(value || "").trim();
+  const path = normalizeProviderRowPath(value);
   if (!path) return { error: "Suggested vehicle row path is required." };
   if (
     path.includes("://") ||
@@ -1219,6 +1224,17 @@ function sanitizeSuggestedVehicleRowPath(value: any) {
     };
   }
   return { path };
+}
+
+function normalizeProviderRowPath(value: any) {
+  let path = String(value || "").trim();
+  if (!path) return "";
+  path = path.replace(/^\$\$+\./, "$.");
+  path = path.replace(/^\$\$+$/, "$");
+  while (path.startsWith("$.$.")) {
+    path = "$." + path.slice(4);
+  }
+  return path;
 }
 
 function sanitizeVehicleFieldMapping(value: any) {

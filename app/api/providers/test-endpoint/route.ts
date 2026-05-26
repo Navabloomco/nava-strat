@@ -1321,8 +1321,23 @@ function buildSetupBlockers(
 }
 
 function getByPath(obj: any, path: string) {
-  if (path === "$") return obj;
-  return path.split(".").reduce((current, part) => current?.[part], obj);
+  const normalizedPath = normalizeProviderRowPath(path);
+  if (normalizedPath === "$") return obj;
+  const lookupPath = normalizedPath.startsWith("$.")
+    ? normalizedPath.slice(2)
+    : normalizedPath;
+  return lookupPath.split(".").reduce((current, part) => current?.[part], obj);
+}
+
+function normalizeProviderRowPath(value: any) {
+  let path = String(value || "").trim();
+  if (!path) return "";
+  path = path.replace(/^\$\$+\./, "$.");
+  path = path.replace(/^\$\$+$/, "$");
+  while (path.startsWith("$.$.")) {
+    path = "$." + path.slice(4);
+  }
+  return path;
 }
 
 function isBlockedHostname(hostname: string) {

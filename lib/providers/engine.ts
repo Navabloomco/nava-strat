@@ -881,6 +881,21 @@ export async function executeProviderRequest(
     feedConfig.token_placement,
     authContext.token
   );
+  const unresolvedUrlPlaceholder = findUnresolvedUrlPlaceholder(requestUrl);
+  if (unresolvedUrlPlaceholder) {
+    const message = `Provider endpoint still has an unresolved placeholder: ${unresolvedUrlPlaceholder}. Set a value before testing.`;
+    return {
+      success: false,
+      feed_name: feedName,
+      feed_type: feedType,
+      failure_stage: "request",
+      message,
+      setup_blocker: message,
+      rows: [],
+      data: null,
+      effective_url_masked: maskUrlToken(requestUrl, authContext.token),
+    };
+  }
   const requestHeaders = withJsonContentType(headers);
   const requestDiagnostics = buildSupplementalRequestDiagnostics(
     requestUrl,
@@ -1006,7 +1021,9 @@ function buildProviderDiscoveryEndpoints(
   candidateEndpoints: ProviderDiscoveryEndpointInput[]
 ): ProviderDiscoveryEndpointConfig[] {
   const endpoints: ProviderDiscoveryEndpointConfig[] = [];
+  const currentFeed = provider.fleet_config?.current_vehicle_feed || {};
   const fleetUrl =
+    currentFeed.endpoint_url ||
     provider.fleet_url ||
     provider.fleet_config?.fleet_url ||
     provider.default_fleet_url;
@@ -1016,14 +1033,14 @@ function buildProviderDiscoveryEndpoints(
       name: "Configured current/fleet endpoint",
       source: "configured_primary",
       url: String(fleetUrl),
-      method: String(provider.fleet_config?.method || "POST").toUpperCase(),
+      method: String(currentFeed.method || provider.fleet_config?.method || "POST").toUpperCase(),
       rowPaths: buildDiscoveryCandidateRowPaths(
-        provider.fleet_config?.vehicle_paths || defaultVehiclePaths()
+        buildCurrentVehicleRowPaths(provider)
       ),
-      headers: provider.fleet_config?.headers || {},
-      payload: provider.fleet_config?.payload || {},
-      apiKeyHeader: provider.fleet_config?.api_key_header,
-      tokenPlacement: provider.fleet_config?.token_placement,
+      headers: currentFeed.headers || provider.fleet_config?.headers || {},
+      payload: currentFeed.payload || provider.fleet_config?.payload || {},
+      apiKeyHeader: currentFeed.api_key_header || provider.fleet_config?.api_key_header,
+      tokenPlacement: currentFeed.token_placement || provider.fleet_config?.token_placement,
     });
   }
 
@@ -1068,7 +1085,7 @@ function buildProviderDiscoveryEndpoints(
 
 function buildDiscoveryCandidateRowPaths(paths: any) {
   const configured = Array.isArray(paths)
-    ? paths.map((path) => String(path)).filter(Boolean)
+    ? paths.map(normalizeProviderRowPath).filter(Boolean)
     : [];
   return Array.from(
     new Set([
@@ -1085,6 +1102,39 @@ function buildDiscoveryCandidateRowPaths(paths: any) {
       "result.records",
     ])
   ).slice(0, 40);
+}
+
+function buildCurrentVehicleRowPaths(provider: ProviderRecord) {
+  const config = provider.fleet_config || {};
+  const currentFeed = config.current_vehicle_feed || {};
+  const paths = [
+    currentFeed.row_path,
+    ...(Array.isArray(currentFeed.row_paths) ? currentFeed.row_paths : []),
+    ...(Array.isArray(config.vehicle_paths) ? config.vehicle_paths : []),
+    config.data_group,
+  ]
+    .map(normalizeProviderRowPath)
+    .filter(Boolean);
+
+  return paths.length > 0 ? Array.from(new Set(paths)) : defaultVehiclePaths();
+}
+
+function normalizeProviderRowPath(value: any) {
+  let path = String(value || "").trim();
+  if (!path) return "";
+  path = path.replace(/^\$\$+\./, "$.");
+  path = path.replace(/^\$\$+$/, "$");
+  while (path.startsWith("$.$.")) {
+    path = "$." + path.slice(4);
+  }
+  return path;
+}
+
+function toDisplayJsonPath(path: string) {
+  const normalized = normalizeProviderRowPath(path);
+  if (!normalized || normalized === "$") return "$";
+  if (normalized.startsWith("$.")) return normalized;
+  return `$.${normalized}`;
 }
 
 function buildSkippedDiscoveryEndpoint(
@@ -1712,14 +1762,15 @@ function sanitizeDiscoveryUrl(rawUrl: string) {
     const parsed = new URL(rawUrl);
     for (const key of Array.from(parsed.searchParams.keys())) {
       const normalized = normalizeProviderKey(key);
+      const value = parsed.searchParams.get(key) || "";
       parsed.searchParams.set(
         key,
         isSensitiveProviderKey(normalized) || normalized.includes("hash")
           ? "[redacted]"
-          : "[set]"
+          : safeDisplayQueryValue(value)
       );
     }
-    return parsed.toString();
+    return parsed.toString().replace(/%5B(redacted|set)%5D/gi, "[$1]");
   } catch {
     return String(rawUrl || "")
       .replace(
@@ -1728,6 +1779,37 @@ function sanitizeDiscoveryUrl(rawUrl: string) {
       )
       .slice(0, 120);
   }
+}
+
+function safeDisplayQueryValue(value: string) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  if (text === "[set]" || text === "[redacted]") return text;
+  if (/^\{\{.+\}\}$/.test(text)) return "[set]";
+  if (/^[A-Za-z0-9._:-]{1,60}$/.test(text)) return text;
+  return "[set]";
+}
+
+function findUnresolvedUrlPlaceholder(rawUrl: string) {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return null;
+  }
+
+  for (const [key, value] of Array.from(parsed.searchParams.entries())) {
+    const text = String(value || "").trim();
+    if (
+      text === "[set]" ||
+      text === "%5Bset%5D" ||
+      /\{\{.+\}\}/.test(text)
+    ) {
+      return key;
+    }
+  }
+
+  return null;
 }
 
 function describeDiscoveryAuth(
@@ -2477,13 +2559,7 @@ async function fetchFleet(
   const authType = (provider.auth_type || "POST_LOGIN").toUpperCase();
   const config = provider.fleet_config || {};
   const method = String(currentFeed.method || config.method || "POST").toUpperCase();
-  const vehiclePaths = Array.isArray(currentFeed.row_paths) && currentFeed.row_paths.length > 0
-    ? currentFeed.row_paths
-    : currentFeed.row_path
-      ? [currentFeed.row_path]
-      : Array.isArray(config.vehicle_paths) && config.vehicle_paths.length > 0
-        ? config.vehicle_paths
-        : defaultVehiclePaths();
+  const vehiclePaths = buildCurrentVehicleRowPaths(provider);
   const result = await executeProviderRequest(
     provider,
     {
@@ -3549,7 +3625,7 @@ function collectArrayPathCounts(data: any) {
     }
 
     if (Array.isArray(value)) {
-      counts[path ? `$.${path}` : "$"] = value.length;
+      counts[toDisplayJsonPath(path)] = value.length;
 
       for (const item of value.slice(0, 3)) {
         if (item && typeof item === "object") {
@@ -4931,8 +5007,9 @@ function getByPaths(data: any, paths: string[]) {
 }
 
 function getByPath(obj: any, path: string) {
-  if (path === "$") return obj;
-  const normalizedPath = path.startsWith("$.") ? path.slice(2) : path;
+  const rowPath = normalizeProviderRowPath(path);
+  if (rowPath === "$") return obj;
+  const normalizedPath = rowPath.startsWith("$.") ? rowPath.slice(2) : rowPath;
   return normalizedPath.split(".").reduce((current, part) => current?.[part], obj);
 }
 
