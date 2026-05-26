@@ -321,6 +321,7 @@ function ProviderCard({
   const [form, setForm] = useState({ ...provider });
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<any>(null);
+  const statusSummary = buildProviderStatusSummary(form, testResult);
 
   async function handleTestConnection() {
     setIsTesting(true);
@@ -404,6 +405,12 @@ function ProviderCard({
         </div>
       </div>
 
+      <ProviderBusinessStatusSummary
+        summary={statusSummary}
+        onRunTest={capabilities.can_test_provider ? handleTestConnection : undefined}
+        isTesting={isTesting}
+      />
+
       {capabilities.can_edit_advanced_provider_config ? (
         <AdvancedProviderEditor provider={provider} form={form} setForm={setForm} />
       ) : capabilities.can_update_provider_credentials ? (
@@ -429,44 +436,216 @@ function ProviderCard({
         />
       )}
 
-      <ProviderTestOutcome result={testResult} />
-      <ProviderFeedContractSummary summary={form.feed_summary || provider.feed_summary} />
-      <ProviderCapabilityDiagnostics summary={testResult?.capability_summary} />
-      <ProviderSecondSourceDiagnostics result={testResult} />
-      <ProviderDistanceDiagnostics diagnostics={testResult?.distance_diagnostics} />
-      <ProviderDataDiscoveryDiagnostics
-        providerId={form.id}
-        selectedCompanyId={selectedCompanyId}
-        canRun={capabilities.can_test_provider}
-        canApply={
-          capabilities.can_update_provider_credentials ||
-          capabilities.can_edit_advanced_provider_config
-        }
-        isActive={Boolean(form.is_active)}
-        currentRowPaths={getCurrentVehicleRowPaths(form)}
-        onApplied={(updatedProvider) => {
-          setForm((current: any) => ({
-            ...current,
-            ...updatedProvider,
-          }));
-          onProviderUpdated(updatedProvider);
-        }}
-      />
-      <DistanceReportImport
-        providerId={form.id}
-        selectedCompanyId={selectedCompanyId}
-        canImport={
-          capabilities.can_update_provider_credentials ||
-          capabilities.can_edit_advanced_provider_config
-        }
-      />
+      {capabilities.can_test_provider && (
+        <details style={advancedDiagnosticsDetailsStyle}>
+          <summary style={advancedDiagnosticsSummaryStyle}>
+            Advanced diagnostics
+            <span style={advancedSummaryHintStyle}>
+              Connection channels, discovery tools, report imports, and safe response-shape details
+            </span>
+          </summary>
 
-      <ProviderEnrichmentDiagnostics
-        diagnostics={testResult?.supplemental_diagnostics}
-        canShowAvailableKeys={capabilities.can_edit_advanced_provider_config}
-      />
+          <ProviderTestOutcome result={testResult} />
+          <ProviderFeedContractSummary summary={form.feed_summary || provider.feed_summary} />
+          <ProviderCapabilityDiagnostics summary={testResult?.capability_summary} />
+          <ProviderSecondSourceDiagnostics result={testResult} />
+          <ProviderDistanceDiagnostics diagnostics={testResult?.distance_diagnostics} />
+          <ProviderDataDiscoveryDiagnostics
+            providerId={form.id}
+            selectedCompanyId={selectedCompanyId}
+            canRun={capabilities.can_test_provider}
+            canApply={
+              capabilities.can_update_provider_credentials ||
+              capabilities.can_edit_advanced_provider_config
+            }
+            isActive={Boolean(form.is_active)}
+            currentRowPaths={getCurrentVehicleRowPaths(form)}
+            onApplied={(updatedProvider) => {
+              setForm((current: any) => ({
+                ...current,
+                ...updatedProvider,
+              }));
+              onProviderUpdated(updatedProvider);
+            }}
+          />
+          <DistanceReportImport
+            providerId={form.id}
+            selectedCompanyId={selectedCompanyId}
+            canImport={
+              capabilities.can_update_provider_credentials ||
+              capabilities.can_edit_advanced_provider_config
+            }
+          />
+
+          <ProviderEnrichmentDiagnostics
+            diagnostics={testResult?.supplemental_diagnostics}
+            canShowAvailableKeys={capabilities.can_edit_advanced_provider_config}
+          />
+        </details>
+      )}
     </div>
   );
+}
+
+function ProviderBusinessStatusSummary({
+  summary,
+  onRunTest,
+  isTesting,
+}: {
+  summary: ReturnType<typeof buildProviderStatusSummary>;
+  onRunTest?: () => void;
+  isTesting: boolean;
+}) {
+  return (
+    <section style={businessStatusStyle}>
+      <div style={businessStatusHeaderStyle}>
+        <div>
+          <div style={businessEyebrowStyle}>Provider status</div>
+          <h4 style={businessStatusTitleStyle}>{summary.connectionStatus}</h4>
+        </div>
+        <div style={businessStatusBadgeStyle(summary.tone)}>
+          {summary.lastTestResult}
+        </div>
+      </div>
+
+      <p style={businessStatusCopyStyle}>{summary.message}</p>
+
+      <div style={businessMetricGridStyle}>
+        <BusinessMetric label="Vehicles found" value={summary.vehiclesFound} />
+        <BusinessMetric label="Matched existing trucks" value={summary.matchedTrucks} />
+        <BusinessMetric label="New/unmatched vehicles" value={summary.unmatchedVehicles} />
+        <BusinessMetric label="Live location tracking" value={summary.liveTracking} />
+        <BusinessMetric label="Engine/fuel signals" value={summary.engineFuelSignals} />
+        <BusinessMetric label="Report/distance feed" value={summary.reportDistanceFeed} />
+      </div>
+
+      {summary.inactiveWarning && (
+        <div style={businessWarningStyle}>
+          This provider will not sync regularly until you activate it.
+        </div>
+      )}
+
+      <div style={businessActionRowStyle}>
+        <div style={businessNextActionStyle}>
+          Next action: <strong>{summary.nextAction}</strong>
+        </div>
+        {onRunTest && (
+          <button
+            type="button"
+            onClick={onRunTest}
+            disabled={isTesting}
+            style={testBtn}
+          >
+            {isTesting ? "Testing..." : "Run test"}
+          </button>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function BusinessMetric({ label, value }: { label: string; value: any }) {
+  return (
+    <div style={businessMetricStyle}>
+      <div style={businessMetricValueStyle}>{formatBusinessMetricValue(value)}</div>
+      <div style={businessMetricLabelStyle}>{label}</div>
+    </div>
+  );
+}
+
+function buildProviderStatusSummary(provider: any, testResult: any) {
+  const isActive = Boolean(provider?.is_active);
+  const hasFreshTest = Boolean(testResult);
+  const testPassed = hasFreshTest
+    ? Boolean(testResult?.success)
+    : provider?.last_test_status === "success";
+  const testFailed = hasFreshTest
+    ? testResult && !testResult.success
+    : provider?.last_test_status === "failure";
+  const vehiclesFound =
+    testResult && Number.isFinite(Number(testResult.vehicles_found))
+      ? Number(testResult.vehicles_found)
+      : null;
+  const matchedTrucks =
+    testResult && Number.isFinite(Number(testResult.assets_count))
+      ? Number(testResult.assets_count)
+      : null;
+  const unmatchedVehicles =
+    vehiclesFound !== null && matchedTrucks !== null
+      ? Math.max(vehiclesFound - matchedTrucks, 0)
+      : null;
+  const supportedEngineTankSignals =
+    testResult?.capability_summary?.supported_engine_tank_signals || [];
+  const reportConfigured = Boolean(
+    provider?.feed_summary?.report_feed?.configured ||
+      testResult?.distance_diagnostics?.automated_distance_feeds_configured
+  );
+  const liveTrackingVerified = hasFreshTest
+    ? testPassed && Number(vehiclesFound || 0) > 0
+    : testPassed || isActive;
+  const engineFuelVerified =
+    Array.isArray(supportedEngineTankSignals) &&
+    supportedEngineTankSignals.length > 0;
+  const connectionStatus = isActive
+    ? "Active sync"
+    : testFailed
+      ? "Needs attention"
+      : "Inactive until activated";
+  const lastTestResult = testPassed
+    ? "Connection test passed"
+    : testFailed
+      ? "Connection test failed"
+      : "Run test";
+  const nextAction = testFailed
+    ? "Fix connection"
+    : !testPassed
+      ? "Run test"
+      : !isActive
+        ? "Activate sync"
+        : "Review vehicles";
+  const tone = testFailed ? "warning" : testPassed ? "success" : "neutral";
+  const vehiclesText =
+    vehiclesFound !== null
+      ? `${vehiclesFound.toLocaleString()} vehicle${vehiclesFound === 1 ? "" : "s"} were found.`
+      : "Run a connection test to refresh vehicle counts.";
+  const liveTrackingText = liveTrackingVerified
+    ? "Live location tracking is available"
+    : "Live location tracking is not verified yet";
+  const engineFuelText = engineFuelVerified
+    ? "Engine/fuel signals are verified"
+    : "Engine/fuel signals are not verified yet";
+  const reportText = reportConfigured
+    ? "Report/distance feed is configured"
+    : "Report/distance feed is not configured";
+  const syncActivationText = isActive
+    ? ""
+    : "Provider remains inactive until you activate sync.";
+  const message = testPassed
+    ? `${isActive ? "Provider sync is active." : "Connection test passed."} ${vehiclesText} ${liveTrackingText}. ${engineFuelText}. ${reportText}.${syncActivationText ? ` ${syncActivationText}` : ""}`
+    : testFailed
+      ? `${provider?.last_test_message || testResult?.message || "Connection test failed."} ${reportText}.`
+      : `${provider?.provider_name || "This provider"} has not passed a connection test yet. ${reportText}.`;
+
+  return {
+    connectionStatus,
+    lastTestResult,
+    tone,
+    message,
+    vehiclesFound: vehiclesFound ?? "Run test",
+    matchedTrucks: matchedTrucks ?? "Run test",
+    unmatchedVehicles: unmatchedVehicles ?? "Run test",
+    liveTracking: liveTrackingVerified ? "verified" : "not verified",
+    engineFuelSignals: engineFuelVerified ? "verified" : "not verified",
+    reportDistanceFeed: reportConfigured ? "configured" : "not configured",
+    nextAction,
+    inactiveWarning: !isActive,
+  };
+}
+
+function formatBusinessMetricValue(value: any) {
+  if (typeof value === "number") return value.toLocaleString();
+  if (typeof value === "boolean") return value ? "yes" : "no";
+  return String(value || "not available");
 }
 
 function ProviderCapabilityDiagnostics({ summary }: { summary: any }) {
@@ -2426,3 +2605,42 @@ const activationTitleStyle = { color: "#0f172a", fontSize: 15, fontWeight: 850 }
 const activationCopyStyle = { margin: "6px 0 0 0", color: "#475569", fontSize: 13, lineHeight: 1.6, maxWidth: 680 };
 const activationActionsStyle = { flexShrink: 0 };
 const secondaryActionButtonStyle = { backgroundColor: "#fff", color: "#0f172a", border: "1px solid #cbd5e1", padding: "8px 20px", borderRadius: "6px", fontWeight: "bold", cursor: "pointer" };
+const businessStatusStyle = { border: "1px solid #dbeafe", backgroundColor: "#f8fbff", borderRadius: 12, padding: 18, marginBottom: 18 };
+const businessStatusHeaderStyle = { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, marginBottom: 12 };
+const businessEyebrowStyle = { color: "#2563eb", fontSize: 11, fontWeight: 900, textTransform: "uppercase" as const, letterSpacing: "0.12em", marginBottom: 4 };
+const businessStatusTitleStyle = { margin: 0, color: "#0f172a", fontSize: 18, fontWeight: 900 };
+const businessStatusBadgeStyle = (tone: string) => ({
+  border:
+    tone === "success"
+      ? "1px solid #bbf7d0"
+      : tone === "warning"
+        ? "1px solid #fde68a"
+        : "1px solid #cbd5e1",
+  backgroundColor:
+    tone === "success"
+      ? "#f0fdf4"
+      : tone === "warning"
+        ? "#fffbeb"
+        : "#f8fafc",
+  color:
+    tone === "success"
+      ? "#15803d"
+      : tone === "warning"
+        ? "#92400e"
+        : "#475569",
+  borderRadius: 999,
+  padding: "6px 10px",
+  fontSize: 12,
+  fontWeight: 900,
+  whiteSpace: "nowrap" as const,
+});
+const businessStatusCopyStyle = { margin: "0 0 14px 0", color: "#334155", fontSize: 14, lineHeight: 1.65 };
+const businessMetricGridStyle = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10 };
+const businessMetricStyle = { border: "1px solid #e2e8f0", backgroundColor: "#fff", borderRadius: 10, padding: 12 };
+const businessMetricValueStyle = { color: "#0f172a", fontSize: 16, fontWeight: 900, lineHeight: 1.2 };
+const businessMetricLabelStyle = { marginTop: 4, color: "#64748b", fontSize: 11, fontWeight: 850, textTransform: "uppercase" as const, letterSpacing: "0.04em" };
+const businessWarningStyle = { marginTop: 12, border: "1px solid #fde68a", backgroundColor: "#fffbeb", color: "#92400e", borderRadius: 10, padding: 12, fontSize: 13, lineHeight: 1.55, fontWeight: 700 };
+const businessActionRowStyle = { marginTop: 14, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" as const };
+const businessNextActionStyle = { color: "#334155", fontSize: 13 };
+const advancedDiagnosticsDetailsStyle = { marginTop: 18, border: "1px solid #e2e8f0", backgroundColor: "#f8fafc", borderRadius: 12, padding: 14 };
+const advancedDiagnosticsSummaryStyle = { cursor: "pointer", color: "#0f172a", fontSize: 14, fontWeight: 900 };
