@@ -62,13 +62,16 @@ Open `/admin/providers?companyId=<id>`.
 - [ ] Confirm provider list loads.
 - [ ] Open `/admin/providers/new?companyId=<id>` as owner/admin/platform-owner.
 - [ ] As a customer owner/admin, confirm the guided Add Provider flow shows only public/supported providers, Custom API provider, and Request assisted setup.
-- [ ] Select Custom API provider and confirm the default Simple Connect form shows only Provider name, Provider website/API link, Email/username, Password/API key, and Connect provider.
+- [ ] Select Custom API provider and confirm the default Simple Connect form shows only Provider name, Provider website/API link, Email/username, Password, optional API key/token, and Connect provider.
 - [ ] Confirm auth method, token path, row path, endpoint URL candidates, token placement, field mapping, signal capability, and JSON config are hidden under collapsed Advanced troubleshooting.
 - [ ] Enter a provider base URL and credentials, then click Connect provider. Confirm Nava automatically tries safe common setup patterns without requiring raw JSON.
 - [ ] Enter an endpoint-specific value such as `https://fleettrack.africa/api/login` in API base URL and confirm the wizard normalizes the base to `https://fleettrack.africa/api` while filling the login endpoint separately.
 - [ ] When provider notes mention `user_api_hash` or `get_devices`, confirm "Use detected login-token setup" fills POST login token, token path, fleet endpoint, and row path defaults.
 - [ ] Use Auto-test setup with a safe FleetTrack-style provider and confirm it detects login token path, fleet endpoint, row path, field mappings, and vehicle count when available.
 - [ ] Click Connect provider and confirm the progress runner uses plain labels: Checking secure connection, Signing in, Confirming access, Finding vehicles, Matching trucks, Checking location fields, Checking signal quality, Creating inactive provider, and Ready for review.
+- [ ] If sign-in fails, confirm only Signing in fails and dependent steps such as Confirming access, Finding vehicles, Matching trucks, Checking location fields, Creating inactive provider, and Ready for review are skipped.
+- [ ] If sign-in succeeds but no vehicles are found, confirm Finding vehicles fails and later matching/mapping/create steps are skipped.
+- [ ] If vehicles are found but location fields are missing, confirm Checking location fields fails and provider creation is skipped.
 - [ ] Confirm the success screen shows Vehicles found, Matched existing trucks, New/unmatched vehicles, Tracking verified, Engine/fuel signals verified, Provider created inactive, and Review in Provider Vault.
 - [ ] Confirm the failure screen shows one plain-language problem plus Try advanced troubleshooting and Request assisted setup.
 - [ ] Confirm row path accepts one JSON path only, such as `data`, and rejects URLs or multiple paths like `items data devices`.

@@ -229,6 +229,7 @@ async function autoTestSetup(body: any, companyId: string) {
   let loginResult: any = null;
   let tokenValue = "";
   let loginAttempts = 0;
+  let loginAcceptedWithoutToken = false;
   const loginStatuses: number[] = [];
 
   if (authMethod === "post_login") {
@@ -269,6 +270,7 @@ async function autoTestSetup(body: any, companyId: string) {
           const result = await testEndpointCandidate(candidate, AUTO_TEST_TIMEOUT_MS);
           if (result.response?.status) loginStatuses.push(result.response.status);
           if (result.error || !result.response?.ok) continue;
+          loginAcceptedWithoutToken = true;
 
           const matchedPath = tokenPathCandidates.find((path) =>
             isUsableToken(getByPath(result.analysis.parsed, path))
@@ -292,6 +294,31 @@ async function autoTestSetup(body: any, companyId: string) {
       }
       if (loginResult) break;
     }
+  }
+
+  if (authMethod === "post_login" && !loginResult) {
+    return {
+      base_url: baseUrl,
+      login: null,
+      fleet: null,
+      login_candidates: loginUrlCandidates,
+      fleet_candidates: fleetUrlCandidates,
+      token_path_candidates: tokenPathCandidates,
+      row_path_candidates: ["data", "items", "devices", "vehicles", "result.items"],
+      suggested_auth_method: null,
+      failure_stage: loginAcceptedWithoutToken ? "token" : "login",
+      attempts: {
+        login: loginAttempts,
+        fleet: 0,
+      },
+      setup_blockers: [
+        loginAcceptedWithoutToken
+          ? "Access token not found. Ask the provider which token or hash field is returned by login."
+          : loginStatuses.includes(422)
+            ? "The provider rejected the login request shape. Try query-parameter login or JSON-body login."
+            : "Login failed. Check email/password or whether this provider expects query-parameter login.",
+      ],
+    };
   }
 
   const fleetAuthCandidates = buildFleetAuthCandidates(body, authMethod, tokenValue);
@@ -372,6 +399,7 @@ async function autoTestSetup(body: any, companyId: string) {
     row_path_candidates: ["data", "items", "devices", "vehicles", "result.items"],
     suggested_auth_method:
       authMethod !== "post_login" && loginTokenHint ? "post_login" : null,
+    failure_stage: !fleetResult ? "fleet" : null,
     attempts: {
       login: loginAttempts,
       fleet: fleetAttempts,

@@ -408,7 +408,6 @@ export default function NewProviderPage() {
   function buildCustomProviderCreateBody(
     formInput: typeof INITIAL_CUSTOM_PROVIDER_FORM
   ) {
-    const simpleCredential = formInput.password || formInput.api_key;
     return {
       provider_mode: "custom_api",
       custom_provider: {
@@ -421,10 +420,10 @@ export default function NewProviderPage() {
         auth_method: formInput.auth_method,
         login_credential_placement: formInput.login_credential_placement,
         api_key_header: formInput.api_key_header.trim() || "x-api-key",
-        api_key: formInput.api_key || simpleCredential,
+        api_key: formInput.api_key,
         bearer_token: formInput.bearer_token,
         username: formInput.username,
-        password: formInput.password || simpleCredential,
+        password: formInput.password,
         login_url: formInput.login_url.trim(),
         login_token_path: formInput.login_token_path.trim(),
         login_username_field:
@@ -616,6 +615,12 @@ export default function NewProviderPage() {
       return;
     }
     const fleetTrackLike = split.fleetTrackLike || isFleetTrackLike(customForm, baseUrl);
+    const hasLoginCredentials = Boolean(
+      customForm.username.trim() && customForm.password.trim()
+    );
+    const hasApiToken = Boolean(
+      customForm.api_key.trim() || customForm.bearer_token.trim()
+    );
     const patch: Record<string, string> = {
       base_url: baseUrl,
       provider_timezone: customForm.provider_timezone || "Africa/Nairobi",
@@ -630,8 +635,13 @@ export default function NewProviderPage() {
 
     if (fleetTrackLike) {
       Object.assign(patch, buildLoginTokenSetupPatch(baseUrl, customForm));
-    } else if (customForm.auth_method === "post_login") {
+    } else if (hasApiToken) {
+      patch.auth_method = customForm.bearer_token.trim()
+        ? "bearer_token"
+        : "api_key_header";
+    } else if (hasLoginCredentials || customForm.auth_method === "post_login") {
       Object.assign(patch, {
+        auth_method: "post_login",
         login_url: customForm.login_url.trim() || `${baseUrl}/login`,
         login_token_path: customForm.login_token_path.trim() || "token",
         login_username_field:
@@ -650,6 +660,7 @@ export default function NewProviderPage() {
     }
     patch.http_method = customForm.http_method || "GET";
     patch.row_path = customForm.row_path.trim() || "data";
+
     patch.fleet_token_placement = fleetTrackLike
       ? "query_user_api_hash"
       : customForm.fleet_token_placement || "authorization_bearer";
@@ -705,6 +716,28 @@ export default function NewProviderPage() {
         updateConnectStep("token", "skipped", "No separate sign-in step needed.");
       }
       updateConnectStep("fleet", "running", "Looking for vehicles.");
+    }
+
+    if (
+      formInput.auth_method === "post_login" &&
+      (!formInput.username.trim() || !formInput.password.trim())
+    ) {
+      if (showProgress) {
+        applyProgressUpdates({
+          login: {
+            state: "failed",
+            detail: "Login failed. Check email/password.",
+          },
+          token: { state: "skipped", detail: "Access was not checked because sign-in failed." },
+          fleet: { state: "skipped", detail: "Vehicle search was not attempted." },
+          rows: { state: "skipped", detail: "Truck matching was not attempted." },
+          mapping: { state: "skipped", detail: "Location fields were not checked." },
+          capability: { state: "skipped", detail: "Signal quality was not checked." },
+          create: { state: "skipped", detail: "Provider was not created." },
+          ready: { state: "skipped", detail: "Review is not ready yet." },
+        });
+      }
+      throw new Error("Login failed. Check email/password.");
     }
 
     setTestingEndpoint("auto");
@@ -788,10 +821,18 @@ export default function NewProviderPage() {
   ) {
     if (result?.error) {
       applyProgressUpdates({
-        fleet: {
+        prepare: {
           state: "failed",
           detail: setupFixMessage(result),
         },
+        login: { state: "skipped", detail: "Stopped before sign-in." },
+        token: { state: "skipped", detail: "Stopped before access confirmation." },
+        fleet: { state: "skipped", detail: "Vehicle search was not attempted." },
+        rows: { state: "skipped", detail: "Truck matching was not attempted." },
+        mapping: { state: "skipped", detail: "Location fields were not checked." },
+        capability: { state: "skipped", detail: "Signal quality was not checked." },
+        create: { state: "skipped", detail: "Provider was not created." },
+        ready: { state: "skipped", detail: "Review is not ready yet." },
       });
       return;
     }
@@ -802,62 +843,147 @@ export default function NewProviderPage() {
     );
     const blockers = result?.setup_blockers || [];
     const authIsLogin = formInput.auth_method === "post_login";
-    const loginState = authIsLogin
-      ? result.login
-        ? "success"
-        : "failed"
-      : result.suggested_auth_method === "post_login"
-        ? "warning"
-        : "skipped";
-    const tokenState = authIsLogin
-      ? result.login
-        ? "success"
-        : "failed"
-      : result.suggested_auth_method === "post_login"
-        ? "warning"
-        : "skipped";
+    const loginNeedsSwitch =
+      !authIsLogin && result.suggested_auth_method === "post_login";
+    const loginFailed = authIsLogin && result.failure_stage === "login";
+    const tokenFailed = authIsLogin && result.failure_stage === "token";
+
+    if (loginFailed) {
+      applyProgressUpdates({
+        login: {
+          state: "failed",
+          detail:
+            setupFixMessage({ setup_blockers: blockers }) ||
+            "Login failed. Check email/password.",
+        },
+        token: { state: "skipped", detail: "Access was not checked because sign-in failed." },
+        fleet: { state: "skipped", detail: "Vehicle search was not attempted." },
+        rows: { state: "skipped", detail: "Truck matching was not attempted." },
+        mapping: { state: "skipped", detail: "Location fields were not checked." },
+        capability: { state: "skipped", detail: "Signal quality was not checked." },
+        create: { state: "skipped", detail: "Provider was not created." },
+        ready: { state: "skipped", detail: "Review is not ready yet." },
+      });
+      return;
+    }
+
+    if (tokenFailed) {
+      applyProgressUpdates({
+        login: { state: "success", detail: "Sign-in accepted." },
+        token: {
+          state: "failed",
+          detail: "Access token was not found. Ask the provider which token or hash field to use.",
+        },
+        fleet: { state: "skipped", detail: "Vehicle search was not attempted." },
+        rows: { state: "skipped", detail: "Truck matching was not attempted." },
+        mapping: { state: "skipped", detail: "Location fields were not checked." },
+        capability: { state: "skipped", detail: "Signal quality was not checked." },
+        create: { state: "skipped", detail: "Provider was not created." },
+        ready: { state: "skipped", detail: "Review is not ready yet." },
+      });
+      return;
+    }
+
+    if (loginNeedsSwitch && !result.fleet) {
+      applyProgressUpdates({
+        login: {
+          state: "warning",
+          detail: "This looks like an email/password provider.",
+        },
+        token: {
+          state: "skipped",
+          detail: "Switch to the sign-in setup before checking access.",
+        },
+        fleet: {
+          state: "failed",
+          detail: setupFixMessage({ setup_blockers: blockers }),
+        },
+        rows: { state: "skipped", detail: "Truck matching was not attempted." },
+        mapping: { state: "skipped", detail: "Location fields were not checked." },
+        capability: { state: "skipped", detail: "Signal quality was not checked." },
+        create: { state: "skipped", detail: "Provider was not created." },
+        ready: { state: "skipped", detail: "Review is not ready yet." },
+      });
+      return;
+    }
+
+    if (!result.fleet) {
+      applyProgressUpdates({
+        login: {
+          state: authIsLogin ? "success" : "skipped",
+          detail: authIsLogin ? "Sign-in accepted." : "No separate sign-in step needed.",
+        },
+        token: {
+          state: authIsLogin ? "success" : "skipped",
+          detail: authIsLogin ? "Access confirmed." : "Using the supplied API key or public access.",
+        },
+        fleet: {
+          state: "failed",
+          detail: setupFixMessage({ setup_blockers: blockers }),
+        },
+        rows: { state: "skipped", detail: "Truck matching was not attempted." },
+        mapping: { state: "skipped", detail: "Location fields were not checked." },
+        capability: { state: "skipped", detail: "Signal quality was not checked." },
+        create: { state: "skipped", detail: "Provider was not created." },
+        ready: { state: "skipped", detail: "Review is not ready yet." },
+      });
+      return;
+    }
+
+    if (coreFields.length < 4) {
+      applyProgressUpdates({
+        login: {
+          state: authIsLogin ? "success" : "skipped",
+          detail: authIsLogin ? "Sign-in accepted." : "No separate sign-in step needed.",
+        },
+        token: {
+          state: authIsLogin ? "success" : "skipped",
+          detail: authIsLogin ? "Access confirmed." : "Using the supplied API key or public access.",
+        },
+        fleet: { state: "success", detail: "Vehicle list found." },
+        rows: {
+          state: result.fleet.detected_vehicle_count ? "success" : "failed",
+          detail: result.fleet.detected_vehicle_count
+            ? `Vehicles found: ${result.fleet.detected_vehicle_count}.`
+            : "No vehicles were found.",
+        },
+        mapping: {
+          state: "failed",
+          detail: "Vehicles were found, but required location fields were missing.",
+        },
+        capability: { state: "skipped", detail: "Signal quality was not checked." },
+        create: { state: "skipped", detail: "Provider was not created." },
+        ready: { state: "skipped", detail: "Review is not ready yet." },
+      });
+      return;
+    }
 
     applyProgressUpdates({
       login: {
-        state: loginState,
-        detail: result.login
-          ? "Sign-in accepted."
-          : result.suggested_auth_method === "post_login"
-            ? "This provider appears to need username/password sign-in."
-            : "Using the supplied key/password.",
+        state: authIsLogin ? "success" : "skipped",
+        detail: authIsLogin ? "Sign-in accepted." : "No separate sign-in step needed.",
       },
       token: {
-        state: tokenState,
-        detail: result.login
+        state: authIsLogin ? "success" : "skipped",
+        detail: authIsLogin
           ? "Access confirmed."
-          : result.suggested_auth_method === "post_login"
-            ? "Try the advanced sign-in setup."
-            : "No separate access step needed.",
+          : "Using the supplied API key or public access.",
       },
       fleet: {
-        state: result.fleet ? "success" : "failed",
-        detail: result.fleet
-          ? "Vehicle list found."
-          : setupFixMessage({ setup_blockers: blockers }),
+        state: "success",
+        detail: "Vehicle list found.",
       },
       rows: {
-        state: result.fleet?.detected_vehicle_count ? "success" : "failed",
-        detail: result.fleet?.detected_vehicle_count
-          ? `Vehicles found: ${result.fleet.detected_vehicle_count}.`
-          : "Nava signed in but could not find vehicles. Ask your provider for the vehicle list endpoint.",
+        state: "success",
+        detail: `Vehicles found: ${result.fleet.detected_vehicle_count}.`,
       },
       mapping: {
-        state: coreFields.length === 4 ? "success" : "warning",
-        detail:
-          coreFields.length === 4
-            ? "Location tracking fields found."
-            : "Vehicles were found, but required location fields need review.",
+        state: "success",
+        detail: "Location tracking fields found.",
       },
       capability: {
-        state: result.fleet ? "success" : "waiting",
-        detail: result.fleet
-          ? "Signal quality ready for review."
-          : "",
+        state: "success",
+        detail: "Signal quality ready for review.",
       },
       create: {
         state: "waiting",
@@ -891,11 +1017,15 @@ export default function NewProviderPage() {
 
       const coreMissing = missingCoreMappingFields(effectiveForm);
       if (coreMissing.length > 0) {
-        updateConnectStep(
-          "mapping",
-          "failed",
-          "Vehicles were found, but the required location fields were missing."
-        );
+        applyProgressUpdates({
+          mapping: {
+            state: "failed",
+            detail: "Vehicles were found, but the required location fields were missing.",
+          },
+          capability: { state: "skipped", detail: "Signal quality was not checked." },
+          create: { state: "skipped", detail: "Provider was not created." },
+          ready: { state: "skipped", detail: "Review is not ready yet." },
+        });
         throw new Error("Core field mapping is incomplete.");
       }
 
@@ -1490,9 +1620,19 @@ function prepareSimpleConnectForm(form: typeof INITIAL_CUSTOM_PROVIDER_FORM) {
   if (split.endpointKind === "fleet" && split.endpointUrl && !prepared.endpoint_url.trim()) {
     prepared.endpoint_url = split.endpointUrl;
   }
+  const hasLoginCredentials = Boolean(
+    prepared.username.trim() && prepared.password.trim()
+  );
+  const hasApiToken = Boolean(
+    prepared.api_key.trim() || prepared.bearer_token.trim()
+  );
   if (fleetTrackLike) {
     Object.assign(prepared, buildLoginTokenSetupPatch(baseUrl, prepared, true));
-  } else if (prepared.username.trim() && prepared.password.trim()) {
+  } else if (hasApiToken) {
+    prepared.auth_method = prepared.bearer_token.trim()
+      ? "bearer_token"
+      : "api_key_header";
+  } else if (hasLoginCredentials) {
     prepared.auth_method = "post_login";
     prepared.login_url = prepared.login_url.trim() || `${baseUrl}/login`;
     prepared.login_token_path = prepared.login_token_path.trim() || "token";
@@ -1520,8 +1660,20 @@ function setupFixMessage(result: any) {
     ? result.setup_blockers
     : [];
   const text = String(result?.error || blockers[0] || "").toLowerCase();
+  if (text.includes("access token not found") || text.includes("token path")) {
+    return "Access token not found. Ask your provider which token or hash field is returned after login.";
+  }
   if (text.includes("422") || text.includes("login request shape")) {
-    return "Login failed. Check username/password.";
+    return "Login failed. Check email/password or whether this provider expects query-parameter login.";
+  }
+  if (text.includes("login failed")) {
+    return "Login failed. Check email/password or whether this provider expects query-parameter login.";
+  }
+  if (text.includes("username and password")) {
+    return "Login failed. Check email/password.";
+  }
+  if (text.includes("api key is required") || text.includes("bearer token is required")) {
+    return "API key or token is missing. Add the provider token or use email/password sign-in.";
   }
   if (text.includes("401") || text.includes("user_api_hash")) {
     return "Nava signed in but the provider rejected vehicle access. Ask your provider how vehicle access should be authorized.";
@@ -1772,10 +1924,6 @@ function CustomApiProviderForm({
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const isPost = form.http_method === "POST";
   const loginTokenHint = isFleetTrackLike(form, normalizeBaseUrl(form.base_url));
-  const simpleSecretValue =
-    form.auth_method === "post_login" || loginTokenHint
-      ? form.password
-      : form.api_key || form.password;
 
   return (
     <div style={customProviderStyle}>
@@ -1821,14 +1969,24 @@ function CustomApiProviderForm({
             onChange={(value) => updateForm({ username: value })}
           />
           <TextField
-            label="Password / API key"
-            value={simpleSecretValue}
-            onChange={(value) =>
-              updateForm({ password: value, api_key: value })
-            }
+            label="Password"
+            value={form.password}
+            onChange={(value) => updateForm({ password: value })}
+            secret
+          />
+          <TextField
+            label="API key / token optional"
+            value={form.api_key}
+            onChange={(value) => updateForm({ api_key: value })}
             secret
           />
         </div>
+        {loginTokenHint && (
+          <div style={warningStyle}>
+            This provider appears to use email/password sign-in that returns an
+            access hash. Nava will try that first.
+          </div>
+        )}
         <div style={autoActionsStyle}>
           <button
             type="button"
