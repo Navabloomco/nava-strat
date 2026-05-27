@@ -3,6 +3,7 @@ import { readStoredVehicleIdentityContext } from "../providers/vehicleIdentity";
 import { supabaseAdmin } from "../supabaseAdmin";
 import {
   classifyProviderTimestampQuality,
+  parseProviderTimestamp,
   resolveOperationalDayRange,
   resolveOperationalTimeZone,
 } from "../timeFormatting";
@@ -1187,9 +1188,9 @@ function journeyOverlapsTimeframe(journey: any, timeframe: TripTimeframe) {
 function resolveJourneySourceWindow(journey: any, timeframe: TripTimeframe) {
   const timeframeStartMs = timestampMs(timeframe.start_utc) || Date.now();
   const timeframeEndMs = timestampMs(timeframe.end_utc) || timeframeStartMs;
-  const explicitStartMs = timestampMs(journey.start_time);
-  const explicitEndMs = timestampMs(journey.end_time);
-  const createdMs = timestampMs(journey.created_at);
+  const explicitStartMs = timestampMs(journey.start_time, timeframe.time_zone);
+  const explicitEndMs = timestampMs(journey.end_time, timeframe.time_zone);
+  const createdMs = timestampMs(journey.created_at, timeframe.time_zone);
   const status = String(journey.status || "").toLowerCase();
   const hasExplicitStart = Boolean(explicitStartMs);
   const hasExplicitEnd = Boolean(explicitEndMs);
@@ -1504,9 +1505,10 @@ function numericOrNull(value: any) {
   return Number.isFinite(number) ? number : null;
 }
 
-function timestampMs(value: any): number | null {
+function timestampMs(value: any, timeZone?: string): number | null {
   if (!value) return null;
-  const ms = new Date(value).getTime();
+  const date = parseProviderTimestamp(value, timeZone);
+  const ms = date ? date.getTime() : Number.NaN;
   return Number.isFinite(ms) ? ms : null;
 }
 

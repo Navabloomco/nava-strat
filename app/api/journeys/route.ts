@@ -8,6 +8,7 @@ import {
   normalizeRole,
   rolesForCompany,
 } from "../../../lib/api/roleAccess";
+import { parseProviderTimestamp } from "../../../lib/timeFormatting";
 
 export const dynamic = "force-dynamic";
 
@@ -36,8 +37,8 @@ function normalizeTimestamp(value: unknown) {
   if (value === undefined) return undefined;
   const text = String(value || "").trim();
   if (!text) return null;
-  const date = new Date(text);
-  if (Number.isNaN(date.getTime())) return null;
+  const date = parseProviderTimestamp(text);
+  if (!date || Number.isNaN(date.getTime())) return null;
   return date.toISOString();
 }
 

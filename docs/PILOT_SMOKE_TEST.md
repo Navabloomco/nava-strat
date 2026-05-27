@@ -251,6 +251,7 @@ Confirm workflow behavior:
 - [ ] Confirm `/ops/efficiency` shows a friendly in-page access message instead of raw JSON when the user lacks access.
 - [ ] Call `GET /api/ops/trip-intelligence?range=yesterday` with an ops-visible role and confirm the JSON returns Trip records projected from `journeys`.
 - [ ] Confirm `/api/ops/trip-intelligence` does not require `journeys.updated_at`; it uses `start_time` / `end_time` when available and `created_at` as fallback.
+- [ ] Confirm Trip Intelligence interprets journey `start_time`, `end_time`, and `created_at` values without explicit timezone offsets in the company/operator timezone, so same-day active Trips are not dropped on UTC server runtimes.
 - [ ] Confirm production Trip Intelligence excludes demo journeys. If no real trips exist, the API succeeds with `trips: []`, journey source `empty`, and a clear empty-state message instead of schema-missing output.
 - [ ] Create one real production Trip in `/ops/journey/new`, then open `/ops/efficiency?range=today` and confirm Trips projected is greater than 0 with clear missing-data notes if revenue/cost/distance links are incomplete.
 - [ ] Confirm Trip Intelligence returns trip identity, asset evidence, driver evidence, movement evidence, delay evidence, stale-tracking evidence, missing-data notes, profitability readiness, and management flags.
