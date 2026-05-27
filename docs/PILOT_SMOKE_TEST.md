@@ -227,7 +227,8 @@ Confirm workflow behavior:
 - [ ] Create Trip keeps saved route picker behavior.
 - [ ] Create Trip keeps enabled vehicle picker behavior.
 - [ ] Create Trip saves production journeys as `is_demo = false` and preserves `start_time` / `end_time` if supplied.
-- [ ] Create Trip persists the selected same-company asset link (`asset_id`) and selected driver link (`driver_id`) when the picker is used.
+- [ ] Create Trip persists the selected same-company driver link (`driver_id`) when the picker is used.
+- [ ] Create Trip with an enabled provider asset such as `KBJ132C` succeeds even if the live `journeys.asset_id` FK cannot accept `fleet_assets.id`; in that case the Trip preserves the vehicle text and safely leaves `asset_id` null.
 - [ ] Create Trip accepts partial trips: client, vehicle, origin, destination, status, and start time are enough; revenue, fuel, expenses, and end time can be added later.
 - [ ] Optional commercial fields can store tonnage/rate when known, but Trip Intelligence still marks contribution unsafe until linked cost evidence exists.
 - [ ] Vehicle picker can fill the truck field.

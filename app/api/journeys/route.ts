@@ -70,6 +70,18 @@ function calculateRevenueFields(input: {
   };
 }
 
+function isJourneyAssetForeignKeyError(error: any) {
+  const text = String(
+    error?.message || error?.details || error?.hint || error || ""
+  ).toLowerCase();
+  return (
+    text.includes("journeys_asset_id_fkey") ||
+    (text.includes("foreign key") &&
+      text.includes("journeys") &&
+      text.includes("asset_id"))
+  );
+}
+
 async function getUserFromRequest(req: Request) {
   const authHeader = req.headers.get("authorization");
   if (!authHeader?.startsWith("Bearer ")) {
@@ -401,11 +413,28 @@ export async function POST(req: Request) {
     const revenueNotes = normalizeOptionalText(body.revenue_notes);
     if (revenueNotes !== undefined) insertPayload.revenue_notes = revenueNotes;
 
-    const { data: journey, error: insertError } = await supabaseAdmin
+    let assetLinkOmitted = false;
+    let { data: journey, error: insertError } = await supabaseAdmin
       .from("journeys")
       .insert(insertPayload)
       .select(OPERATIONAL_JOURNEY_FIELDS)
       .single();
+
+    if (insertError && selectedAsset?.id && isJourneyAssetForeignKeyError(insertError)) {
+      const retryPayload = {
+        ...insertPayload,
+        asset_id: null,
+      };
+      const retry = await supabaseAdmin
+        .from("journeys")
+        .insert(retryPayload)
+        .select(OPERATIONAL_JOURNEY_FIELDS)
+        .single();
+
+      journey = retry.data;
+      insertError = retry.error;
+      assetLinkOmitted = !retry.error;
+    }
 
     if (insertError) throw insertError;
 
@@ -413,6 +442,21 @@ export async function POST(req: Request) {
       success: true,
       company,
       journey,
+      asset_link: selectedAsset
+        ? {
+            selected_fleet_asset_id: selectedAsset.id,
+            saved_asset_id: journey?.asset_id || null,
+            status: assetLinkOmitted ? "omitted_fk_mismatch" : "linked",
+            note: assetLinkOmitted
+              ? "Selected provider asset was preserved as the trip vehicle text, but asset_id was left empty because the current journey schema does not accept fleet_assets IDs."
+              : null,
+          }
+        : null,
+      warnings: assetLinkOmitted
+        ? [
+            "Selected provider asset was preserved as the trip vehicle text, but asset_id was left empty because the current journey schema does not accept fleet_assets IDs.",
+          ]
+        : [],
     });
   } catch (err: any) {
     console.error("Journeys POST error:", err);
