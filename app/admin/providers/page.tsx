@@ -639,7 +639,11 @@ function ProviderVehicleMatchReview({
       <div style={vehicleReviewHeaderStyle}>
         <div>
           <div style={businessEyebrowStyle}>Vehicle match review</div>
-          <h4 style={vehicleReviewTitleStyle}>Confirm provider vehicles before activation</h4>
+          <h4 style={vehicleReviewTitleStyle}>
+            {isActive
+              ? "Review provider vehicle mappings"
+              : "Confirm provider vehicles before activation"}
+          </h4>
         </div>
         <div style={businessStatusBadgeStyle(isActive ? "success" : reviewConfirmed ? "success" : "neutral")}>
           {isActive ? "Active provider" : reviewConfirmed ? "Reviewed" : "Review required"}
@@ -647,9 +651,9 @@ function ProviderVehicleMatchReview({
       </div>
 
       <p style={vehicleReviewCopyStyle}>
-        Review the provider vehicle labels against the canonical fleet assets before
-        activating sync. This prevents a second provider from updating the wrong
-        truck record.
+        {isActive
+          ? "Review provider vehicle labels to confirm sync mappings remain correct."
+          : "Review provider vehicle labels before activating sync. This prevents a second provider from updating the wrong truck record."}
       </p>
 
       <div style={vehicleReviewMetricGridStyle}>
@@ -698,7 +702,9 @@ function ProviderVehicleMatchReview({
                       {row.matched_truck_id || "No existing asset matched"}
                     </td>
                     <td style={vehicleReviewTdStyle}>
-                      {formatMatchSource(row.match_source, row.confidence)}
+                      <span style={vehicleReviewSourceBadgeStyle(row.status)}>
+                        {formatMatchSource(row.match_source, row.confidence)}
+                      </span>
                     </td>
                     <td style={vehicleReviewTdStyle}>
                       <span style={vehicleReviewStatusStyle(row.status)}>
@@ -775,15 +781,21 @@ function confirmProviderActivation(provider: any, review: any) {
 
 function formatMatchSource(source: any, confidence: any) {
   const sourceText = String(source || "");
+  const confidenceLabel =
+    confidence === "high"
+      ? "High confidence"
+      : confidence === "medium"
+        ? "Medium confidence"
+        : "Review needed";
   const label =
     sourceText === "same_provider_registration_match"
-      ? "Existing provider asset"
+      ? "Existing asset"
       : sourceText === "cross_provider_registration_match"
-        ? "Existing fleet asset from another provider"
+        ? "Existing asset"
         : sourceText === "missing_vehicle_identifier"
-          ? "Missing provider identifier"
-          : "No existing asset match";
-  return confidence === "high" ? `${label} - high confidence` : `${label} - review`;
+          ? "Missing ID"
+          : "New vehicle";
+  return `${label} · ${confidenceLabel}`;
 }
 
 function formatMatchStatus(status: any) {
@@ -2998,11 +3010,40 @@ const vehicleReviewHeaderStyle = { display: "flex", justifyContent: "space-betwe
 const vehicleReviewTitleStyle = { margin: 0, color: "#0f172a", fontSize: 17, fontWeight: 900 };
 const vehicleReviewCopyStyle = { margin: "0 0 14px 0", color: "#475569", fontSize: 13, lineHeight: 1.65 };
 const vehicleReviewMetricGridStyle = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 10, marginBottom: 14 };
-const vehicleReviewTableWrapStyle = { overflowX: "auto" as const, border: "1px solid #e2e8f0", borderRadius: 10, backgroundColor: "#fff", marginBottom: 12 };
-const vehicleReviewTableStyle = { width: "100%", borderCollapse: "collapse" as const, minWidth: 680 };
-const vehicleReviewThStyle = { textAlign: "left" as const, padding: "10px 12px", color: "#475569", fontSize: 11, fontWeight: 900, textTransform: "uppercase" as const, letterSpacing: "0.04em", borderBottom: "1px solid #e2e8f0", backgroundColor: "#f8fafc" };
-const vehicleReviewTdStyle = { padding: "11px 12px", color: "#0f172a", fontSize: 13, borderBottom: "1px solid #f1f5f9", verticalAlign: "top" as const };
+const vehicleReviewTableWrapStyle = { overflowX: "auto" as const, border: "1px solid #e2e8f0", borderRadius: 10, backgroundColor: "#fff", marginBottom: 12, maxWidth: "100%" };
+const vehicleReviewTableStyle = { width: "100%", borderCollapse: "collapse" as const, tableLayout: "fixed" as const };
+const vehicleReviewThStyle = { textAlign: "left" as const, padding: "10px 12px", color: "#475569", fontSize: 11, fontWeight: 900, textTransform: "uppercase" as const, letterSpacing: "0.04em", borderBottom: "1px solid #e2e8f0", backgroundColor: "#f8fafc", overflowWrap: "anywhere" as const };
+const vehicleReviewTdStyle = { padding: "11px 12px", color: "#0f172a", fontSize: 13, borderBottom: "1px solid #f1f5f9", verticalAlign: "top" as const, overflowWrap: "anywhere" as const, wordBreak: "break-word" as const };
 const vehicleReviewConfirmStyle = { marginTop: 12, display: "flex", alignItems: "center", gap: 8, color: "#0f172a", fontSize: 13, fontWeight: 800 };
+const vehicleReviewSourceBadgeStyle = (status: string) => ({
+  display: "inline-flex",
+  maxWidth: "100%",
+  border:
+    status === "matched"
+      ? "1px solid #d1fae5"
+      : status === "unmatched"
+        ? "1px solid #fed7aa"
+        : "1px solid #fde68a",
+  backgroundColor:
+    status === "matched"
+      ? "#f7fefb"
+      : status === "unmatched"
+        ? "#fff7ed"
+        : "#fffbeb",
+  color:
+    status === "matched"
+      ? "#166534"
+      : status === "unmatched"
+        ? "#c2410c"
+        : "#92400e",
+  borderRadius: 999,
+  padding: "4px 8px",
+  fontSize: 12,
+  fontWeight: 850,
+  lineHeight: 1.25,
+  whiteSpace: "normal" as const,
+  overflowWrap: "anywhere" as const,
+});
 const vehicleReviewStatusStyle = (status: string) => ({
   display: "inline-flex",
   border:

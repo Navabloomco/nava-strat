@@ -94,6 +94,7 @@ Open `/admin/providers?companyId=<id>`.
 - [ ] Confirm provider summary metrics use latest successful test/sync counts when available, such as 36 FleetTrack vehicles or 21 BlueTrax vehicles, and otherwise show plain placeholders such as `Not refreshed yet` / `Review needed`.
 - [ ] Confirm matched existing trucks never exceeds vehicles found; if legacy or uncertain counts are impossible, the card shows `Review needed`.
 - [ ] For an inactive second provider with successful test results, confirm Provider Vault shows a Vehicle match review with provider vehicle label, matched canonical truck, match source/confidence, and status.
+- [ ] Confirm Vehicle match review uses compact match labels such as `Existing asset · High confidence` and active providers use sync-maintenance copy rather than activation copy.
 - [ ] Confirm activation stays blocked until the admin checks `I reviewed these vehicle matches`, even when all rows are matched.
 - [ ] Confirm activating after review shows a final confirmation describing how many provider vehicles will map to existing assets.
 - [ ] Confirm GPS-only providers keep Engine/fuel signals as `not verified` unless supported ignition, engine/CAN, or tank signals have meaningful non-placeholder values.
