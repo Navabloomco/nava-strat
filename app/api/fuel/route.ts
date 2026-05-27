@@ -12,7 +12,7 @@ import {
 export const dynamic = "force-dynamic";
 
 const OPERATIONAL_JOURNEY_FIELDS =
-  "id, internal_trip_id, client_name, truck, driver, from_location, to_location, expected_fuel_liters, status, created_at, updated_at";
+  "id, internal_trip_id, client_name, truck, driver, from_location, to_location, expected_fuel_liters, status, start_time, end_time, created_at";
 const FINANCE_JOURNEY_FIELDS = `${OPERATIONAL_JOURNEY_FIELDS}, loaded_quantity, offloaded_quantity, billing_quantity, billing_unit, rate_type, rate_amount, rate_currency, fx_rate, revenue_original, revenue_kes, revenue_status`;
 const SAFE_FUEL_LOG_FIELDS =
   "id, truck_text, liters, price_per_liter, total_cost, vendor, notes, journey_id, allocation_status, fuel_source, approved_extra_fuel, approval_reason, request_status, approval_required, created_at";

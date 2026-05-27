@@ -396,7 +396,7 @@ async function fetchJourneys(
   try {
     const { data, error } = await supabaseAdmin
       .from("journeys")
-      .select("id, truck, driver, client_name, from_location, to_location, status, created_at, updated_at")
+      .select("id, truck, driver, client_name, from_location, to_location, status, start_time, end_time, created_at")
       .eq("company_id", companyId)
       .eq("is_demo", false)
       .gte("created_at", timeframe.start_utc)

@@ -301,7 +301,10 @@ export default function OpsEfficiencyPage() {
                 {trips.length === 0 ? (
                   <InlineEmpty
                     title="No trips projected"
-                    body="No journey records matched this operating range."
+                    body={
+                      data.tripIntelligence?.empty_state?.message ||
+                      "No real journey records are linked for this period yet."
+                    }
                   />
                 ) : (
                   <div className="mt-5 grid gap-3">

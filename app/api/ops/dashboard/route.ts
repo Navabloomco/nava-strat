@@ -50,7 +50,7 @@ const SHARED_DISRUPTION_REASONS = [
   "Other",
 ];
 const OPS_JOURNEY_FIELDS =
-  "id, internal_trip_id, client_name, truck, driver, from_location, to_location, status, created_at, updated_at";
+  "id, internal_trip_id, client_name, truck, driver, from_location, to_location, status, start_time, end_time, created_at";
 const OPS_ENABLED_ASSET_FIELDS =
   "id, truck_id, registration, status, asset_category, provider_name, latitude, longitude, last_seen_at";
 const OPS_PROVIDER_FIELDS =

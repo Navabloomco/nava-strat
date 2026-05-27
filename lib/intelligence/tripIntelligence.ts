@@ -41,9 +41,10 @@ type TripTimeframe = {
 const STALE_TRACKING_THRESHOLD_MINUTES = 60;
 const MAX_SEGMENT_MINUTES = 90;
 const MAX_IMPLIED_SPEED_KPH = 160;
+const MAX_INFERRED_TRIP_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 const OPERATIONAL_JOURNEY_SELECT =
-  "id, company_id, internal_trip_id, client_name, truck, driver, from_location, to_location, expected_fuel_liters, status, created_at, updated_at";
+  "id, company_id, internal_trip_id, asset_id, driver_id, client_name, truck, driver, from_location, to_location, expected_fuel_liters, status, start_time, end_time, created_at";
 const FINANCE_JOURNEY_SELECT = `${OPERATIONAL_JOURNEY_SELECT}, loaded_quantity, offloaded_quantity, billing_quantity, billing_unit, rate_type, rate_amount, rate_currency, fx_rate, revenue_original, revenue_kes, revenue_status`;
 const ASSET_SELECT =
   "id, company_id, provider_id, truck_id, registration, provider_name, status, last_seen_at, provider_location_label, asset_category, billing_status, intelligence_enabled, first_seen_at, telemetry_capability, telemetry_capabilities";
@@ -218,6 +219,7 @@ export async function buildTripIntelligenceSummary(input: TripIntelligenceInput)
       fuel_logs: includeFinance ? sourceStatus(fuelResult) : hiddenSourceStatus(),
       expenses: includeFinance ? sourceStatus(expensesResult) : hiddenSourceStatus(),
     },
+    empty_state: buildTripEmptyState(journeysResult, timeframe),
     summary: buildTripSummary(tripRecords),
     evidence_source_summary: buildEvidenceSourceSummary(tripRecords),
     missing_data_summary: buildMissingDataSummary(tripRecords),
@@ -253,7 +255,6 @@ async function fetchJourneys(
       .select(includeFinance ? FINANCE_JOURNEY_SELECT : OPERATIONAL_JOURNEY_SELECT)
       .eq("company_id", companyId)
       .eq("is_demo", false)
-      .lt("created_at", timeframe.end_utc)
       .order("created_at", { ascending: false })
       .limit(2000);
 
@@ -262,11 +263,8 @@ async function fetchJourneys(
       throw error;
     }
 
-    const startMs = new Date(timeframe.start_utc).getTime();
     const rows = (data || []).filter((journey: any) => {
-      const createdMs = new Date(journey.created_at || 0).getTime();
-      const status = String(journey.status || "").toLowerCase();
-      return createdMs >= startMs || status === "active";
+      return journeyOverlapsTimeframe(journey, timeframe);
     });
 
     return { rows };
@@ -541,10 +539,12 @@ function buildTripIdentity(journey: any, window: any) {
       end_utc: window.end_utc,
       basis: window.basis,
       evidence_label:
-        "journey created/updated timestamps; actual departure and arrival windows are not first-class yet",
+        window.evidence_label ||
+        "journey start/end timestamps when available; created_at is used only as a fallback",
     },
     created_at: journey.created_at || null,
-    updated_at: journey.updated_at || null,
+    start_time: journey.start_time || null,
+    end_time: journey.end_time || null,
   };
 }
 
@@ -995,22 +995,86 @@ function findJourneyAsset(journey: any, lookup: ReturnType<typeof buildAssetLook
 }
 
 function resolveTripWindow(journey: any, timeframe: TripTimeframe) {
-  const createdMs = new Date(journey.created_at || timeframe.start_utc).getTime();
-  const updatedMs = new Date(journey.updated_at || timeframe.end_utc).getTime();
-  const startMs = Number.isFinite(createdMs)
-    ? Math.max(createdMs, new Date(timeframe.start_utc).getTime())
-    : new Date(timeframe.start_utc).getTime();
+  const sourceWindow = resolveJourneySourceWindow(journey, timeframe);
+  const timeframeStartMs = timestampMs(timeframe.start_utc) || 0;
+  const timeframeEndMs = timestampMs(timeframe.end_utc) || timeframeStartMs;
+  let startMs = Math.max(sourceWindow.start_ms, timeframeStartMs);
   const status = String(journey.status || "").toLowerCase();
-  const fallbackEnd = status === "active" ? Math.min(Date.now(), new Date(timeframe.end_utc).getTime()) : updatedMs;
-  const endMs =
-    Number.isFinite(fallbackEnd) && fallbackEnd > startMs
-      ? Math.min(fallbackEnd, new Date(timeframe.end_utc).getTime())
-      : new Date(timeframe.end_utc).getTime();
+
+  if (
+    status === "active" &&
+    !sourceWindow.has_explicit_start &&
+    !sourceWindow.has_explicit_end
+  ) {
+    startMs = Math.max(startMs, sourceWindow.end_ms - MAX_INFERRED_TRIP_WINDOW_MS);
+  }
+
+  const endMs = Math.max(
+    startMs,
+    Math.min(sourceWindow.end_ms, timeframeEndMs)
+  );
 
   return {
     start_utc: new Date(startMs).toISOString(),
-    end_utc: new Date(Math.max(endMs, startMs)).toISOString(),
-    basis: "journey_created_updated_window",
+    end_utc: new Date(endMs).toISOString(),
+    basis: sourceWindow.basis,
+    evidence_label: sourceWindow.evidence_label,
+  };
+}
+
+function journeyOverlapsTimeframe(journey: any, timeframe: TripTimeframe) {
+  const sourceWindow = resolveJourneySourceWindow(journey, timeframe);
+  const timeframeStartMs = timestampMs(timeframe.start_utc);
+  const timeframeEndMs = timestampMs(timeframe.end_utc);
+
+  if (!timeframeStartMs || !timeframeEndMs) return false;
+  return sourceWindow.start_ms < timeframeEndMs && sourceWindow.end_ms >= timeframeStartMs;
+}
+
+function resolveJourneySourceWindow(journey: any, timeframe: TripTimeframe) {
+  const timeframeStartMs = timestampMs(timeframe.start_utc) || Date.now();
+  const timeframeEndMs = timestampMs(timeframe.end_utc) || timeframeStartMs;
+  const explicitStartMs = timestampMs(journey.start_time);
+  const explicitEndMs = timestampMs(journey.end_time);
+  const createdMs = timestampMs(journey.created_at);
+  const status = String(journey.status || "").toLowerCase();
+  const hasExplicitStart = Boolean(explicitStartMs);
+  const hasExplicitEnd = Boolean(explicitEndMs);
+  const startMs = explicitStartMs || createdMs || timeframeStartMs;
+  let endMs: number;
+  let basis = "journey_created_fallback_window";
+  let evidenceLabel =
+    "created_at fallback; first-class journey start/end times are not available for this record";
+
+  if (explicitStartMs || explicitEndMs) {
+    basis = "journey_start_end_window";
+    evidenceLabel = "journey start_time/end_time";
+  }
+
+  if (explicitEndMs && explicitEndMs >= startMs) {
+    endMs = explicitEndMs;
+  } else if (status === "active") {
+    endMs = Math.min(Date.now(), timeframeEndMs);
+    if (!explicitStartMs && !explicitEndMs) {
+      basis = "active_journey_recent_window";
+      evidenceLabel =
+        "active journey without end_time; window capped to avoid overstating old open trips";
+    }
+  } else {
+    endMs = startMs + MAX_INFERRED_TRIP_WINDOW_MS;
+  }
+
+  if (!Number.isFinite(endMs) || endMs < startMs) {
+    endMs = startMs;
+  }
+
+  return {
+    start_ms: startMs,
+    end_ms: endMs,
+    basis,
+    evidence_label: evidenceLabel,
+    has_explicit_start: hasExplicitStart,
+    has_explicit_end: hasExplicitEnd,
   };
 }
 
@@ -1225,6 +1289,28 @@ function sourceStatus(result: QueryResult<any>) {
   return { status: result.rows.length ? "available" : "empty", row_count: result.rows.length };
 }
 
+function buildTripEmptyState(result: QueryResult<any>, timeframe: TripTimeframe) {
+  if (result.missing) {
+    return {
+      status: "journey_source_unavailable",
+      message:
+        "Trip records could not be read safely. Check the journey schema before using Trip Intelligence.",
+      timeframe: timeframe.display_label,
+    };
+  }
+
+  if (result.rows.length === 0) {
+    return {
+      status: "no_production_trips",
+      message:
+        "No real journey records are linked for this period yet. Demo journeys are excluded from production Trip Intelligence.",
+      timeframe: timeframe.display_label,
+    };
+  }
+
+  return null;
+}
+
 function hiddenSourceStatus() {
   return { status: "hidden_by_role", row_count: null };
 }
@@ -1263,6 +1349,12 @@ function countBy(values: any[]) {
 function numericOrNull(value: any) {
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
+}
+
+function timestampMs(value: any): number | null {
+  if (!value) return null;
+  const ms = new Date(value).getTime();
+  return Number.isFinite(ms) ? ms : null;
 }
 
 function roundMetric(value: any) {
