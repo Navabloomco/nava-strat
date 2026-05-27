@@ -10,6 +10,7 @@ export type KenyaOperationalLocation = {
 
 type KenyaPlace = {
   name: string;
+  display_name?: string;
   latitude: number;
   longitude: number;
   kind?: "town" | "urban_area" | "landmark" | "industrial_area" | "transport_hub";
@@ -60,6 +61,7 @@ const KENYA_PLACES: KenyaPlace[] = [
   },
   {
     name: "Industrial Area",
+    display_name: "Industrial Area, Nairobi",
     latitude: -1.3032,
     longitude: 36.8461,
     kind: "industrial_area",
@@ -203,11 +205,29 @@ export function resolveKenyaOperationalLocation(input: {
   const corridor = findNearestCorridor(point);
 
   if (nearest && nearest.distance_meters <= CLOSE_PLACE_METERS) {
-    return formatNearestPlace(nearest.place, nearest.distance_meters, "close");
+    return formatNearestPlace(nearest.place, nearest.distance_meters, "close", point);
+  }
+
+  if (
+    corridor &&
+    corridor.offset_meters <= CORRIDOR_MAX_OFFSET_METERS &&
+    nearest &&
+    nearest.distance_meters <= NEAR_PLACE_METERS &&
+    nearest.distance_meters > CLOSE_PLACE_METERS
+  ) {
+    return {
+      display_label: `between ${displayPlaceName(corridor.from)} and ${displayPlaceName(
+        corridor.to
+      )}, near ${displayPlaceName(nearest.place)}`,
+      evidence_label: "corridor-estimate",
+      confidence: "medium",
+      distance_meters: nearest.distance_meters,
+      note: "Approximate operational location, not an exact address.",
+    };
   }
 
   if (nearest && nearest.distance_meters <= NEAR_PLACE_METERS) {
-    return formatNearestPlace(nearest.place, nearest.distance_meters, "near");
+    return formatNearestPlace(nearest.place, nearest.distance_meters, "near", point);
   }
 
   if (
@@ -216,10 +236,17 @@ export function resolveKenyaOperationalLocation(input: {
     nearest &&
     nearest.distance_meters > CORRIDOR_MIN_ENDPOINT_METERS
   ) {
+    const nearestContext =
+      nearest.distance_meters <= FAR_PLACE_METERS
+        ? `, near ${displayPlaceName(nearest.place)}`
+        : "";
     return {
-      display_label: `between ${corridor.from.name} and ${corridor.to.name}`,
+      display_label: `between ${displayPlaceName(corridor.from)} and ${displayPlaceName(
+        corridor.to
+      )}${nearestContext}`,
       evidence_label: "corridor-estimate",
       confidence: "medium",
+      distance_meters: nearest.distance_meters,
       note:
         "Approximate operational location, not an exact address.",
     };
@@ -227,7 +254,9 @@ export function resolveKenyaOperationalLocation(input: {
 
   if (corridor && corridor.offset_meters <= CORRIDOR_AREA_OFFSET_METERS) {
     return {
-      display_label: `around the ${corridor.from.name}-${corridor.to.name} corridor`,
+      display_label: `around the ${displayPlaceName(corridor.from)}-${displayPlaceName(
+        corridor.to
+      )} corridor`,
       evidence_label: "corridor-estimate",
       confidence: "low",
       note: "Approximate operational location, not an exact address.",
@@ -235,7 +264,7 @@ export function resolveKenyaOperationalLocation(input: {
   }
 
   if (nearest && nearest.distance_meters <= FAR_PLACE_METERS) {
-    return formatNearestPlace(nearest.place, nearest.distance_meters, "far");
+    return formatNearestPlace(nearest.place, nearest.distance_meters, "far", point);
   }
 
   return null;
@@ -244,11 +273,14 @@ export function resolveKenyaOperationalLocation(input: {
 function formatNearestPlace(
   place: KenyaPlace,
   distanceMeters: number,
-  proximity: "close" | "near" | "far"
+  proximity: "close" | "near" | "far",
+  point: { latitude: number; longitude: number }
 ): KenyaOperationalLocation {
+  const placeName = displayPlaceName(place);
+
   if (proximity === "far") {
     return {
-      display_label: `near ${place.name} area`,
+      display_label: `near ${placeName} area`,
       evidence_label: "nearest-known-place",
       confidence: "low",
       distance_meters: distanceMeters,
@@ -258,9 +290,12 @@ function formatNearestPlace(
 
   if (proximity === "near") {
     const prefix = prefixForPlace(place, "around");
+    const relation = relationSuffix(place, distanceMeters, point);
     return {
       display_label:
-        prefix === "around" ? `around ${place.name} area` : `near ${place.name}`,
+        prefix === "around"
+          ? `around ${placeName}${relation ? `, ${relation}` : ""}`
+          : `near ${placeName}${relation ? `, ${relation}` : ""}`,
       evidence_label: "nearest-known-place",
       confidence: "medium",
       distance_meters: distanceMeters,
@@ -268,13 +303,20 @@ function formatNearestPlace(
     };
   }
 
+  const relation = relationSuffix(place, distanceMeters, point);
   return {
-    display_label: `${prefixForPlace(place, "near")} ${place.name}`,
+    display_label: `${prefixForPlace(place, "near")} ${placeName}${
+      relation ? `, ${relation}` : ""
+    }`,
     evidence_label: "nearest-known-place",
     confidence: "medium",
     distance_meters: distanceMeters,
     note: "Approximate operational location, not an exact address.",
   };
+}
+
+function displayPlaceName(place: KenyaPlace) {
+  return place.display_name || place.name;
 }
 
 function findNearestPlace(point: { latitude: number; longitude: number }) {
@@ -300,6 +342,57 @@ function prefixForPlace(place: KenyaPlace, fallback: "near" | "around") {
     return "around";
   }
   return fallback;
+}
+
+function relationSuffix(
+  place: KenyaPlace,
+  distanceMetersValue: number,
+  point: { latitude: number; longitude: number }
+) {
+  if (!shouldShowRelation(place, distanceMetersValue)) return null;
+  const direction = directionFromPlaceToPoint(place, point);
+  return `about ${formatDistanceKm(distanceMetersValue)} ${direction} of town`;
+}
+
+function shouldShowRelation(place: KenyaPlace, distanceMetersValue: number) {
+  if (distanceMetersValue < 500) return false;
+  if (/border/i.test(place.name)) return false;
+  if (
+    place.kind &&
+    place.kind !== "town" &&
+    place.kind !== undefined
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function directionFromPlaceToPoint(
+  place: KenyaPlace,
+  point: { latitude: number; longitude: number }
+) {
+  const deltaLat = point.latitude - place.latitude;
+  const deltaLng = point.longitude - place.longitude;
+  const angle = (Math.atan2(deltaLng, deltaLat) * 180) / Math.PI;
+  const normalized = (angle + 360) % 360;
+  const directions = [
+    "north",
+    "north east",
+    "east",
+    "south east",
+    "south",
+    "south west",
+    "west",
+    "north west",
+  ];
+  return directions[Math.round(normalized / 45) % directions.length];
+}
+
+function formatDistanceKm(distanceMetersValue: number) {
+  const km = distanceMetersValue / 1000;
+  return `${km.toLocaleString(undefined, {
+    maximumFractionDigits: km >= 10 ? 0 : 1,
+  })} km`;
 }
 
 function findNearestCorridor(point: { latitude: number; longitude: number }) {
