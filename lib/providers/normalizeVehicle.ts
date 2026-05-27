@@ -11,9 +11,12 @@ import {
   normalizeSignalKey,
   resolveTelemetryCapability,
 } from "../telemetry/capabilities";
+import { parseProviderVehicleIdentity } from "./vehicleIdentity";
 
 export type CanonicalVehicle = {
   truck_id: string;
+  provider_label?: string | null;
+  attached_trailer_plate?: string | null;
 
   latitude: number | null;
   longitude: number | null;
@@ -85,7 +88,9 @@ export function normalizeVehicle(
   const warnings: string[] = [];
   const missing_fields: string[] = [];
 
-  const truck_id = getVehicleIdentifier(raw, mapping);
+  const providerVehicleLabel = getVehicleIdentifier(raw, mapping);
+  const identity = parseProviderVehicleIdentity(providerVehicleLabel);
+  const truck_id = identity.canonical_truck_plate || providerVehicleLabel;
   const latitude = getNumber(raw, mapping.latitude);
   const longitude = getNumber(raw, mapping.longitude);
   const speed = getNullableNumber(raw, mapping.speed);
@@ -114,6 +119,11 @@ export function normalizeVehicle(
 
   if (!truck_id) {
     missing_fields.push("truck_id");
+  }
+  if (identity.attached_trailer_plate) {
+    warnings.push(
+      "Provider label included an attached trailer; canonical asset identity uses the truck plate"
+    );
   }
 
   if (latitude === null) {
@@ -167,6 +177,8 @@ export function normalizeVehicle(
 
   return {
     truck_id: truck_id || "",
+    provider_label: identity.provider_label,
+    attached_trailer_plate: identity.attached_trailer_plate,
 
     latitude,
     longitude,
@@ -195,6 +207,9 @@ export function normalizeVehicle(
         (signal) => (observedSignals as Record<string, boolean>)[signal]
       ),
       timestamp_quality: normalizedTimestamp.quality,
+      provider_label: identity.provider_label,
+      attached_trailer_plate: identity.attached_trailer_plate,
+      identity_source: identity.identity_source,
     },
     telemetry_capability_source: capabilityResolution.source,
     signal_quality: {
@@ -203,6 +218,9 @@ export function normalizeVehicle(
       placeholder_zero_signals: placeholderZeroSignals,
       unsupported_signal_fields_seen: signalInspection.unsupported_signal_fields_seen,
       timestamp_quality: normalizedTimestamp.quality,
+      provider_label: identity.provider_label,
+      attached_trailer_plate: identity.attached_trailer_plate,
+      identity_source: identity.identity_source,
       meaningful_signals: Object.keys(observedSignals).filter(
         (signal) => (observedSignals as Record<string, boolean>)[signal]
       ),
@@ -215,6 +233,9 @@ export function normalizeVehicle(
       observed_signal_keys: signalInspection.observed_signal_keys,
       placeholder_zero_signals: placeholderZeroSignals,
       timestamp_quality: normalizedTimestamp.quality,
+      provider_label: identity.provider_label,
+      attached_trailer_plate: identity.attached_trailer_plate,
+      identity_source: identity.identity_source,
     },
 
     provider: providerName,

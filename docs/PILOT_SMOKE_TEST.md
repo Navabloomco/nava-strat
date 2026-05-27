@@ -134,6 +134,7 @@ Open `/admin/providers?companyId=<id>`.
 - [ ] Confirm data discovery sample shape shows keys and value types only, not provider secrets, tokens, cookies, Authorization values, raw rows, or raw response bodies.
 - [ ] Confirm BlueTrax current fuel limitation is treated as a provider-pending integration item, not a product failure.
 - [ ] If testing a second provider on an existing fleet, confirm Provider Vault reports cross-provider asset matches instead of creating duplicate billable-review assets.
+- [ ] Confirm provider labels with an attached trailer, such as `KCF529Z ZF3316`, canonicalize to truck `KCF529Z` with attached trailer context `ZF3316`; the trailer does not become a separate billable intelligence asset.
 - [ ] Confirm second-provider telemetry logs preserve the incoming `provider_id` and signal quality.
 - [ ] Confirm verified richer capability declarations can improve asset capability, while placeholder/auto-observed values do not silently upgrade GPS-only assets.
 
@@ -150,6 +151,7 @@ Open `/admin/assets?companyId=<id>`.
 - [ ] Confirm FleetTrack/Oak and Gold assets do not display 1970-style `Last seen` dates; invalid provider timestamps show `Provider timestamp invalid` or `Last seen unavailable`.
 - [ ] Confirm the `Needs timestamp review` filter shows assets with invalid, missing, future, or first-seen-conflicting provider timestamps.
 - [ ] Confirm search works by truck ID/plate, provider, category, and review status.
+- [ ] Confirm truck-and-trailer provider labels show separate fields: Truck, Attached trailer, and Provider label.
 - [ ] Confirm filters/tabs work for All, Unreviewed, Enabled intelligence, Excluded/disabled, Needs timestamp review, New provider assets, Cars/pickups/motorbikes, Trucks, and Possible duplicates.
 - [ ] Select multiple unreviewed provider assets and bulk exclude cars/pickups/motorbikes with an excluded reason.
 - [ ] Select truck assets and bulk enable only after the confirmation shows projected billable enabled count and planning-only monthly estimate.
@@ -235,6 +237,7 @@ Open `/nava-eye` and ask:
 - [ ] "Is KDQ265 siphoning fuel?"
 - [ ] "Why is KDQ265 always stopping?"
 - [ ] Ask "Where is KCW 103Z?", then reply "yes" and confirm the follow-up stays on KCW 103Z.
+- [ ] Ask "Where is ZF3316?" for a trailer plate seen in a provider label and confirm Nava Eye explains it is attached-trailer context following the canonical truck, not an independent trailer tracker.
 - [ ] Ask "Where is KDQ265?", then ask "How about KDQ266" and confirm Nava Eye answers that truck if it exists, or suggests the closest workspace match instead of returning generic limited context.
 - [ ] Ask "How about KCW103Z" after a truck-status answer and confirm Nava Eye inherits current-status intent for KCW 103Z.
 - [ ] Ask "Where is KDQ265?", then ask "How much mileage has it covered today?" and confirm the answer stays on KDQ 265T instead of switching to fleet-wide.

@@ -32,6 +32,7 @@ import {
 } from "../../../../lib/telemetry/capabilities";
 import { resolveNavaEyeConversationFollowup } from "../../../../lib/intelligence/conversationResolver";
 import { applyNavaEyeAnswerQualityGuardrails } from "../../../../lib/intelligence/answerQuality";
+import { readStoredVehicleIdentityContext } from "../../../../lib/providers/vehicleIdentity";
 
 export async function POST(req: Request) {
   try {
@@ -1966,6 +1967,11 @@ function buildTruckStatusFallbackAnswer(context: any, options: any = {}) {
   );
   parts.push(formatTimelineTimeNote(model.timeZone));
 
+  const trailerContext = formatAttachedTrailerLiveContext(model.trailerContext);
+  if (trailerContext) {
+    parts.push(trailerContext);
+  }
+
   if (context.coordinate_request && model.hasGpsPoint) {
     parts.push(
       `Coordinates: ${formatCoordinate(model.locationPoint.latitude)}, ${formatCoordinate(
@@ -2037,6 +2043,7 @@ function buildLiveTruckStatusModel(context: any) {
     context.vehicle_match?.matched_truck_id ||
     context.detected_truck_id ||
     "the vehicle";
+  const trailerContext = buildAttachedTrailerLiveContext(context, truck, matchedLabel);
   const timeZone = context.display_timezone?.time_zone || DEFAULT_OPERATIONAL_TIME_ZONE;
   const latestPoint = latestTelemetry || truck;
   const lastSeenAt = latestTelemetry?.recorded_at || truck.last_seen_at || null;
@@ -2122,7 +2129,41 @@ function buildLiveTruckStatusModel(context: any) {
     timestampWarnings,
     ignitionState,
     telemetryCapability,
+    trailerContext,
   };
+}
+
+function buildAttachedTrailerLiveContext(context: any, truck: any, truckLabel: string) {
+  const match = context.vehicle_match || {};
+  const askedTrailer =
+    match.match_type === "attached_trailer_context" ||
+    Boolean(match.trailer_context);
+  if (!askedTrailer) return null;
+
+  const matchIdentity = readStoredVehicleIdentityContext({
+    telemetry_capabilities: {
+      attached_trailer_plate: match.attached_trailer_plate,
+      provider_label: match.provider_label,
+    },
+  });
+  const truckIdentity = readStoredVehicleIdentityContext(truck);
+  const attachedTrailer =
+    matchIdentity.attached_trailer_plate || truckIdentity.attached_trailer_plate;
+  if (!attachedTrailer) return null;
+
+  return {
+    attached_trailer_plate: attachedTrailer,
+    provider_label: matchIdentity.provider_label || truckIdentity.provider_label,
+    truck_label: truckLabel,
+  };
+}
+
+function formatAttachedTrailerLiveContext(context: any) {
+  if (!context?.attached_trailer_plate) return null;
+  const providerLabel = context.provider_label
+    ? ` on the latest provider label ${context.provider_label}`
+    : "";
+  return `${context.attached_trailer_plate} appears as the attached trailer${providerLabel}. The location follows truck ${context.truck_label} unless trailer-specific tracking is added.`;
 }
 
 function formatLiveTruckTopLine(

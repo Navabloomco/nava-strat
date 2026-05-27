@@ -682,7 +682,15 @@ export default function AssetReviewPage() {
                         </div>
                       )}
                       <div className="mt-3 grid gap-2 text-sm text-slate-300 md:grid-cols-2">
-                        <Detail label="Truck ID" value={asset.truck_id || "Not available"} />
+                        <Detail label="Truck" value={asset.truck_id || "Not available"} />
+                        <Detail
+                          label="Attached trailer"
+                          value={asset.attached_trailer_plate || "None reported"}
+                        />
+                        <Detail
+                          label="Provider label"
+                          value={asset.provider_label || asset.registration || "Not available"}
+                        />
                         <Detail label="Provider" value={asset.provider_name || "Not available"} />
                         <Detail label="Provider status" value={asset.status || "Not available"} />
                         <Detail
@@ -1055,6 +1063,8 @@ function assetMatchesFilter(
     asset.billing_status,
     asset.status,
     asset.provider_location_label,
+    asset.attached_trailer_plate,
+    asset.provider_label,
   ]
     .filter(Boolean)
     .join(" ")

@@ -414,6 +414,8 @@ New provider records must not start active by default, and provider sync must no
 3. Fetch the primary fleet feed from `fleet_url` or `fleet_config.fleet_url`.
 4. Normalize provider rows into canonical fields:
    - `truck_id`
+   - `provider_label`
+   - `attached_trailer_plate`
    - `latitude`
    - `longitude`
    - `speed`
@@ -432,6 +434,7 @@ New provider records must not start active by default, and provider sync must no
    - `location_label`
    - `recorded_at`
 5. Skip rows that do not have a safe vehicle identifier after mapped and fallback keys are checked. Provider sync must not create `UNKNOWN`, blank, or null reviewable assets.
+   Provider labels may include both a truck plate and an attached trailer plate, for example `KCF529Z ZF3316`. Nava normalizes the truck plate as the canonical asset identity and stores the trailer plate only as latest attached-trailer context. Attached trailers are operational metadata and must not become primary billable intelligence assets unless trailer-specific tracking is explicitly introduced later.
 6. If the same provider has already imported the asset, upsert that provider-owned `fleet_assets` row by `(provider_id, truck_id)`.
 7. If a different provider reports the same normalized registration/truck ID for an existing company asset, treat it as cross-provider telemetry for that asset and do not create a duplicate billable-review asset automatically.
 8. Insert `telemetry_logs` with the incoming `provider_id`, normalized signal quality, timestamp quality, and capability flags preserved. Provider timestamps must be normalized and validated before use: Unix seconds/milliseconds should be interpreted safely when possible, while epoch/default dates, years before 2000, far-future dates, or dates that conflict with asset first-seen evidence must be marked invalid/suspect instead of being displayed as real last-seen telemetry. Asset Review should show `Last seen unavailable` or `Provider timestamp invalid` rather than 1970-style dates.

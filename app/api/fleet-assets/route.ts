@@ -7,6 +7,7 @@ import {
   rolesForCompany,
 } from "../../../lib/api/roleAccess";
 import { isPendingAssetReview } from "../../../lib/assetReview";
+import { readStoredVehicleIdentityContext } from "../../../lib/providers/vehicleIdentity";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -65,10 +66,13 @@ function noStoreJson(body: any, init?: ResponseInit) {
 
 function sanitizeAsset(asset: any) {
   const timestampQuality = deriveAssetTimestampQuality(asset);
+  const identityContext = readStoredVehicleIdentityContext(asset);
   return {
     id: asset.id,
     registration: asset.registration || null,
     truck_id: asset.truck_id || null,
+    provider_label: identityContext.provider_label || null,
+    attached_trailer_plate: identityContext.attached_trailer_plate || null,
     provider_name: asset.provider_name || null,
     status: asset.status || null,
     last_seen_at: asset.last_seen_at || null,

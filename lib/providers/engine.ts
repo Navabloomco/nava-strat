@@ -615,7 +615,7 @@ export async function runProviderSync(
           vehicleMatchReviewRows,
           vehicleMatchReviewKeys,
           {
-            provider_vehicle_label: normalized.truck_id,
+            provider_vehicle_label: normalized.provider_label || normalized.truck_id,
             matched_truck_id: matchedAsset
               ? matchedAsset.truck_id || matchedAsset.registration || null
               : null,
@@ -665,7 +665,7 @@ export async function runProviderSync(
         }
 
         if (!existingAsset && !crossProviderAsset) {
-          assetPayload.asset_category = "unknown";
+          assetPayload.asset_category = normalized.attached_trailer_plate ? "truck" : "unknown";
           assetPayload.billing_status = "unreviewed";
           assetPayload.intelligence_enabled = false;
           assetPayload.first_seen_at = new Date().toISOString();

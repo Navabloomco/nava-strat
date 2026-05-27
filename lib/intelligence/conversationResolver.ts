@@ -1,6 +1,7 @@
 import { supabaseAdmin } from "../supabaseAdmin";
 import { normalizeVehicleKey } from "./entityResolver";
 import { resolveTruckTimelineTimeframe } from "./contextRouter";
+import { readStoredVehicleIdentityContext } from "../providers/vehicleIdentity";
 
 type ConversationResolverInput = {
   question: string;
@@ -90,6 +91,9 @@ export async function resolveNavaEyeConversationFollowup(
         matched_truck_id: selectedVehicle.truck_id,
         matched_registration: selectedVehicle.registration,
         match_type: selectedVehicle.match_type,
+        attached_trailer_plate: selectedVehicle.attached_trailer_plate || null,
+        provider_label: selectedVehicle.provider_label || null,
+        trailer_context: Boolean(selectedVehicle.trailer_context),
       },
     };
   }
@@ -363,24 +367,10 @@ async function resolvePromptVehicle(
 
   if (!inputs.length) return base;
 
-  const { data, error } = await supabaseAdmin
-    .from("fleet_assets")
-    .select("id, truck_id, registration, intelligence_enabled")
-    .eq("company_id", companyId)
-    .eq("status", "active")
-    .limit(1000);
-
-  if (error) throw error;
+  const data = await loadFleetAssetsForConversationResolution(companyId);
 
   const assets = (data || []).map((asset: any) => ({
-    id: asset.id,
-    truck_id: asset.truck_id || null,
-    registration: asset.registration || null,
-    display_label: asset.registration || asset.truck_id || "truck",
-    enabled_for_intelligence: Boolean(asset.intelligence_enabled),
-    keys: [normalizeVehicleKey(asset.truck_id), normalizeVehicleKey(asset.registration)].filter(
-      (key) => key.length >= 4
-    ),
+    ...buildConversationVehicleCandidate(asset),
   }));
 
   for (const input of inputs) {
@@ -399,6 +389,34 @@ async function resolvePromptVehicle(
         input: input.input,
         input_key: input.key,
         ambiguous: exact.map((asset: any) => ({ ...asset, match_type: "exact_normalized" })),
+      };
+    }
+
+    const trailerExact = assets.filter((asset: any) =>
+      (asset.trailer_keys || []).includes(input.key)
+    );
+    if (trailerExact.length === 1) {
+      return {
+        ...base,
+        input: input.input,
+        input_key: input.key,
+        selected: {
+          ...trailerExact[0],
+          match_type: "attached_trailer_context",
+          trailer_context: true,
+        },
+      };
+    }
+    if (trailerExact.length > 1) {
+      return {
+        ...base,
+        input: input.input,
+        input_key: input.key,
+        ambiguous: trailerExact.map((asset: any) => ({
+          ...asset,
+          match_type: "attached_trailer_context",
+          trailer_context: true,
+        })),
       };
     }
 
@@ -436,6 +454,48 @@ async function resolvePromptVehicle(
   return base;
 }
 
+async function loadFleetAssetsForConversationResolution(companyId: string) {
+  let { data, error } = await supabaseAdmin
+    .from("fleet_assets")
+    .select("id, truck_id, registration, intelligence_enabled, telemetry_capabilities")
+    .eq("company_id", companyId)
+    .eq("status", "active")
+    .limit(1000);
+
+  if (isMissingOptionalTelemetryColumnError(error)) {
+    const retry = await supabaseAdmin
+      .from("fleet_assets")
+      .select("id, truck_id, registration, intelligence_enabled")
+      .eq("company_id", companyId)
+      .eq("status", "active")
+      .limit(1000);
+    data = retry.data as any;
+    error = retry.error;
+  }
+
+  if (error) throw error;
+  return data || [];
+}
+
+function buildConversationVehicleCandidate(asset: any) {
+  const identityContext = readStoredVehicleIdentityContext(asset);
+  return {
+    id: asset.id,
+    truck_id: asset.truck_id || null,
+    registration: asset.registration || null,
+    display_label: asset.registration || asset.truck_id || "truck",
+    attached_trailer_plate: identityContext.attached_trailer_plate,
+    provider_label: identityContext.provider_label,
+    enabled_for_intelligence: Boolean(asset.intelligence_enabled),
+    keys: [normalizeVehicleKey(asset.truck_id), normalizeVehicleKey(asset.registration)].filter(
+      (key) => key.length >= 4
+    ),
+    trailer_keys: [normalizeVehicleKey(identityContext.attached_trailer_plate)].filter(
+      (key) => key.length >= 4
+    ),
+  };
+}
+
 function findClosestVehicle(inputKey: string, assets: any[]) {
   let closest: any = null;
   for (const asset of assets) {
@@ -458,6 +518,18 @@ function findClosestVehicle(inputKey: string, assets: any[]) {
     }
   }
   return closest;
+}
+
+function isMissingOptionalTelemetryColumnError(error: any) {
+  if (!error) return false;
+  const code = String(error.code || "").toUpperCase();
+  const message = String(error.message || error.details || error.hint || "").toLowerCase();
+  return (
+    code === "PGRST204" ||
+    message.includes("column") ||
+    message.includes("schema cache") ||
+    message.includes("could not find")
+  );
 }
 
 function extractVehicleInputs(question: string) {

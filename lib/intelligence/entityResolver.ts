@@ -1,14 +1,29 @@
 import { supabaseAdmin } from "../supabaseAdmin";
+import { readStoredVehicleIdentityContext } from "../providers/vehicleIdentity";
 
 export function normalizeVehicleKey(value: string | null | undefined) {
   return String(value || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
 }
 
 export function getVehicleMatchKeys(asset: any) {
+  const trailerKey = getVehicleTrailerMatchKey(asset);
+  return [
+    normalizeVehicleKey(asset?.truck_id),
+    normalizeVehicleKey(asset?.registration),
+    trailerKey,
+  ].filter((key) => key.length >= 4);
+}
+
+function getVehiclePrimaryMatchKeys(asset: any) {
   return [
     normalizeVehicleKey(asset?.truck_id),
     normalizeVehicleKey(asset?.registration),
   ].filter((key) => key.length >= 4);
+}
+
+function getVehicleTrailerMatchKey(asset: any) {
+  const trailer = readStoredVehicleIdentityContext(asset).attached_trailer_plate;
+  return normalizeVehicleKey(trailer);
 }
 
 function extractVehicleInputs(question: string) {
@@ -57,14 +72,7 @@ export async function matchVehicleInFleet(question: string, companyId: string) {
 
   if (inputs.length === 0) return baseMatch;
 
-  const { data, error } = await supabaseAdmin
-    .from("fleet_assets")
-    .select("id, truck_id, registration, intelligence_enabled")
-    .eq("company_id", companyId)
-    .eq("status", "active")
-    .limit(1000);
-
-  if (error) throw error;
+  const data = await loadFleetAssetsForVehicleMatching(companyId);
 
   const candidates = new Map<string, any>();
   for (const input of inputs) {
@@ -75,12 +83,16 @@ export async function matchVehicleInFleet(question: string, companyId: string) {
       const candidateKey = asset.id || `${asset.truck_id}:${asset.registration}`;
       const existing = candidates.get(candidateKey);
       if (!existing || best.rank > existing.rank) {
+        const identityContext = readStoredVehicleIdentityContext(asset);
         candidates.set(candidateKey, {
           id: asset.id,
           truck_id: asset.truck_id || null,
           registration: asset.registration || null,
           confidence: best.confidence,
           match_type: best.match_type,
+          attached_trailer_plate: identityContext.attached_trailer_plate,
+          provider_label: identityContext.provider_label,
+          trailer_context: Boolean(best.trailer_context),
           enabled_for_intelligence: Boolean(asset.intelligence_enabled),
           input: input.input,
           rank: best.rank,
@@ -119,19 +131,56 @@ export async function matchVehicleInFleet(question: string, companyId: string) {
     match_type: winner.match_type,
     matched_truck_id: winner.truck_id,
     matched_registration: winner.registration,
+    attached_trailer_plate: winner.attached_trailer_plate || null,
+    provider_label: winner.provider_label || null,
+    trailer_context: Boolean(winner.trailer_context),
     enabled_for_intelligence: winner.enabled_for_intelligence,
     candidates: safeCandidates,
   };
 }
 
+async function loadFleetAssetsForVehicleMatching(companyId: string) {
+  let { data, error } = await supabaseAdmin
+    .from("fleet_assets")
+    .select("id, truck_id, registration, intelligence_enabled, telemetry_capabilities")
+    .eq("company_id", companyId)
+    .eq("status", "active")
+    .limit(1000);
+
+  if (isMissingOptionalTelemetryColumnError(error)) {
+    const retry = await supabaseAdmin
+      .from("fleet_assets")
+      .select("id, truck_id, registration, intelligence_enabled")
+      .eq("company_id", companyId)
+      .eq("status", "active")
+      .limit(1000);
+    data = retry.data as any;
+    error = retry.error;
+  }
+
+  if (error) throw error;
+  return data || [];
+}
+
 function bestVehicleMatchForAsset(inputKey: string, asset: any) {
   let best: any = null;
 
-  for (const key of getVehicleMatchKeys(asset)) {
+  for (const key of getVehiclePrimaryMatchKeys(asset)) {
     const match = scoreVehicleKey(inputKey, key);
     if (match && (!best || match.rank > best.rank)) {
       best = match;
     }
+  }
+
+  const trailerKey = getVehicleTrailerMatchKey(asset);
+  if (trailerKey && inputKey === trailerKey) {
+    const trailerMatch = {
+      confidence: "high",
+      match_type: "attached_trailer_context",
+      rank: 95,
+      trailer_context: true,
+    };
+    if (!best || trailerMatch.rank > best.rank) best = trailerMatch;
   }
 
   return best;
@@ -177,8 +226,23 @@ function sanitizeVehicleCandidate(candidate: any) {
     registration: candidate.registration || null,
     confidence: candidate.confidence || "low",
     match_type: candidate.match_type || "candidate",
+    attached_trailer_plate: candidate.attached_trailer_plate || null,
+    provider_label: candidate.provider_label || null,
+    trailer_context: Boolean(candidate.trailer_context),
     enabled_for_intelligence: Boolean(candidate.enabled_for_intelligence),
   };
+}
+
+function isMissingOptionalTelemetryColumnError(error: any) {
+  if (!error) return false;
+  const code = String(error.code || "").toUpperCase();
+  const message = String(error.message || error.details || error.hint || "").toLowerCase();
+  return (
+    code === "PGRST204" ||
+    message.includes("column") ||
+    message.includes("schema cache") ||
+    message.includes("could not find")
+  );
 }
 
 function editDistance(a: string, b: string) {
