@@ -236,6 +236,13 @@ Confirm workflow behavior:
 - [ ] Confirm `/api/ops/efficiency` does not return raw coordinate series and does not expose disabled/unreviewed asset telemetry.
 - [ ] Confirm `/api/ops/efficiency` does not let future provider timestamps inflate movement/stopped/productivity metrics or mark an asset fresh when timestamp quality is suspicious.
 - [ ] Confirm ops/management/owner/admin/platform-owner can view operational efficiency summaries and unauthorized roles receive a role boundary.
+- [ ] Call `GET /api/ops/trip-intelligence?range=yesterday` with an ops-visible role and confirm the JSON returns Trip records projected from `journeys`.
+- [ ] Confirm Trip Intelligence returns trip identity, asset evidence, driver evidence, movement evidence, delay evidence, stale-tracking evidence, missing-data notes, profitability readiness, and management flags.
+- [ ] Confirm Trip Intelligence labels movement distance as provider-reported, GPS-estimated, journey-recorded, or unavailable, and does not return raw coordinate series.
+- [ ] Confirm Trip Intelligence uses journey revenue plus linked `fuel_logs` / `expenses` only when the role can see finance, and does not use unlinked costs for exact trip contribution.
+- [ ] As an ops-only role, confirm Trip Intelligence hides finance amounts and returns a role visibility note.
+- [ ] As a finance/management/elevated role, confirm Trip Intelligence marks profitability readiness as `calculable`, `partially_linked`, or `not_enough_linked_data` and lists exactly what is missing when contribution is unsafe.
+- [ ] Confirm Trip Intelligence does not require fuel as the only cost source and does not invent profit when linked revenue/cost evidence is missing.
 
 ## 8. Nava Eye Smoke Test
 
