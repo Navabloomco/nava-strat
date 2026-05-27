@@ -2087,7 +2087,7 @@ function buildLiveTruckStatusModel(context: any) {
     includeCoordinates: Boolean(context.coordinate_request),
     gpsFallback: null,
   });
-  const locationText = location || "at its latest known GPS point";
+  const locationText = location || null;
   const hasGpsPoint = hasCoordinates(locationPoint);
   const freshnessMinutes = freshnessMinutesFromNow(lastSeenAt);
   const stale = freshnessMinutes !== null && freshnessMinutes > 60;
@@ -2212,23 +2212,32 @@ function formatAttachedTrailerLiveContext(context: any) {
 
 function formatLiveTruckTopLine(
   label: string,
-  location: string,
+  location: string | null,
   lastSeenAt: any,
   speed: number | null,
   stale: boolean,
   timeZone: string
 ) {
   const time = formatTimelineClock(lastSeenAt, timeZone);
+  const locationPhrase = cleanLocationLabel(location);
   if (stale) {
-    return `${label} was last seen ${location} at ${time}; this is a last-known position, not confirmed live status.`;
+    return locationPhrase
+      ? `${label} was last seen ${locationPhrase} at ${time}; this is a last-known position, not confirmed live status.`
+      : `${label} was last seen at ${time}; location label unavailable. This is a last-known position, not confirmed live status.`;
   }
   if (speed !== null && speed > 5) {
-    return `${label} is moving ${location}, last seen at ${time} at ${formatNumber(speed)} km/h.`;
+    return locationPhrase
+      ? `${label} is moving ${locationPhrase}, last seen at ${time} at ${formatNumber(speed)} km/h.`
+      : `${label} is moving; location label unavailable. Last seen at ${time} at ${formatNumber(speed)} km/h.`;
   }
   if (speed !== null) {
-    return `${label} is currently stopped ${location}, last seen at ${time} with speed ${formatNumber(speed)}.`;
+    return locationPhrase
+      ? `${label} is currently stopped ${locationPhrase}, last seen at ${time} with speed ${formatNumber(speed)}.`
+      : `${label} is currently stopped; location label unavailable. Last seen at ${time} with speed ${formatNumber(speed)}.`;
   }
-  return `${label} is at its latest known position ${location}, last seen at ${time}; speed is not available.`;
+  return locationPhrase
+    ? `${label} is at its latest known position ${locationPhrase}, last seen at ${time}; speed is not available.`
+    : `${label} was last seen at ${time}; location label unavailable and speed is not available.`;
 }
 
 function formatLiveOperationalState(speed: number | null, stale: boolean) {
@@ -4526,20 +4535,22 @@ function formatOperationalLocation(value: any, options: OperationalLocationOptio
   const resolvedLocation = value.location_resolution;
   if (resolvedLocation?.display_label) {
     if (resolvedLocation.confidence_source !== "coordinates_only") {
-      return String(resolvedLocation.display_label);
+      return cleanLocationLabel(resolvedLocation.display_label);
     }
-    return options.gpsFallback === undefined
-      ? String(resolvedLocation.display_label)
-      : options.gpsFallback;
+    const gpsLabel = cleanLocationLabel(resolvedLocation.display_label);
+    return options.gpsFallback === undefined ? gpsLabel : options.gpsFallback;
   }
   if (value.provider_location_label) {
-    return normalizeProviderLocationLabel(value.provider_location_label);
+    const label = normalizeProviderLocationLabel(value.provider_location_label);
+    if (label) return label;
   }
   if (value.location_label) {
-    return normalizeProviderLocationLabel(value.location_label);
+    const label = normalizeProviderLocationLabel(value.location_label);
+    if (label) return label;
   }
   if (value.location_name) {
-    return normalizeProviderLocationLabel(value.location_name);
+    const label = normalizeProviderLocationLabel(value.location_name);
+    if (label) return label;
   }
   if (value.geofence_match?.name) {
     return `inside ${value.geofence_match.name}`;
@@ -4551,6 +4562,15 @@ function formatOperationalLocation(value: any, options: OperationalLocationOptio
     return options.gpsFallback === undefined ? "at an unresolved GPS point" : options.gpsFallback;
   }
   return null;
+}
+
+function cleanLocationLabel(value: any) {
+  const label = String(value || "").trim().replace(/\s+/g, " ");
+  if (!label) return null;
+  if (/^[-–—]+$/.test(label) || /^(n\/a|na|null|none|unknown)$/i.test(label)) {
+    return null;
+  }
+  return label;
 }
 
 function formatEventLocation(event: any) {

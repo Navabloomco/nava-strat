@@ -29,6 +29,9 @@ const LIMITED_CONTEXT =
 const ENGINE_ON_CONFIRMED =
   /\b(?:engine-on idling|engine-on idle|active fuel-burn idling)\s+(?:is\s+)?confirmed\b/gi;
 
+const BLANK_LOCATION_PHRASE =
+  /\b(?:near|at|inside)\s+[-–—]+(?=\s|[,.]|$)/gi;
+
 export function applyNavaEyeAnswerQualityGuardrails(
   input: AnswerQualityInput
 ): AnswerQualityResult {
@@ -71,6 +74,13 @@ export function applyNavaEyeAnswerQualityGuardrails(
       );
       warnings.push("unsupported_engine_idle_claim_rewritten");
     }
+  }
+
+  BLANK_LOCATION_PHRASE.lastIndex = 0;
+  if (BLANK_LOCATION_PHRASE.test(answer)) {
+    BLANK_LOCATION_PHRASE.lastIndex = 0;
+    answer = answer.replace(BLANK_LOCATION_PHRASE, "location label unavailable");
+    warnings.push("blank_location_label_rewritten");
   }
 
   return { answer, warnings };

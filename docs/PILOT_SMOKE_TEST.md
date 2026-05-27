@@ -246,7 +246,8 @@ Open `/nava-eye` and ask:
 - [ ] Ask "Where is KCW 103Z?", then reply "yes" and confirm the follow-up stays on KCW 103Z.
 - [ ] Ask "Where is KCF529Z ZF3316?" for a provider asset label and confirm Nava Eye uses the full provider asset name in the answer; if it is not enabled, it should say the provider asset is present in Asset Review but must be enabled before live status can be answered.
 - [ ] Ask "Where is KCF529Z?" and confirm Nava Eye can use the internal match key while explaining the matching provider asset name, such as `KCF529Z ZF3316`, where useful.
-- [ ] Ask "Where is ZF3316?" for trailer text seen in a provider label and confirm Nava Eye explains it appears in the provider asset name, location/status comes from that tracked provider asset, and this is not independent trailer tracking.
+- [ ] Ask "Where is ZF3316?" for trailer text seen in a provider label and confirm Nava Eye explains it appears in the provider asset name, location/status comes from that tracked provider asset, this is not independent trailer tracking, and not-enabled provider assets do not leak live status.
+- [ ] Confirm Nava Eye never says `near -` or `at -`; blank provider labels should become `location label unavailable` or be omitted.
 - [ ] Ask "Where is KDQ265?", then ask "How about KDQ266" and confirm Nava Eye answers that truck if it exists, or suggests the closest workspace match instead of returning generic limited context.
 - [ ] Ask "How about KCW103Z" after a truck-status answer and confirm Nava Eye inherits current-status intent for KCW 103Z.
 - [ ] Ask "Where is KDQ265?", then ask "How much mileage has it covered today?" and confirm the answer stays on KDQ 265T instead of switching to fleet-wide.

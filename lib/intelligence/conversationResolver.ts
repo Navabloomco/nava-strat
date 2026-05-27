@@ -480,7 +480,7 @@ async function resolvePromptVehicle(
 async function loadFleetAssetsForConversationResolution(companyId: string) {
   let { data, error } = await supabaseAdmin
     .from("fleet_assets")
-    .select("id, truck_id, registration, intelligence_enabled, telemetry_capabilities")
+    .select("id, truck_id, registration, intelligence_enabled, billing_status, billing_enabled_at, telemetry_capabilities")
     .eq("company_id", companyId)
     .eq("status", "active")
     .limit(1000);
@@ -515,7 +515,7 @@ function buildConversationVehicleCandidate(asset: any) {
       "truck",
     attached_trailer_plate: identityContext.attached_trailer_plate,
     provider_label: identityContext.provider_label,
-    enabled_for_intelligence: Boolean(asset.intelligence_enabled),
+    enabled_for_intelligence: isAssetEnabledForNavaEye(asset),
     keys: [
       providerLabelKey,
       normalizeVehicleKey(asset.truck_id),
@@ -540,7 +540,7 @@ function selectUniqueBestVehicleCandidate(candidates: any[]) {
 
 function vehicleCandidateRankBias(asset: any, identityContext: any) {
   let bias = 0;
-  if (asset?.intelligence_enabled) bias += 0.3;
+  if (isAssetEnabledForNavaEye(asset)) bias += 0.3;
   const canonicalKey = normalizeVehicleKey(identityContext?.canonical_truck_plate);
   const truckKey = normalizeVehicleKey(asset?.truck_id);
   const registrationKey = normalizeVehicleKey(asset?.registration);
@@ -557,6 +557,17 @@ function vehicleCandidateRankBias(asset: any, identityContext: any) {
     bias -= 0.2;
   }
   return bias;
+}
+
+function isAssetEnabledForNavaEye(asset: any) {
+  if (!asset?.intelligence_enabled) return false;
+  const hasBillingStatus = Object.prototype.hasOwnProperty.call(asset, "billing_status");
+  const hasBillingEnabledAt = Object.prototype.hasOwnProperty.call(asset, "billing_enabled_at");
+  if (!hasBillingStatus && !hasBillingEnabledAt) return true;
+  return (
+    String(asset.billing_status || "").toLowerCase() === "enabled" &&
+    Boolean(asset.billing_enabled_at)
+  );
 }
 
 function findClosestVehicle(inputKey: string, assets: any[]) {

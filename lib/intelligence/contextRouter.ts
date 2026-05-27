@@ -410,17 +410,17 @@ function buildAssetAccessRestrictedMessage(vehicleMatch: any) {
 
   if (askedTrailer && vehicleMatch?.provider_label) {
     const trailer = vehicleMatch?.attached_trailer_plate || inputLabel;
-    return `${trailer} appears in the provider asset name ${vehicleMatch.provider_label}. Location/status comes from that tracked provider asset, not independent trailer tracking. ${vehicleMatch.provider_label} is present in Asset Review but is not enabled for Nava intelligence yet.`;
+    return `${trailer} appears in the provider asset name ${vehicleMatch.provider_label}. That provider asset is present in Asset Review but is not enabled for Nava intelligence yet. Enable ${vehicleMatch.provider_label} before Nava Eye can answer live status. The location/status would come from the tracked provider asset, not independent trailer tracking.`;
   }
 
   if (
     vehicleMatch?.provider_label &&
     normalizeVehicleKey(inputLabel) !== normalizeVehicleKey(vehicleMatch.provider_label)
   ) {
-    return `${inputLabel} matches provider asset ${vehicleMatch.provider_label}. ${vehicleMatch.provider_label} is present in Asset Review but is not enabled for Nava intelligence yet.`;
+    return `${inputLabel} matches provider asset ${vehicleMatch.provider_label}. ${vehicleMatch.provider_label} is present in Asset Review but is not enabled for Nava intelligence yet. Enable ${vehicleMatch.provider_label} before Nava Eye can answer live status.`;
   }
 
-  return `${providerLabel} is present in Asset Review but is not enabled for Nava intelligence yet.`;
+  return `${providerLabel} is present in Asset Review but is not enabled for Nava intelligence yet. Enable ${providerLabel} before Nava Eye can answer live status.`;
 }
 
 function getIntentPermissionBoundary(

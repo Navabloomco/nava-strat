@@ -115,6 +115,9 @@ export async function resolveOperationalLocation(
 export function normalizeProviderLocationLabel(value: any) {
   const label = String(value || "").trim().replace(/\s+/g, " ");
   if (!label) return null;
+  if (/^[-–—]+$/.test(label) || /^(n\/a|na|null|none|unknown)$/i.test(label)) {
+    return null;
+  }
 
   const distanceMatch = label.match(
     /^([0-9]+(?:\.[0-9]+)?)\s*(km|kilometres|kilometers|kms?)\s+([a-z -]+?)\s+of\s+(.+)$/i
