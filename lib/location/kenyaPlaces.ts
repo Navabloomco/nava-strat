@@ -102,6 +102,8 @@ const KENYA_PLACES: KenyaPlace[] = [
   { name: "Athi River", latitude: -1.4563, longitude: 36.9783 },
   { name: "Kitengela", latitude: -1.473, longitude: 36.959 },
   { name: "Machakos", latitude: -1.5177, longitude: 37.2634 },
+  { name: "Machakos Junction", latitude: -1.516, longitude: 37.136, specificity: 2 },
+  { name: "Salama", latitude: -1.833, longitude: 37.267 },
   { name: "Sultan Hamud", latitude: -2.0167, longitude: 37.3667 },
   { name: "Emali", latitude: -2.0833, longitude: 37.4667 },
   { name: "Kiboko", latitude: -2.217, longitude: 37.733 },
@@ -109,6 +111,9 @@ const KENYA_PLACES: KenyaPlace[] = [
   { name: "Kibwezi", latitude: -2.4167, longitude: 37.9667 },
   { name: "Mtito Andei", latitude: -2.6899, longitude: 38.1667 },
   { name: "Voi", latitude: -3.396, longitude: 38.556 },
+  { name: "Maungu", latitude: -3.554, longitude: 38.756 },
+  { name: "Taru", latitude: -3.721, longitude: 39.088 },
+  { name: "Samburu", latitude: -3.801, longitude: 39.27 },
   { name: "Mariakani", latitude: -3.862, longitude: 39.475 },
   { name: "Mazeras", latitude: -3.9706, longitude: 39.545 },
   { name: "Mombasa", latitude: -4.0435, longitude: 39.6682 },
@@ -124,8 +129,16 @@ const KENYA_PLACES: KenyaPlace[] = [
   { name: "Naivasha", latitude: -0.7167, longitude: 36.4333 },
   { name: "Longonot", latitude: -0.914, longitude: 36.452 },
   { name: "Gilgil", latitude: -0.5, longitude: 36.3167 },
+  { name: "Salgaa", latitude: -0.24, longitude: 35.856 },
+  { name: "Molo", latitude: -0.247, longitude: 35.731 },
+  { name: "Mau Summit", latitude: -0.155, longitude: 35.69 },
+  { name: "Timboroa", latitude: 0.071, longitude: 35.535 },
+  { name: "Burnt Forest", latitude: 0.248, longitude: 35.433 },
   { name: "Eldoret", latitude: 0.5143, longitude: 35.2698 },
-  { name: "Malaba", latitude: 0.635, longitude: 34.281 },
+  { name: "Webuye", latitude: 0.607, longitude: 34.769 },
+  { name: "Bungoma", latitude: 0.563, longitude: 34.561 },
+  { name: "Kanduyi", latitude: 0.57, longitude: 34.57 },
+  { name: "Malaba, Kenya border", latitude: 0.635, longitude: 34.281, label: "near" },
   { name: "Kisumu", latitude: -0.0917, longitude: 34.768 },
   { name: "Thika", latitude: -1.0332, longitude: 37.0693 },
   { name: "Ruiru", latitude: -1.145, longitude: 36.96 },
@@ -139,6 +152,8 @@ const CORRIDORS: string[][] = [
     "Nairobi",
     "Mlolongo",
     "Athi River",
+    "Machakos Junction",
+    "Salama",
     "Sultan Hamud",
     "Emali",
     "Kiboko",
@@ -146,11 +161,30 @@ const CORRIDORS: string[][] = [
     "Kibwezi",
     "Mtito Andei",
     "Voi",
+    "Maungu",
+    "Taru",
+    "Samburu",
     "Mariakani",
     "Mazeras",
     "Mombasa",
   ],
-  ["Nairobi", "Limuru", "Naivasha", "Gilgil", "Nakuru", "Eldoret", "Malaba"],
+  [
+    "Nairobi",
+    "Limuru",
+    "Naivasha",
+    "Gilgil",
+    "Nakuru",
+    "Salgaa",
+    "Molo",
+    "Mau Summit",
+    "Timboroa",
+    "Burnt Forest",
+    "Eldoret",
+    "Webuye",
+    "Bungoma",
+    "Kanduyi",
+    "Malaba, Kenya border",
+  ],
   ["Nairobi", "Ruiru", "Thika"],
   ["Nairobi", "Naivasha", "Narok"],
   ["Nakuru", "Kisumu"],
@@ -172,6 +206,10 @@ export function resolveKenyaOperationalLocation(input: {
     return formatNearestPlace(nearest.place, nearest.distance_meters, "close");
   }
 
+  if (nearest && nearest.distance_meters <= NEAR_PLACE_METERS) {
+    return formatNearestPlace(nearest.place, nearest.distance_meters, "near");
+  }
+
   if (
     corridor &&
     corridor.offset_meters <= CORRIDOR_MAX_OFFSET_METERS &&
@@ -185,10 +223,6 @@ export function resolveKenyaOperationalLocation(input: {
       note:
         "Approximate operational location, not an exact address.",
     };
-  }
-
-  if (nearest && nearest.distance_meters <= NEAR_PLACE_METERS) {
-    return formatNearestPlace(nearest.place, nearest.distance_meters, "near");
   }
 
   if (corridor && corridor.offset_meters <= CORRIDOR_AREA_OFFSET_METERS) {

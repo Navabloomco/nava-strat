@@ -233,8 +233,7 @@ export default function LiveTrackingPage() {
               </section>
             )}
 
-            <section className="mt-8 grid gap-4 md:grid-cols-3 xl:grid-cols-6">
-              <Metric label="Imported assets" value={summary.imported_assets} />
+            <section className="mt-8 grid gap-4 md:grid-cols-3 xl:grid-cols-5">
               <Metric label="Enabled assets" value={summary.enabled_assets} />
               <Metric label="Live now" value={summary.live_assets} accent />
               <Metric label="Stale assets" value={summary.stale_assets} />
@@ -247,17 +246,17 @@ export default function LiveTrackingPage() {
                 <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <h2 className="text-lg font-semibold text-amber-100">
-                      Imported assets waiting for review
+                      Provider assets waiting for review
                     </h2>
                     <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-300">
-                      Some imported assets are waiting for review before they appear in live tracking.
+                      Some provider assets are waiting for review before they appear in live tracking.
                     </p>
                   </div>
                   <Link
                     href="/admin/assets"
                     className="inline-flex w-full items-center justify-center rounded-md bg-cyan-300 px-4 py-3 text-sm font-bold text-slate-950 hover:bg-cyan-200 sm:w-auto"
                   >
-                    Review imported assets
+                    Review provider assets
                   </Link>
                 </div>
               </section>
@@ -479,9 +478,9 @@ function EmptyState({
     title = "Provider connected, no fleet assets yet";
     body = "Your provider connection exists, but Nava has not received fleet assets yet.";
   } else if (importedButNoneEnabled) {
-    title = "You have imported assets waiting for review";
+    title = "Provider assets are waiting for review";
     body =
-      "Fleet assets have been imported, but none have been enabled for Nava intelligence yet. Review imported assets before they appear in live tracking.";
+      "Provider assets have been received, but none have been enabled for Nava intelligence yet. Review provider assets before they appear in live tracking.";
   } else if (noLiveLocations) {
     title = "No fresh live locations";
     body =
@@ -497,7 +496,7 @@ function EmptyState({
           href="/admin/assets"
           className="mt-4 inline-flex w-full items-center justify-center rounded-md bg-cyan-300 px-4 py-3 text-sm font-bold text-slate-950 hover:bg-cyan-200 sm:w-auto"
         >
-          Review imported assets
+          Review provider assets
         </Link>
       )}
     </section>
