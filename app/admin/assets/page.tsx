@@ -29,6 +29,7 @@ const excludedReasons = [
   { value: "", label: "Choose reason" },
   { value: "personal_use", label: "Personal use" },
   { value: "duplicate", label: "Duplicate" },
+  { value: "legacy_duplicate_canonical_exists", label: "Legacy duplicate; canonical truck exists" },
   { value: "inactive_device", label: "Inactive device" },
   { value: "test_device", label: "Test device" },
   { value: "sold_or_removed", label: "Sold or removed" },
@@ -235,7 +236,15 @@ export default function AssetReviewPage() {
     }
 
     const selectedAssets = assets.filter((asset) => selectedAssetIds.has(asset.id));
+    const selectedProtectedCollisionRows = selectedAssets.filter(isProtectedCollisionRow);
+    const selectedActiveCollisionRows = selectedAssets.filter(isCanonicalDuplicateSecondary);
     if (bulkAction === "enable") {
+      if (selectedProtectedCollisionRows.length > 0) {
+        setError(
+          "Possible collision rows cannot be bulk-enabled. Resolve the legacy duplicate rows or enable the clean canonical truck rows instead."
+        );
+        return;
+      }
       const preview = buildBulkEnablePreview(selectedAssets, billingPreview);
       const confirmed = window.confirm(
         [
@@ -243,6 +252,21 @@ export default function AssetReviewPage() {
           `Projected billable enabled count: ${preview.projectedBillableCount}.`,
           `Estimated monthly total: ${preview.currency} ${preview.estimatedMonthlyTotal.toLocaleString()}.`,
           "This is a planning estimate only.",
+        ].join("\n")
+      );
+      if (!confirmed) return;
+    } else if (bulkAction === "resolve_legacy_collision") {
+      if (selectedActiveCollisionRows.length !== selectedAssets.length) {
+        setError(
+          "Resolve legacy collisions only applies to rows marked Possible duplicate. Clear non-collision rows from the selection first."
+        );
+        return;
+      }
+      const confirmed = window.confirm(
+        [
+          `Resolve ${selectedIds.length} legacy collision row${selectedIds.length === 1 ? "" : "s"}?`,
+          "Only the selected old provider rows will be excluded as legacy duplicates.",
+          "Clean canonical truck rows and enabled intelligence vehicles will not be changed.",
         ].join("\n")
       );
       if (!confirmed) return;
@@ -272,7 +296,10 @@ export default function AssetReviewPage() {
           asset_ids: selectedIds,
           action: bulkAction,
           asset_category: bulkCategory,
-          excluded_reason: bulkExcludedReason,
+          excluded_reason:
+            bulkAction === "resolve_legacy_collision"
+              ? "legacy_duplicate_canonical_exists"
+              : bulkExcludedReason,
           ...(selectedCompanyId ? { companyId: selectedCompanyId } : {}),
         }),
       });
@@ -375,6 +402,10 @@ export default function AssetReviewPage() {
   const selectedAssets = useMemo(
     () => assets.filter((asset) => selectedAssetIds.has(asset.id)),
     [assets, selectedAssetIds]
+  );
+  const selectedCollisionRows = useMemo(
+    () => selectedAssets.filter(isProtectedCollisionRow),
+    [selectedAssets]
   );
   const bulkEnablePreview = useMemo(
     () => buildBulkEnablePreview(selectedAssets, billingPreview),
@@ -605,10 +636,15 @@ export default function AssetReviewPage() {
                         if (["exclude", "disable", "review_later"].includes(nextAction)) {
                           setBulkCategory("unknown");
                         }
+                        if (nextAction === "resolve_legacy_collision") {
+                          setBulkCategory("unknown");
+                          setBulkExcludedReason("legacy_duplicate_canonical_exists");
+                        }
                       }}
                       className={inputClass}
                     >
                       <option value="enable">Enable for intelligence</option>
+                      <option value="resolve_legacy_collision">Resolve legacy collisions</option>
                       <option value="exclude">Exclude</option>
                       <option value="disable">Disable</option>
                       <option value="review_later">Review later</option>
@@ -617,6 +653,7 @@ export default function AssetReviewPage() {
                     <select
                       value={bulkCategory}
                       onChange={(event) => setBulkCategory(event.target.value)}
+                      disabled={bulkAction === "resolve_legacy_collision"}
                       className={inputClass}
                     >
                       {assetCategories.map((category) => (
@@ -628,6 +665,7 @@ export default function AssetReviewPage() {
                     <select
                       value={bulkExcludedReason}
                       onChange={(event) => setBulkExcludedReason(event.target.value)}
+                      disabled={bulkAction === "resolve_legacy_collision"}
                       className={inputClass}
                     >
                       {excludedReasons.map((reason) => (
@@ -648,6 +686,16 @@ export default function AssetReviewPage() {
                   {bulkAction === "enable" && selectedCount > 0 && (
                     <div className="mt-3 rounded-md border border-amber-300/25 bg-amber-300/10 px-3 py-2 text-sm leading-6 text-amber-50">
                       Projected billable count: {bulkEnablePreview.projectedBillableCount.toLocaleString()} · Estimated monthly total: {bulkEnablePreview.currency} {bulkEnablePreview.estimatedMonthlyTotal.toLocaleString()}. Planning estimate only.
+                    </div>
+                  )}
+                  {selectedCollisionRows.length > 0 && bulkAction === "enable" && (
+                    <div className="mt-3 rounded-md border border-rose-300/25 bg-rose-500/10 px-3 py-2 text-sm leading-6 text-rose-50">
+                      {selectedCollisionRows.length.toLocaleString()} selected row{selectedCollisionRows.length === 1 ? "" : "s"} are legacy collision rows and will not be counted as new billable assets. Resolve them or select the clean canonical truck rows before enabling.
+                    </div>
+                  )}
+                  {bulkAction === "resolve_legacy_collision" && selectedCount > 0 && (
+                    <div className="mt-3 rounded-md border border-cyan-200/20 bg-cyan-300/10 px-3 py-2 text-sm leading-6 text-cyan-50">
+                      This will exclude selected legacy collision rows as "Legacy duplicate; canonical truck exists." Provider labels and attached-trailer metadata stay preserved.
                     </div>
                   )}
                 </div>
@@ -682,6 +730,7 @@ export default function AssetReviewPage() {
               const isUnreviewed = isPendingAssetReview(asset);
               const needsTimestampReview = assetNeedsTimestampReview(asset);
               const isDuplicate = reviewInsights.duplicateKeys.has(asset.id);
+              const isProtectedCollision = isProtectedCollisionRow(asset);
 
               return (
                 <Panel
@@ -718,6 +767,9 @@ export default function AssetReviewPage() {
                         {isDuplicate && (
                           <StatusPill tone="warning">Possible duplicate</StatusPill>
                         )}
+                        {isResolvedLegacyCollisionRow(asset) && (
+                          <StatusPill tone="neutral">Legacy duplicate resolved</StatusPill>
+                        )}
                         {asset.non_primary_asset && (
                           <StatusPill tone="warning">Needs classification</StatusPill>
                         )}
@@ -725,6 +777,11 @@ export default function AssetReviewPage() {
                       {isUnreviewed && (
                         <div className="mt-3 rounded-md border border-amber-300/25 bg-amber-300/10 px-3 py-2 text-sm text-amber-50">
                           Waiting for review before this asset can appear in live tracking.
+                        </div>
+                      )}
+                      {isDuplicate && (
+                        <div className="mt-3 rounded-md border border-rose-300/25 bg-rose-500/10 px-3 py-2 text-sm leading-6 text-rose-50">
+                          Legacy collision row. Select it and use Resolve legacy collisions to exclude this old provider row without changing the clean canonical truck record.
                         </div>
                       )}
                       <div className="mt-3 grid gap-2 text-sm text-slate-300 md:grid-cols-2">
@@ -818,7 +875,7 @@ export default function AssetReviewPage() {
                       <PrimaryButton
                         type="button"
                         onClick={() => reviewAsset(asset.id, "enable")}
-                        disabled={actionId === asset.id}
+                        disabled={actionId === asset.id || isProtectedCollision}
                         className="w-full xl:w-auto"
                       >
                         Enable for intelligence
@@ -1184,7 +1241,8 @@ function sortFilteredAssets(assets: any[], sortBy: string) {
 }
 
 function buildBulkEnablePreview(selectedAssets: any[], billingPreview: any) {
-  const newlyBillable = selectedAssets.filter(
+  const billableCandidates = selectedAssets.filter((asset) => !isProtectedCollisionRow(asset));
+  const newlyBillable = billableCandidates.filter(
     (asset) =>
       !(
         asset.status === "active" &&
@@ -1207,6 +1265,7 @@ function buildBulkEnablePreview(selectedAssets: any[], billingPreview: any) {
 
 function bulkActionLabel(action: string) {
   if (action === "enable") return "Enable for intelligence";
+  if (action === "resolve_legacy_collision") return "Resolve legacy collisions";
   if (action === "exclude") return "Exclude";
   if (action === "disable") return "Disable";
   if (action === "review_later") return "Review later";
@@ -1229,6 +1288,14 @@ function isCanonicalDuplicateSecondary(asset: any) {
     Boolean(asset.canonical_duplicate) &&
     String(asset.canonical_review_role || "").toLowerCase() === "duplicate"
   );
+}
+
+function isResolvedLegacyCollisionRow(asset: any) {
+  return String(asset.excluded_reason || "").toLowerCase() === "legacy_duplicate_canonical_exists";
+}
+
+function isProtectedCollisionRow(asset: any) {
+  return isCanonicalDuplicateSecondary(asset) || isResolvedLegacyCollisionRow(asset);
 }
 
 function isAssetDuplicateCandidate(asset: any) {

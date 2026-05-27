@@ -15,6 +15,9 @@ export const revalidate = 0;
 const REVIEW_ROLES = ["owner", "admin", "platform_owner"] as const;
 const COMPANY_SELECT =
   "id, name, slug, subscription_plan, business_type, primary_asset_types, main_billing_unit, operating_regions, primary_use_case, asset_unit_price, billing_currency, included_assets, trial_starts_at, trial_ends_at, billing_cycle_day";
+const ASSET_BASE_SELECT =
+  "id, registration, truck_id, provider_name, status, last_seen_at, provider_location_label, asset_category, billing_status, intelligence_enabled, excluded_reason, ai_suggested_category, ai_suggested_reason, ai_confidence, first_seen_at, reviewed_at, billing_enabled_at, billing_disabled_at";
+const ASSET_CAPABILITY_SELECT = `${ASSET_BASE_SELECT}, telemetry_capability, telemetry_capabilities, telemetry_capability_source, canbus_enabled, fuel_rod_installed, fuel_rod_calibration_status`;
 const ASSET_CATEGORIES = new Set([
   "unknown",
   "truck",
@@ -29,6 +32,7 @@ const ASSET_CATEGORIES = new Set([
 const EXCLUDED_REASONS = new Set([
   "personal_use",
   "duplicate",
+  "legacy_duplicate_canonical_exists",
   "inactive_device",
   "test_device",
   "sold_or_removed",
@@ -164,8 +168,12 @@ function buildSummary(reviewModel: any) {
     enabled_count: enabledIntelligenceGroups.length,
     enabled_intelligence_count: enabledIntelligenceGroups.length,
     billable_enabled_count: billableGroups.length,
-    excluded_count: primaryAssets.filter((asset: any) => asset.billing_status === "excluded").length,
-    disabled_count: primaryAssets.filter((asset: any) => asset.billing_status === "disabled").length,
+    excluded_count: (reviewModel.raw_assets || primaryAssets).filter(
+      (asset: any) => asset.billing_status === "excluded"
+    ).length,
+    disabled_count: (reviewModel.raw_assets || primaryAssets).filter(
+      (asset: any) => asset.billing_status === "disabled"
+    ).length,
     needs_timestamp_review_count: primaryAssets.filter(
       (asset: any) => deriveAssetTimestampQuality(asset).status !== "valid"
     ).length,
@@ -209,6 +217,7 @@ function buildCanonicalReviewModel(assets: any[]) {
   return {
     groups,
     asset_contexts: assetContexts,
+    raw_assets: assets,
     raw_count: assets.length,
     collision_group_count: groups.filter((group: any) => group.duplicate).length,
     duplicate_row_count: groups.reduce(
@@ -229,7 +238,11 @@ function duplicateReviewAssetIds(assets: any[], primary: any, canonicalKey: stri
   if (assets.length <= 1) return duplicateIds;
 
   for (const asset of assets) {
-    if (asset.id !== primary?.id && isLegacyCombinedLabelAsset(asset, canonicalKey)) {
+    if (
+      asset.id !== primary?.id &&
+      isLegacyCombinedLabelAsset(asset, canonicalKey) &&
+      isReviewableCollisionCandidate(asset)
+    ) {
       duplicateIds.add(asset.id);
     }
   }
@@ -269,6 +282,18 @@ function isReviewableCollisionCandidate(asset: any) {
     status === "active" &&
     !["excluded", "disabled"].includes(billingStatus)
   );
+}
+
+function isCanonicalCollisionRow(asset: any, assetContexts: Map<string, any>) {
+  const context = assetContexts.get(asset.id);
+  return Boolean(
+    context?.canonical_duplicate &&
+      String(context?.canonical_review_role || "").toLowerCase() === "duplicate"
+  );
+}
+
+function isResolvedLegacyCollisionRow(asset: any) {
+  return String(asset?.excluded_reason || "").toLowerCase() === "legacy_duplicate_canonical_exists";
 }
 
 function isEnabledIntelligenceAsset(asset: any) {
@@ -369,6 +394,25 @@ function deriveAssetTimestampQuality(asset: any) {
   }
 
   return { status: "valid", reason: embedded?.reason || "provider_timestamp_valid" };
+}
+
+async function loadCompanyAssetsForReview(companyId: string) {
+  let { data: assets, error } = await supabaseAdmin
+    .from("fleet_assets")
+    .select(ASSET_CAPABILITY_SELECT)
+    .eq("company_id", companyId);
+
+  if (isMissingOptionalTelemetryColumnError(error)) {
+    const retry = await supabaseAdmin
+      .from("fleet_assets")
+      .select(ASSET_BASE_SELECT)
+      .eq("company_id", companyId);
+    assets = retry.data as any;
+    error = retry.error;
+  }
+
+  if (error) throw error;
+  return assets || [];
 }
 
 function isMissingOptionalTelemetryColumnError(error: any) {
@@ -497,26 +541,9 @@ export async function GET(req: Request) {
     const resolved = await resolveReviewAccess(req, searchParams.get("companyId"));
     if (resolved.error) return resolved.error;
 
-    const assetBaseSelect =
-      "id, registration, truck_id, provider_name, status, last_seen_at, provider_location_label, asset_category, billing_status, intelligence_enabled, excluded_reason, ai_suggested_category, ai_suggested_reason, ai_confidence, first_seen_at, reviewed_at, billing_enabled_at, billing_disabled_at";
-    const assetCapabilitySelect = `${assetBaseSelect}, telemetry_capability, telemetry_capabilities, telemetry_capability_source, canbus_enabled, fuel_rod_installed, fuel_rod_calibration_status`;
-    let { data: assets, error } = await supabaseAdmin
-      .from("fleet_assets")
-      .select(assetCapabilitySelect)
-      .eq("company_id", resolved.company.id);
-
-    if (isMissingOptionalTelemetryColumnError(error)) {
-      const retry = await supabaseAdmin
-        .from("fleet_assets")
-        .select(assetBaseSelect)
-        .eq("company_id", resolved.company.id);
-      assets = retry.data as any;
-      error = retry.error;
-    }
-
-    if (error) throw error;
-
-    const sortedAssets = sortAssetsForReview(assets || []);
+    const sortedAssets = sortAssetsForReview(
+      await loadCompanyAssetsForReview(resolved.company.id)
+    );
     const canonicalReviewModel = buildCanonicalReviewModel(sortedAssets);
     const summary = buildSummary(canonicalReviewModel);
 
@@ -592,18 +619,44 @@ export async function PATCH(req: Request) {
       );
     }
 
-    const { data: assets, error: assetError } = await supabaseAdmin
-      .from("fleet_assets")
-      .select(
-        "id, company_id, status, billing_status, intelligence_enabled, billing_enabled_at, billing_disabled_at"
-      )
-      .eq("company_id", resolved.company.id)
-      .in("id", uniqueAssetIds);
-
-    if (assetError) throw assetError;
-    const scopedAssets = assets || [];
+    const allAssets = await loadCompanyAssetsForReview(resolved.company.id);
+    const canonicalReviewModel = buildCanonicalReviewModel(sortAssetsForReview(allAssets));
+    const selectedIdSet = new Set(uniqueAssetIds);
+    const scopedAssets = allAssets.filter((asset: any) => selectedIdSet.has(asset.id));
     if (scopedAssets.length === 0) {
       return noStoreJson({ success: false, error: "No selected assets found" }, { status: 404 });
+    }
+    const selectedCollisionRows = scopedAssets.filter((asset: any) =>
+      isCanonicalCollisionRow(asset, canonicalReviewModel.asset_contexts)
+    );
+    const selectedProtectedCollisionRows = scopedAssets.filter(
+      (asset: any) =>
+        isCanonicalCollisionRow(asset, canonicalReviewModel.asset_contexts) ||
+        isResolvedLegacyCollisionRow(asset)
+    );
+
+    if (action === "enable" && selectedProtectedCollisionRows.length > 0) {
+      return noStoreJson(
+        {
+          success: false,
+          error:
+            "Remove possible collision rows before enabling. Resolve or review the canonical truck row instead.",
+        },
+        { status: 400 }
+      );
+    }
+
+    if (action === "resolve_legacy_collision") {
+      if (selectedCollisionRows.length !== scopedAssets.length) {
+        return noStoreJson(
+          {
+            success: false,
+            error:
+              "Resolve legacy collisions can only be applied to rows marked Possible duplicate.",
+          },
+          { status: 400 }
+        );
+      }
     }
 
     const now = new Date().toISOString();
@@ -613,7 +666,10 @@ export async function PATCH(req: Request) {
     for (const asset of scopedAssets) {
       const updates = buildBulkAssetUpdates(asset, action, {
         category,
-        excludedReason,
+        excludedReason:
+          action === "resolve_legacy_collision"
+            ? "legacy_duplicate_canonical_exists"
+            : excludedReason,
         now,
         userId: resolved.userId,
       });
@@ -684,6 +740,15 @@ function buildBulkAssetUpdates(
     updates.billing_status = "excluded";
     updates.intelligence_enabled = false;
     updates.excluded_reason = context.excludedReason;
+    updates.reviewed_at = context.now;
+    updates.reviewed_by = context.userId;
+    if (shouldSetBillingDisabledAt(asset)) updates.billing_disabled_at = context.now;
+    return updates;
+  }
+  if (action === "resolve_legacy_collision") {
+    updates.billing_status = "excluded";
+    updates.intelligence_enabled = false;
+    updates.excluded_reason = "legacy_duplicate_canonical_exists";
     updates.reviewed_at = context.now;
     updates.reviewed_by = context.userId;
     if (shouldSetBillingDisabledAt(asset)) updates.billing_disabled_at = context.now;

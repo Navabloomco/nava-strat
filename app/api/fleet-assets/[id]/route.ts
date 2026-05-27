@@ -26,6 +26,7 @@ const ASSET_CATEGORIES = new Set([
 const EXCLUDED_REASONS = new Set([
   "personal_use",
   "duplicate",
+  "legacy_duplicate_canonical_exists",
   "inactive_device",
   "test_device",
   "sold_or_removed",

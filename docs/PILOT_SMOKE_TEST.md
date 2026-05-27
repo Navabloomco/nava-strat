@@ -152,6 +152,8 @@ Open `/admin/assets?companyId=<id>`.
 - [ ] Confirm imported and unreviewed counts use canonical truck identity, so legacy rows like `KCF529Z ZF3316` do not inflate normal review counts when `KCF529Z` also exists.
 - [ ] Confirm Possible duplicates detects canonical collisions such as `KCF529Z` and legacy `KCF529Z ZF3316`.
 - [ ] Confirm a clean canonical truck row with an attached trailer, such as Truck `KCF529Z` / Attached trailer `ZF3316`, is not marked Possible duplicate unless another competing review row exists.
+- [ ] In Possible collisions, select visible legacy rows and apply `Resolve legacy collisions`; confirm only those old rows are excluded as `Legacy duplicate; canonical truck exists`, clean canonical truck rows remain unchanged, and Possible collision groups drop.
+- [ ] Confirm bulk enable refuses selections that include Possible duplicate or already-resolved legacy collision rows and the billable preview does not count those rows as new billable assets.
 - [ ] Confirm obvious non-primary labels such as `MOTOR BIKE`, `TOYOTA PROBOX`, `HILUX PICK-UP`, or raw IMEI/device IDs are kept out of likely-truck and truck-duplicate counts.
 - [ ] Confirm the Needs classification tab shows non-primary/noisy rows separately from Unreviewed trucks.
 - [ ] Confirm FleetTrack/Oak and Gold assets do not display 1970-style `Last seen` dates; invalid provider timestamps show `Provider timestamp invalid` or `Last seen unavailable`.
