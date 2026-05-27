@@ -29,6 +29,7 @@ const KENYA_PLACES: KenyaPlace[] = [
   { name: "Nairobi", latitude: -1.286389, longitude: 36.817223 },
   {
     name: "CBD Nairobi",
+    display_name: "CBD, Nairobi",
     latitude: -1.286389,
     longitude: 36.817223,
     kind: "urban_area",
@@ -37,6 +38,7 @@ const KENYA_PLACES: KenyaPlace[] = [
   },
   {
     name: "Westlands",
+    display_name: "Westlands, Nairobi",
     latitude: -1.2674,
     longitude: 36.8105,
     kind: "urban_area",
@@ -45,6 +47,7 @@ const KENYA_PLACES: KenyaPlace[] = [
   },
   {
     name: "Karen",
+    display_name: "Karen, Nairobi",
     latitude: -1.3197,
     longitude: 36.7066,
     kind: "urban_area",
@@ -53,6 +56,7 @@ const KENYA_PLACES: KenyaPlace[] = [
   },
   {
     name: "The Hub Karen",
+    display_name: "The Hub, Karen, Nairobi",
     latitude: -1.3196,
     longitude: 36.7077,
     kind: "landmark",
@@ -70,6 +74,7 @@ const KENYA_PLACES: KenyaPlace[] = [
   },
   {
     name: "JKIA / Embakasi",
+    display_name: "JKIA / Embakasi, Nairobi",
     latitude: -1.3192,
     longitude: 36.9278,
     kind: "transport_hub",
@@ -78,6 +83,7 @@ const KENYA_PLACES: KenyaPlace[] = [
   },
   {
     name: "Embakasi",
+    display_name: "Embakasi, Nairobi",
     latitude: -1.3175,
     longitude: 36.9003,
     kind: "urban_area",
@@ -94,6 +100,7 @@ const KENYA_PLACES: KenyaPlace[] = [
   },
   {
     name: "SGR Nairobi Terminus",
+    display_name: "SGR Nairobi Terminus, Nairobi",
     latitude: -1.3647,
     longitude: 36.9392,
     kind: "transport_hub",
@@ -121,6 +128,7 @@ const KENYA_PLACES: KenyaPlace[] = [
   { name: "Mombasa", latitude: -4.0435, longitude: 39.6682 },
   {
     name: "Mombasa Port",
+    display_name: "Mombasa Port, Mombasa",
     latitude: -4.058,
     longitude: 39.642,
     kind: "transport_hub",
