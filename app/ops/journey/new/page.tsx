@@ -318,7 +318,11 @@ export default function NewJourneyPage() {
     }
 
     setMessage(`Trip saved. Trip ID: ${tripId}`);
-    router.push("/ops/journey");
+    if (json.journey?.id) {
+      router.push(`/ops/journey/${json.journey.id}`);
+    } else {
+      router.push("/ops/journey");
+    }
   }
 
   return (

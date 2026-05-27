@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { supabase } from "../../../lib/supabase";
 import {
   EmptyState,
@@ -25,7 +26,7 @@ const rangeOptions: Array<{ value: RangeValue; label: string }> = [
 ];
 
 export default function OpsEfficiencyPage() {
-  const [range, setRange] = useState<RangeValue>("yesterday");
+  const [range, setRange] = useState<RangeValue>(() => initialRangeFromUrl());
   const [data, setData] = useState<EfficiencyState>({
     efficiency: null,
     tripIntelligence: null,
@@ -449,8 +450,8 @@ function TripRow({ trip }: { trip: any }) {
   const flags = trip.management_flags || [];
   const route = identity.route?.route_label || "Route missing";
 
-  return (
-    <div className="rounded-md border border-white/10 bg-white/[0.04] p-4">
+  const content = (
+    <div className="rounded-md border border-white/10 bg-white/[0.04] p-4 transition hover:border-cyan-200/40 hover:bg-cyan-300/10">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="break-words text-sm font-semibold text-white">
@@ -470,6 +471,18 @@ function TripRow({ trip }: { trip: any }) {
         <span>Flags: {flags.length ? flags.slice(0, 3).map(humanize).join(", ") : "None"}</span>
       </div>
     </div>
+  );
+
+  const companyId =
+    typeof window === "undefined"
+      ? null
+      : new URLSearchParams(window.location.search).get("companyId");
+  const companyQuery = companyId ? `?companyId=${encodeURIComponent(companyId)}` : "";
+
+  return identity.journey_id ? (
+    <Link href={`/ops/journey/${identity.journey_id}${companyQuery}`}>{content}</Link>
+  ) : (
+    content
   );
 }
 
@@ -619,4 +632,12 @@ function humanize(value: any) {
     .trim();
   if (!text) return "Unavailable";
   return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+function initialRangeFromUrl(): RangeValue {
+  if (typeof window === "undefined") return "yesterday";
+  const value = new URLSearchParams(window.location.search).get("range");
+  return value === "today" || value === "7d" || value === "yesterday"
+    ? value
+    : "yesterday";
 }

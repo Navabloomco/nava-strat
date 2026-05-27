@@ -114,10 +114,10 @@ export default function JourneyListPage() {
                   </div>
 
                   <Link
-                    href="/ops/journey/new"
+                    href={`/ops/journey/${journey.id}`}
                     className="rounded-md border border-white/15 px-4 py-2 text-center text-sm font-semibold text-slate-100 hover:bg-white/10"
                   >
-                    New journey
+                    Open trip
                   </Link>
                 </div>
               </Panel>
