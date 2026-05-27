@@ -7,7 +7,9 @@ export function normalizeVehicleKey(value: string | null | undefined) {
 
 export function getVehicleMatchKeys(asset: any) {
   const trailerKey = getVehicleTrailerMatchKey(asset);
+  const providerLabelKey = getVehicleProviderLabelMatchKey(asset);
   return [
+    providerLabelKey,
     normalizeVehicleKey(asset?.truck_id),
     normalizeVehicleKey(asset?.registration),
     trailerKey,
@@ -26,14 +28,28 @@ function getVehicleTrailerMatchKey(asset: any) {
   return normalizeVehicleKey(trailer);
 }
 
+function getVehicleProviderLabelMatchKey(asset: any) {
+  const providerLabel = readStoredVehicleIdentityContext(asset).provider_label;
+  return normalizeVehicleKey(providerLabel);
+}
+
 function extractVehicleInputs(question: string) {
   const inputs = new Map<string, string>();
+  const providerLabelPattern =
+    /[A-Z]{2,4}[\s\-/.]*\d{2,4}[A-Z]?\s+[A-Z]{1,3}[\s\-/.]*\d{3,5}[A-Z]?/gi;
+  const providerLabelMatches = question.match(providerLabelPattern) || [];
+
+  for (const match of providerLabelMatches) {
+    const key = normalizeVehicleKey(match);
+    if (key.length >= 8) inputs.set(key, formatVehicleInput(match));
+  }
+
   const platePattern = /[A-Z]{2,4}[\s\-/.]*\d{2,4}[A-Z]?/gi;
   const matches = question.match(platePattern) || [];
 
   for (const match of matches) {
     const key = normalizeVehicleKey(match);
-    if (key.length >= 4) inputs.set(key, match.trim().toUpperCase());
+    if (key.length >= 4) inputs.set(key, formatVehicleInput(match));
   }
 
   const tokens = question
@@ -84,10 +100,16 @@ export async function matchVehicleInFleet(question: string, companyId: string) {
       const existing = candidates.get(candidateKey);
       if (!existing || best.rank > existing.rank) {
         const identityContext = readStoredVehicleIdentityContext(asset);
+        const rank = best.rank + vehicleCandidateRankBias(asset, identityContext);
         candidates.set(candidateKey, {
           id: asset.id,
           truck_id: asset.truck_id || null,
           registration: asset.registration || null,
+          display_label:
+            identityContext.provider_label ||
+            asset.registration ||
+            asset.truck_id ||
+            input.input,
           confidence: best.confidence,
           match_type: best.match_type,
           attached_trailer_plate: identityContext.attached_trailer_plate,
@@ -95,7 +117,7 @@ export async function matchVehicleInFleet(question: string, companyId: string) {
           trailer_context: Boolean(best.trailer_context),
           enabled_for_intelligence: Boolean(asset.intelligence_enabled),
           input: input.input,
-          rank: best.rank,
+          rank,
         });
       }
     }
@@ -131,6 +153,13 @@ export async function matchVehicleInFleet(question: string, companyId: string) {
     match_type: winner.match_type,
     matched_truck_id: winner.truck_id,
     matched_registration: winner.registration,
+    matched_display_label:
+      winner.display_label ||
+      winner.provider_label ||
+      winner.registration ||
+      winner.truck_id ||
+      winner.input ||
+      null,
     attached_trailer_plate: winner.attached_trailer_plate || null,
     provider_label: winner.provider_label || null,
     trailer_context: Boolean(winner.trailer_context),
@@ -164,6 +193,15 @@ async function loadFleetAssetsForVehicleMatching(companyId: string) {
 
 function bestVehicleMatchForAsset(inputKey: string, asset: any) {
   let best: any = null;
+
+  const providerLabelKey = getVehicleProviderLabelMatchKey(asset);
+  if (providerLabelKey && inputKey === providerLabelKey) {
+    best = {
+      confidence: "high",
+      match_type: "exact_provider_asset_label",
+      rank: 110,
+    };
+  }
 
   for (const key of getVehiclePrimaryMatchKeys(asset)) {
     const match = scoreVehicleKey(inputKey, key);
@@ -224,6 +262,12 @@ function sanitizeVehicleCandidate(candidate: any) {
   return {
     truck_id: candidate.truck_id || null,
     registration: candidate.registration || null,
+    display_label:
+      candidate.display_label ||
+      candidate.provider_label ||
+      candidate.registration ||
+      candidate.truck_id ||
+      null,
     confidence: candidate.confidence || "low",
     match_type: candidate.match_type || "candidate",
     attached_trailer_plate: candidate.attached_trailer_plate || null,
@@ -231,6 +275,31 @@ function sanitizeVehicleCandidate(candidate: any) {
     trailer_context: Boolean(candidate.trailer_context),
     enabled_for_intelligence: Boolean(candidate.enabled_for_intelligence),
   };
+}
+
+function vehicleCandidateRankBias(asset: any, identityContext: any) {
+  let bias = 0;
+  if (asset?.intelligence_enabled) bias += 0.3;
+  const canonicalKey = normalizeVehicleKey(identityContext?.canonical_truck_plate);
+  const truckKey = normalizeVehicleKey(asset?.truck_id);
+  const registrationKey = normalizeVehicleKey(asset?.registration);
+  if (canonicalKey && (truckKey === canonicalKey || registrationKey === canonicalKey)) {
+    bias += 0.2;
+  }
+  if (
+    canonicalKey &&
+    identityContext?.attached_trailer_plate &&
+    truckKey &&
+    truckKey !== canonicalKey &&
+    truckKey.includes(canonicalKey)
+  ) {
+    bias -= 0.2;
+  }
+  return bias;
+}
+
+function formatVehicleInput(value: string) {
+  return String(value || "").trim().toUpperCase().replace(/\s+/g, " ");
 }
 
 function isMissingOptionalTelemetryColumnError(error: any) {

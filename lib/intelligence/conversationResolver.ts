@@ -90,6 +90,7 @@ export async function resolveNavaEyeConversationFollowup(
         input: vehicleResolution.input,
         matched_truck_id: selectedVehicle.truck_id,
         matched_registration: selectedVehicle.registration,
+        matched_display_label: selectedVehicle.display_label,
         match_type: selectedVehicle.match_type,
         attached_trailer_plate: selectedVehicle.attached_trailer_plate || null,
         provider_label: selectedVehicle.provider_label || null,
@@ -384,6 +385,15 @@ async function resolvePromptVehicle(
       };
     }
     if (exact.length > 1) {
+      const bestExact = selectUniqueBestVehicleCandidate(exact);
+      if (bestExact) {
+        return {
+          ...base,
+          input: input.input,
+          input_key: input.key,
+          selected: { ...bestExact, match_type: "exact_normalized" },
+        };
+      }
       return {
         ...base,
         input: input.input,
@@ -408,6 +418,19 @@ async function resolvePromptVehicle(
       };
     }
     if (trailerExact.length > 1) {
+      const bestTrailer = selectUniqueBestVehicleCandidate(trailerExact);
+      if (bestTrailer) {
+        return {
+          ...base,
+          input: input.input,
+          input_key: input.key,
+          selected: {
+            ...bestTrailer,
+            match_type: "attached_trailer_context",
+            trailer_context: true,
+          },
+        };
+      }
       return {
         ...base,
         input: input.input,
@@ -479,6 +502,8 @@ async function loadFleetAssetsForConversationResolution(companyId: string) {
 
 function buildConversationVehicleCandidate(asset: any) {
   const identityContext = readStoredVehicleIdentityContext(asset);
+  const providerLabelKey = normalizeVehicleKey(identityContext.provider_label);
+  const rankBias = vehicleCandidateRankBias(asset, identityContext);
   return {
     id: asset.id,
     truck_id: asset.truck_id || null,
@@ -491,13 +516,47 @@ function buildConversationVehicleCandidate(asset: any) {
     attached_trailer_plate: identityContext.attached_trailer_plate,
     provider_label: identityContext.provider_label,
     enabled_for_intelligence: Boolean(asset.intelligence_enabled),
-    keys: [normalizeVehicleKey(asset.truck_id), normalizeVehicleKey(asset.registration)].filter(
-      (key) => key.length >= 4
-    ),
+    keys: [
+      providerLabelKey,
+      normalizeVehicleKey(asset.truck_id),
+      normalizeVehicleKey(asset.registration),
+    ].filter((key) => key.length >= 4),
     trailer_keys: [normalizeVehicleKey(identityContext.attached_trailer_plate)].filter(
       (key) => key.length >= 4
     ),
+    rank_bias: rankBias,
   };
+}
+
+function selectUniqueBestVehicleCandidate(candidates: any[]) {
+  const sorted = [...candidates].sort(
+    (a, b) => Number(b.rank_bias || 0) - Number(a.rank_bias || 0)
+  );
+  if (!sorted.length) return null;
+  const topBias = Number(sorted[0].rank_bias || 0);
+  const secondBias = Number(sorted[1]?.rank_bias || 0);
+  return topBias > secondBias ? sorted[0] : null;
+}
+
+function vehicleCandidateRankBias(asset: any, identityContext: any) {
+  let bias = 0;
+  if (asset?.intelligence_enabled) bias += 0.3;
+  const canonicalKey = normalizeVehicleKey(identityContext?.canonical_truck_plate);
+  const truckKey = normalizeVehicleKey(asset?.truck_id);
+  const registrationKey = normalizeVehicleKey(asset?.registration);
+  if (canonicalKey && (truckKey === canonicalKey || registrationKey === canonicalKey)) {
+    bias += 0.2;
+  }
+  if (
+    canonicalKey &&
+    identityContext?.attached_trailer_plate &&
+    truckKey &&
+    truckKey !== canonicalKey &&
+    truckKey.includes(canonicalKey)
+  ) {
+    bias -= 0.2;
+  }
+  return bias;
 }
 
 function findClosestVehicle(inputKey: string, assets: any[]) {
@@ -538,6 +597,15 @@ function isMissingOptionalTelemetryColumnError(error: any) {
 
 function extractVehicleInputs(question: string) {
   const inputs = new Map<string, string>();
+  const providerLabelPattern =
+    /[A-Z]{2,4}[\s\-/.]*\d{2,4}[A-Z]?\s+[A-Z]{1,3}[\s\-/.]*\d{3,5}[A-Z]?/gi;
+  const providerLabelMatches = question.match(providerLabelPattern) || [];
+
+  for (const match of providerLabelMatches) {
+    const key = normalizeVehicleKey(match);
+    if (key.length >= 8) inputs.set(key, formatVehicleInput(match));
+  }
+
   const platePattern = /[A-Z]{2,4}[\s\-/.]*\d{2,4}[A-Z]?/gi;
   const matches = question.match(platePattern) || [];
 

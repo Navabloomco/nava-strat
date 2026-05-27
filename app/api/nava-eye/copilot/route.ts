@@ -1298,13 +1298,33 @@ function buildVehicleCandidateAnswer(vehicleMatch: any) {
 }
 
 function buildAssetRestrictedAnswer(vehicleMatch: any) {
-  const label =
+  const providerLabel =
+    vehicleMatch?.provider_label ||
+    vehicleMatch?.matched_display_label ||
     vehicleMatch?.matched_registration ||
     vehicleMatch?.matched_truck_id ||
     vehicleMatch?.input ||
-    "this asset";
+    "this provider asset";
+  const inputLabel = vehicleMatch?.input || providerLabel;
+  const askedTrailer =
+    vehicleMatch?.match_type === "attached_trailer_context" ||
+    Boolean(vehicleMatch?.trailer_context);
+  const attachedTrailer = vehicleMatch?.attached_trailer_plate || inputLabel;
 
-  return `${label} is present, but answers are limited to assets enabled for intelligence. This asset may be waiting for review.`;
+  if (askedTrailer && vehicleMatch?.provider_label) {
+    return `${attachedTrailer} appears in the provider asset name ${vehicleMatch.provider_label}. Location/status comes from that tracked provider asset, not independent trailer tracking. ${vehicleMatch.provider_label} is present in Asset Review but is not enabled for Nava intelligence yet. Enable this provider asset before Nava Eye can answer live status.`;
+  }
+
+  const askedCanonicalKey =
+    vehicleMatch?.provider_label &&
+    inputLabel &&
+    normalizeDisplayKey(inputLabel) !== normalizeDisplayKey(vehicleMatch.provider_label);
+
+  if (askedCanonicalKey) {
+    return `${inputLabel} matches provider asset ${vehicleMatch.provider_label}. ${vehicleMatch.provider_label} is present in Asset Review but is not enabled for Nava intelligence yet. Enable this provider asset before Nava Eye can answer live status.`;
+  }
+
+  return `${providerLabel} is present in Asset Review but is not enabled for Nava intelligence yet. Enable this provider asset before Nava Eye can answer live status.`;
 }
 
 function buildDashboardFollowupAnswer(context: any) {
@@ -1967,6 +1987,11 @@ function buildTruckStatusFallbackAnswer(context: any, options: any = {}) {
   );
   parts.push(formatTimelineTimeNote(model.timeZone));
 
+  const providerAssetMatchContext = formatProviderAssetMatchContext(context.vehicle_match);
+  if (providerAssetMatchContext) {
+    parts.push(providerAssetMatchContext);
+  }
+
   const trailerContext = formatAttachedTrailerLiveContext(model.trailerContext);
   if (trailerContext) {
     parts.push(trailerContext);
@@ -2159,6 +2184,20 @@ function buildAttachedTrailerLiveContext(context: any, truck: any, truckLabel: s
     provider_label: matchIdentity.provider_label || truckIdentity.provider_label,
     truck_label: truckLabel,
   };
+}
+
+function formatProviderAssetMatchContext(vehicleMatch: any) {
+  if (!vehicleMatch?.provider_label || !vehicleMatch?.input) return null;
+  if (
+    vehicleMatch.match_type === "attached_trailer_context" ||
+    Boolean(vehicleMatch.trailer_context)
+  ) {
+    return null;
+  }
+  if (normalizeDisplayKey(vehicleMatch.input) === normalizeDisplayKey(vehicleMatch.provider_label)) {
+    return null;
+  }
+  return `${vehicleMatch.input} matches provider asset ${vehicleMatch.provider_label}.`;
 }
 
 function formatAttachedTrailerLiveContext(context: any) {
@@ -3860,7 +3899,7 @@ function formatVehicleMatchIntro(vehicleMatch: any, matchedLabel: string) {
 }
 
 function formatVehicleCandidateLine(candidate: any) {
-  const label = [candidate.registration, candidate.truck_id]
+  const label = [candidate.display_label, candidate.provider_label, candidate.registration, candidate.truck_id]
     .filter(Boolean)
     .filter((value, index, list) => list.indexOf(value) === index)
     .join(" / ");

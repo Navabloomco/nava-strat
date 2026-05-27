@@ -136,7 +136,7 @@ export async function routeContext(
       vehicleMatch.matched && !vehicleMatch.enabled_for_intelligence,
     asset_access_message:
       vehicleMatch.matched && !vehicleMatch.enabled_for_intelligence
-      ? "I can only answer using assets enabled for Nava intelligence. This asset may be waiting for review."
+      ? buildAssetAccessRestrictedMessage(vehicleMatch)
       : null,
     fleet_asset_review_status: fleetAssetCounts,
     no_enabled_intelligence_assets:
@@ -393,6 +393,34 @@ export async function routeContext(
     );
   }
   return context;
+}
+
+function buildAssetAccessRestrictedMessage(vehicleMatch: any) {
+  const providerLabel =
+    vehicleMatch?.provider_label ||
+    vehicleMatch?.matched_display_label ||
+    vehicleMatch?.matched_registration ||
+    vehicleMatch?.matched_truck_id ||
+    vehicleMatch?.input ||
+    "This provider asset";
+  const inputLabel = vehicleMatch?.input || providerLabel;
+  const askedTrailer =
+    vehicleMatch?.match_type === "attached_trailer_context" ||
+    Boolean(vehicleMatch?.trailer_context);
+
+  if (askedTrailer && vehicleMatch?.provider_label) {
+    const trailer = vehicleMatch?.attached_trailer_plate || inputLabel;
+    return `${trailer} appears in the provider asset name ${vehicleMatch.provider_label}. Location/status comes from that tracked provider asset, not independent trailer tracking. ${vehicleMatch.provider_label} is present in Asset Review but is not enabled for Nava intelligence yet.`;
+  }
+
+  if (
+    vehicleMatch?.provider_label &&
+    normalizeVehicleKey(inputLabel) !== normalizeVehicleKey(vehicleMatch.provider_label)
+  ) {
+    return `${inputLabel} matches provider asset ${vehicleMatch.provider_label}. ${vehicleMatch.provider_label} is present in Asset Review but is not enabled for Nava intelligence yet.`;
+  }
+
+  return `${providerLabel} is present in Asset Review but is not enabled for Nava intelligence yet.`;
 }
 
 function getIntentPermissionBoundary(
