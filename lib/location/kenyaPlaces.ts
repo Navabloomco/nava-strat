@@ -13,8 +13,14 @@ type KenyaPlace = {
   display_name?: string;
   latitude: number;
   longitude: number;
-  kind?: "town" | "urban_area" | "landmark" | "industrial_area" | "transport_hub";
-  label?: "near" | "around";
+  kind?:
+    | "town"
+    | "urban_area"
+    | "landmark"
+    | "industrial_area"
+    | "transport_hub"
+    | "border";
+  label?: "near" | "around" | "by";
   specificity?: number;
 };
 
@@ -60,7 +66,7 @@ const KENYA_PLACES: KenyaPlace[] = [
     latitude: -1.3196,
     longitude: 36.7077,
     kind: "landmark",
-    label: "near",
+    label: "by",
     specificity: 4,
   },
   {
@@ -104,7 +110,7 @@ const KENYA_PLACES: KenyaPlace[] = [
     latitude: -1.3647,
     longitude: 36.9392,
     kind: "transport_hub",
-    label: "near",
+    label: "by",
     specificity: 4,
   },
   { name: "Mlolongo", latitude: -1.3972, longitude: 36.9397 },
@@ -132,7 +138,7 @@ const KENYA_PLACES: KenyaPlace[] = [
     latitude: -4.058,
     longitude: 39.642,
     kind: "transport_hub",
-    label: "near",
+    label: "by",
     specificity: 4,
   },
   { name: "Nakuru", latitude: -0.3031, longitude: 36.08 },
@@ -148,7 +154,13 @@ const KENYA_PLACES: KenyaPlace[] = [
   { name: "Webuye", latitude: 0.607, longitude: 34.769 },
   { name: "Bungoma", latitude: 0.563, longitude: 34.561 },
   { name: "Kanduyi", latitude: 0.57, longitude: 34.57 },
-  { name: "Malaba, Kenya border", latitude: 0.635, longitude: 34.281, label: "near" },
+  {
+    name: "Malaba, Kenya border",
+    latitude: 0.635,
+    longitude: 34.281,
+    kind: "border",
+    label: "around",
+  },
   { name: "Kisumu", latitude: -0.0917, longitude: 34.768 },
   { name: "Thika", latitude: -1.0332, longitude: 37.0693 },
   { name: "Ruiru", latitude: -1.145, longitude: 36.96 },
@@ -226,7 +238,7 @@ export function resolveKenyaOperationalLocation(input: {
     return {
       display_label: `between ${displayPlaceName(corridor.from)} and ${displayPlaceName(
         corridor.to
-      )}, near ${displayPlaceName(nearest.place)}`,
+      )}, ${contextPlacePhrase(nearest.place, "near")}`,
       evidence_label: "corridor-estimate",
       confidence: "medium",
       distance_meters: nearest.distance_meters,
@@ -246,7 +258,7 @@ export function resolveKenyaOperationalLocation(input: {
   ) {
     const nearestContext =
       nearest.distance_meters <= FAR_PLACE_METERS
-        ? `, near ${displayPlaceName(nearest.place)}`
+        ? `, ${contextPlacePhrase(nearest.place, "far")}`
         : "";
     return {
       display_label: `between ${displayPlaceName(corridor.from)} and ${displayPlaceName(
@@ -262,7 +274,7 @@ export function resolveKenyaOperationalLocation(input: {
 
   if (corridor && corridor.offset_meters <= CORRIDOR_AREA_OFFSET_METERS) {
     return {
-      display_label: `around the ${displayPlaceName(corridor.from)}-${displayPlaceName(
+      display_label: `along the ${displayPlaceName(corridor.from)}-${displayPlaceName(
         corridor.to
       )} corridor`,
       evidence_label: "corridor-estimate",
@@ -288,7 +300,7 @@ function formatNearestPlace(
 
   if (proximity === "far") {
     return {
-      display_label: `near ${placeName} area`,
+      display_label: `around ${placeName} area`,
       evidence_label: "nearest-known-place",
       confidence: "low",
       distance_meters: distanceMeters,
@@ -297,13 +309,10 @@ function formatNearestPlace(
   }
 
   if (proximity === "near") {
-    const prefix = prefixForPlace(place, "around");
+    const prefix = prefixForPlace(place, "near", proximity);
     const relation = relationSuffix(place, distanceMeters, point);
     return {
-      display_label:
-        prefix === "around"
-          ? `around ${placeName}${relation ? `, ${relation}` : ""}`
-          : `near ${placeName}${relation ? `, ${relation}` : ""}`,
+      display_label: `${prefix} ${placeName}${relation ? `, ${relation}` : ""}`,
       evidence_label: "nearest-known-place",
       confidence: "medium",
       distance_meters: distanceMeters,
@@ -313,7 +322,7 @@ function formatNearestPlace(
 
   const relation = relationSuffix(place, distanceMeters, point);
   return {
-    display_label: `${prefixForPlace(place, "near")} ${placeName}${
+    display_label: `${prefixForPlace(place, "around", proximity)} ${placeName}${
       relation ? `, ${relation}` : ""
     }`,
     evidence_label: "nearest-known-place",
@@ -340,16 +349,38 @@ function findNearestPlace(point: { latitude: number; longitude: number }) {
   return best;
 }
 
-function prefixForPlace(place: KenyaPlace, fallback: "near" | "around") {
+function prefixForPlace(
+  place: KenyaPlace,
+  fallback: "near" | "around",
+  proximity: "close" | "near" | "far"
+) {
+  if (place.label === "by") {
+    return proximity === "close" ? "by" : "around";
+  }
   if (place.label) return place.label;
+  if (place.kind === "landmark") {
+    return proximity === "close" ? "by" : "around";
+  }
   if (
     place.kind === "urban_area" ||
     place.kind === "industrial_area" ||
-    place.kind === "transport_hub"
+    place.kind === "transport_hub" ||
+    place.kind === "border"
   ) {
     return "around";
   }
   return fallback;
+}
+
+function contextPlacePhrase(place: KenyaPlace, proximity: "near" | "far") {
+  const prefix = prefixForPlace(
+    place,
+    proximity === "near" ? "around" : "near",
+    proximity === "near" ? "near" : "far"
+  );
+  const suffix =
+    proximity === "far" && place.kind !== "border" ? " area" : "";
+  return `${prefix} ${displayPlaceName(place)}${suffix}`;
 }
 
 function relationSuffix(
