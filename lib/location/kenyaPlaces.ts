@@ -14,9 +14,11 @@ type KenyaPlace = {
   longitude: number;
 };
 
+const CLOSE_PLACE_METERS = 12000;
 const NEAR_PLACE_METERS = 35000;
 const FAR_PLACE_METERS = 80000;
 const CORRIDOR_MAX_OFFSET_METERS = 22000;
+const CORRIDOR_AREA_OFFSET_METERS = 40000;
 const CORRIDOR_MIN_ENDPOINT_METERS = 12000;
 
 const KENYA_PLACES: KenyaPlace[] = [
@@ -82,8 +84,8 @@ export function resolveKenyaOperationalLocation(input: {
   const nearest = findNearestPlace(point);
   const corridor = findNearestCorridor(point);
 
-  if (nearest && nearest.distance_meters <= NEAR_PLACE_METERS) {
-    return formatNearestPlace(nearest.place, nearest.distance_meters, point, "medium");
+  if (nearest && nearest.distance_meters <= CLOSE_PLACE_METERS) {
+    return formatNearestPlace(nearest.place, nearest.distance_meters, "close");
   }
 
   if (
@@ -97,12 +99,25 @@ export function resolveKenyaOperationalLocation(input: {
       evidence_label: "corridor-estimate",
       confidence: "medium",
       note:
-        "Approximate corridor estimate from Nava's built-in Kenya transport place list; not an exact address.",
+        "Approximate operational location, not an exact address.",
+    };
+  }
+
+  if (nearest && nearest.distance_meters <= NEAR_PLACE_METERS) {
+    return formatNearestPlace(nearest.place, nearest.distance_meters, "near");
+  }
+
+  if (corridor && corridor.offset_meters <= CORRIDOR_AREA_OFFSET_METERS) {
+    return {
+      display_label: `around the ${corridor.from.name}-${corridor.to.name} corridor`,
+      evidence_label: "corridor-estimate",
+      confidence: "low",
+      note: "Approximate operational location, not an exact address.",
     };
   }
 
   if (nearest && nearest.distance_meters <= FAR_PLACE_METERS) {
-    return formatNearestPlace(nearest.place, nearest.distance_meters, point, "low");
+    return formatNearestPlace(nearest.place, nearest.distance_meters, "far");
   }
 
   return null;
@@ -111,40 +126,34 @@ export function resolveKenyaOperationalLocation(input: {
 function formatNearestPlace(
   place: KenyaPlace,
   distanceMeters: number,
-  point: { latitude: number; longitude: number },
-  confidence: "medium" | "low"
+  proximity: "close" | "near" | "far"
 ): KenyaOperationalLocation {
-  if (confidence === "low") {
+  if (proximity === "far") {
     return {
       display_label: `near ${place.name} area`,
       evidence_label: "nearest-known-place",
-      confidence,
+      confidence: "low",
       distance_meters: distanceMeters,
-      note:
-        "Approximate nearest-town fallback from Nava's built-in Kenya transport place list; not an exact address.",
+      note: "Approximate operational location, not an exact address.",
     };
   }
 
-  if (distanceMeters < 1000) {
+  if (proximity === "near") {
     return {
-      display_label: `near ${place.name}`,
+      display_label: `around ${place.name} area`,
       evidence_label: "nearest-known-place",
-      confidence,
+      confidence: "medium",
       distance_meters: distanceMeters,
-      note:
-        "Nearest known Kenya transport place fallback; not an exact address.",
+      note: "Approximate operational location, not an exact address.",
     };
   }
 
   return {
-    display_label: `near ${place.name}, about ${formatDistanceKm(
-      distanceMeters
-    )} ${directionFromPlace(place, point)} of town`,
+    display_label: `near ${place.name}`,
     evidence_label: "nearest-known-place",
-    confidence,
+    confidence: "medium",
     distance_meters: distanceMeters,
-    note:
-      "Nearest known Kenya transport place fallback; not an exact address.",
+    note: "Approximate operational location, not an exact address.",
   };
 }
 
@@ -240,38 +249,6 @@ function numericPoint(latitude: any, longitude: any) {
   return { latitude: lat, longitude: lng };
 }
 
-function directionFromPlace(
-  place: KenyaPlace,
-  point: { latitude: number; longitude: number }
-) {
-  const bearing = bearingDegrees(place, point);
-  const directions = [
-    "north",
-    "north east",
-    "east",
-    "south east",
-    "south",
-    "south west",
-    "west",
-    "north west",
-  ];
-  return directions[Math.round(bearing / 45) % directions.length];
-}
-
-function bearingDegrees(
-  from: { latitude: number; longitude: number },
-  to: { latitude: number; longitude: number }
-) {
-  const fromLat = toRadians(from.latitude);
-  const toLat = toRadians(to.latitude);
-  const deltaLng = toRadians(to.longitude - from.longitude);
-  const y = Math.sin(deltaLng) * Math.cos(toLat);
-  const x =
-    Math.cos(fromLat) * Math.sin(toLat) -
-    Math.sin(fromLat) * Math.cos(toLat) * Math.cos(deltaLng);
-  return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
-}
-
 function distanceMeters(
   from: { latitude: number; longitude: number },
   to: { latitude: number; longitude: number }
@@ -288,13 +265,6 @@ function distanceMeters(
       Math.sin(deltaLng / 2) *
       Math.sin(deltaLng / 2);
   return earthRadiusMeters * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
-function formatDistanceKm(distanceMetersValue: number) {
-  const km = distanceMetersValue / 1000;
-  return `${km.toLocaleString(undefined, {
-    maximumFractionDigits: km >= 10 ? 0 : 1,
-  })} km`;
 }
 
 function toRadians(value: number) {
