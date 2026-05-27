@@ -22,6 +22,15 @@ function normalizeOptionalText(value: unknown) {
   return text ? text.toUpperCase() : null;
 }
 
+function normalizeDriverText(...values: unknown[]) {
+  for (const value of values) {
+    if (typeof value !== "string") continue;
+    const text = value.trim();
+    if (text) return text.toUpperCase();
+  }
+  return null;
+}
+
 function normalizeUuid(value: unknown) {
   const text = String(value || "").trim();
   return text || null;
@@ -291,6 +300,10 @@ export async function POST(req: Request) {
       typeof body.status === "string" && body.status.trim()
         ? body.status.trim()
         : "active";
+    const manualDriverText = normalizeDriverText(
+      body.manual_driver_text,
+      body.driver
+    );
 
     if (!cleanTruck || !body.client_name || !body.from_location || !body.to_location) {
       return NextResponse.json(
@@ -338,9 +351,7 @@ export async function POST(req: Request) {
           : body.client_name,
       truck: cleanTruck,
       driver:
-        typeof body.driver === "string"
-          ? body.driver.trim().toUpperCase() || selectedDriver?.full_name?.toUpperCase() || null
-          : selectedDriver?.full_name?.toUpperCase() || body.driver || null,
+        selectedDriver?.full_name?.toUpperCase() || manualDriverText || null,
       from_location:
         typeof body.from_location === "string"
           ? body.from_location.trim().toUpperCase()

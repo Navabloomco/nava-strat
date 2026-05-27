@@ -228,11 +228,13 @@ Confirm workflow behavior:
 - [ ] Create Trip keeps enabled vehicle picker behavior.
 - [ ] Create Trip saves production journeys as `is_demo = false` and preserves `start_time` / `end_time` if supplied.
 - [ ] Create Trip persists the selected same-company driver link (`driver_id`) when the picker is used.
+- [ ] Create Trip persists typed manual driver text in `journeys.driver` when no driver-directory ID is selected.
 - [ ] Create Trip with an enabled provider asset such as `KBJ132C` succeeds even if the live `journeys.asset_id` FK cannot accept `fleet_assets.id`; in that case the Trip preserves the vehicle text and safely leaves `asset_id` null.
 - [ ] Create Trip accepts partial trips: client, vehicle, origin, destination, status, and start time are enough; revenue, fuel, expenses, and end time can be added later.
 - [ ] Optional commercial fields can store tonnage/rate when known, but Trip Intelligence still marks contribution unsafe until linked cost evidence exists.
 - [ ] After creating a Trip, open `/ops/journey/[id]` from the Trip list or the create flow and confirm the detail page shows trip reference, status, truck/provider asset, client, route, start/end time, driver, Trip Intelligence readiness, missing-data notes, and management flags.
 - [ ] On Trip Detail, assign or update a driver/timing/status with an ops/admin role and confirm the page refreshes without changing finance values.
+- [ ] On Trip Detail, enter `KARIUKI` as manual driver text, save, and confirm Driver shows `KARIUKI` and Trip Intelligence labels driver evidence as manual driver text instead of missing.
 - [ ] On Trip Detail, add or update revenue with a finance/elevated role and confirm Trip Intelligence no longer lists missing revenue after refresh.
 - [ ] On Trip Detail, confirm allocated fuel appears as litres/cost allocation evidence and does not claim actual fuel burn, theft, tank balance, or fuel efficiency.
 - [ ] On Trip Detail, allocate part of an existing fuel issue to the Trip only when the role can edit fuel; confirm the fuel issue remaining/carry-forward balance is still shown safely.

@@ -293,6 +293,7 @@ export default function NewJourneyPage() {
         client_name: client.trim().toUpperCase(),
         truck: cleanTruck,
         driver: driver.trim().toUpperCase(),
+        manual_driver_text: selectedDriverId ? null : driver.trim().toUpperCase(),
         from_location: fromLocation.trim().toUpperCase(),
         to_location: toLocation.trim().toUpperCase(),
         status: "active",

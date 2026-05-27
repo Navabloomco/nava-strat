@@ -157,6 +157,7 @@ export default function TripDetailPage() {
         status,
         driver_id: driverId || null,
         driver: driverId ? selectedDriver?.full_name || driverText : driverText,
+        manual_driver_text: driverId ? null : driverText,
         start_time: startTime || null,
         end_time: endTime || null,
         expected_fuel_liters: expectedFuel ? Number(expectedFuel) : null,
@@ -291,6 +292,7 @@ export default function TripDetailPage() {
   const trip = data?.trip_intelligence?.trip || null;
   const missingData = trip?.missing_data || [];
   const flags = trip?.management_flags || [];
+  const driverEvidence = trip?.driver_evidence || {};
   const finance = trip?.finance_evidence || {};
   const movement = trip?.movement_evidence || {};
   const fuel = data?.fuel || {};
@@ -302,6 +304,7 @@ export default function TripDetailPage() {
     (sum: number, expense: any) => sum + Number(expense.amount || 0),
     0
   );
+  const displayDriver = journey.driver || driverEvidence.driver_name || "Missing";
   const companyIdParam = currentCompanyId();
   const companyQuery = companyIdParam
     ? `?companyId=${encodeURIComponent(companyIdParam)}`
@@ -387,7 +390,7 @@ export default function TripDetailPage() {
                   <Detail label="Truck / provider asset" value={journey.truck || "Missing"} />
                   <Detail label="Client" value={journey.client_name || "Missing"} />
                   <Detail label="Route" value={routeLabel(journey)} />
-                  <Detail label="Driver" value={journey.driver || "Missing"} />
+                  <Detail label="Driver" value={displayDriver} />
                   <Detail label="Start" value={formatDateTime(journey.start_time)} />
                   <Detail label="End" value={formatDateTime(journey.end_time)} />
                 </div>
@@ -413,6 +416,14 @@ export default function TripDetailPage() {
                 </div>
 
                 <div className="mt-5 grid gap-3">
+                  <EvidenceLine
+                    label="Driver evidence"
+                    value={
+                      driverEvidence.driver_name
+                        ? `${driverEvidence.driver_name} (${humanize(driverEvidence.evidence_label)})`
+                        : "Unavailable"
+                    }
+                  />
                   <EvidenceLine
                     label="Distance"
                     value={

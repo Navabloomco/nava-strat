@@ -679,12 +679,23 @@ function resolveDriverEvidence(
   tripWindow: any
 ): any {
   const journeyDriver = cleanText(journey.driver);
-  if (journeyDriver || journey.driver_id) {
+  if (journey.driver_id) {
     return {
       driver_name: journeyDriver,
       driver_id: journey.driver_id || null,
       evidence_label: "trip-linked",
       linked: true,
+      missing_driver_link: false,
+    };
+  }
+
+  if (journeyDriver) {
+    return {
+      driver_name: journeyDriver,
+      driver_id: null,
+      evidence_label: "manual-driver-text",
+      linked: true,
+      directory_verified: false,
       missing_driver_link: false,
     };
   }

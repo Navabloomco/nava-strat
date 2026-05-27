@@ -170,6 +170,15 @@ function normalizeOptionalText(value: unknown) {
   return text ? text.toUpperCase() : null;
 }
 
+function normalizeDriverText(...values: unknown[]) {
+  for (const value of values) {
+    if (typeof value !== "string") continue;
+    const text = value.trim();
+    if (text) return text.toUpperCase();
+  }
+  return null;
+}
+
 function normalizeUuid(value: unknown) {
   if (value === undefined) return undefined;
   const text = String(value || "").trim();
@@ -467,6 +476,12 @@ export async function PATCH(
     for (const field of ["client_name", "truck", "driver", "from_location", "to_location", "route"]) {
       if (body[field] !== undefined) {
         updates[field] = normalizeOptionalText(body[field]);
+      }
+    }
+    if (body.manual_driver_text !== undefined) {
+      const manualDriverText = normalizeDriverText(body.manual_driver_text);
+      if (body.driver === undefined || !updates.driver) {
+        updates.driver = manualDriverText;
       }
     }
     if (body.status !== undefined) {
