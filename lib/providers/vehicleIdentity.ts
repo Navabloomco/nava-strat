@@ -2,7 +2,18 @@ export type ProviderVehicleIdentity = {
   provider_label: string | null;
   canonical_truck_plate: string | null;
   attached_trailer_plate: string | null;
-  identity_source: "single_vehicle_label" | "truck_with_attached_trailer" | "unknown";
+  identity_source:
+    | "single_vehicle_label"
+    | "truck_with_attached_trailer"
+    | "non_primary_vehicle_label"
+    | "device_identifier"
+    | "unknown";
+  asset_identity_role:
+    | "truck"
+    | "truck_with_attached_trailer"
+    | "non_primary_vehicle"
+    | "device_identifier"
+    | "unknown";
   tokens: string[];
 };
 
@@ -11,28 +22,51 @@ export type StoredVehicleIdentityContext = {
   canonical_truck_plate: string | null;
   attached_trailer_plate: string | null;
   identity_source: string;
+  asset_identity_role: string;
+  non_primary_asset: boolean;
   canonical_key: string | null;
 };
 
 export function parseProviderVehicleIdentity(value: any): ProviderVehicleIdentity {
   const providerLabel = sanitizeProviderVehicleLabel(value);
   const tokens = extractPlateTokens(providerLabel);
-  const truckToken = tokens.find(isTruckPlateToken) || tokens.find((token) => !isTrailerPlateToken(token)) || null;
+  const nonPrimaryLabel = isNonPrimaryVehicleLabel(providerLabel);
+  const deviceIdentifier = isDeviceIdentifierLabel(providerLabel);
+  const truckToken = nonPrimaryLabel || deviceIdentifier
+    ? null
+    : tokens.find(isTruckPlateToken) || null;
   const trailerToken = tokens.find(
     (token) => isTrailerPlateToken(token) && token !== truckToken
   ) || null;
   const identitySource =
-    truckToken && trailerToken
-      ? "truck_with_attached_trailer"
-      : truckToken || providerLabel
-        ? "single_vehicle_label"
-        : "unknown";
+    deviceIdentifier
+      ? "device_identifier"
+      : nonPrimaryLabel
+        ? "non_primary_vehicle_label"
+        : truckToken && trailerToken
+          ? "truck_with_attached_trailer"
+          : truckToken || providerLabel
+            ? "single_vehicle_label"
+            : "unknown";
+  const assetIdentityRole =
+    deviceIdentifier
+      ? "device_identifier"
+      : nonPrimaryLabel
+        ? "non_primary_vehicle"
+        : truckToken && trailerToken
+          ? "truck_with_attached_trailer"
+          : truckToken
+            ? "truck"
+            : providerLabel
+              ? "unknown"
+              : "unknown";
 
   return {
     provider_label: providerLabel,
-    canonical_truck_plate: truckToken || providerLabel || null,
+    canonical_truck_plate: truckToken,
     attached_trailer_plate: trailerToken,
     identity_source: identitySource,
+    asset_identity_role: assetIdentityRole,
     tokens,
   };
 }
@@ -55,12 +89,20 @@ export function readStoredVehicleIdentityContext(source: any): StoredVehicleIden
     sanitizeAttachedTrailerPlate(telemetryCapabilities.attached_trailer_plate) ||
     sanitizeAttachedTrailerPlate(source?.attached_trailer_plate) ||
     parsed.attached_trailer_plate;
-  const canonicalTruckPlate =
-    sanitizeTruckPlate(telemetryCapabilities.canonical_truck_plate) ||
-    sanitizeTruckPlate(source?.canonical_truck_id) ||
-    parsed.canonical_truck_plate ||
-    fallbackParsed.canonical_truck_plate ||
-    null;
+  const assetIdentityRole =
+    typeof telemetryCapabilities.asset_identity_role === "string"
+      ? telemetryCapabilities.asset_identity_role
+      : parsed.asset_identity_role;
+  const nonPrimaryAsset =
+    assetIdentityRole === "non_primary_vehicle" ||
+    assetIdentityRole === "device_identifier";
+  const canonicalTruckPlate = nonPrimaryAsset
+    ? null
+    : sanitizeTruckPlate(telemetryCapabilities.canonical_truck_plate) ||
+      sanitizeTruckPlate(source?.canonical_truck_id) ||
+      parsed.canonical_truck_plate ||
+      fallbackParsed.canonical_truck_plate ||
+      null;
 
   return {
     provider_label:
@@ -72,6 +114,8 @@ export function readStoredVehicleIdentityContext(source: any): StoredVehicleIden
       typeof telemetryCapabilities.identity_source === "string"
         ? telemetryCapabilities.identity_source
         : parsed.identity_source,
+    asset_identity_role: assetIdentityRole,
+    non_primary_asset: nonPrimaryAsset,
     canonical_key: normalizeProviderVehicleToken(canonicalTruckPlate),
   };
 }
@@ -99,6 +143,18 @@ export function sanitizeTruckPlate(value: any) {
   const token = normalizeProviderVehicleToken(value);
   if (!token || !isTruckPlateToken(token)) return null;
   return token;
+}
+
+function isNonPrimaryVehicleLabel(label: string | null) {
+  if (!label) return false;
+  return /\b(MOTOR\s*BIKE|MOTORBIKE|MOTOR\s*CYCLE|MOTORCYCLE|PROBOX|HILUX|PICK\s*UP|PICKUP|DOUBLE\s*CAB|CAR|VAN)\b/i.test(
+    label
+  );
+}
+
+function isDeviceIdentifierLabel(label: string | null) {
+  if (!label) return false;
+  return /^\d{12,18}$/.test(normalizeProviderVehicleToken(label));
 }
 
 function extractPlateTokens(label: string | null) {

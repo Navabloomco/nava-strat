@@ -125,6 +125,14 @@ export function normalizeVehicle(
       "Provider label included an attached trailer; canonical asset identity uses the truck plate"
     );
   }
+  if (
+    identity.asset_identity_role === "non_primary_vehicle" ||
+    identity.asset_identity_role === "device_identifier"
+  ) {
+    warnings.push(
+      "Provider label looks like a non-truck asset or device identifier; keep it in review before enabling intelligence"
+    );
+  }
 
   if (latitude === null) {
     missing_fields.push("latitude");
@@ -211,6 +219,7 @@ export function normalizeVehicle(
       canonical_truck_plate: identity.canonical_truck_plate,
       attached_trailer_plate: identity.attached_trailer_plate,
       identity_source: identity.identity_source,
+      asset_identity_role: identity.asset_identity_role,
     },
     telemetry_capability_source: capabilityResolution.source,
     signal_quality: {
@@ -222,6 +231,7 @@ export function normalizeVehicle(
       provider_label: identity.provider_label,
       attached_trailer_plate: identity.attached_trailer_plate,
       identity_source: identity.identity_source,
+      asset_identity_role: identity.asset_identity_role,
       meaningful_signals: Object.keys(observedSignals).filter(
         (signal) => (observedSignals as Record<string, boolean>)[signal]
       ),
@@ -237,6 +247,7 @@ export function normalizeVehicle(
       provider_label: identity.provider_label,
       attached_trailer_plate: identity.attached_trailer_plate,
       identity_source: identity.identity_source,
+      asset_identity_role: identity.asset_identity_role,
     },
 
     provider: providerName,

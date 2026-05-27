@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { isPendingAssetReview } from "../../../lib/assetReview";
-import { readStoredVehicleIdentityContext } from "../../../lib/providers/vehicleIdentity";
 import { supabase } from "../../../lib/supabase";
 import {
   EmptyState,
@@ -639,7 +638,7 @@ export default function AssetReviewPage() {
               };
               const isUnreviewed = isPendingAssetReview(asset);
               const needsTimestampReview = assetNeedsTimestampReview(asset);
-              const isDuplicate = reviewInsights.duplicateKeys.has(assetReviewKey(asset));
+              const isDuplicate = reviewInsights.duplicateKeys.has(asset.id);
 
               return (
                 <Panel
@@ -675,6 +674,9 @@ export default function AssetReviewPage() {
                         )}
                         {isDuplicate && (
                           <StatusPill tone="warning">Possible duplicate</StatusPill>
+                        )}
+                        {asset.non_primary_asset && (
+                          <StatusPill tone="warning">Needs classification</StatusPill>
                         )}
                       </div>
                       {isUnreviewed && (
@@ -997,15 +999,11 @@ function assetNeedsTimestampReview(asset: any) {
 }
 
 function buildReviewInsights(assets: any[]) {
-  const keyCounts = new Map<string, number>();
-  for (const asset of assets) {
-    const key = assetReviewKey(asset);
-    if (key) keyCounts.set(key, (keyCounts.get(key) || 0) + 1);
-  }
   const duplicateKeys = new Set(
-    Array.from(keyCounts.entries())
-      .filter(([, count]) => count > 1)
-      .map(([key]) => key)
+    assets
+      .filter(isAssetDuplicateCandidate)
+      .map((asset) => asset.id)
+      .filter(Boolean)
   );
   const primaryReviewAssets = assets.filter((asset) => !isCanonicalDuplicateSecondary(asset));
   const trucks = primaryReviewAssets.filter((asset) => effectiveCategory(asset) === "truck").length;
@@ -1013,7 +1011,7 @@ function buildReviewInsights(assets: any[]) {
     ["car", "pickup", "motorcycle", "van"].includes(effectiveCategory(asset))
   ).length;
   const needsTimestampReview = primaryReviewAssets.filter(assetNeedsTimestampReview).length;
-  const duplicates = assets.filter((asset) => duplicateKeys.has(assetReviewKey(asset))).length;
+  const duplicates = duplicateKeys.size;
   const unknowns = primaryReviewAssets.filter((asset) => effectiveCategory(asset) === "unknown").length;
   const newProviderAssets = primaryReviewAssets.filter(isNewProviderAsset).length;
 
@@ -1072,6 +1070,7 @@ function assetMatchesFilter(
     asset.provider_location_label,
     asset.attached_trailer_plate,
     asset.provider_label,
+    asset.asset_identity_role,
   ]
     .filter(Boolean)
     .join(" ")
@@ -1096,7 +1095,7 @@ function assetMatchesFilter(
     return ["car", "pickup", "motorcycle", "van"].includes(effectiveCategory(asset));
   }
   if (filter === "trucks") return effectiveCategory(asset) === "truck";
-  if (filter === "duplicates") return duplicateKeys.has(assetReviewKey(asset));
+  if (filter === "duplicates") return duplicateKeys.has(asset.id);
   return true;
 }
 
@@ -1150,20 +1149,9 @@ function bulkActionLabel(action: string) {
 }
 
 function effectiveCategory(asset: any) {
-  return String(asset.asset_category || asset.ai_suggested_category || "unknown").toLowerCase();
-}
-
-function assetReviewKey(asset: any) {
-  const identity = readStoredVehicleIdentityContext(asset);
-  return String(
-    asset.canonical_vehicle_key ||
-      identity.canonical_key ||
-      asset.registration ||
-      asset.truck_id ||
-      ""
-  )
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, "");
+  const category = String(asset.asset_category || asset.ai_suggested_category || "unknown").toLowerCase();
+  if (asset.non_primary_asset && category === "truck") return "unknown";
+  return category;
 }
 
 function isCanonicalDuplicateSecondary(asset: any) {
@@ -1171,6 +1159,10 @@ function isCanonicalDuplicateSecondary(asset: any) {
     Boolean(asset.canonical_duplicate) &&
     String(asset.canonical_review_role || "").toLowerCase() === "duplicate"
   );
+}
+
+function isAssetDuplicateCandidate(asset: any) {
+  return Boolean(asset.canonical_duplicate);
 }
 
 function isNewProviderAsset(asset: any) {

@@ -76,6 +76,8 @@ function sanitizeAsset(asset: any, reviewContext: any = {}) {
       identityContext.canonical_key || normalizeAssetReviewKey(asset.registration || asset.truck_id),
     provider_label: identityContext.provider_label || null,
     attached_trailer_plate: identityContext.attached_trailer_plate || null,
+    asset_identity_role: identityContext.asset_identity_role || "unknown",
+    non_primary_asset: Boolean(identityContext.non_primary_asset),
     canonical_duplicate: Boolean(reviewContext.canonical_duplicate),
     canonical_review_role: reviewContext.canonical_review_role || "primary",
     duplicate_canonical_key: reviewContext.duplicate_canonical_key || null,
@@ -168,19 +170,25 @@ function buildCanonicalReviewModel(assets: any[]) {
   const assetContexts = new Map<string, any>();
   const groups = Array.from(groupsByKey.entries()).map(([key, groupAssets]) => {
     const primary = chooseCanonicalPrimaryAsset(groupAssets, key);
-    const isDuplicateGroup = groupAssets.length > 1;
+    const duplicateAssetIds = duplicateReviewAssetIds(groupAssets, primary, key);
     for (const asset of groupAssets) {
+      const duplicate = duplicateAssetIds.has(asset.id);
       assetContexts.set(asset.id, {
-        canonical_duplicate: isDuplicateGroup,
-        canonical_review_role: asset.id === primary?.id ? "primary" : "duplicate",
-        duplicate_canonical_key: isDuplicateGroup ? key : null,
+        canonical_duplicate: duplicate,
+        canonical_review_role: duplicate
+          ? "duplicate"
+          : isNonPrimaryReviewAsset(asset)
+            ? "non_primary"
+            : "primary",
+        duplicate_canonical_key: duplicate ? key : null,
       });
     }
     return {
       key,
       assets: groupAssets,
       primary,
-      duplicate: isDuplicateGroup,
+      duplicate: duplicateAssetIds.size > 0,
+      duplicate_count: duplicateAssetIds.size,
     };
   });
 
@@ -189,7 +197,7 @@ function buildCanonicalReviewModel(assets: any[]) {
     asset_contexts: assetContexts,
     raw_count: assets.length,
     duplicate_row_count: groups.reduce(
-      (total: number, group: any) => total + Math.max(group.assets.length - 1, 0),
+      (total: number, group: any) => total + Number(group.duplicate_count || 0),
       0
     ),
   };
@@ -197,7 +205,67 @@ function buildCanonicalReviewModel(assets: any[]) {
 
 function canonicalAssetReviewKey(asset: any) {
   const identity = readStoredVehicleIdentityContext(asset);
+  if (identity.non_primary_asset) return `asset:${asset.id}`;
   return identity.canonical_key || normalizeAssetReviewKey(asset.registration || asset.truck_id);
+}
+
+function duplicateReviewAssetIds(assets: any[], primary: any, canonicalKey: string) {
+  const duplicateIds = new Set<string>();
+  if (assets.length <= 1) return duplicateIds;
+
+  for (const asset of assets) {
+    if (asset.id !== primary?.id && isLegacyCombinedLabelAsset(asset, canonicalKey)) {
+      duplicateIds.add(asset.id);
+    }
+  }
+
+  const competingPrimaryRows = assets.filter(
+    (asset) =>
+      !isNonPrimaryReviewAsset(asset) &&
+      !isLegacyCombinedLabelAsset(asset, canonicalKey) &&
+      isReviewableCollisionCandidate(asset)
+  );
+  const enabledRows = competingPrimaryRows.filter(isEnabledIntelligenceAsset);
+  const unreviewedRows = competingPrimaryRows.filter(isPendingAssetReview);
+
+  if (enabledRows.length > 1 || unreviewedRows.length > 1) {
+    for (const asset of competingPrimaryRows) duplicateIds.add(asset.id);
+  }
+
+  return duplicateIds;
+}
+
+function isLegacyCombinedLabelAsset(asset: any, canonicalKey: string) {
+  const rawKey = normalizeAssetReviewKey(asset.registration || asset.truck_id);
+  const identity = readStoredVehicleIdentityContext(asset);
+  return Boolean(
+    canonicalKey &&
+      rawKey &&
+      rawKey !== canonicalKey &&
+      rawKey.includes(canonicalKey) &&
+      identity.attached_trailer_plate
+  );
+}
+
+function isReviewableCollisionCandidate(asset: any) {
+  const status = String(asset.status || "").toLowerCase();
+  const billingStatus = String(asset.billing_status || "").toLowerCase();
+  return (
+    status === "active" &&
+    !["excluded", "disabled"].includes(billingStatus)
+  );
+}
+
+function isEnabledIntelligenceAsset(asset: any) {
+  return (
+    asset.status === "active" &&
+    asset.billing_status === "enabled" &&
+    asset.intelligence_enabled
+  );
+}
+
+function isNonPrimaryReviewAsset(asset: any) {
+  return readStoredVehicleIdentityContext(asset).non_primary_asset;
 }
 
 function chooseCanonicalPrimaryAsset(assets: any[], canonicalKey: string) {
