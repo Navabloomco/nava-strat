@@ -270,6 +270,7 @@ Confirm workflow behavior:
 - [ ] As an ops-only role, confirm Trip Intelligence hides finance amounts and returns a role visibility note.
 - [ ] As a finance/management/elevated role, confirm Trip Intelligence keeps deterministic machine readiness while the UI labels revenue-plus-linked-cost trips as `Contribution review ready`, not raw `Calculable`.
 - [ ] On Trip Detail, confirm the Contribution summary shows revenue, allocated fuel cost, linked expenses, linked variable cost, contribution, and contribution margin from linked evidence only.
+- [ ] Confirm `Contribution per tonne` does not show `Requires billing quantity` when billing/offloaded quantity exists and the per-tonne value is calculated.
 - [ ] On `/ops/efficiency`, confirm contribution-ready trips show a compact contribution line with revenue, linked variable cost, contribution, and margin.
 - [ ] Confirm missing distance appears separately as `Distance evidence missing` / `Distance-based metrics pending` and only blocks per-km metrics, not basic contribution review from linked revenue minus linked costs.
 - [ ] Confirm trips with linked fuel allocation and no other expenses show `No additional trip expenses linked yet` as a supporting note rather than a blocker.

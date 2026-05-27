@@ -1084,6 +1084,8 @@ function buildContributionSummary(
       ? roundMoney(contribution / billingQuantity)
       : null,
     distance_based_metrics_available: ready && distanceKm > 0,
+    per_tonne_metrics_available: ready && billingQuantity > 0 && contribution !== null,
+    billing_quantity: billingQuantity > 0 ? roundMetric(billingQuantity) : null,
     extra_expenses_linked: Number(finance.linked_expense_count || 0) > 0,
     caveats: buildContributionCaveats(finance, movement, ready),
     wording:

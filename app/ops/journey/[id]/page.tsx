@@ -550,7 +550,7 @@ export default function TripDetailPage() {
                       <ContributionValue
                         label="Contribution per tonne"
                         value={formatCurrencyOrPending(contributionSummary.per_tonne_contribution)}
-                        detail="Requires billing quantity"
+                        detail={contributionPerTonneDetail(contributionSummary)}
                       />
                     </div>
 
@@ -1207,6 +1207,18 @@ function formatPercentOrPending(value: any) {
   const number = Number(value);
   if (!Number.isFinite(number)) return "Pending";
   return `${formatNumber(number)}%`;
+}
+
+function contributionPerTonneDetail(summary: any) {
+  if (hasNumericValue(summary?.per_tonne_contribution)) return undefined;
+  if (!hasNumericValue(summary?.billing_quantity)) return "Requires billing quantity";
+  return undefined;
+}
+
+function hasNumericValue(value: any) {
+  if (value === null || value === undefined || value === "") return false;
+  const number = Number(value);
+  return Number.isFinite(number);
 }
 
 function humanize(value: any) {
