@@ -337,7 +337,7 @@ export default function LiveTrackingPage() {
                   <div className="border-b border-white/10 px-5 py-4">
                     <h2 className="text-lg font-semibold">Stale assets</h2>
                     <p className="mt-1 text-xs text-slate-400">
-                      Active assets without fresh coordinates.
+                      Active assets without fresh location updates.
                     </p>
                   </div>
                   {data.stale_assets.length === 0 ? (
@@ -355,9 +355,11 @@ export default function LiveTrackingPage() {
                           <div className="mt-1 text-sm text-slate-300">
                             {asset.location_label || "Location not labeled yet"}
                           </div>
-                          <div className="mt-1 text-xs text-slate-500">
-                            {formatCoordinate(asset.latitude)}, {formatCoordinate(asset.longitude)}
-                          </div>
+                          {asset.location_note && (
+                            <div className="mt-1 text-xs leading-5 text-amber-100">
+                              {asset.location_note}
+                            </div>
+                          )}
                           <div className="mt-1 text-xs text-slate-400">
                             Last seen: {formatDateTime(asset.last_seen_at)}
                           </div>
@@ -414,9 +416,11 @@ function TruckRow({ truck }: { truck: any }) {
         <div className="mt-1 text-slate-100">
           {truck.location_label || "Location not labeled yet"}
         </div>
-        <div className="mt-1 text-slate-400">
-          {formatCoordinate(truck.latitude)}, {formatCoordinate(truck.longitude)}
-        </div>
+        {truck.location_note && (
+          <div className="mt-1 text-xs leading-5 text-amber-100">
+            {truck.location_note}
+          </div>
+        )}
       </div>
 
       <div className="text-sm text-slate-200">
@@ -438,11 +442,12 @@ function TruckRow({ truck }: { truck: any }) {
 
 function GeofenceBadge({ match }: { match?: any }) {
   if (!match?.name) return null;
+  const relation = String(match.relation || "inside").toLowerCase() === "near" ? "Near" : "Inside";
 
   return (
     <div className="mt-2 flex flex-wrap items-center gap-2">
       <span className="inline-flex max-w-full whitespace-normal break-words rounded-full border border-cyan-200/25 bg-cyan-300/10 px-2.5 py-1 text-xs font-semibold leading-5 text-cyan-100">
-        Inside {match.name}
+        {relation} {match.name}
       </span>
       {match.type && (
         <span className="text-xs text-slate-400">{formatGeofenceType(match.type)}</span>
@@ -522,12 +527,6 @@ function formatDateTime(value?: string | null) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "—";
   return date.toLocaleString();
-}
-
-function formatCoordinate(value: any) {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return "—";
-  return numeric.toFixed(5);
 }
 
 function formatValue(value: any, suffix: string) {

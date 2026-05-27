@@ -248,8 +248,10 @@ Confirm workflow behavior:
 - [ ] Expense entry uses JourneyPicker and submits without changing payload names.
 - [ ] Live Tracking only shows enabled intelligence assets.
 - [ ] Geofence labels render when matched.
+- [ ] Live Tracking does not show raw coordinates as the primary location. Dash-like provider labels such as `-` should fall back to readable provider labels, geofences, cached place labels, or `Readable place name unavailable`.
 - [ ] Call `GET /api/ops/efficiency?range=yesterday` with an ops-visible role and confirm the JSON returns movement, idle/stopped, stale-location, productivity, driver-readiness, and client-waiting readiness sections.
 - [ ] Confirm `/api/ops/efficiency` labels metric evidence as provider-reported, GPS-estimated, event-derived, unavailable, or not enough linked data instead of inventing fuel/profit/driver/client conclusions.
+- [ ] Confirm stopped-time rows show that values are GPS estimates, include confidence/point/interval metadata, and label sparse or capped intervals as low confidence instead of exact idle proof.
 - [ ] Confirm `/api/ops/efficiency` does not return raw coordinate series and does not expose disabled/unreviewed asset telemetry.
 - [ ] Confirm `/api/ops/efficiency` does not let future provider timestamps inflate movement/stopped/productivity metrics or mark an asset fresh when timestamp quality is suspicious.
 - [ ] Confirm ops/management/owner/admin/platform-owner can view operational efficiency summaries and unauthorized roles receive a role boundary.

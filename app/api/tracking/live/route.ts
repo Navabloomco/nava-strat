@@ -11,6 +11,10 @@ import {
   normalizeRole,
   rolesForCompany,
 } from "../../../../lib/api/roleAccess";
+import {
+  normalizeProviderLocationLabel,
+  resolveOperationalLocation,
+} from "../../../../lib/location/resolveOperationalLocation";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -235,6 +239,57 @@ function getCachedLocationLabel(
   return labels.get(rounded.key) || null;
 }
 
+async function resolveLiveLocationLabel(input: {
+  companyId: string;
+  latitude: any;
+  longitude: any;
+  providerLocationLabel?: string | null;
+  cachedLabel?: string | null;
+  geofences: any[];
+}) {
+  const providerLabel = normalizeProviderLocationLabel(input.providerLocationLabel);
+  const cachedLabel = normalizeProviderLocationLabel(input.cachedLabel);
+  const resolved = await resolveOperationalLocation({
+    company_id: input.companyId,
+    latitude: input.latitude,
+    longitude: input.longitude,
+    provider_location_label: providerLabel || cachedLabel,
+    supabase: supabaseAdmin,
+    geofences: input.geofences,
+  });
+
+  if (providerLabel) {
+    return {
+      location_label: providerLabel,
+      location_source: "provider_label",
+      location_note: null,
+      geofence_match: resolved?.geofence || null,
+    };
+  }
+
+  if (!resolved) {
+    return {
+      location_label: cachedLabel || "Readable place name unavailable",
+      location_source: cachedLabel ? "reverse_geocode_cache" : "unavailable",
+      location_note:
+        cachedLabel ? null : "Nava has no readable place label for this asset yet.",
+      geofence_match: null,
+    };
+  }
+
+  const coordinatesOnly = resolved.confidence_source === "coordinates_only";
+  return {
+    location_label: coordinatesOnly
+      ? "Readable place name unavailable"
+      : resolved.display_label,
+    location_source: resolved.confidence_source,
+    location_note: coordinatesOnly
+      ? "Latest GPS is available, but Nava does not yet have a readable place name for this point."
+      : resolved.note || null,
+    geofence_match: resolved.geofence || null,
+  };
+}
+
 async function fetchRecentTelemetryLogs(
   companyId: string,
   truckIds: string[],
@@ -347,11 +402,20 @@ export async function GET(req: Request) {
       ...enabledAssets,
     ]);
 
-    const trucks = liveTrucks.map((truck) => {
+    const trucks = await Promise.all(liveTrucks.map(async (truck) => {
       const telemetry = telemetryByTruck[truck.truck_id] || null;
       const matchingAsset = enabledAssets.find(
         (asset) => asset.truck_id === truck.truck_id
       );
+      const location = await resolveLiveLocationLabel({
+        companyId: resolved.company.id,
+        latitude: truck.latitude,
+        longitude: truck.longitude,
+        providerLocationLabel:
+          matchingAsset?.provider_location_label || truck.provider_location_label || null,
+        cachedLabel: getCachedLocationLabel(locationLabels, truck.latitude, truck.longitude),
+        geofences,
+      });
 
       return {
         truck_id: truck.truck_id,
@@ -365,26 +429,36 @@ export async function GET(req: Request) {
         fuel_level: telemetry?.fuel_level ?? null,
         fuel_unit: telemetry?.fuel_unit || null,
         provider_name: matchingAsset?.provider_name || null,
-        location_label:
-          matchingAsset?.provider_location_label ||
-          getCachedLocationLabel(locationLabels, truck.latitude, truck.longitude),
-        geofence_match: matchPointToGeofence(truck, geofences),
+        location_label: location.location_label,
+        location_source: location.location_source,
+        location_note: location.location_note,
+        geofence_match: location.geofence_match || matchPointToGeofence(truck, geofences),
       };
-    });
+    }));
 
-    const staleAssets = enabledAssets
+    const staleAssets = await Promise.all(enabledAssets
       .filter((asset) => !liveTruckIds.has(asset.truck_id))
-      .map((asset) => ({
-        truck_id: asset.truck_id,
-        registration: asset.registration || asset.truck_id,
-        latitude: asset.latitude ?? null,
-        longitude: asset.longitude ?? null,
-        last_seen_at: asset.last_seen_at || null,
-        status: asset.status || null,
-        location_label:
-          asset.provider_location_label ||
-          getCachedLocationLabel(locationLabels, asset.latitude, asset.longitude),
-        geofence_match: matchPointToGeofence(asset, geofences),
+      .map(async (asset) => {
+        const location = await resolveLiveLocationLabel({
+          companyId: resolved.company.id,
+          latitude: asset.latitude,
+          longitude: asset.longitude,
+          providerLocationLabel: asset.provider_location_label || null,
+          cachedLabel: getCachedLocationLabel(locationLabels, asset.latitude, asset.longitude),
+          geofences,
+        });
+        return {
+          truck_id: asset.truck_id,
+          registration: asset.registration || asset.truck_id,
+          latitude: asset.latitude ?? null,
+          longitude: asset.longitude ?? null,
+          last_seen_at: asset.last_seen_at || null,
+          status: asset.status || null,
+          location_label: location.location_label,
+          location_source: location.location_source,
+          location_note: location.location_note,
+          geofence_match: location.geofence_match || matchPointToGeofence(asset, geofences),
+        };
       }));
 
     return noStoreJson({

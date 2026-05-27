@@ -244,8 +244,8 @@ export default function OpsEfficiencyPage() {
                   <RankRow
                     key={truck.truck_key || truck.truck_id}
                     title={truck.truck_id || "Unknown truck"}
-                    metric={formatMinutes(truck.stopped_minutes)}
-                    detail={`${formatPercent(truck.productive_ratio ?? truck.stopped_share)} evidence ratio`}
+                    metric={`${formatMinutes(truck.stopped_minutes)} estimated`}
+                    detail={`${formatStoppedConfidence(truck)} · ${formatPercent(truck.productive_ratio ?? truck.stopped_share)} observed-interval ratio`}
                   />
                 )}
               />
@@ -261,7 +261,7 @@ export default function OpsEfficiencyPage() {
                     key={truck.truck_key || truck.truck_id}
                     title={truck.truck_id || "Unknown truck"}
                     metric={formatPercent(truck.productive_ratio)}
-                    detail={`${formatKm(truck.distance_km)} km, ${formatMinutes(truck.stopped_minutes)} stopped`}
+                    detail={`${formatKm(truck.distance_km)} km, ${formatMinutes(truck.stopped_minutes)} stopped estimate · ${formatStoppedConfidence(truck)}`}
                   />
                 )}
               />
@@ -707,6 +707,23 @@ function formatPercent(value: any) {
   if (!Number.isFinite(number)) return "Unavailable";
   const percent = number <= 1 ? number * 100 : number;
   return `${Math.round(percent)}%`;
+}
+
+function formatStoppedConfidence(row: any) {
+  const confidence = String(row?.confidence || row?.stopped_time_confidence || "").trim();
+  const reason = String(row?.confidence_reason || row?.stopped_time_confidence_reason || "").trim();
+  const points = Number(row?.point_count || row?.telemetry_points || 0);
+  const intervals = Number(row?.interval_count || row?.stopped_interval_count || 0);
+  const gapCount = Number(row?.large_gap_count || row?.stopped_large_gap_count || 0);
+  const parts = [
+    confidence ? `${humanize(confidence)} confidence` : "Estimated from GPS",
+    points || intervals ? `${formatCount(points)} GPS points / ${formatCount(intervals)} intervals` : null,
+    row?.capped_estimate || row?.stopped_time_capped_estimate
+      ? `${formatCount(gapCount)} long gap(s) excluded`
+      : null,
+    reason || null,
+  ].filter(Boolean);
+  return parts.join(" · ");
 }
 
 function humanize(value: any) {

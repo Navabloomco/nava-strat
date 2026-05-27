@@ -45,11 +45,16 @@ type TruckTelemetryStats = {
   truck_id: string;
   point_count: number;
   segment_count: number;
+  large_gap_count: number;
   distance_km: number;
   moving_minutes: number;
   stopped_minutes: number;
   observed_minutes: number;
+  observed_coverage_ratio: number;
   gap_minutes: number;
+  capped_estimate: boolean;
+  stopped_time_confidence: "high" | "medium" | "low";
+  stopped_time_confidence_reason: string;
   skipped_invalid_points: number;
   skipped_unrealistic_segments: number;
   latest_recorded_at: string | null;
@@ -124,7 +129,8 @@ export async function buildOperationalEfficiencySummary(
   );
   const telemetryStatsByTruck = summarizeTelemetryRows(
     telemetryResult.rows,
-    assetLookups
+    assetLookups,
+    timeframe
   );
   const movement = buildTruckMovementSummary(
     providerDistanceByTruck,
@@ -464,7 +470,8 @@ function summarizeProviderDistanceRows(rows: any[], assetLookups: ReturnType<typ
 
 function summarizeTelemetryRows(
   rows: any[],
-  assetLookups: ReturnType<typeof buildAssetLookups>
+  assetLookups: ReturnType<typeof buildAssetLookups>,
+  timeframe: OperationalEfficiencyTimeframe
 ) {
   const rowsByTruck = new Map<string, any[]>();
   for (const row of rows) {
@@ -476,6 +483,12 @@ function summarizeTelemetryRows(
   }
 
   const byTruck = new Map<string, TruckTelemetryStats>();
+  const timeframeStartMs = new Date(timeframe.start_utc).getTime();
+  const timeframeEndMs = Math.min(new Date(timeframe.end_utc).getTime(), Date.now());
+  const timeframeMinutes = Math.max(
+    1,
+    (timeframeEndMs - timeframeStartMs) / 60000
+  );
   for (const [truckKey, groupRows] of Array.from(rowsByTruck.entries())) {
     const sorted = groupRows
       .slice()
@@ -489,6 +502,7 @@ function summarizeTelemetryRows(
     let stoppedMinutes = 0;
     let observedMinutes = 0;
     let gapMinutes = 0;
+    let largeGapCount = 0;
     let skippedInvalidPoints = 0;
     let skippedUnrealisticSegments = 0;
     let latestRecordedAt: string | null = null;
@@ -515,6 +529,7 @@ function summarizeTelemetryRows(
 
       if (elapsedMinutes > MAX_CONTINUOUS_INTERVAL_MINUTES) {
         gapMinutes += elapsedMinutes;
+        largeGapCount += 1;
         previous = point;
         continue;
       }
@@ -541,17 +556,30 @@ function summarizeTelemetryRows(
       segmentCount += 1;
       previous = point;
     }
+    const confidence = classifyStoppedTimeConfidence({
+      pointCount,
+      segmentCount,
+      largeGapCount,
+      observedMinutes,
+      timeframeMinutes,
+      skippedUnrealisticSegments,
+    });
 
     byTruck.set(truckKey, {
       truck_key: truckKey,
       truck_id: displayTruckLabel(sorted[0]?.truck_id, asset),
       point_count: pointCount,
       segment_count: segmentCount,
+      large_gap_count: largeGapCount,
       distance_km: roundMetric(distanceKm),
       moving_minutes: Math.round(movingMinutes),
       stopped_minutes: Math.round(stoppedMinutes),
       observed_minutes: Math.round(observedMinutes),
+      observed_coverage_ratio: roundMetric(observedMinutes / timeframeMinutes),
       gap_minutes: Math.round(gapMinutes),
+      capped_estimate: largeGapCount > 0,
+      stopped_time_confidence: confidence.confidence,
+      stopped_time_confidence_reason: confidence.reason,
       skipped_invalid_points: skippedInvalidPoints,
       skipped_unrealistic_segments: skippedUnrealisticSegments,
       latest_recorded_at: latestRecordedAt,
@@ -601,6 +629,13 @@ function buildTruckMovementSummary(
         telemetry && telemetry.observed_minutes > 0
           ? "GPS-estimated point intervals"
           : "unavailable",
+      stopped_time_confidence: telemetry?.stopped_time_confidence || null,
+      stopped_time_confidence_reason: telemetry?.stopped_time_confidence_reason || null,
+      stopped_time_capped_estimate: Boolean(telemetry?.capped_estimate),
+      stopped_interval_count: telemetry?.segment_count || 0,
+      stopped_large_gap_count: telemetry?.large_gap_count || 0,
+      observed_minutes: telemetry?.observed_minutes || 0,
+      observed_coverage_ratio: telemetry?.observed_coverage_ratio || 0,
       telemetry_points: telemetry?.point_count || 0,
       provider_summary_rows: provider?.rows || 0,
     };
@@ -663,7 +698,15 @@ function buildIdleTimeSummary(
         stats.observed_minutes > 0
           ? roundMetric(stats.stopped_minutes / stats.observed_minutes)
           : null,
-      evidence_label: "GPS-estimated stationary intervals",
+      evidence_label: stoppedTimeEvidenceLabel(stats),
+      confidence: stats.stopped_time_confidence,
+      confidence_reason: stats.stopped_time_confidence_reason,
+      point_count: stats.point_count,
+      interval_count: stats.segment_count,
+      capped_estimate: stats.capped_estimate,
+      large_gap_count: stats.large_gap_count,
+      gap_minutes: stats.gap_minutes,
+      observed_coverage_ratio: stats.observed_coverage_ratio,
     }));
 
   return {
@@ -834,8 +877,15 @@ function buildProductivitySummary(
         moving_minutes: stats.moving_minutes,
         stopped_minutes: stats.stopped_minutes,
         observed_minutes: stats.observed_minutes,
+        confidence: stats.stopped_time_confidence,
+        confidence_reason: stats.stopped_time_confidence_reason,
+        point_count: stats.point_count,
+        interval_count: stats.segment_count,
+        capped_estimate: stats.capped_estimate,
+        large_gap_count: stats.large_gap_count,
+        observed_coverage_ratio: stats.observed_coverage_ratio,
         productive_ratio: productiveRatio,
-        evidence_label: "GPS-estimated point intervals",
+        evidence_label: stoppedTimeEvidenceLabel(stats),
       };
     })
     .filter(Boolean) as any[];
@@ -977,6 +1027,61 @@ function buildClientWaitingSummary(journeysResult: QueryResult<any>) {
       "stop/idle event to journey/client linkage",
     ]),
   };
+}
+
+function classifyStoppedTimeConfidence(input: {
+  pointCount: number;
+  segmentCount: number;
+  largeGapCount: number;
+  observedMinutes: number;
+  timeframeMinutes: number;
+  skippedUnrealisticSegments: number;
+}) {
+  const coverage = input.observedMinutes / Math.max(1, input.timeframeMinutes);
+  if (input.segmentCount < 3 || input.pointCount < 4) {
+    return {
+      confidence: "low" as const,
+      reason:
+        "Sparse GPS pings: stopped time is estimated from very few point intervals.",
+    };
+  }
+  if (input.largeGapCount > 0 && coverage < 0.2) {
+    return {
+      confidence: "low" as const,
+      reason:
+        "Capped from sparse GPS intervals: long gaps were excluded from the stopped-time estimate.",
+    };
+  }
+  if (coverage < 0.1) {
+    return {
+      confidence: "low" as const,
+      reason:
+        "Thin GPS coverage: the estimate covers only a small part of the selected window.",
+    };
+  }
+  if (input.largeGapCount > 0 || input.skippedUnrealisticSegments > 0 || coverage < 0.35) {
+    return {
+      confidence: "medium" as const,
+      reason:
+        "Estimated from GPS point intervals with some gaps or filtered segments.",
+    };
+  }
+  return {
+    confidence: "high" as const,
+    reason: "Estimated from frequent GPS point intervals in the selected window.",
+  };
+}
+
+function stoppedTimeEvidenceLabel(stats: TruckTelemetryStats) {
+  const prefix =
+    stats.stopped_time_confidence === "low"
+      ? "Low-confidence GPS-estimated stopped intervals"
+      : stats.stopped_time_confidence === "medium"
+        ? "Medium-confidence GPS-estimated stopped intervals"
+        : "GPS-estimated stopped intervals";
+  return stats.capped_estimate
+    ? `${prefix}; long gaps excluded by the ${MAX_CONTINUOUS_INTERVAL_MINUTES}-minute interval cap`
+    : prefix;
 }
 
 function assignmentOverlapsTimeframe(
