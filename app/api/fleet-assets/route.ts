@@ -124,6 +124,13 @@ function sortAssetsForReview(assets: any[]) {
 function buildSummary(reviewModel: any) {
   const groups = reviewModel.groups || [];
   const primaryAssets = groups.map((group: any) => group.primary).filter(Boolean);
+  const reviewablePrimaryAssets = primaryAssets.filter(
+    (asset: any) => !isNonPrimaryReviewAsset(asset)
+  );
+  const needsClassificationAssets = primaryAssets.filter(isNeedsClassificationAsset);
+  const unreviewedLikelyTrucks = primaryAssets.filter(
+    (asset: any) => isPendingAssetReview(asset) && isLikelyTruckReviewAsset(asset)
+  );
   const enabledIntelligenceGroups = groups.filter((group: any) =>
     group.assets.some(
       (asset: any) =>
@@ -144,9 +151,16 @@ function buildSummary(reviewModel: any) {
 
   return {
     imported_count: groups.length,
+    asset_review_group_count: groups.length,
     raw_imported_count: reviewModel.raw_count || 0,
     canonical_duplicate_count: reviewModel.duplicate_row_count || 0,
-    unreviewed_count: primaryAssets.filter(isPendingAssetReview).length,
+    possible_collision_group_count: reviewModel.collision_group_count || 0,
+    possible_collision_row_count: reviewModel.duplicate_row_count || 0,
+    primary_review_count: primaryAssets.length,
+    reviewable_primary_count: reviewablePrimaryAssets.length,
+    needs_classification_count: needsClassificationAssets.length,
+    unreviewed_count: unreviewedLikelyTrucks.length,
+    unreviewed_likely_truck_count: unreviewedLikelyTrucks.length,
     enabled_count: enabledIntelligenceGroups.length,
     enabled_intelligence_count: enabledIntelligenceGroups.length,
     billable_enabled_count: billableGroups.length,
@@ -196,6 +210,7 @@ function buildCanonicalReviewModel(assets: any[]) {
     groups,
     asset_contexts: assetContexts,
     raw_count: assets.length,
+    collision_group_count: groups.filter((group: any) => group.duplicate).length,
     duplicate_row_count: groups.reduce(
       (total: number, group: any) => total + Number(group.duplicate_count || 0),
       0
@@ -266,6 +281,18 @@ function isEnabledIntelligenceAsset(asset: any) {
 
 function isNonPrimaryReviewAsset(asset: any) {
   return readStoredVehicleIdentityContext(asset).non_primary_asset;
+}
+
+function isLikelyTruckReviewAsset(asset: any) {
+  return !isNonPrimaryReviewAsset(asset) && reviewAssetCategory(asset) === "truck";
+}
+
+function isNeedsClassificationAsset(asset: any) {
+  return isNonPrimaryReviewAsset(asset) || reviewAssetCategory(asset) === "unknown";
+}
+
+function reviewAssetCategory(asset: any) {
+  return String(asset.asset_category || asset.ai_suggested_category || "unknown").toLowerCase();
 }
 
 function chooseCanonicalPrimaryAsset(assets: any[], canonicalKey: string) {

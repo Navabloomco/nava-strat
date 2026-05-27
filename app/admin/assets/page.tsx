@@ -53,7 +53,16 @@ export default function AssetReviewPage() {
   const [operatingContext, setOperatingContext] = useState<any>(null);
   const [summary, setSummary] = useState({
     imported_count: 0,
+    asset_review_group_count: 0,
+    raw_imported_count: 0,
+    canonical_duplicate_count: 0,
+    possible_collision_group_count: 0,
+    possible_collision_row_count: 0,
+    primary_review_count: 0,
+    reviewable_primary_count: 0,
+    needs_classification_count: 0,
     unreviewed_count: 0,
+    unreviewed_likely_truck_count: 0,
     enabled_count: 0,
     enabled_intelligence_count: 0,
     billable_enabled_count: 0,
@@ -438,21 +447,55 @@ export default function AssetReviewPage() {
           </Panel>
         )}
 
-        <section className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-          <Metric label="Imported assets" value={summary.imported_count} />
-          <Metric label="Unreviewed" value={summary.unreviewed_count} warning={summary.unreviewed_count > 0} />
+        <section className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <Metric
+            label="Raw provider records"
+            value={summary.raw_imported_count || assets.length}
+            note="Rows imported from provider feeds"
+          />
+          <Metric
+            label="Asset review groups"
+            value={summary.asset_review_group_count || summary.imported_count}
+            note="Canonical truck/device groups"
+          />
+          <Metric
+            label="Primary review rows"
+            value={summary.primary_review_count || summary.imported_count}
+            note="One visible row per review group"
+          />
+          <Metric
+            label="Unreviewed likely trucks"
+            value={summary.unreviewed_likely_truck_count || summary.unreviewed_count}
+            warning={(summary.unreviewed_likely_truck_count || summary.unreviewed_count) > 0}
+            note="Truck candidates awaiting decision"
+          />
           <Metric
             label="Enabled intelligence vehicles"
             value={summary.enabled_intelligence_count || summary.enabled_count}
+            note="Unique enabled canonical assets"
+          />
+          <Metric
+            label="Needs classification"
+            value={summary.needs_classification_count || reviewInsights.needsClassification}
+            warning={(summary.needs_classification_count || reviewInsights.needsClassification) > 0}
+            note="Unknown, non-primary, or device-like rows"
+          />
+          <Metric
+            label="Needs timestamp review"
+            value={summary.needs_timestamp_review_count || reviewInsights.needsTimestampReview}
+            warning={(summary.needs_timestamp_review_count || reviewInsights.needsTimestampReview) > 0}
+            note="Invalid, missing, or suspicious timestamps"
+          />
+          <Metric
+            label="Possible collision groups"
+            value={summary.possible_collision_group_count || 0}
+            warning={(summary.possible_collision_group_count || 0) > 0}
+            note="Real identity conflicts only"
           />
           <Metric
             label="Excluded / disabled"
             value={summary.excluded_count + summary.disabled_count}
-          />
-          <Metric
-            label="Timestamp review"
-            value={summary.needs_timestamp_review_count || reviewInsights.needsTimestampReview}
-            warning={(summary.needs_timestamp_review_count || reviewInsights.needsTimestampReview) > 0}
+            note="Not active intelligence candidates"
           />
         </section>
 
@@ -615,9 +658,9 @@ export default function AssetReviewPage() {
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
                 <ReviewGroup label="Likely trucks" value={reviewInsights.trucks} />
                 <ReviewGroup label="Cars/pickups/motorbikes" value={reviewInsights.lightVehicles} />
-                <ReviewGroup label="Timestamp needs review" value={reviewInsights.needsTimestampReview} warning />
-                <ReviewGroup label="Possible duplicates" value={reviewInsights.duplicates} warning={reviewInsights.duplicates > 0} />
-                <ReviewGroup label="Unknowns" value={reviewInsights.unknowns} warning={reviewInsights.unknowns > 0} />
+                <ReviewGroup label="Needs classification" value={reviewInsights.needsClassification} warning={reviewInsights.needsClassification > 0} />
+                <ReviewGroup label="Timestamp needs review" value={reviewInsights.needsTimestampReview} warning={reviewInsights.needsTimestampReview > 0} />
+                <ReviewGroup label="Collision rows" value={reviewInsights.duplicates} warning={reviewInsights.duplicates > 0} />
               </div>
             </Panel>
 
@@ -830,10 +873,12 @@ function companyQuery(companyId: string) {
 function Metric({
   label,
   value,
+  note,
   warning = false,
 }: {
   label: string;
   value: number;
+  note?: string;
   warning?: boolean;
 }) {
   return (
@@ -850,6 +895,7 @@ function Metric({
       >
         {value.toLocaleString()}
       </div>
+      {note && <div className="mt-2 text-xs leading-5 text-slate-400">{note}</div>}
     </Panel>
   );
 }
@@ -1012,6 +1058,7 @@ function buildReviewInsights(assets: any[]) {
   ).length;
   const needsTimestampReview = primaryReviewAssets.filter(assetNeedsTimestampReview).length;
   const duplicates = duplicateKeys.size;
+  const needsClassification = primaryReviewAssets.filter(assetNeedsClassification).length;
   const unknowns = primaryReviewAssets.filter((asset) => effectiveCategory(asset) === "unknown").length;
   const newProviderAssets = primaryReviewAssets.filter(isNewProviderAsset).length;
 
@@ -1021,6 +1068,7 @@ function buildReviewInsights(assets: any[]) {
     needsTimestampReview,
     duplicates,
     duplicateKeys,
+    needsClassification,
     unknowns,
     newProviderAssets,
   };
@@ -1028,8 +1076,21 @@ function buildReviewInsights(assets: any[]) {
 
 function assetFilterTabs(insights: any, summary: any) {
   return [
-    { value: "all", label: "All", count: Number(summary.imported_count || 0) },
-    { value: "unreviewed", label: "Unreviewed", count: Number(summary.unreviewed_count || 0) },
+    {
+      value: "all",
+      label: "Review assets",
+      count: Number(summary.primary_review_count || summary.imported_count || 0),
+    },
+    {
+      value: "unreviewed",
+      label: "Unreviewed trucks",
+      count: Number(summary.unreviewed_likely_truck_count || summary.unreviewed_count || 0),
+    },
+    {
+      value: "needs_classification",
+      label: "Needs classification",
+      count: Number(summary.needs_classification_count || insights.needsClassification || 0),
+    },
     {
       value: "enabled",
       label: "Enabled intelligence",
@@ -1048,7 +1109,11 @@ function assetFilterTabs(insights: any, summary: any) {
     { value: "new_provider", label: "New provider assets", count: insights.newProviderAssets },
     { value: "light_vehicles", label: "Cars/pickups/motorbikes", count: insights.lightVehicles },
     { value: "trucks", label: "Trucks", count: insights.trucks },
-    { value: "duplicates", label: "Possible duplicates", count: insights.duplicates },
+    {
+      value: "duplicates",
+      label: "Possible collisions",
+      count: Number(summary.possible_collision_group_count || insights.duplicates || 0),
+    },
   ];
 }
 
@@ -1090,6 +1155,7 @@ function assetMatchesFilter(
     return ["excluded", "disabled"].includes(String(asset.billing_status || ""));
   }
   if (filter === "timestamp_review") return assetNeedsTimestampReview(asset);
+  if (filter === "needs_classification") return assetNeedsClassification(asset);
   if (filter === "new_provider") return isNewProviderAsset(asset);
   if (filter === "light_vehicles") {
     return ["car", "pickup", "motorcycle", "van"].includes(effectiveCategory(asset));
@@ -1152,6 +1218,10 @@ function effectiveCategory(asset: any) {
   const category = String(asset.asset_category || asset.ai_suggested_category || "unknown").toLowerCase();
   if (asset.non_primary_asset && category === "truck") return "unknown";
   return category;
+}
+
+function assetNeedsClassification(asset: any) {
+  return Boolean(asset.non_primary_asset) || effectiveCategory(asset) === "unknown";
 }
 
 function isCanonicalDuplicateSecondary(asset: any) {
