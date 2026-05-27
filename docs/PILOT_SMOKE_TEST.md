@@ -148,6 +148,8 @@ Open `/admin/assets?companyId=<id>`.
 
 - [ ] Confirm imported assets count is visible.
 - [ ] Confirm unreviewed assets are visually obvious.
+- [ ] Confirm imported and unreviewed counts use canonical truck identity, so legacy rows like `KCF529Z ZF3316` do not inflate normal review counts when `KCF529Z` also exists.
+- [ ] Confirm Possible duplicates detects canonical collisions such as `KCF529Z` and legacy `KCF529Z ZF3316`.
 - [ ] Confirm FleetTrack/Oak and Gold assets do not display 1970-style `Last seen` dates; invalid provider timestamps show `Provider timestamp invalid` or `Last seen unavailable`.
 - [ ] Confirm the `Needs timestamp review` filter shows assets with invalid, missing, future, or first-seen-conflicting provider timestamps.
 - [ ] Confirm search works by truck ID/plate, provider, category, and review status.

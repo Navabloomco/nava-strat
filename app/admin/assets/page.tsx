@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { isPendingAssetReview } from "../../../lib/assetReview";
+import { readStoredVehicleIdentityContext } from "../../../lib/providers/vehicleIdentity";
 import { supabase } from "../../../lib/supabase";
 import {
   EmptyState,
@@ -657,11 +658,11 @@ export default function AssetReviewPage() {
                           type="checkbox"
                           checked={selectedAssetIds.has(asset.id)}
                           onChange={() => toggleAssetSelection(asset.id)}
-                          aria-label={`Select ${asset.registration || asset.truck_id || "asset"}`}
+                          aria-label={`Select ${asset.canonical_truck_id || asset.registration || asset.truck_id || "asset"}`}
                           className="h-4 w-4 rounded border-white/20 bg-slate-900"
                         />
                         <h2 className="min-w-0 break-words text-lg font-semibold">
-                          {asset.registration || asset.truck_id || "Unknown asset"}
+                          {asset.canonical_truck_id || asset.registration || asset.truck_id || "Unknown asset"}
                         </h2>
                         <StatusPill tone={statusTone(asset.billing_status)}>
                           {statusLabel(asset.billing_status)}
@@ -682,7 +683,10 @@ export default function AssetReviewPage() {
                         </div>
                       )}
                       <div className="mt-3 grid gap-2 text-sm text-slate-300 md:grid-cols-2">
-                        <Detail label="Truck" value={asset.truck_id || "Not available"} />
+                        <Detail
+                          label="Truck"
+                          value={asset.canonical_truck_id || asset.truck_id || "Not available"}
+                        />
                         <Detail
                           label="Attached trailer"
                           value={asset.attached_trailer_plate || "None reported"}
@@ -1003,14 +1007,15 @@ function buildReviewInsights(assets: any[]) {
       .filter(([, count]) => count > 1)
       .map(([key]) => key)
   );
-  const trucks = assets.filter((asset) => effectiveCategory(asset) === "truck").length;
-  const lightVehicles = assets.filter((asset) =>
+  const primaryReviewAssets = assets.filter((asset) => !isCanonicalDuplicateSecondary(asset));
+  const trucks = primaryReviewAssets.filter((asset) => effectiveCategory(asset) === "truck").length;
+  const lightVehicles = primaryReviewAssets.filter((asset) =>
     ["car", "pickup", "motorcycle", "van"].includes(effectiveCategory(asset))
   ).length;
-  const needsTimestampReview = assets.filter(assetNeedsTimestampReview).length;
+  const needsTimestampReview = primaryReviewAssets.filter(assetNeedsTimestampReview).length;
   const duplicates = assets.filter((asset) => duplicateKeys.has(assetReviewKey(asset))).length;
-  const unknowns = assets.filter((asset) => effectiveCategory(asset) === "unknown").length;
-  const newProviderAssets = assets.filter(isNewProviderAsset).length;
+  const unknowns = primaryReviewAssets.filter((asset) => effectiveCategory(asset) === "unknown").length;
+  const newProviderAssets = primaryReviewAssets.filter(isNewProviderAsset).length;
 
   return {
     trucks,
@@ -1056,6 +1061,8 @@ function assetMatchesFilter(
   duplicateKeys: Set<string>
 ) {
   const text = [
+    asset.canonical_truck_id,
+    asset.canonical_vehicle_key,
     asset.registration,
     asset.truck_id,
     asset.provider_name,
@@ -1072,7 +1079,13 @@ function assetMatchesFilter(
   const search = searchTerm.trim().toLowerCase();
   if (search && !text.includes(search)) return false;
 
-  if (filter === "unreviewed") return isPendingAssetReview(asset);
+  if (filter !== "duplicates" && isCanonicalDuplicateSecondary(asset)) {
+    return false;
+  }
+
+  if (filter === "unreviewed") {
+    return isPendingAssetReview(asset);
+  }
   if (filter === "enabled") return Boolean(asset.intelligence_enabled);
   if (filter === "excluded_disabled") {
     return ["excluded", "disabled"].includes(String(asset.billing_status || ""));
@@ -1141,9 +1154,23 @@ function effectiveCategory(asset: any) {
 }
 
 function assetReviewKey(asset: any) {
-  return String(asset.registration || asset.truck_id || "")
+  const identity = readStoredVehicleIdentityContext(asset);
+  return String(
+    asset.canonical_vehicle_key ||
+      identity.canonical_key ||
+      asset.registration ||
+      asset.truck_id ||
+      ""
+  )
     .toLowerCase()
     .replace(/[^a-z0-9]/g, "");
+}
+
+function isCanonicalDuplicateSecondary(asset: any) {
+  return (
+    Boolean(asset.canonical_duplicate) &&
+    String(asset.canonical_review_role || "").toLowerCase() === "duplicate"
+  );
 }
 
 function isNewProviderAsset(asset: any) {

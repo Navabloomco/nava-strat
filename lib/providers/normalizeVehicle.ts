@@ -208,6 +208,7 @@ export function normalizeVehicle(
       ),
       timestamp_quality: normalizedTimestamp.quality,
       provider_label: identity.provider_label,
+      canonical_truck_plate: identity.canonical_truck_plate,
       attached_trailer_plate: identity.attached_trailer_plate,
       identity_source: identity.identity_source,
     },

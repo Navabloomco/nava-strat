@@ -64,15 +64,21 @@ function noStoreJson(body: any, init?: ResponseInit) {
   });
 }
 
-function sanitizeAsset(asset: any) {
+function sanitizeAsset(asset: any, reviewContext: any = {}) {
   const timestampQuality = deriveAssetTimestampQuality(asset);
   const identityContext = readStoredVehicleIdentityContext(asset);
   return {
     id: asset.id,
     registration: asset.registration || null,
     truck_id: asset.truck_id || null,
+    canonical_truck_id: identityContext.canonical_truck_plate || asset.truck_id || null,
+    canonical_vehicle_key:
+      identityContext.canonical_key || normalizeAssetReviewKey(asset.registration || asset.truck_id),
     provider_label: identityContext.provider_label || null,
     attached_trailer_plate: identityContext.attached_trailer_plate || null,
+    canonical_duplicate: Boolean(reviewContext.canonical_duplicate),
+    canonical_review_role: reviewContext.canonical_review_role || "primary",
+    duplicate_canonical_key: reviewContext.duplicate_canonical_key || null,
     provider_name: asset.provider_name || null,
     status: asset.status || null,
     last_seen_at: asset.last_seen_at || null,
@@ -113,29 +119,115 @@ function sortAssetsForReview(assets: any[]) {
   });
 }
 
-function buildSummary(assets: any[]) {
-  const enabledIntelligenceAssets = assets.filter(
-    (asset) =>
-      asset.status === "active" &&
-      asset.billing_status === "enabled" &&
-      asset.intelligence_enabled
+function buildSummary(reviewModel: any) {
+  const groups = reviewModel.groups || [];
+  const primaryAssets = groups.map((group: any) => group.primary).filter(Boolean);
+  const enabledIntelligenceGroups = groups.filter((group: any) =>
+    group.assets.some(
+      (asset: any) =>
+        asset.status === "active" &&
+        asset.billing_status === "enabled" &&
+        asset.intelligence_enabled
+    )
   );
-  const billableAssets = enabledIntelligenceAssets.filter(
-    (asset) => Boolean(asset.billing_enabled_at)
+  const billableGroups = groups.filter((group: any) =>
+    group.assets.some(
+      (asset: any) =>
+        asset.status === "active" &&
+        asset.billing_status === "enabled" &&
+        asset.intelligence_enabled &&
+        asset.billing_enabled_at
+    )
   );
 
   return {
-    imported_count: assets.length,
-    unreviewed_count: assets.filter(isPendingAssetReview).length,
-    enabled_count: enabledIntelligenceAssets.length,
-    enabled_intelligence_count: enabledIntelligenceAssets.length,
-    billable_enabled_count: billableAssets.length,
-    excluded_count: assets.filter((asset) => asset.billing_status === "excluded").length,
-    disabled_count: assets.filter((asset) => asset.billing_status === "disabled").length,
-    needs_timestamp_review_count: assets.filter(
-      (asset) => deriveAssetTimestampQuality(asset).status !== "valid"
+    imported_count: groups.length,
+    raw_imported_count: reviewModel.raw_count || 0,
+    canonical_duplicate_count: reviewModel.duplicate_row_count || 0,
+    unreviewed_count: primaryAssets.filter(isPendingAssetReview).length,
+    enabled_count: enabledIntelligenceGroups.length,
+    enabled_intelligence_count: enabledIntelligenceGroups.length,
+    billable_enabled_count: billableGroups.length,
+    excluded_count: primaryAssets.filter((asset: any) => asset.billing_status === "excluded").length,
+    disabled_count: primaryAssets.filter((asset: any) => asset.billing_status === "disabled").length,
+    needs_timestamp_review_count: primaryAssets.filter(
+      (asset: any) => deriveAssetTimestampQuality(asset).status !== "valid"
     ).length,
   };
+}
+
+function buildCanonicalReviewModel(assets: any[]) {
+  const groupsByKey = new Map<string, any[]>();
+  for (const asset of assets) {
+    const key = canonicalAssetReviewKey(asset) || `asset:${asset.id}`;
+    const group = groupsByKey.get(key) || [];
+    group.push(asset);
+    groupsByKey.set(key, group);
+  }
+
+  const assetContexts = new Map<string, any>();
+  const groups = Array.from(groupsByKey.entries()).map(([key, groupAssets]) => {
+    const primary = chooseCanonicalPrimaryAsset(groupAssets, key);
+    const isDuplicateGroup = groupAssets.length > 1;
+    for (const asset of groupAssets) {
+      assetContexts.set(asset.id, {
+        canonical_duplicate: isDuplicateGroup,
+        canonical_review_role: asset.id === primary?.id ? "primary" : "duplicate",
+        duplicate_canonical_key: isDuplicateGroup ? key : null,
+      });
+    }
+    return {
+      key,
+      assets: groupAssets,
+      primary,
+      duplicate: isDuplicateGroup,
+    };
+  });
+
+  return {
+    groups,
+    asset_contexts: assetContexts,
+    raw_count: assets.length,
+    duplicate_row_count: groups.reduce(
+      (total: number, group: any) => total + Math.max(group.assets.length - 1, 0),
+      0
+    ),
+  };
+}
+
+function canonicalAssetReviewKey(asset: any) {
+  const identity = readStoredVehicleIdentityContext(asset);
+  return identity.canonical_key || normalizeAssetReviewKey(asset.registration || asset.truck_id);
+}
+
+function chooseCanonicalPrimaryAsset(assets: any[], canonicalKey: string) {
+  return [...assets].sort((a, b) => {
+    const scoreDelta =
+      canonicalPrimaryScore(b, canonicalKey) - canonicalPrimaryScore(a, canonicalKey);
+    if (scoreDelta !== 0) return scoreDelta;
+    return trustedAssetSortTime(b) - trustedAssetSortTime(a);
+  })[0];
+}
+
+function canonicalPrimaryScore(asset: any, canonicalKey: string) {
+  let score = 0;
+  const registrationKey = normalizeAssetReviewKey(asset.registration);
+  const truckKey = normalizeAssetReviewKey(asset.truck_id);
+  if (registrationKey === canonicalKey || truckKey === canonicalKey) score += 100;
+  if (
+    asset.status === "active" &&
+    asset.billing_status === "enabled" &&
+    asset.intelligence_enabled
+  ) {
+    score += 80;
+  }
+  if (asset.billing_status && asset.billing_status !== "unreviewed") score += 40;
+  if (deriveAssetTimestampQuality(asset).status === "valid") score += 10;
+  return score;
+}
+
+function normalizeAssetReviewKey(value: any) {
+  return String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
 }
 
 function trustedAssetSortTime(asset: any) {
@@ -330,7 +422,8 @@ export async function GET(req: Request) {
     if (error) throw error;
 
     const sortedAssets = sortAssetsForReview(assets || []);
-    const summary = buildSummary(sortedAssets);
+    const canonicalReviewModel = buildCanonicalReviewModel(sortedAssets);
+    const summary = buildSummary(canonicalReviewModel);
 
     return noStoreJson({
       success: true,
@@ -357,7 +450,9 @@ export async function GET(req: Request) {
         billing_cycle_day: resolved.company.billing_cycle_day ?? null,
       },
       summary,
-      assets: sortedAssets.map(sanitizeAsset),
+      assets: sortedAssets.map((asset) =>
+        sanitizeAsset(asset, canonicalReviewModel.asset_contexts.get(asset.id))
+      ),
     });
   } catch (err: any) {
     console.error("Fleet assets GET error:", err);
