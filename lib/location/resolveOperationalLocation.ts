@@ -1,9 +1,12 @@
 import { supabaseAdmin } from "../supabaseAdmin";
+import { resolveKenyaOperationalLocation } from "./kenyaPlaces";
 
 export type OperationalLocationSource =
   | "geofence"
   | "reverse_geocode_cache"
   | "nearby_reverse_geocode_cache"
+  | "nearest_known_place"
+  | "corridor_estimate"
   | "provider_label"
   | "coordinates_only";
 
@@ -73,6 +76,15 @@ export async function resolveOperationalLocation(
     (await fetchCompanyGeofences(input.supabase || supabaseAdmin, input.company_id));
   const geofenceMatch = findGeofenceMatch(coordinates, geofences);
 
+  if (providerLabel) {
+    return {
+      display_label: providerLabel,
+      confidence_source: "provider_label",
+      map_url: mapUrl,
+      geofence: geofenceMatch,
+    };
+  }
+
   if (geofenceMatch) {
     return {
       display_label:
@@ -116,11 +128,16 @@ export async function resolveOperationalLocation(
     };
   }
 
-  if (providerLabel) {
+  const kenyaFallback = resolveKenyaOperationalLocation(coordinates);
+  if (kenyaFallback) {
     return {
-      display_label: providerLabel,
-      confidence_source: "provider_label",
+      display_label: kenyaFallback.display_label,
+      confidence_source:
+        kenyaFallback.evidence_label === "corridor-estimate"
+          ? "corridor_estimate"
+          : "nearest_known_place",
       map_url: mapUrl,
+      note: kenyaFallback.note,
     };
   }
 
