@@ -677,24 +677,30 @@ async function fetchTripPerformanceContext(input: {
   });
   const trips = Array.isArray(summary.trips) ? summary.trips : [];
   const match = selectTripPerformanceMatch(trips, input.question, input.vehicleMatch);
+  const matchedTrip = match?.status === "matched" ? match.trip : null;
+  const ambiguousTrips = match?.status === "ambiguous" ? match.candidates : [];
 
   return {
     source: "trip_intelligence",
     range,
     timeframe: sanitizeTripPerformanceTimeframe(summary.timeframe),
     finance_values_visible: input.financeVisible,
-    matched_trip: match
-      ? sanitizeTripPerformanceRecord(match.trip, input.financeVisible)
+    matched_trip: matchedTrip
+      ? sanitizeTripPerformanceRecord(matchedTrip, input.financeVisible)
       : null,
-    match: match
+    ambiguous_trip: match?.status === "ambiguous",
+    ambiguity_label: match?.status === "ambiguous" ? match.label : null,
+    match: matchedTrip
       ? {
           score: match.score,
           reason: match.reason,
         }
       : null,
-    candidate_trips: match
+    candidate_trips: matchedTrip
       ? []
-      : trips.slice(0, 5).map((trip: any) => sanitizeTripCandidate(trip)),
+      : (ambiguousTrips.length ? ambiguousTrips : trips.slice(0, 5)).map((trip: any) =>
+          sanitizeTripCandidate(trip, input.financeVisible)
+        ),
     trip_count: trips.length,
   };
 }
@@ -718,33 +724,72 @@ function resolveTripPerformanceRange(question: string) {
   return "7d";
 }
 
-function selectTripPerformanceMatch(trips: any[], question: string, vehicleMatch: any) {
+function selectTripPerformanceMatch(trips: any[], question: string, vehicleMatch: any): any {
   if (!trips.length) return null;
-  const scored = trips
-    .map((trip) => ({
-      trip,
-      ...scoreTripPerformanceMatch(trip, question, vehicleMatch),
-    }))
-    .filter((item) => item.score > 0)
-    .sort((a, b) => {
-      if (b.score !== a.score) return b.score - a.score;
-      return tripSortTimeMs(b.trip) - tripSortTimeMs(a.trip);
-    });
+  const sortedTrips = [...trips].sort((a, b) => tripSortTimeMs(b) - tripSortTimeMs(a));
+  const criteria = buildTripPerformanceMatchCriteria(question, vehicleMatch);
 
-  if (!scored.length) {
-    return trips.length === 1
-      ? { trip: trips[0], score: 20, reason: "only projected trip in range" }
-      : null;
+  const exactReferenceMatches = sortedTrips.filter((trip) =>
+    tripMatchesInternalReference(trip, criteria)
+  );
+  if (exactReferenceMatches.length) {
+    return {
+      status: "matched",
+      trip: exactReferenceMatches[0],
+      score: 120,
+      reason: "internal_trip_id",
+    };
   }
 
-  const top = scored[0];
-  if (top.score >= 35) return top;
-  if (trips.length === 1) return top;
+  const truckClientMatches = sortedTrips.filter(
+    (trip) => tripMatchesTruck(trip, criteria) && tripMatchesClient(trip, criteria)
+  );
+  const truckClientResult = selectUniqueTripMatch(
+    truckClientMatches,
+    "truck+client",
+    buildTripAmbiguityLabel(truckClientMatches, "matching truck/client")
+  );
+  if (truckClientResult) return truckClientResult;
+
+  const truckRouteMatches = sortedTrips.filter(
+    (trip) => tripMatchesTruck(trip, criteria) && tripMatchesRoute(trip, criteria)
+  );
+  const truckRouteResult = selectUniqueTripMatch(
+    truckRouteMatches,
+    "truck+route",
+    buildTripAmbiguityLabel(truckRouteMatches, "matching truck/route")
+  );
+  if (truckRouteResult) return truckRouteResult;
+
+  const clientOnlyMatches = sortedTrips.filter((trip) => tripMatchesClient(trip, criteria));
+  const clientOnlyResult = selectUniqueTripMatch(
+    clientOnlyMatches,
+    "client",
+    buildTripAmbiguityLabel(clientOnlyMatches, "matching client")
+  );
+  if (clientOnlyResult) return clientOnlyResult;
+
+  const truckOnlyMatches = sortedTrips.filter((trip) => tripMatchesTruck(trip, criteria));
+  const truckOnlyResult = selectUniqueTripMatch(
+    truckOnlyMatches,
+    "truck",
+    buildTripAmbiguityLabel(truckOnlyMatches, "matching truck")
+  );
+  if (truckOnlyResult) return truckOnlyResult;
+
+  if (sortedTrips.length === 1) {
+    return {
+      status: "matched",
+      trip: sortedTrips[0],
+      score: 20,
+      reason: "only projected trip in range",
+    };
+  }
+
   return null;
 }
 
-function scoreTripPerformanceMatch(trip: any, question: string, vehicleMatch: any) {
-  const identity = trip.trip_identity || {};
+function buildTripPerformanceMatchCriteria(question: string, vehicleMatch: any) {
   const questionText = normalizeTripText(question);
   const questionKey = normalizeVehicleKey(question);
   const vehicleKeys = [
@@ -757,27 +802,54 @@ function scoreTripPerformanceMatch(trip: any, question: string, vehicleMatch: an
     .map((value) => normalizeVehicleKey(value))
     .filter(Boolean);
 
-  let score = 0;
-  const reasons: string[] = [];
+  return {
+    questionText,
+    questionKey,
+    vehicleKeys,
+  };
+}
+
+function selectUniqueTripMatch(matches: any[], reason: string, label: string) {
+  if (!matches.length) return null;
+  if (matches.length === 1) {
+    return {
+      status: "matched",
+      trip: matches[0],
+      score: reason === "truck+client" || reason === "truck+route" ? 85 : 55,
+      reason,
+    };
+  }
+
+  return {
+    status: "ambiguous",
+    candidates: matches.slice(0, 8),
+    reason,
+    label,
+  };
+}
+
+function tripMatchesInternalReference(trip: any, criteria: any) {
+  const identity = trip.trip_identity || {};
   const reference = identity.reference || identity.internal_trip_id;
   const referenceKey = normalizeVehicleKey(reference);
-  if (referenceKey && questionKey.includes(referenceKey)) {
-    score += 120;
-    reasons.push("internal_trip_id");
-  }
+  return Boolean(referenceKey && criteria.questionKey.includes(referenceKey));
+}
 
+function tripMatchesTruck(trip: any, criteria: any) {
+  const identity = trip.trip_identity || {};
   const truckKey = normalizeVehicleKey(identity.truck);
-  if (truckKey && (questionKey.includes(truckKey) || vehicleKeys.includes(truckKey))) {
-    score += 50;
-    reasons.push("truck");
-  }
+  if (!truckKey) return false;
+  return criteria.questionKey.includes(truckKey) || criteria.vehicleKeys.includes(truckKey);
+}
 
+function tripMatchesClient(trip: any, criteria: any) {
+  const identity = trip.trip_identity || {};
   const client = normalizeTripText(identity.client_name);
-  if (client && questionText.includes(client)) {
-    score += 35;
-    reasons.push("client");
-  }
+  return Boolean(client && criteria.questionText.includes(client));
+}
 
+function tripMatchesRoute(trip: any, criteria: any) {
+  const identity = trip.trip_identity || {};
   const route = identity.route || {};
   for (const [label, value] of [
     ["origin", route.from_location],
@@ -785,16 +857,15 @@ function scoreTripPerformanceMatch(trip: any, question: string, vehicleMatch: an
     ["route", route.route_label || route.route_name],
   ]) {
     const normalized = normalizeTripText(value);
-    if (normalized && questionText.includes(normalized)) {
-      score += label === "route" ? 25 : 15;
-      reasons.push(label);
-    }
+    if (normalized && criteria.questionText.includes(normalized)) return true;
   }
+  return false;
+}
 
-  return {
-    score,
-    reason: reasons.join("+") || "weak trip text match",
-  };
+function buildTripAmbiguityLabel(matches: any[], fallback: string) {
+  const first = matches[0]?.trip_identity || {};
+  const parts = [first.truck, first.client_name].filter(Boolean);
+  return parts.length ? parts.join(" ") : fallback;
 }
 
 function sanitizeTripPerformanceRecord(trip: any, financeVisible: boolean) {
@@ -854,15 +925,35 @@ function sanitizeTripPerformanceRecord(trip: any, financeVisible: boolean) {
   };
 }
 
-function sanitizeTripCandidate(trip: any) {
+function sanitizeTripCandidate(trip: any, financeVisible = false) {
   const identity = trip.trip_identity || {};
+  const readiness = trip.profitability_readiness || {};
+  const contribution = readiness.contribution_summary || {};
   return {
     reference: identity.reference || identity.internal_trip_id || "Trip",
+    date_label: formatTripCandidateDate(
+      identity.start_time || identity.date_window?.start_utc || identity.created_at
+    ),
     truck: identity.truck || null,
     client_name: identity.client_name || null,
     route_label: identity.route?.route_label || null,
+    readiness_label:
+      readiness.label || readiness.customer_label || profitabilityStatusLabel(readiness.status),
+    contribution_amount: financeVisible ? contribution.contribution_amount : null,
     status: identity.status || null,
   };
+}
+
+function formatTripCandidateDate(value: any) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return null;
+  return date.toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    timeZone: "Africa/Nairobi",
+  });
 }
 
 function sanitizeTripPerformanceTimeframe(timeframe: any) {
@@ -878,7 +969,7 @@ function sanitizeTripPerformanceTimeframe(timeframe: any) {
 function normalizeTripText(value: any) {
   return String(value || "")
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -1098,12 +1189,37 @@ function detectIntent(
 function detectTripPerformanceIntent(lower: string) {
   const text = String(lower || "").toLowerCase().replace(/[’]/g, "'");
   const mentionsTrip = /\b(trip|journey)\b/.test(text);
-  const asksPerformance =
-    /\b(perform|performance|do|did|done|make money|made money|contribution|profit|profitability|margin|ready for profit review|profit review)\b/.test(
+  const asksPerformance = /\b(perform|performance|make money|made money|contribution|contribute|contributed|profitability|profit|margin|ready for profit review|profit review)\b/.test(
+    text
+  );
+  const asksTripContribution =
+    /\b(contribution|contribute|contributed|margin|ready for profit review|profit review)\b/.test(
       text
     );
+  const asksProfitOrMake =
+    /\b(make money|made money|profitability|profit)\b/.test(text);
+  const asksTripOutcome = mentionsTrip && /\b(do|did|done|perform|performance)\b/.test(text);
+  const asksMakeAmount = /\b(what|how much)\b.*\b(make|made)\b/.test(text);
+  const asksPerKmMetric = /\b(per\s*km|per\s*kilomet(?:er|re)|\/\s*km)\b/.test(text);
+  const hasVehicleToken = /[a-z]{2,4}[\s\-/.]*\d{2,4}[\s\-/.]*[a-z]?/i.test(text);
+  const hasVehicleDescriptor = hasVehicleTripDescriptor(text);
 
-  return mentionsTrip && asksPerformance;
+  if (asksPerKmMetric && !mentionsTrip) return false;
+  return (mentionsTrip && (asksPerformance || asksTripOutcome || asksMakeAmount)) ||
+    (hasVehicleToken && asksTripContribution) ||
+    (hasVehicleToken && hasVehicleDescriptor && (asksProfitOrMake || asksMakeAmount));
+}
+
+function hasVehicleTripDescriptor(text: string) {
+  const withoutVehicle = String(text || "").replace(
+    /[a-z]{2,4}[\s\-/.]*\d{2,4}[\s\-/.]*[a-z]?/gi,
+    " "
+  );
+  const remaining = withoutVehicle.replace(
+    /\b(what|was|were|is|are|the|a|an|on|for|show|me|how|much|did|do|done|make|made|money|contribution|contribute|contributed|profit|profitability|margin|ready|review|perform|performance|trip|journey|today|yesterday|this|that|current|latest)\b/g,
+    " "
+  );
+  return /\b[a-z]{3,}\b/i.test(remaining);
 }
 
 function detectHypotheticalProfitSimulation(lower: string) {

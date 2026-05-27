@@ -1660,6 +1660,18 @@ function buildTripPerformanceAnswer(context: any) {
   const trip = performance.matched_trip || null;
   const parts: string[] = [];
 
+  if (performance.ambiguous_trip && Array.isArray(performance.candidate_trips) && performance.candidate_trips.length) {
+    const label = performance.ambiguity_label || "matching";
+    parts.push(`I found multiple ${label} trips. Which one do you mean?`);
+    parts.push(
+      performance.candidate_trips
+        .slice(0, 6)
+        .map((candidate: any, index: number) => `${index + 1}. ${formatTripCandidate(candidate)}`)
+        .join("\n")
+    );
+    return parts.join("\n");
+  }
+
   if (!trip) {
     parts.push("No matching production trip was found for that trip-performance question.");
     if (Array.isArray(performance.candidate_trips) && performance.candidate_trips.length) {
@@ -1769,10 +1781,14 @@ function buildTripPerformanceAnswer(context: any) {
 function formatTripCandidate(trip: any) {
   const bits = [
     trip.reference || "Trip",
-    trip.truck || null,
+    trip.date_label || null,
     trip.client_name || null,
     trip.route_label || null,
+    trip.readiness_label || null,
   ].filter(Boolean);
+  if (hasNumber(trip.contribution_amount)) {
+    bits.push(`Contribution ${formatKesPrefix(trip.contribution_amount)}`);
+  }
   return bits.join(" · ");
 }
 
