@@ -15,7 +15,7 @@ When this playbook discovers a bug, batch fixes into one Codex prompt. Do not pa
 - [ ] Confirm the additive `billing_invoices` SQL has been applied.
 - [ ] Confirm a test tenant/company exists.
 - [ ] Confirm at least one tracking provider is configured for the test tenant.
-- [ ] Confirm at least one imported or asset-reviewable asset exists.
+- [ ] Confirm at least one current provider asset or asset-reviewable record exists.
 - [ ] Confirm the test tenant has at least one owner/admin/platform-owner membership.
 
 ## 2. Platform Owner Admin Smoke Test
@@ -146,21 +146,20 @@ Expected BlueTrax note:
 
 Open `/admin/assets?companyId=<id>`.
 
-- [ ] Confirm imported assets count is visible.
-- [ ] Confirm top summary cards separate Raw provider records, Asset review groups, Primary review rows, Unreviewed likely trucks, Enabled intelligence vehicles, Needs classification, Needs timestamp review, Possible collision groups, and Excluded/disabled.
-- [ ] Confirm unreviewed assets are visually obvious.
-- [ ] Confirm imported and unreviewed counts use canonical truck identity, so legacy rows like `KCF529Z ZF3316` do not inflate normal review counts when `KCF529Z` also exists.
-- [ ] Confirm Possible duplicates detects canonical collisions such as `KCF529Z` and legacy `KCF529Z ZF3316`.
-- [ ] Confirm a clean provider asset label such as `KCF529Z ZF3316` is shown as the Asset name and is not marked Possible duplicate unless another competing review row exists.
-- [ ] In Possible collisions, select visible legacy rows and apply `Resolve legacy collisions`; confirm only those old rows are excluded as `Legacy duplicate; canonical truck exists`, clean canonical truck rows remain unchanged, and Possible collision groups drop.
-- [ ] Confirm bulk enable refuses selections that include Possible duplicate or already-resolved legacy collision rows and the billable preview does not count those rows as new billable assets.
+- [ ] Confirm Current provider assets count is visible and represents the customer-facing provider asset list, not raw historical database rows.
+- [ ] Confirm top summary cards show Current provider assets, Enabled intelligence assets, Pending review, Needs classification, Needs timestamp review, and Excluded/disabled.
+- [ ] Confirm pending-review assets are visually obvious.
+- [ ] Confirm legacy/pre-normalization rows do not appear as normal customer review work when a newer current provider asset row exists.
+- [ ] Confirm backend/raw counts such as raw provider records, canonical groups, hidden legacy rows, and identity collisions are absent from the main customer summary and available only as platform diagnostics if shown.
+- [ ] Confirm a clean provider asset label such as `KCF529Z ZF3316` is shown as the Asset name and is not marked Needs match review unless another competing current provider asset row exists.
+- [ ] Confirm bulk enable refuses any current-state match-conflict row and the billable preview does not count protected rows as new billable assets.
 - [ ] Confirm obvious non-primary labels such as `MOTOR BIKE`, `TOYOTA PROBOX`, `HILUX PICK-UP`, or raw IMEI/device IDs are kept out of likely-truck and truck-duplicate counts.
 - [ ] Confirm the Needs classification tab shows non-primary/noisy rows separately from Unreviewed trucks.
 - [ ] Confirm FleetTrack/Oak and Gold assets do not display 1970-style `Last seen` dates; invalid provider timestamps show `Provider timestamp invalid` or `Last seen unavailable`.
 - [ ] Confirm the `Needs timestamp review` filter shows assets with invalid, missing, future, or first-seen-conflicting provider timestamps.
 - [ ] Confirm search works by truck ID/plate, provider, category, and review status.
 - [ ] Confirm truck-and-trailer provider labels show the provider asset name first, with the internal match key and trailer label context shown only as secondary review detail.
-- [ ] Confirm filters/tabs work for All, Unreviewed, Enabled intelligence, Excluded/disabled, Needs timestamp review, New provider assets, Cars/pickups/motorbikes, Trucks, and Possible duplicates.
+- [ ] Confirm filters/tabs work for Review assets, Pending review, Enabled intelligence, Excluded/disabled, Needs timestamp review, Needs classification, Cars/pickups/motorbikes, and Trucks.
 - [ ] Select multiple unreviewed provider assets and bulk exclude cars/pickups/motorbikes with an excluded reason.
 - [ ] Select truck assets and bulk enable only after the confirmation shows projected billable enabled count and planning-only monthly estimate.
 - [ ] Enable one test asset if safe.
@@ -314,7 +313,7 @@ Mark the pilot/demo ready only when all critical checks pass:
 - [ ] Platform health acceptable.
 - [ ] Tenant readiness is not blocked.
 - [ ] Provider connected or provider limitation documented.
-- [ ] Imported assets reviewed and at least one safe asset enabled.
+- [ ] Current provider assets reviewed and at least one safe asset enabled.
 - [ ] Billing preview works.
 - [ ] Invoice record flow works.
 - [ ] Ops flow works.

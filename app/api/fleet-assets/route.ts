@@ -16,7 +16,7 @@ const REVIEW_ROLES = ["owner", "admin", "platform_owner"] as const;
 const COMPANY_SELECT =
   "id, name, slug, subscription_plan, business_type, primary_asset_types, main_billing_unit, operating_regions, primary_use_case, asset_unit_price, billing_currency, included_assets, trial_starts_at, trial_ends_at, billing_cycle_day";
 const ASSET_BASE_SELECT =
-  "id, registration, truck_id, provider_name, status, last_seen_at, provider_location_label, asset_category, billing_status, intelligence_enabled, excluded_reason, ai_suggested_category, ai_suggested_reason, ai_confidence, first_seen_at, reviewed_at, billing_enabled_at, billing_disabled_at";
+  "id, company_id, provider_id, registration, truck_id, provider_name, status, last_seen_at, provider_location_label, asset_category, billing_status, intelligence_enabled, excluded_reason, ai_suggested_category, ai_suggested_reason, ai_confidence, first_seen_at, reviewed_at, billing_enabled_at, billing_disabled_at";
 const ASSET_CAPABILITY_SELECT = `${ASSET_BASE_SELECT}, telemetry_capability, telemetry_capabilities, telemetry_capability_source, canbus_enabled, fuel_rod_installed, fuel_rod_calibration_status`;
 const ASSET_CATEGORIES = new Set([
   "unknown",
@@ -133,12 +133,16 @@ function sortAssetsForReview(assets: any[]) {
 
 function buildSummary(reviewModel: any) {
   const groups = reviewModel.groups || [];
+  const currentAssets = reviewModel.current_assets || groups.map((group: any) => group.primary).filter(Boolean);
   const primaryAssets = groups.map((group: any) => group.primary).filter(Boolean);
-  const reviewablePrimaryAssets = primaryAssets.filter(
+  const reviewablePrimaryAssets = currentAssets.filter(
     (asset: any) => !isNonPrimaryReviewAsset(asset)
   );
-  const needsClassificationAssets = primaryAssets.filter(isNeedsClassificationAsset);
-  const unreviewedLikelyTrucks = primaryAssets.filter(
+  const needsClassificationAssets = currentAssets.filter(isNeedsClassificationAsset);
+  const pendingReviewAssets = currentAssets.filter(
+    (asset: any) => isPendingAssetReview(asset)
+  );
+  const unreviewedLikelyTrucks = currentAssets.filter(
     (asset: any) => isPendingAssetReview(asset) && isLikelyTruckReviewAsset(asset)
   );
   const enabledIntelligenceGroups = groups.filter((group: any) =>
@@ -160,27 +164,33 @@ function buildSummary(reviewModel: any) {
   );
 
   return {
-    imported_count: groups.length,
-    asset_review_group_count: groups.length,
+    imported_count: currentAssets.length,
+    current_provider_asset_count: currentAssets.length,
+    pending_review_count: pendingReviewAssets.length,
+    excluded_disabled_count: currentAssets.filter((asset: any) =>
+      ["excluded", "disabled"].includes(String(asset.billing_status || ""))
+    ).length,
+    asset_review_group_count: reviewModel.diagnostic_group_count || groups.length,
     raw_imported_count: reviewModel.raw_count || 0,
     canonical_duplicate_count: reviewModel.duplicate_row_count || 0,
+    hidden_legacy_row_count: reviewModel.hidden_legacy_count || 0,
     possible_collision_group_count: reviewModel.collision_group_count || 0,
     possible_collision_row_count: reviewModel.duplicate_row_count || 0,
-    primary_review_count: primaryAssets.length,
+    primary_review_count: currentAssets.length,
     reviewable_primary_count: reviewablePrimaryAssets.length,
     needs_classification_count: needsClassificationAssets.length,
-    unreviewed_count: unreviewedLikelyTrucks.length,
+    unreviewed_count: pendingReviewAssets.length,
     unreviewed_likely_truck_count: unreviewedLikelyTrucks.length,
     enabled_count: enabledIntelligenceGroups.length,
     enabled_intelligence_count: enabledIntelligenceGroups.length,
     billable_enabled_count: billableGroups.length,
-    excluded_count: (reviewModel.raw_assets || primaryAssets).filter(
+    excluded_count: currentAssets.filter(
       (asset: any) => asset.billing_status === "excluded"
     ).length,
-    disabled_count: (reviewModel.raw_assets || primaryAssets).filter(
+    disabled_count: currentAssets.filter(
       (asset: any) => asset.billing_status === "disabled"
     ).length,
-    needs_timestamp_review_count: primaryAssets.filter(
+    needs_timestamp_review_count: currentAssets.filter(
       (asset: any) => deriveAssetTimestampQuality(asset).status !== "valid"
     ).length,
   };
@@ -231,6 +241,77 @@ function buildCanonicalReviewModel(assets: any[]) {
       0
     ),
   };
+}
+
+function buildProviderAssetReviewProjection(assets: any[]) {
+  const groupsByProviderAsset = new Map<string, any[]>();
+  for (const asset of assets) {
+    const key = providerAssetReviewKey(asset) || `asset:${asset.id}`;
+    const group = groupsByProviderAsset.get(key) || [];
+    group.push(asset);
+    groupsByProviderAsset.set(key, group);
+  }
+
+  const currentAssets: any[] = [];
+  const hiddenAssets: any[] = [];
+  for (const [key, groupAssets] of Array.from(groupsByProviderAsset.entries())) {
+    const primary = chooseCurrentProviderAsset(groupAssets, key);
+    currentAssets.push(primary);
+    for (const asset of groupAssets) {
+      if (asset.id !== primary?.id) hiddenAssets.push(asset);
+    }
+  }
+
+  return {
+    current_assets: sortAssetsForReview(currentAssets),
+    hidden_assets: hiddenAssets,
+    hidden_legacy_count: hiddenAssets.length,
+    provider_asset_group_count: groupsByProviderAsset.size,
+  };
+}
+
+function providerAssetReviewKey(asset: any) {
+  const providerKey = normalizeAssetReviewKey(asset.provider_id || asset.provider_name || "provider");
+  const metadata =
+    asset?.telemetry_capabilities && typeof asset.telemetry_capabilities === "object"
+      ? asset.telemetry_capabilities
+      : {};
+  const providerAssetId = normalizeAssetReviewKey(
+    metadata.provider_asset_id ||
+      metadata.provider_vehicle_id ||
+      metadata.vehicle_id ||
+      metadata.device_id ||
+      metadata.imei
+  );
+  if (providerAssetId) return `${providerKey}:id:${providerAssetId}`;
+
+  const identity = readStoredVehicleIdentityContext(asset);
+  const providerLabelKey = normalizeAssetReviewKey(
+    identity.provider_label || asset.registration || asset.truck_id
+  );
+  return providerLabelKey ? `${providerKey}:label:${providerLabelKey}` : null;
+}
+
+function chooseCurrentProviderAsset(assets: any[], providerAssetKey: string) {
+  return [...assets].sort((a, b) => {
+    const scoreDelta =
+      currentProviderAssetScore(b, providerAssetKey) -
+      currentProviderAssetScore(a, providerAssetKey);
+    if (scoreDelta !== 0) return scoreDelta;
+    return trustedAssetSortTime(b) - trustedAssetSortTime(a);
+  })[0];
+}
+
+function currentProviderAssetScore(asset: any, providerAssetKey: string) {
+  const identity = readStoredVehicleIdentityContext(asset);
+  let score = 0;
+  if (!isLegacyCombinedLabelAsset(asset, identity.canonical_key || "")) score += 100;
+  if (asset.status === "active") score += 30;
+  if (asset.billing_status === "enabled" && asset.intelligence_enabled) score += 25;
+  if (asset.billing_status && asset.billing_status !== "unreviewed") score += 10;
+  if (deriveAssetTimestampQuality(asset).status === "valid") score += 5;
+  if (providerAssetKey.includes(":id:")) score += 2;
+  return score;
 }
 
 function canonicalAssetReviewKey(asset: any) {
@@ -547,11 +628,18 @@ export async function GET(req: Request) {
     const resolved = await resolveReviewAccess(req, searchParams.get("companyId"));
     if (resolved.error) return resolved.error;
 
-    const sortedAssets = sortAssetsForReview(
+    const allSortedAssets = sortAssetsForReview(
       await loadCompanyAssetsForReview(resolved.company.id)
     );
-    const canonicalReviewModel = buildCanonicalReviewModel(sortedAssets);
-    const summary = buildSummary(canonicalReviewModel);
+    const providerProjection = buildProviderAssetReviewProjection(allSortedAssets);
+    const currentAssets = sortAssetsForReview(providerProjection.current_assets);
+    const canonicalReviewModel = buildCanonicalReviewModel(allSortedAssets);
+    const summary = buildSummary({
+      ...canonicalReviewModel,
+      current_assets: currentAssets,
+      hidden_legacy_count: providerProjection.hidden_legacy_count,
+      diagnostic_group_count: canonicalReviewModel.groups.length,
+    });
 
     return noStoreJson({
       success: true,
@@ -578,7 +666,14 @@ export async function GET(req: Request) {
         billing_cycle_day: resolved.company.billing_cycle_day ?? null,
       },
       summary,
-      assets: sortedAssets.map((asset) =>
+      diagnostics: {
+        raw_provider_records: allSortedAssets.length,
+        canonical_review_groups: canonicalReviewModel.groups.length,
+        hidden_legacy_rows: providerProjection.hidden_legacy_count,
+        current_provider_asset_groups: providerProjection.provider_asset_group_count,
+        possible_collision_groups: canonicalReviewModel.collision_group_count,
+      },
+      assets: currentAssets.map((asset) =>
         sanitizeAsset(asset, canonicalReviewModel.asset_contexts.get(asset.id))
       ),
     });

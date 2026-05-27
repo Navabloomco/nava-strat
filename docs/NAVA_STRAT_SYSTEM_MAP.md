@@ -98,7 +98,7 @@ The main product principle is convenience. Every user-facing page should make th
 | Route | Purpose |
 | --- | --- |
 | `/admin` | Role-aware Admin Hub. Platform owners see platform tools; company owners/admins see company tools. |
-| `/admin/assets` | Asset Review for imported provider assets and intelligence/billing readiness. Supports platform-owner `?companyId=` tenant context. |
+| `/admin/assets` | Asset Review for current provider assets and intelligence/billing readiness. Supports platform-owner `?companyId=` tenant context. |
 | `/admin/providers` | Provider Vault for tracking provider configuration, testing, sync diagnostics, activation, and enrichment diagnostics. Supports platform-owner `?companyId=` tenant context. |
 | `/admin/providers/new` | Guided Add Provider wizard. Customer owners/admins see public/supported providers, Custom API provider, and Request assisted setup; internal/setup-only templates are platform-owner-only and clearly marked as not customer-facing. New connections are created inactive, then tested/reviewed/activated from Provider Vault. |
 | `/admin/provider-requests` | Platform-owner provider setup requests. |
@@ -166,7 +166,7 @@ The main product principle is convenience. Every user-facing page should make th
 | API Route | Purpose |
 | --- | --- |
 | `GET /api/fleet-assets` | Asset Review list, operating context, billing preview data, and strict billable counts. Supports platform-owner `companyId` context. |
-| `PATCH /api/fleet-assets/[id]` | Enable, exclude, disable, or review-later an imported asset in the resolved tenant context. |
+| `PATCH /api/fleet-assets/[id]` | Enable, exclude, disable, or review-later a provider asset in the resolved tenant context. |
 | `POST /api/fleet-assets/suggest-classification` | Asset classification suggestion endpoint using resolved company operating context as weak signal. |
 
 ### Operations
@@ -255,7 +255,7 @@ The main product principle is convenience. Every user-facing page should make th
 | `tracking_providers` | Provider credentials/config, auth type, fleet URL, field mapping, fleet config, sync status, safe telemetry capability declarations, supported signal metadata, provider timezone, and test diagnostics. |
 | `provider_setup_requests` | Assisted provider onboarding requests. |
 | `provider_templates` | Reusable provider setup templates. Internal setup-only templates may document signal mappings for future providers without live credentials or endpoints. |
-| `fleet_assets` | Imported provider assets, latest asset state, review status, intelligence enablement, billing readiness, and asset telemetry capability profile. |
+| `fleet_assets` | Provider asset records, latest asset state, review status, intelligence enablement, billing readiness, and asset telemetry capability profile. |
 | `telemetry_logs` | Historical telemetry points from provider sync: location, speed, fuel level, normalized engine/ignition/fuel/tank signal placeholders where supported, provider location label, validation, capability flags, and raw payload server-side. |
 | `provider_trip_summaries` | Recommended additive table for provider report/trip-level distance evidence such as start/end odometer, provider-reported mileage, motion duration, start/end locations, violations, distance source, and distance quality. |
 | `telemetry_events` | Derived operational events and alert context annotations. |
@@ -435,7 +435,7 @@ New provider records must not start active by default, and provider sync must no
    - `recorded_at`
 5. Skip rows that do not have a safe vehicle identifier after mapped and fallback keys are checked. Provider sync must not create `UNKNOWN`, blank, or null reviewable assets.
    Provider labels may include both a truck plate and trailer text, for example `KCF529Z ZF3316`. The provider asset name remains the customer-facing Asset Review identity. Nava keeps the truck plate as an internal normalized match key for cross-provider matching and duplicate safety, and may store the trailer text only as label context. Attached trailers are operational metadata from the provider asset name and must not become primary billable intelligence assets unless trailer-specific tracking is explicitly introduced later.
-   Asset Review counts and billable-review views use this canonical truck identity. The UI must separate raw provider records, canonical asset review groups, primary review rows, enabled intelligence vehicles, classification work, timestamp issues, and identity collisions. Possible Duplicates is narrower than canonical grouping: attached-trailer metadata alone is not a duplicate. Duplicate review is reserved for legacy combined-label rows, competing enabled/reviewable rows for the same canonical truck, or other real mapping collisions. Obvious non-primary labels such as motorbikes, Probox/Hilux pickups, or raw IMEI/device identifiers stay reviewable under Needs classification but are kept out of likely-truck and truck-duplicate counts.
+   Asset Review is a current-state provider asset review page. Customer-facing rows and summary cards should show current provider assets as the provider identifies them, with provider source, review state, classification warnings, timestamp issues, and billing-safe enabled count. Raw provider records, canonical grouping internals, hidden legacy rows, and identity-collision diagnostics belong in platform diagnostics, not the primary customer review workflow. Possible match warnings should appear only for real current-state ambiguity requiring review. Obvious non-primary labels such as motorbikes, Probox/Hilux pickups, or raw IMEI/device identifiers stay reviewable under Needs classification but are kept out of likely-truck counts.
 6. If the same provider has already imported the asset, upsert that provider-owned `fleet_assets` row by `(provider_id, truck_id)`.
 7. If a different provider reports the same normalized registration/truck ID for an existing company asset, treat it as cross-provider telemetry for that asset and do not create a duplicate billable-review asset automatically.
 8. Insert `telemetry_logs` with the incoming `provider_id`, normalized signal quality, timestamp quality, and capability flags preserved. Provider timestamps must be normalized and validated before use: Unix seconds/milliseconds should be interpreted safely when possible, while epoch/default dates, years before 2000, far-future dates, or dates that conflict with asset first-seen evidence must be marked invalid/suspect instead of being displayed as real last-seen telemetry. Asset Review should show `Last seen unavailable` or `Provider timestamp invalid` rather than 1970-style dates.
@@ -455,7 +455,7 @@ Multiple active `tracking_providers` can exist for one tenant. During controlled
 
 ### Provider Import Defaults
 
-New imported assets default to:
+New provider assets default to:
 
 - `asset_category = unknown`
 - `billing_status = unreviewed`
@@ -463,7 +463,7 @@ New imported assets default to:
 - `first_seen_at = now`
 - `status = active`
 
-This is intentional. Imported provider assets must be reviewed before appearing as enabled intelligence vehicles.
+This is intentional. Provider assets must be reviewed before appearing as enabled intelligence vehicles.
 
 ### Supplemental Enrichment Feeds
 
@@ -615,9 +615,9 @@ Current limitation:
 
 ## 9. Asset Review and Billing Readiness Rules
 
-Asset Review is the gate between imported provider devices and billable Nava intelligence vehicles.
+Asset Review is the gate between current provider assets and billable Nava intelligence vehicles.
 
-For larger fleets, Asset Review should support batch triage instead of one-by-one scrolling: filters for all, unreviewed, enabled intelligence, excluded/disabled, timestamp review, new provider assets, light vehicles, trucks, and possible duplicates; search by plate/provider/category/status; sortable views; select-all-visible; and bulk actions for enable, exclude, disable, review later, and category updates. Legacy collision rows may be bulk-resolved by excluding only the selected old provider rows as `legacy_duplicate_canonical_exists`; this preserves the provider label, attached-trailer context, and raw evidence while leaving the clean canonical truck row available. Bulk enabling must require confirmation, must block collision/protected legacy rows, and must show the projected strict billable count and planning-only monthly estimate before applying. Do not auto-enable suggested classifications or duplicate/multi-provider assets without user confirmation.
+For larger fleets, Asset Review should support batch triage instead of one-by-one scrolling: filters for current provider assets, pending review, enabled intelligence, excluded/disabled, timestamp review, light vehicles, trucks, and classification-needed assets; search by asset name/plate/provider/category/status; sortable views; select-all-visible; and bulk actions for enable, exclude, disable, review later, and category updates. Legacy import/collision rows may remain in the database for audit, but they should not be customer-facing review work once a newer current provider asset row exists. Bulk enabling must require confirmation, must block protected match-conflict rows, and must show the projected strict billable count and planning-only monthly estimate before applying. Do not auto-enable suggested classifications or duplicate/multi-provider assets without user confirmation.
 
 ### Billable Asset Rule
 
@@ -630,7 +630,7 @@ An asset is billable-ready only when all are true:
 
 Do not count assets as billable merely because one of `billing_status = enabled` or `intelligence_enabled = true` is true.
 
-Unreviewed/pending-review counts should only include active imported assets with `billing_status = unreviewed` and `intelligence_enabled = false`. Excluded, disabled, inactive, or already-enabled assets must not be treated as still needing review.
+Unreviewed/pending-review counts should only include active current provider assets with `billing_status = unreviewed` and `intelligence_enabled = false`. Excluded, disabled, inactive, hidden legacy rows, or already-enabled assets must not be treated as still needing review.
 
 ### Platform Tenant Billing Preview
 
@@ -708,7 +708,7 @@ Readiness categories:
 
 - Company setup: company record, name/slug, operating context, billing currency, and asset unit price.
 - Provider setup: active provider, test/sync history, and recent sync freshness.
-- Asset review: imported assets, enabled intelligence assets, strict billable assets, unreviewed assets, and imported-but-not-enabled warnings.
+- Asset review: current provider assets, enabled intelligence assets, strict billable assets, pending-review assets, and provider-assets-not-enabled warnings.
 - Billing readiness: `billing_invoices` availability, invoice preview possibility, pricing, strict billable assets, and recent invoice records.
 - Role/security readiness: active owner/admin/platform-owner membership and role counts only.
 - Operations readiness: enabled assets, drivers, geofences, journeys, and saved routes.
@@ -754,7 +754,7 @@ Review later should:
 ### Intelligence Visibility
 
 - Live tracking, ops dashboard, Nava Eye, enabled vehicle pickers, and client-visible live context should only use reviewed/enabled intelligence assets unless a route is explicitly an admin review route.
-- Imported unreviewed assets may be visible in Asset Review and platform/admin diagnostics, but must not become live/intelligence/client-visible assets automatically.
+- Pending-review provider assets may be visible in Asset Review and platform/admin diagnostics, but must not become live/intelligence/client-visible assets automatically.
 
 ## 10. Known "Do Not Break" Rules
 
@@ -763,7 +763,7 @@ Review later should:
 - Do not weaken `company_users` role semantics.
 - Do not expose provider credentials, cookies, tokens, Authorization headers, API keys, passwords, or raw provider payloads.
 - Do not expose disabled or unreviewed asset telemetry/location outside admin review/diagnostics.
-- Do not auto-enable imported assets.
+- Do not auto-enable provider assets.
 - Do not let provider sync overwrite reviewed asset category, billing status, intelligence enablement, or billing timestamps.
 - Do not expose driver phone, license, notes, or employee code in Nava Eye or public/client routes.
 - Do not expose financial values to plain ops users.

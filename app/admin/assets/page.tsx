@@ -29,7 +29,6 @@ const excludedReasons = [
   { value: "", label: "Choose reason" },
   { value: "personal_use", label: "Personal use" },
   { value: "duplicate", label: "Duplicate" },
-  { value: "legacy_duplicate_canonical_exists", label: "Legacy duplicate; canonical truck exists" },
   { value: "inactive_device", label: "Inactive device" },
   { value: "test_device", label: "Test device" },
   { value: "sold_or_removed", label: "Sold or removed" },
@@ -54,11 +53,15 @@ export default function AssetReviewPage() {
   const [operatingContext, setOperatingContext] = useState<any>(null);
   const [summary, setSummary] = useState({
     imported_count: 0,
+    current_provider_asset_count: 0,
+    pending_review_count: 0,
+    excluded_disabled_count: 0,
     asset_review_group_count: 0,
     raw_imported_count: 0,
     canonical_duplicate_count: 0,
     possible_collision_group_count: 0,
     possible_collision_row_count: 0,
+    hidden_legacy_row_count: 0,
     primary_review_count: 0,
     reviewable_primary_count: 0,
     needs_classification_count: 0,
@@ -71,6 +74,7 @@ export default function AssetReviewPage() {
     disabled_count: 0,
     needs_timestamp_review_count: 0,
   });
+  const [diagnostics, setDiagnostics] = useState<any>(null);
   const [forms, setForms] = useState<Record<string, AssetFormState>>({});
   const [filter, setFilter] = useState("unreviewed");
   const [searchTerm, setSearchTerm] = useState("");
@@ -142,6 +146,7 @@ export default function AssetReviewPage() {
       setBilling(json.billing || null);
       setOperatingContext(json.operating_context || null);
       setSummary(json.summary || summary);
+      setDiagnostics(json.diagnostics || null);
       seedForms(json.assets || []);
       setSelectedAssetIds(new Set());
     } catch (err: any) {
@@ -237,36 +242,20 @@ export default function AssetReviewPage() {
 
     const selectedAssets = assets.filter((asset) => selectedAssetIds.has(asset.id));
     const selectedProtectedCollisionRows = selectedAssets.filter(isProtectedCollisionRow);
-    const selectedActiveCollisionRows = selectedAssets.filter(isCanonicalDuplicateSecondary);
     if (bulkAction === "enable") {
       if (selectedProtectedCollisionRows.length > 0) {
         setError(
-          "Possible collision rows cannot be bulk-enabled. Resolve the legacy duplicate rows or enable the clean canonical truck rows instead."
+          "Assets needing match review cannot be bulk-enabled. Review the current provider asset row before enabling."
         );
         return;
       }
-      const preview = buildBulkEnablePreview(selectedAssets, billingPreview);
+      const preview = buildBulkEnablePreview(selectedAssets, billingPreview, assets);
       const confirmed = window.confirm(
         [
           `Enable Nava intelligence for ${selectedIds.length} selected asset${selectedIds.length === 1 ? "" : "s"}?`,
           `Projected billable enabled count: ${preview.projectedBillableCount}.`,
           `Estimated monthly total: ${preview.currency} ${preview.estimatedMonthlyTotal.toLocaleString()}.`,
           "This is a planning estimate only.",
-        ].join("\n")
-      );
-      if (!confirmed) return;
-    } else if (bulkAction === "resolve_legacy_collision") {
-      if (selectedActiveCollisionRows.length !== selectedAssets.length) {
-        setError(
-          "Resolve legacy collisions only applies to rows marked Possible duplicate. Clear non-collision rows from the selection first."
-        );
-        return;
-      }
-      const confirmed = window.confirm(
-        [
-          `Resolve ${selectedIds.length} legacy collision row${selectedIds.length === 1 ? "" : "s"}?`,
-          "Only the selected old provider rows will be excluded as legacy duplicates.",
-          "Clean canonical truck rows and enabled intelligence vehicles will not be changed.",
         ].join("\n")
       );
       if (!confirmed) return;
@@ -296,10 +285,7 @@ export default function AssetReviewPage() {
           asset_ids: selectedIds,
           action: bulkAction,
           asset_category: bulkCategory,
-          excluded_reason:
-            bulkAction === "resolve_legacy_collision"
-              ? "legacy_duplicate_canonical_exists"
-              : bulkExcludedReason,
+          excluded_reason: bulkExcludedReason,
           ...(selectedCompanyId ? { companyId: selectedCompanyId } : {}),
         }),
       });
@@ -389,11 +375,11 @@ export default function AssetReviewPage() {
     () =>
       sortFilteredAssets(
         assets.filter((asset) =>
-          assetMatchesFilter(asset, filter, searchTerm, reviewInsights.duplicateKeys)
+          assetMatchesFilter(asset, filter, searchTerm)
         ),
         sortBy
       ),
-    [assets, filter, searchTerm, reviewInsights.duplicateKeys, sortBy]
+    [assets, filter, searchTerm, sortBy]
   );
   const selectedCount = selectedAssetIds.size;
   const allVisibleSelected =
@@ -408,15 +394,15 @@ export default function AssetReviewPage() {
     [selectedAssets]
   );
   const bulkEnablePreview = useMemo(
-    () => buildBulkEnablePreview(selectedAssets, billingPreview),
-    [selectedAssets, billingPreview]
+    () => buildBulkEnablePreview(selectedAssets, billingPreview, assets),
+    [selectedAssets, billingPreview, assets]
   );
 
   if (loading) {
     return (
       <main className="min-h-screen bg-slate-950 px-4 py-6 text-white sm:px-8 sm:py-10">
         <Panel dark className="p-6">
-          <div className="text-sm text-slate-300">Loading imported assets...</div>
+          <div className="text-sm text-slate-300">Loading provider assets...</div>
         </Panel>
       </main>
     );
@@ -429,7 +415,7 @@ export default function AssetReviewPage() {
           dark
           eyebrow={`Fleet assets · ${company?.name || "Company workspace"}`}
           title="Asset review"
-          body="Imported assets are not billed until they are reviewed, active, and enabled for Nava intelligence."
+          body="Provider assets are not billed until they are reviewed, active, and enabled for Nava intelligence."
           actions={
             <SecondaryButton
               type="button"
@@ -480,55 +466,56 @@ export default function AssetReviewPage() {
 
         <section className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           <Metric
-            label="Raw provider records"
-            value={summary.raw_imported_count || assets.length}
-            note="Rows imported from provider feeds"
-          />
-          <Metric
-            label="Asset review groups"
-            value={summary.asset_review_group_count || summary.imported_count}
-            note="Canonical truck/device groups"
-          />
-          <Metric
-            label="Primary review rows"
-            value={summary.primary_review_count || summary.imported_count}
-            note="One visible row per review group"
-          />
-          <Metric
-            label="Unreviewed likely trucks"
-            value={summary.unreviewed_likely_truck_count || summary.unreviewed_count}
-            warning={(summary.unreviewed_likely_truck_count || summary.unreviewed_count) > 0}
-            note="Truck candidates awaiting decision"
+            label="Current provider assets"
+            value={summary.current_provider_asset_count ?? summary.imported_count ?? assets.length}
+            note="Assets as provider systems currently identify them"
           />
           <Metric
             label="Enabled intelligence vehicles"
-            value={summary.enabled_intelligence_count || summary.enabled_count}
-            note="Unique enabled canonical assets"
+            value={summary.enabled_intelligence_count ?? summary.enabled_count}
+            note="Billing-safe enabled count"
+          />
+          <Metric
+            label="Pending review"
+            value={summary.pending_review_count ?? summary.unreviewed_count}
+            warning={(summary.pending_review_count ?? summary.unreviewed_count) > 0}
+            note="Current provider assets awaiting decision"
           />
           <Metric
             label="Needs classification"
-            value={summary.needs_classification_count || reviewInsights.needsClassification}
-            warning={(summary.needs_classification_count || reviewInsights.needsClassification) > 0}
-            note="Unknown, non-primary, or device-like rows"
+            value={summary.needs_classification_count ?? reviewInsights.needsClassification}
+            warning={(summary.needs_classification_count ?? reviewInsights.needsClassification) > 0}
+            note="Unknown, non-primary, or device-like assets"
           />
           <Metric
             label="Needs timestamp review"
-            value={summary.needs_timestamp_review_count || reviewInsights.needsTimestampReview}
-            warning={(summary.needs_timestamp_review_count || reviewInsights.needsTimestampReview) > 0}
+            value={summary.needs_timestamp_review_count ?? reviewInsights.needsTimestampReview}
+            warning={(summary.needs_timestamp_review_count ?? reviewInsights.needsTimestampReview) > 0}
             note="Invalid, missing, or suspicious timestamps"
           />
           <Metric
-            label="Possible collision groups"
-            value={summary.possible_collision_group_count || 0}
-            warning={(summary.possible_collision_group_count || 0) > 0}
-            note="Real identity conflicts only"
-          />
-          <Metric
             label="Excluded / disabled"
-            value={summary.excluded_count + summary.disabled_count}
+            value={summary.excluded_disabled_count ?? summary.excluded_count + summary.disabled_count}
             note="Not active intelligence candidates"
           />
         </section>
+
+        {isPlatformOwner && diagnostics && (
+          <Panel dark className="mt-4 border-white/10 bg-white/5 p-4">
+            <details>
+              <summary className="cursor-pointer text-sm font-semibold text-slate-200">
+                Advanced asset diagnostics
+              </summary>
+              <div className="mt-4 grid gap-3 text-sm text-slate-300 md:grid-cols-2 xl:grid-cols-5">
+                <Diagnostic label="Raw provider records" value={diagnostics.raw_provider_records} />
+                <Diagnostic label="Canonical groups" value={diagnostics.canonical_review_groups} />
+                <Diagnostic label="Hidden historical rows" value={diagnostics.hidden_legacy_rows} />
+                <Diagnostic label="Provider asset groups" value={diagnostics.current_provider_asset_groups} />
+                <Diagnostic label="Identity collisions" value={diagnostics.possible_collision_groups} />
+              </div>
+            </details>
+          </Panel>
+        )}
 
         <Panel dark className="mt-8 p-6">
           <div className="grid gap-5 lg:grid-cols-[1fr_1fr_1fr_1fr]">
@@ -562,8 +549,8 @@ export default function AssetReviewPage() {
           <div className="mt-8">
             <EmptyState
               dark
-              title="No imported assets yet"
-              body="Assets will appear here after a provider sync imports vehicles or devices for review."
+              title="No provider assets yet"
+              body="Assets will appear here after a provider sync brings in vehicles or devices for review."
             />
           </div>
         ) : (
@@ -636,15 +623,10 @@ export default function AssetReviewPage() {
                         if (["exclude", "disable", "review_later"].includes(nextAction)) {
                           setBulkCategory("unknown");
                         }
-                        if (nextAction === "resolve_legacy_collision") {
-                          setBulkCategory("unknown");
-                          setBulkExcludedReason("legacy_duplicate_canonical_exists");
-                        }
                       }}
                       className={inputClass}
                     >
                       <option value="enable">Enable for intelligence</option>
-                      <option value="resolve_legacy_collision">Resolve legacy collisions</option>
                       <option value="exclude">Exclude</option>
                       <option value="disable">Disable</option>
                       <option value="review_later">Review later</option>
@@ -653,7 +635,6 @@ export default function AssetReviewPage() {
                     <select
                       value={bulkCategory}
                       onChange={(event) => setBulkCategory(event.target.value)}
-                      disabled={bulkAction === "resolve_legacy_collision"}
                       className={inputClass}
                     >
                       {assetCategories.map((category) => (
@@ -665,7 +646,6 @@ export default function AssetReviewPage() {
                     <select
                       value={bulkExcludedReason}
                       onChange={(event) => setBulkExcludedReason(event.target.value)}
-                      disabled={bulkAction === "resolve_legacy_collision"}
                       className={inputClass}
                     >
                       {excludedReasons.map((reason) => (
@@ -690,12 +670,7 @@ export default function AssetReviewPage() {
                   )}
                   {selectedCollisionRows.length > 0 && bulkAction === "enable" && (
                     <div className="mt-3 rounded-md border border-rose-300/25 bg-rose-500/10 px-3 py-2 text-sm leading-6 text-rose-50">
-                      {selectedCollisionRows.length.toLocaleString()} selected row{selectedCollisionRows.length === 1 ? "" : "s"} are legacy collision rows and will not be counted as new billable assets. Resolve them or select the clean canonical truck rows before enabling.
-                    </div>
-                  )}
-                  {bulkAction === "resolve_legacy_collision" && selectedCount > 0 && (
-                    <div className="mt-3 rounded-md border border-cyan-200/20 bg-cyan-300/10 px-3 py-2 text-sm leading-6 text-cyan-50">
-                      This will exclude selected legacy collision rows as "Legacy duplicate; canonical truck exists." Provider labels and attached-trailer metadata stay preserved.
+                      {selectedCollisionRows.length.toLocaleString()} selected asset{selectedCollisionRows.length === 1 ? "" : "s"} need match review and will not be counted as new billable assets. Select the current provider asset row before enabling.
                     </div>
                   )}
                 </div>
@@ -703,12 +678,11 @@ export default function AssetReviewPage() {
             </Panel>
 
             <Panel dark className="mt-4 p-4">
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                 <ReviewGroup label="Likely trucks" value={reviewInsights.trucks} />
                 <ReviewGroup label="Cars/pickups/motorbikes" value={reviewInsights.lightVehicles} />
                 <ReviewGroup label="Needs classification" value={reviewInsights.needsClassification} warning={reviewInsights.needsClassification > 0} />
                 <ReviewGroup label="Timestamp needs review" value={reviewInsights.needsTimestampReview} warning={reviewInsights.needsTimestampReview > 0} />
-                <ReviewGroup label="Collision rows" value={reviewInsights.duplicates} warning={reviewInsights.duplicates > 0} />
               </div>
             </Panel>
 
@@ -717,7 +691,7 @@ export default function AssetReviewPage() {
                 <EmptyState
                   dark
                   title="No assets match this review view"
-                  body="Adjust the filter, search, or sort settings to continue reviewing imported assets."
+                  body="Adjust the filter, search, or sort settings to continue reviewing provider assets."
                 />
               </div>
             ) : (
@@ -765,10 +739,10 @@ export default function AssetReviewPage() {
                           <StatusPill tone="warning">Timestamp needs review</StatusPill>
                         )}
                         {isDuplicate && (
-                          <StatusPill tone="warning">Possible duplicate</StatusPill>
+                          <StatusPill tone="warning">Needs match review</StatusPill>
                         )}
                         {isResolvedLegacyCollisionRow(asset) && (
-                          <StatusPill tone="neutral">Legacy duplicate resolved</StatusPill>
+                          <StatusPill tone="neutral">Duplicate excluded</StatusPill>
                         )}
                         {asset.non_primary_asset && (
                           <StatusPill tone="warning">Needs classification</StatusPill>
@@ -781,7 +755,7 @@ export default function AssetReviewPage() {
                       )}
                       {isDuplicate && (
                         <div className="mt-3 rounded-md border border-rose-300/25 bg-rose-500/10 px-3 py-2 text-sm leading-6 text-rose-50">
-                          Legacy collision row. Select it and use Resolve legacy collisions to exclude this old provider row without changing the clean canonical truck record.
+                          This provider asset needs match review before it can be enabled for intelligence.
                         </div>
                       )}
                       <div className="mt-3 grid gap-2 text-sm text-slate-300 md:grid-cols-2">
@@ -964,6 +938,19 @@ function Metric({
   );
 }
 
+function Diagnostic({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-lg border border-white/10 bg-slate-950/60 p-3">
+      <div className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">
+        {label}
+      </div>
+      <div className="mt-2 text-lg font-semibold text-slate-100">
+        {Number(value || 0).toLocaleString()}
+      </div>
+    </div>
+  );
+}
+
 function BillingMetric({
   label,
   value,
@@ -1143,22 +1130,22 @@ function assetFilterTabs(insights: any, summary: any) {
     {
       value: "all",
       label: "Review assets",
-      count: Number(summary.primary_review_count || summary.imported_count || 0),
+      count: Number(summary.current_provider_asset_count ?? summary.primary_review_count ?? summary.imported_count ?? 0),
     },
     {
       value: "unreviewed",
-      label: "Unreviewed trucks",
-      count: Number(summary.unreviewed_likely_truck_count || summary.unreviewed_count || 0),
+      label: "Pending review",
+      count: Number(summary.pending_review_count ?? summary.unreviewed_count ?? 0),
     },
     {
       value: "needs_classification",
       label: "Needs classification",
-      count: Number(summary.needs_classification_count || insights.needsClassification || 0),
+      count: Number(summary.needs_classification_count ?? insights.needsClassification ?? 0),
     },
     {
       value: "enabled",
       label: "Enabled intelligence",
-      count: Number(summary.enabled_intelligence_count || summary.enabled_count || 0),
+      count: Number(summary.enabled_intelligence_count ?? summary.enabled_count ?? 0),
     },
     {
       value: "excluded_disabled",
@@ -1168,24 +1155,17 @@ function assetFilterTabs(insights: any, summary: any) {
     {
       value: "timestamp_review",
       label: "Needs timestamp review",
-      count: Number(summary.needs_timestamp_review_count || insights.needsTimestampReview || 0),
+      count: Number(summary.needs_timestamp_review_count ?? insights.needsTimestampReview ?? 0),
     },
-    { value: "new_provider", label: "New provider assets", count: insights.newProviderAssets },
     { value: "light_vehicles", label: "Cars/pickups/motorbikes", count: insights.lightVehicles },
     { value: "trucks", label: "Trucks", count: insights.trucks },
-    {
-      value: "duplicates",
-      label: "Possible collisions",
-      count: Number(summary.possible_collision_group_count || insights.duplicates || 0),
-    },
   ];
 }
 
 function assetMatchesFilter(
   asset: any,
   filter: string,
-  searchTerm: string,
-  duplicateKeys: Set<string>
+  searchTerm: string
 ) {
   const text = [
     asset.canonical_truck_id,
@@ -1207,10 +1187,6 @@ function assetMatchesFilter(
   const search = searchTerm.trim().toLowerCase();
   if (search && !text.includes(search)) return false;
 
-  if (filter !== "duplicates" && isCanonicalDuplicateSecondary(asset)) {
-    return false;
-  }
-
   if (filter === "unreviewed") {
     return isPendingAssetReview(asset);
   }
@@ -1225,7 +1201,6 @@ function assetMatchesFilter(
     return ["car", "pickup", "motorcycle", "van"].includes(effectiveCategory(asset));
   }
   if (filter === "trucks") return effectiveCategory(asset) === "truck";
-  if (filter === "duplicates") return duplicateKeys.has(asset.id);
   return true;
 }
 
@@ -1247,18 +1222,22 @@ function sortFilteredAssets(assets: any[], sortBy: string) {
   });
 }
 
-function buildBulkEnablePreview(selectedAssets: any[], billingPreview: any) {
+function buildBulkEnablePreview(selectedAssets: any[], billingPreview: any, allAssets: any[] = []) {
+  const billableKeys = new Set(
+    allAssets
+      .filter(isStrictBillableAsset)
+      .map(assetCanonicalBillingKey)
+      .filter(Boolean)
+  );
+  const newlyBillableKeys = new Set<string>();
   const billableCandidates = selectedAssets.filter((asset) => !isProtectedCollisionRow(asset));
-  const newlyBillable = billableCandidates.filter(
-    (asset) =>
-      !(
-        asset.status === "active" &&
-        asset.billing_status === "enabled" &&
-        asset.intelligence_enabled &&
-        asset.billing_enabled_at
-      )
-  ).length;
-  const projectedBillableCount = Number(billingPreview.billableEnabledCount || 0) + newlyBillable;
+  for (const asset of billableCandidates) {
+    const key = assetCanonicalBillingKey(asset);
+    if (!key || billableKeys.has(key) || isStrictBillableAsset(asset)) continue;
+    newlyBillableKeys.add(key);
+  }
+  const projectedBillableCount =
+    Number(billingPreview.billableEnabledCount || 0) + newlyBillableKeys.size;
   const billableAdditional = Math.max(
     projectedBillableCount - Number(billingPreview.includedAssets || 0),
     0
@@ -1270,9 +1249,30 @@ function buildBulkEnablePreview(selectedAssets: any[], billingPreview: any) {
   };
 }
 
+function isStrictBillableAsset(asset: any) {
+  return Boolean(
+    asset.status === "active" &&
+      asset.billing_status === "enabled" &&
+      asset.intelligence_enabled &&
+      asset.billing_enabled_at
+  );
+}
+
+function assetCanonicalBillingKey(asset: any) {
+  return String(
+    asset.canonical_vehicle_key ||
+      asset.canonical_truck_id ||
+      asset.registration ||
+      asset.truck_id ||
+      asset.id ||
+      ""
+  )
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+}
+
 function bulkActionLabel(action: string) {
   if (action === "enable") return "Enable for intelligence";
-  if (action === "resolve_legacy_collision") return "Resolve legacy collisions";
   if (action === "exclude") return "Exclude";
   if (action === "disable") return "Disable";
   if (action === "review_later") return "Review later";
