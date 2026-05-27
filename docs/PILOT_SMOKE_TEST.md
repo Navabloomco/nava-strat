@@ -224,9 +224,12 @@ Confirm role gates:
 
 Confirm workflow behavior:
 
-- [ ] Create Journey keeps saved route picker behavior.
-- [ ] Create Journey keeps enabled vehicle picker behavior.
-- [ ] Create Journey saves production journeys as `is_demo = false` and preserves `start_time` / `end_time` if supplied.
+- [ ] Create Trip keeps saved route picker behavior.
+- [ ] Create Trip keeps enabled vehicle picker behavior.
+- [ ] Create Trip saves production journeys as `is_demo = false` and preserves `start_time` / `end_time` if supplied.
+- [ ] Create Trip persists the selected same-company asset link (`asset_id`) and selected driver link (`driver_id`) when the picker is used.
+- [ ] Create Trip accepts partial trips: client, vehicle, origin, destination, status, and start time are enough; revenue, fuel, expenses, and end time can be added later.
+- [ ] Optional commercial fields can store tonnage/rate when known, but Trip Intelligence still marks contribution unsafe until linked cost evidence exists.
 - [ ] Vehicle picker can fill the truck field.
 - [ ] Current standing driver assignment can fill or suggest the driver field.
 - [ ] Fuel entry uses JourneyPicker and submits without changing journey payload names.
@@ -245,6 +248,7 @@ Confirm workflow behavior:
 - [ ] Call `GET /api/ops/trip-intelligence?range=yesterday` with an ops-visible role and confirm the JSON returns Trip records projected from `journeys`.
 - [ ] Confirm `/api/ops/trip-intelligence` does not require `journeys.updated_at`; it uses `start_time` / `end_time` when available and `created_at` as fallback.
 - [ ] Confirm production Trip Intelligence excludes demo journeys. If no real trips exist, the API succeeds with `trips: []`, journey source `empty`, and a clear empty-state message instead of schema-missing output.
+- [ ] Create one real production Trip in `/ops/journey/new`, then open `/ops/efficiency?range=today` and confirm Trips projected is greater than 0 with clear missing-data notes if revenue/cost/distance links are incomplete.
 - [ ] Confirm Trip Intelligence returns trip identity, asset evidence, driver evidence, movement evidence, delay evidence, stale-tracking evidence, missing-data notes, profitability readiness, and management flags.
 - [ ] Confirm Trip Intelligence labels movement distance as provider-reported, GPS-estimated, journey-recorded, or unavailable, and does not return raw coordinate series.
 - [ ] Confirm Trip Intelligence uses journey revenue plus linked `fuel_logs` / `expenses` only when the role can see finance, and does not use unlinked costs for exact trip contribution.

@@ -44,7 +44,7 @@ const MAX_IMPLIED_SPEED_KPH = 160;
 const MAX_INFERRED_TRIP_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 const OPERATIONAL_JOURNEY_SELECT =
-  "id, company_id, internal_trip_id, asset_id, driver_id, client_name, truck, driver, from_location, to_location, expected_fuel_liters, status, start_time, end_time, created_at";
+  "id, company_id, internal_trip_id, asset_id, driver_id, client_name, truck, driver, from_location, to_location, route, expected_fuel_liters, status, start_time, end_time, created_at";
 const FINANCE_JOURNEY_SELECT = `${OPERATIONAL_JOURNEY_SELECT}, loaded_quantity, offloaded_quantity, billing_quantity, billing_unit, rate_type, rate_amount, rate_currency, fx_rate, revenue_original, revenue_kes, revenue_status`;
 const ASSET_SELECT =
   "id, company_id, provider_id, truck_id, registration, provider_name, status, last_seen_at, provider_location_label, asset_category, billing_status, intelligence_enabled, first_seen_at, telemetry_capability, telemetry_capabilities";
@@ -525,6 +525,7 @@ function buildTripIdentity(journey: any, window: any) {
     route: {
       from_location: from,
       to_location: to,
+      route_name: cleanText(journey.route),
       route_label: from || to ? `${from || "Unknown origin"} to ${to || "Unknown destination"}` : null,
     },
     cargo: {
@@ -589,10 +590,10 @@ function resolveDriverEvidence(
   tripWindow: any
 ): any {
   const journeyDriver = cleanText(journey.driver);
-  if (journeyDriver) {
+  if (journeyDriver || journey.driver_id) {
     return {
       driver_name: journeyDriver,
-      driver_id: null,
+      driver_id: journey.driver_id || null,
       evidence_label: "trip-linked",
       linked: true,
       missing_driver_link: false,
@@ -970,7 +971,10 @@ function buildMissingDataSummary(trips: any[]) {
 
 function buildAssetLookup(assets: any[]) {
   const byKey = new Map<string, any>();
+  const byId = new Map<string, any>();
   for (const asset of assets) {
+    if (asset.id && !byId.has(asset.id)) byId.set(asset.id, asset);
+
     const identity = readStoredVehicleIdentityContext(asset);
     const keys = [
       asset.truck_id,
@@ -986,10 +990,13 @@ function buildAssetLookup(assets: any[]) {
       if (!byKey.has(key)) byKey.set(key, asset);
     }
   }
-  return { byKey };
+  return { byKey, byId };
 }
 
 function findJourneyAsset(journey: any, lookup: ReturnType<typeof buildAssetLookup>) {
+  if (journey.asset_id && lookup.byId.has(journey.asset_id)) {
+    return lookup.byId.get(journey.asset_id) || null;
+  }
   const key = normalizeVehicleKey(journey.truck || "");
   return key ? lookup.byKey.get(key) || null : null;
 }

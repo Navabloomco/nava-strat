@@ -12,8 +12,63 @@ import {
 export const dynamic = "force-dynamic";
 
 const OPERATIONAL_JOURNEY_FIELDS =
-  "id, internal_trip_id, client_name, truck, driver, from_location, to_location, expected_fuel_liters, status, start_time, end_time, created_at";
+  "id, internal_trip_id, asset_id, driver_id, client_name, truck, driver, from_location, to_location, route, expected_fuel_liters, status, start_time, end_time, created_at";
 const FINANCE_JOURNEY_FIELDS = `${OPERATIONAL_JOURNEY_FIELDS}, loaded_quantity, offloaded_quantity, billing_quantity, billing_unit, rate_type, rate_amount, rate_currency, fx_rate, revenue_original, revenue_kes, revenue_status`;
+
+function normalizeOptionalText(value: unknown) {
+  if (value === undefined) return undefined;
+  const text = String(value || "").trim();
+  return text ? text.toUpperCase() : null;
+}
+
+function normalizeUuid(value: unknown) {
+  const text = String(value || "").trim();
+  return text || null;
+}
+
+function normalizeNumber(value: unknown) {
+  if (value === undefined || value === null || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function normalizeTimestamp(value: unknown) {
+  if (value === undefined) return undefined;
+  const text = String(value || "").trim();
+  if (!text) return null;
+  const date = new Date(text);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString();
+}
+
+function billingUnitFromRateType(rateType: string) {
+  return rateType.startsWith("per_") ? rateType.replace("per_", "") : rateType;
+}
+
+function calculateRevenueFields(input: {
+  rateType: string;
+  rateAmount: number | null;
+  rateCurrency: string;
+  fxRate: number;
+  billingQuantity: number | null;
+}) {
+  if (!input.rateAmount || input.rateAmount <= 0) {
+    return null;
+  }
+
+  const billingQuantity = input.rateType === "per_truck" ? 1 : Number(input.billingQuantity || 0);
+  const revenueOriginal = input.rateAmount * billingQuantity;
+  const revenueKes =
+    input.rateCurrency === "KES" ? revenueOriginal : revenueOriginal * Number(input.fxRate || 1);
+
+  return {
+    billing_quantity: billingQuantity,
+    billing_unit: billingUnitFromRateType(input.rateType),
+    revenue_original: revenueOriginal,
+    revenue_kes: revenueKes,
+    revenue_status: revenueOriginal > 0 ? "calculated" : "pending",
+  };
+}
 
 async function getUserFromRequest(req: Request) {
   const authHeader = req.headers.get("authorization");
@@ -172,8 +227,53 @@ export async function POST(req: Request) {
       );
     }
 
+    const assetId = normalizeUuid(body.asset_id);
+    const driverId = normalizeUuid(body.driver_id);
+    let selectedAsset: any = null;
+    let selectedDriver: any = null;
+
+    if (assetId) {
+      const { data: asset, error: assetError } = await supabaseAdmin
+        .from("fleet_assets")
+        .select("id, truck_id, registration, provider_name, status, intelligence_enabled")
+        .eq("company_id", company.id)
+        .eq("id", assetId)
+        .maybeSingle();
+
+      if (assetError) throw assetError;
+      if (!asset) {
+        return NextResponse.json(
+          { success: false, error: "Selected asset was not found for this company" },
+          { status: 400 }
+        );
+      }
+      selectedAsset = asset;
+    }
+
+    if (driverId) {
+      const { data: driverRecord, error: driverError } = await supabaseAdmin
+        .from("drivers")
+        .select("id, full_name, status")
+        .eq("company_id", company.id)
+        .eq("id", driverId)
+        .maybeSingle();
+
+      if (driverError) throw driverError;
+      if (!driverRecord) {
+        return NextResponse.json(
+          { success: false, error: "Selected driver was not found for this company" },
+          { status: 400 }
+        );
+      }
+      selectedDriver = driverRecord;
+    }
+
     const cleanTruck =
-      typeof body.truck === "string" ? body.truck.trim().toUpperCase() : "";
+      typeof body.truck === "string" && body.truck.trim()
+        ? body.truck.trim().toUpperCase()
+        : String(selectedAsset?.registration || selectedAsset?.truck_id || "")
+            .trim()
+            .toUpperCase();
     const status =
       typeof body.status === "string" && body.status.trim()
         ? body.status.trim()
@@ -217,6 +317,8 @@ export async function POST(req: Request) {
       company_id: company.id,
       is_demo: false,
       internal_trip_id: body.internal_trip_id || null,
+      asset_id: selectedAsset?.id || null,
+      driver_id: selectedDriver?.id || null,
       client_name:
         typeof body.client_name === "string"
           ? body.client_name.trim().toUpperCase()
@@ -224,8 +326,8 @@ export async function POST(req: Request) {
       truck: cleanTruck,
       driver:
         typeof body.driver === "string"
-          ? body.driver.trim().toUpperCase()
-          : body.driver || null,
+          ? body.driver.trim().toUpperCase() || selectedDriver?.full_name?.toUpperCase() || null
+          : selectedDriver?.full_name?.toUpperCase() || body.driver || null,
       from_location:
         typeof body.from_location === "string"
           ? body.from_location.trim().toUpperCase()
@@ -234,16 +336,70 @@ export async function POST(req: Request) {
         typeof body.to_location === "string"
           ? body.to_location.trim().toUpperCase()
           : body.to_location,
+      route:
+        typeof body.route === "string" && body.route.trim()
+          ? body.route.trim().toUpperCase()
+          : `${String(body.from_location || "").trim().toUpperCase()} → ${String(
+              body.to_location || ""
+            )
+              .trim()
+              .toUpperCase()}`,
       expected_fuel_liters: body.expected_fuel_liters ?? null,
       status,
     };
 
-    if (body.start_time !== undefined) {
-      insertPayload.start_time = body.start_time || null;
+    const startTime = normalizeTimestamp(body.start_time);
+    const endTime = normalizeTimestamp(body.end_time);
+    if (startTime !== undefined) insertPayload.start_time = startTime;
+    if (endTime !== undefined) insertPayload.end_time = endTime;
+
+    const loadedQuantity = normalizeNumber(body.loaded_quantity ?? body.loaded_tonnage);
+    const offloadedQuantity = normalizeNumber(body.offloaded_quantity ?? body.offloaded_tonnage);
+    const billingQuantity = normalizeNumber(
+      body.billing_quantity ?? offloadedQuantity ?? loadedQuantity
+    );
+    const rateAmount = normalizeNumber(body.rate_amount);
+    const rateType =
+      typeof body.rate_type === "string" && body.rate_type.trim()
+        ? body.rate_type.trim()
+        : "per_tonne";
+    const rateCurrency =
+      typeof body.rate_currency === "string" && body.rate_currency.trim()
+        ? body.rate_currency.trim().toUpperCase()
+        : "KES";
+    const providedFxRate = normalizeNumber(body.fx_rate);
+    if (rateAmount !== null && rateCurrency !== "KES" && providedFxRate === null) {
+      return NextResponse.json(
+        { success: false, error: "FX rate is required when rate currency is not KES" },
+        { status: 400 }
+      );
     }
-    if (body.end_time !== undefined) {
-      insertPayload.end_time = body.end_time || null;
+    const fxRate = rateCurrency === "KES" ? 1 : providedFxRate || 1;
+
+    if (loadedQuantity !== null) insertPayload.loaded_quantity = loadedQuantity;
+    if (offloadedQuantity !== null) insertPayload.offloaded_quantity = offloadedQuantity;
+    if (body.loaded_tonnage !== undefined) insertPayload.loaded_tonnage = loadedQuantity;
+    if (body.offloaded_tonnage !== undefined) insertPayload.offloaded_tonnage = offloadedQuantity;
+    if (billingQuantity !== null) {
+      insertPayload.billing_quantity = billingQuantity;
+      insertPayload.billing_unit = billingUnitFromRateType(rateType);
     }
+    if (rateAmount !== null) {
+      insertPayload.rate_type = rateType;
+      insertPayload.rate_amount = rateAmount;
+      insertPayload.rate_currency = rateCurrency;
+      insertPayload.fx_rate = fxRate;
+      const revenue = calculateRevenueFields({
+        rateType,
+        rateAmount,
+        rateCurrency,
+        fxRate,
+        billingQuantity,
+      });
+      if (revenue) Object.assign(insertPayload, revenue);
+    }
+    const revenueNotes = normalizeOptionalText(body.revenue_notes);
+    if (revenueNotes !== undefined) insertPayload.revenue_notes = revenueNotes;
 
     const { data: journey, error: insertError } = await supabaseAdmin
       .from("journeys")

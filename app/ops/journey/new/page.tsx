@@ -61,13 +61,25 @@ function labelize(value: string | null | undefined) {
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
+function toDateTimeLocalValue(date = new Date()) {
+  const offsetMs = date.getTimezoneOffset() * 60000;
+  return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16);
+}
+
 export default function NewJourneyPage() {
   const [client, setClient] = useState("");
   const [truck, setTruck] = useState("");
   const [driver, setDriver] = useState("");
   const [fromLocation, setFromLocation] = useState("");
   const [toLocation, setToLocation] = useState("");
+  const [startTime, setStartTime] = useState(() => toDateTimeLocalValue());
+  const [endTime, setEndTime] = useState("");
   const [expectedFuel, setExpectedFuel] = useState("");
+  const [loadedTonnage, setLoadedTonnage] = useState("");
+  const [rateAmount, setRateAmount] = useState("");
+  const [rateCurrency, setRateCurrency] = useState("KES");
+  const [rateType, setRateType] = useState("per_tonne");
+  const [fxRate, setFxRate] = useState("");
   const [message, setMessage] = useState("");
   const [savedRoutes, setSavedRoutes] = useState<SavedRoute[]>([]);
   const [savedRouteSearch, setSavedRouteSearch] = useState("");
@@ -255,7 +267,7 @@ export default function NewJourneyPage() {
 
   async function handleSubmit(e: any) {
     e.preventDefault();
-    setMessage("Saving journey...");
+    setMessage("Saving trip...");
 
     const cleanTruck = truck.trim().toUpperCase();
     const tripId = makeTripId();
@@ -264,7 +276,7 @@ export default function NewJourneyPage() {
     const token = sessionData.session?.access_token;
 
     if (!token) {
-      setMessage("You must be signed in to create a journey.");
+      setMessage("You must be signed in to create a trip.");
       return;
     }
 
@@ -276,24 +288,36 @@ export default function NewJourneyPage() {
       },
       body: JSON.stringify({
         internal_trip_id: tripId,
+        asset_id: selectedVehicleId || null,
+        driver_id: selectedDriverId || null,
         client_name: client.trim().toUpperCase(),
         truck: cleanTruck,
         driver: driver.trim().toUpperCase(),
         from_location: fromLocation.trim().toUpperCase(),
         to_location: toLocation.trim().toUpperCase(),
         status: "active",
+        start_time: startTime || null,
+        end_time: endTime || null,
         expected_fuel_liters: expectedFuel ? Number(expectedFuel) : null,
+        loaded_quantity: loadedTonnage ? Number(loadedTonnage) : null,
+        loaded_tonnage: loadedTonnage ? Number(loadedTonnage) : null,
+        billing_quantity: loadedTonnage ? Number(loadedTonnage) : null,
+        billing_unit: rateType === "per_truck" ? "truck" : "tonne",
+        rate_type: rateType,
+        rate_amount: rateAmount ? Number(rateAmount) : null,
+        rate_currency: rateCurrency,
+        fx_rate: rateCurrency === "KES" ? 1 : fxRate ? Number(fxRate) : null,
       }),
     });
 
     const json = await res.json();
 
     if (!json.success) {
-      setMessage(json.error || "Failed to save journey.");
+      setMessage(json.error || "Failed to save trip.");
       return;
     }
 
-    setMessage(`Journey saved ✅ Trip ID: ${tripId}`);
+    setMessage(`Trip saved. Trip ID: ${tripId}`);
     router.push("/ops/journey");
   }
 
@@ -303,11 +327,11 @@ export default function NewJourneyPage() {
         <PageHeader
           dark
           eyebrow="Operations"
-          title="Create Journey"
-          body="One vehicle can only have one active journey at a time, so Nava can keep fuel, expenses, revenue, and progress tied to the right movement."
+          title="Create Trip"
+          body="Create a real production trip so Nava can link movement, driver context, fuel, expenses, revenue, and progress to the right operation."
           actions={
             <Link href="/ops/journey">
-              <SecondaryButton type="button">Back to journeys</SecondaryButton>
+              <SecondaryButton type="button">Back to trips</SecondaryButton>
             </Link>
           }
         />
@@ -625,6 +649,35 @@ export default function NewJourneyPage() {
 
             <section>
               <h2 className="text-lg font-semibold text-white">
+                Trip timing
+              </h2>
+              <p className="mt-1 text-sm leading-6 text-slate-400">
+                Start time anchors Trip Intelligence to the right operating window. End time can stay blank for active trips.
+              </p>
+              <div className="mt-5 grid gap-5 md:grid-cols-2">
+                <FormField label="Start date and time" dark>
+                  <input
+                    type="datetime-local"
+                    value={startTime}
+                    onChange={(e) => setStartTime(e.target.value)}
+                    className={inputClass}
+                    required
+                  />
+                </FormField>
+
+                <FormField label="End date and time optional" dark>
+                  <input
+                    type="datetime-local"
+                    value={endTime}
+                    onChange={(e) => setEndTime(e.target.value)}
+                    className={inputClass}
+                  />
+                </FormField>
+              </div>
+            </section>
+
+            <section>
+              <h2 className="text-lg font-semibold text-white">
                 Fuel estimate
               </h2>
               <p className="mt-1 text-sm leading-6 text-slate-400">
@@ -642,6 +695,78 @@ export default function NewJourneyPage() {
               </div>
             </section>
 
+            <Panel dark className="border-white/10 bg-slate-950/60 p-4">
+              <details>
+                <summary className="cursor-pointer text-sm font-semibold text-white">
+                  Optional commercial details
+                </summary>
+                <p className="mt-2 text-sm leading-6 text-slate-400">
+                  Add rate and tonnage only when they are already agreed. Trip Intelligence will still show missing-data notes until linked costs are recorded.
+                </p>
+                <div className="mt-5 grid gap-5 md:grid-cols-2">
+                  <FormField label="Loaded tonnage optional" dark>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      placeholder="e.g. 28"
+                      value={loadedTonnage}
+                      onChange={(e) => setLoadedTonnage(e.target.value)}
+                      className={inputClass}
+                    />
+                  </FormField>
+
+                  <FormField label="Rate amount optional" dark>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      placeholder="e.g. 4500"
+                      value={rateAmount}
+                      onChange={(e) => setRateAmount(e.target.value)}
+                      className={inputClass}
+                    />
+                  </FormField>
+
+                  <FormField label="Rate currency" dark>
+                    <select
+                      value={rateCurrency}
+                      onChange={(e) => setRateCurrency(e.target.value)}
+                      className={inputClass}
+                    >
+                      <option value="KES">KES</option>
+                      <option value="USD">USD</option>
+                    </select>
+                  </FormField>
+
+                  <FormField label="Rate basis" dark>
+                    <select
+                      value={rateType}
+                      onChange={(e) => setRateType(e.target.value)}
+                      className={inputClass}
+                    >
+                      <option value="per_tonne">Per tonne</option>
+                      <option value="per_truck">Per truck</option>
+                    </select>
+                  </FormField>
+
+                  {rateCurrency !== "KES" && (
+                    <FormField label="FX rate to KES" dark>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.0001"
+                        placeholder="e.g. 130"
+                        value={fxRate}
+                        onChange={(e) => setFxRate(e.target.value)}
+                        className={inputClass}
+                      />
+                    </FormField>
+                  )}
+                </div>
+              </details>
+            </Panel>
+
             <Panel dark className="border-cyan-200/20 bg-cyan-300/10 p-4">
               <div className="text-xs font-bold uppercase tracking-[0.14em] text-cyan-100">
                 Trip ID preview
@@ -649,17 +774,17 @@ export default function NewJourneyPage() {
               <div className="mt-2 break-words text-sm font-semibold text-white">
                 {truck && client && fromLocation && toLocation
                   ? makeTripId()
-                  : "Fill journey details"}
+                  : "Fill trip details"}
               </div>
             </Panel>
 
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
               <PrimaryButton type="submit" className="w-full sm:w-auto">
-                Create journey
+                Create trip
               </PrimaryButton>
               <Link href="/ops/journey" className="w-full sm:w-auto">
                 <SecondaryButton type="button" className="w-full">
-                  Back to journeys
+                  Back to trips
                 </SecondaryButton>
               </Link>
             </div>
