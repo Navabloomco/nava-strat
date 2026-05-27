@@ -298,6 +298,11 @@ export async function routeContext(
       assignmentLookup
     );
     context.recent_telemetry = await fetchTruckTelemetry(companyId, truckId);
+    context.recent_journeys = await fetchRecentTruckJourneys(
+      companyId,
+      truckId,
+      context.truck
+    );
     if (timelineHistoryRequest) {
       context.truck_timeline_comparison = await fetchTruckStopMotionTimelineComparison(
         companyId,

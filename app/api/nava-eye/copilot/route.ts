@@ -320,7 +320,7 @@ export async function POST(req: Request) {
             {
               role: "system",
               content:
-                "You are Nava Eye, a company operations intelligence analyst for logistics. Use only the provided data. Analyze deeply, then present clean operator-ready answers. Use direct operational statements, not database/log-viewer language. Avoid phrases like \"Nava reads\", \"Nava treats\", \"based on the data provided\", \"available data does not prove\", or \"I cannot treat\". Keep uncertainty as an operational boundary: say what is established, what is suggested, and what remains unverified. Do not accuse drivers or recommend discipline/contacting drivers by default. Include relevant active memories if they help answer the question. For fleet status answers, describe user-facing times in the provided operational timezone, normally EAT, and state the timezone once instead of repeating it after every timestamp. Translate locations into operational place context and do not show raw coordinates unless the user explicitly asks for GPS/coordinates or no readable place label exists.",
+                "You are Nava Eye, a company operations intelligence analyst for logistics. Use only the provided data. Analyze deeply, then present clean operator-ready answers. Use direct operational statements, not database/log-viewer language. Avoid phrases like \"Nava reads\", \"Nava treats\", \"based on the data provided\", \"available data does not prove\", or \"I cannot treat\". Keep uncertainty as an operational boundary: say what is established, what is suggested, and what remains unverified. Do not accuse drivers or recommend discipline/contacting drivers by default. Include relevant active memories if they help answer the question. For fleet status answers, describe user-facing times in the provided operational timezone, normally EAT, and state the timezone once instead of repeating it after every timestamp. Translate locations into operational place context and do not show raw coordinates in customer-facing answers. If no readable place label is known, say the latest GPS/status is available but no readable place name is known yet.",
             },
             {
               role: "user",
@@ -1979,6 +1979,8 @@ function buildTruckStatusFallbackAnswer(context: any, options: any = {}) {
     `**${formatLiveTruckTopLine(
       model.matchedLabel,
       model.locationText,
+      model.journeyLocationFallback,
+      model.hasGpsPoint,
       model.lastSeenAt,
       model.speed,
       model.stale,
@@ -1999,9 +2001,7 @@ function buildTruckStatusFallbackAnswer(context: any, options: any = {}) {
 
   if (context.coordinate_request && model.hasGpsPoint) {
     parts.push(
-      `Coordinates: ${formatCoordinate(model.locationPoint.latitude)}, ${formatCoordinate(
-        model.locationPoint.longitude
-      )}.`
+      "Latest GPS/status evidence is available, but raw coordinates are kept as backend evidence."
     );
   }
 
@@ -2084,11 +2084,12 @@ function buildLiveTruckStatusModel(context: any) {
       latestTelemetry?.provider_location_label || truck.provider_location_label || null,
   };
   const location = formatOperationalLocation(locationPoint, {
-    includeCoordinates: Boolean(context.coordinate_request),
+    includeCoordinates: false,
     gpsFallback: null,
   });
   const locationText = location || null;
   const hasGpsPoint = hasCoordinates(locationPoint);
+  const journeyLocationFallback = buildJourneyLocationFallback(context.recent_journeys);
   const freshnessMinutes = freshnessMinutesFromNow(lastSeenAt);
   const stale = freshnessMinutes !== null && freshnessMinutes > 60;
   const timestampWarnings = latestTelemetry?.validation?.warnings || [];
@@ -2153,6 +2154,7 @@ function buildLiveTruckStatusModel(context: any) {
     locationPoint,
     locationText,
     hasGpsPoint,
+    journeyLocationFallback,
     stale,
     timestampWarnings,
     ignitionState,
@@ -2213,6 +2215,8 @@ function formatAttachedTrailerLiveContext(context: any) {
 function formatLiveTruckTopLine(
   label: string,
   location: string | null,
+  journeyLocationFallback: string | null,
+  hasGpsPoint: boolean,
   lastSeenAt: any,
   speed: number | null,
   stale: boolean,
@@ -2220,24 +2224,61 @@ function formatLiveTruckTopLine(
 ) {
   const time = formatTimelineClock(lastSeenAt, timeZone);
   const locationPhrase = cleanLocationLabel(location);
+  const humanFallback = cleanLocationLabel(journeyLocationFallback);
+  const missingPlaceText = hasGpsPoint
+    ? "Nava does not yet have a readable place name for the latest GPS point."
+    : "Location is not available from the latest provider status.";
   if (stale) {
-    return locationPhrase
-      ? `${label} was last seen ${locationPhrase} at ${time}; this is a last-known position, not confirmed live status.`
-      : `${label} was last seen at ${time}; location label unavailable. This is a last-known position, not confirmed live status.`;
+    if (locationPhrase) {
+      return `${label} was last seen ${locationPhrase} at ${time}; this is a last-known position, not confirmed live status.`;
+    }
+    if (humanFallback) {
+      return `${label} was last seen ${humanFallback}. Last seen at ${time}; this is a last-known position, not confirmed live status.`;
+    }
+    return `${label} was last seen at ${time}. ${missingPlaceText} This is a last-known position, not confirmed live status.`;
   }
   if (speed !== null && speed > 5) {
-    return locationPhrase
-      ? `${label} is moving ${locationPhrase}, last seen at ${time} at ${formatNumber(speed)} km/h.`
-      : `${label} is moving; location label unavailable. Last seen at ${time} at ${formatNumber(speed)} km/h.`;
+    if (locationPhrase) {
+      return `${label} is moving ${locationPhrase}, last seen at ${time} at ${formatNumber(speed)} km/h.`;
+    }
+    if (humanFallback) {
+      return `${label} is moving ${humanFallback}. Last seen at ${time} at ${formatNumber(speed)} km/h.`;
+    }
+    return `${label} is moving. ${missingPlaceText} Last seen at ${time} at ${formatNumber(speed)} km/h.`;
   }
   if (speed !== null) {
-    return locationPhrase
-      ? `${label} is currently stopped ${locationPhrase}, last seen at ${time} with speed ${formatNumber(speed)}.`
-      : `${label} is currently stopped; location label unavailable. Last seen at ${time} with speed ${formatNumber(speed)}.`;
+    if (locationPhrase) {
+      return `${label} is currently stopped ${locationPhrase}, last seen at ${time} with speed ${formatNumber(speed)}.`;
+    }
+    if (humanFallback) {
+      return `${label} is currently stopped ${humanFallback}. Last seen at ${time} with speed ${formatNumber(speed)}.`;
+    }
+    return `${label} is currently stopped. ${missingPlaceText} Last seen at ${time} with speed ${formatNumber(speed)}.`;
   }
-  return locationPhrase
-    ? `${label} is at its latest known position ${locationPhrase}, last seen at ${time}; speed is not available.`
-    : `${label} was last seen at ${time}; location label unavailable and speed is not available.`;
+  if (locationPhrase) {
+    return `${label} is at its latest known position ${locationPhrase}, last seen at ${time}; speed is not available.`;
+  }
+  if (humanFallback) {
+    return `${label} is at its latest known position ${humanFallback}. Last seen at ${time}; speed is not available.`;
+  }
+  return `${label} was last seen at ${time}. ${missingPlaceText} Speed is not available.`;
+}
+
+function buildJourneyLocationFallback(journeys: any[]) {
+  const journey = Array.isArray(journeys) ? journeys[0] : null;
+  if (!journey) return null;
+  const status = String(journey.status || "").toLowerCase();
+  const activeStatus =
+    !status ||
+    /\b(active|in[_\s-]?progress|ongoing|open|dispatched|en\s*route|enroute|started)\b/.test(
+      status
+    );
+  if (!activeStatus) return null;
+  const destination = cleanLocationLabel(journey.to_location);
+  if (destination) return `on a journey headed toward ${stripLeadingPlacePrefix(destination)}`;
+  const origin = cleanLocationLabel(journey.from_location);
+  if (origin) return `on a journey from ${stripLeadingPlacePrefix(origin)}`;
+  return null;
 }
 
 function formatLiveOperationalState(speed: number | null, stale: boolean) {
@@ -4557,7 +4598,7 @@ function formatOperationalLocation(value: any, options: OperationalLocationOptio
   }
   if (hasCoordinates(value)) {
     if (options.includeCoordinates) {
-      return `at coordinates ${formatCoordinate(value.latitude)}, ${formatCoordinate(value.longitude)}`;
+      return "at a GPS point without a readable place name";
     }
     return options.gpsFallback === undefined ? "at an unresolved GPS point" : options.gpsFallback;
   }
