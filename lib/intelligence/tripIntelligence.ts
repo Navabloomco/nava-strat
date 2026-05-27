@@ -921,6 +921,12 @@ function buildProfitabilityReadiness(
       contribution_margin_percent: null,
       contribution_per_km: null,
       contribution_per_tonne: null,
+      revenue_amount: null,
+      linked_fuel_cost: null,
+      linked_expense_cost: null,
+      linked_variable_cost: null,
+      contribution_amount: null,
+      contribution_summary: null,
       missing: ["finance visibility for this role"],
       label: "Finance hidden by role",
       customer_label: "Finance hidden by role",
@@ -958,6 +964,12 @@ function buildProfitabilityReadiness(
       contribution_margin_percent: null,
       contribution_per_km: null,
       contribution_per_tonne: null,
+      revenue_amount: hasRevenue ? revenue : null,
+      linked_fuel_cost: null,
+      linked_expense_cost: null,
+      linked_variable_cost: null,
+      contribution_amount: null,
+      contribution_summary: buildContributionSummary(finance, movement, null, false),
       missing: uniqueStrings(missingData),
     };
   }
@@ -980,6 +992,12 @@ function buildProfitabilityReadiness(
       distanceKm > 0 ? roundMoney(contribution / distanceKm) : null,
     contribution_per_tonne:
       billingQuantity > 0 ? roundMoney(contribution / billingQuantity) : null,
+    revenue_amount: revenue,
+    linked_fuel_cost: roundMoney(Number(finance.linked_fuel_cost_kes || 0)),
+    linked_expense_cost: roundMoney(Number(finance.linked_expense_cost_kes || 0)),
+    linked_variable_cost: variableCosts,
+    contribution_amount: contribution,
+    contribution_summary: buildContributionSummary(finance, movement, contribution, true),
     missing:
       distanceKm > 0
         ? []
@@ -1032,6 +1050,59 @@ function profitabilityReadinessLabel(status: ProfitabilityReadiness | null) {
   if (status === "calculable") return "Contribution review ready";
   if (status === "partially_linked") return "Partially linked";
   return "Not enough linked data";
+}
+
+function buildContributionSummary(
+  finance: any,
+  movement: any,
+  contribution: number | null,
+  ready: boolean
+) {
+  const revenue = Number(finance.revenue_kes || 0);
+  const fuelCost = Number(finance.linked_fuel_cost_kes || 0);
+  const expenseCost = Number(finance.linked_expense_cost_kes || 0);
+  const variableCost = Number(finance.linked_variable_costs_kes || 0);
+  const distanceKm = Number(movement.distance_km || 0);
+  const billingQuantity = Number(finance.billing_quantity || 0);
+  const margin =
+    ready && revenue > 0 && contribution !== null
+      ? roundMetric((contribution / revenue) * 100)
+      : null;
+
+  return {
+    ready_for_contribution_review: ready,
+    revenue_amount: revenue > 0 ? roundMoney(revenue) : null,
+    linked_fuel_cost: ready ? roundMoney(fuelCost) : null,
+    linked_expense_cost: ready ? roundMoney(expenseCost) : null,
+    linked_variable_cost: ready ? roundMoney(variableCost) : null,
+    contribution_amount: ready && contribution !== null ? roundMoney(contribution) : null,
+    contribution_margin_percent: margin,
+    per_km_contribution: ready && distanceKm > 0 && contribution !== null
+      ? roundMoney(contribution / distanceKm)
+      : null,
+    per_tonne_contribution: ready && billingQuantity > 0 && contribution !== null
+      ? roundMoney(contribution / billingQuantity)
+      : null,
+    distance_based_metrics_available: ready && distanceKm > 0,
+    extra_expenses_linked: Number(finance.linked_expense_count || 0) > 0,
+    caveats: buildContributionCaveats(finance, movement, ready),
+    wording:
+      "Contribution is linked revenue minus allocated fuel cost and linked trip expenses; it is not final audited profit.",
+  };
+}
+
+function buildContributionCaveats(finance: any, movement: any, ready: boolean) {
+  const caveats: string[] = [];
+  if (!ready) {
+    caveats.push("Contribution review needs linked revenue and linked cost evidence");
+  }
+  if (Number(movement.distance_km || 0) <= 0) {
+    caveats.push("Distance-based metrics pending");
+  }
+  if (Number(finance.linked_fuel_cost_kes || 0) > 0 && Number(finance.linked_expense_count || 0) === 0) {
+    caveats.push("No additional trip expenses linked yet");
+  }
+  return uniqueStrings(caveats);
 }
 
 function buildProfitabilitySupportingNotes(

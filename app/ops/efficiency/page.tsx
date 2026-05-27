@@ -459,8 +459,10 @@ function TripRow({ trip }: { trip: any }) {
   const identity = trip.trip_identity || {};
   const movement = trip.movement_evidence || {};
   const readiness = trip.profitability_readiness || {};
+  const contribution = readiness.contribution_summary || {};
   const flags = trip.management_flags || [];
   const route = identity.route?.route_label || "Route missing";
+  const showContribution = Boolean(contribution.ready_for_contribution_review);
 
   const content = (
     <div className="rounded-md border border-white/10 bg-white/[0.04] p-4 transition hover:border-cyan-200/40 hover:bg-cyan-300/10">
@@ -482,6 +484,14 @@ function TripRow({ trip }: { trip: any }) {
         <span>Source: {movement.distance_source || "unavailable"}</span>
         <span>Flags: {flags.length ? flags.slice(0, 3).map(humanize).join(", ") : "None"}</span>
       </div>
+      {showContribution && (
+        <div className="mt-3 grid gap-2 rounded-md border border-emerald-300/15 bg-emerald-300/10 p-3 text-xs leading-5 text-emerald-50 sm:grid-cols-4">
+          <span>Revenue: {formatCurrency(contribution.revenue_amount)}</span>
+          <span>Linked cost: {formatCurrency(contribution.linked_variable_cost)}</span>
+          <span>Contribution: {formatCurrency(contribution.contribution_amount)}</span>
+          <span>Margin: {formatPercentValue(contribution.contribution_margin_percent)}</span>
+        </div>
+      )}
       {Array.isArray(readiness.supporting_notes) && readiness.supporting_notes.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-2">
           {readiness.supporting_notes.slice(0, 3).map((note: string) => (
@@ -663,6 +673,24 @@ function formatKm(value: any) {
   return number.toLocaleString(undefined, {
     maximumFractionDigits: number % 1 === 0 ? 0 : 2,
   });
+}
+
+function formatCurrency(value: any) {
+  if (value === null || value === undefined || value === "") return "Pending";
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "Pending";
+  return `KES ${number.toLocaleString(undefined, {
+    maximumFractionDigits: number % 1 === 0 ? 0 : 2,
+  })}`;
+}
+
+function formatPercentValue(value: any) {
+  if (value === null || value === undefined || value === "") return "Pending";
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "Pending";
+  return `${number.toLocaleString(undefined, {
+    maximumFractionDigits: number % 1 === 0 ? 0 : 1,
+  })}%`;
 }
 
 function formatMinutes(value: any) {

@@ -295,6 +295,8 @@ export default function TripDetailPage() {
   const driverEvidence = trip?.driver_evidence || {};
   const finance = trip?.finance_evidence || {};
   const movement = trip?.movement_evidence || {};
+  const readiness = trip?.profitability_readiness || {};
+  const contributionSummary = readiness?.contribution_summary || {};
   const fuel = data?.fuel || {};
   const tripAllocations = fuel?.trip_allocations || [];
   const expenses = data?.expenses || [];
@@ -483,6 +485,86 @@ export default function TripDetailPage() {
                       ))}
                     </div>
                   </div>
+                )}
+              </Panel>
+            </section>
+
+            <section className="mt-8">
+              <Panel dark className="p-5">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <SectionTitle
+                    title="Contribution summary"
+                    subtitle="Linked revenue minus allocated fuel and linked trip expenses. This is review-ready contribution, not final audited profit."
+                  />
+                  <StatusPill tone={readinessTone(readiness.status)}>
+                    {readinessLabel(readiness)}
+                  </StatusPill>
+                </div>
+
+                {!capabilities.can_view_finance ? (
+                  <ReadOnlyNotice text="Contribution values are hidden for this role." />
+                ) : (
+                  <>
+                    <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                      <ContributionValue
+                        label="Revenue"
+                        value={formatCurrencyOrPending(contributionSummary.revenue_amount)}
+                      />
+                      <ContributionValue
+                        label="Allocated fuel/cost"
+                        value={formatCurrencyOrPending(contributionSummary.linked_fuel_cost)}
+                        detail="Fuel allocation evidence only"
+                      />
+                      <ContributionValue
+                        label="Linked expenses"
+                        value={formatCurrencyOrPending(contributionSummary.linked_expense_cost)}
+                        detail={
+                          contributionSummary.extra_expenses_linked
+                            ? "Trip expense records linked"
+                            : "No additional trip expenses linked yet"
+                        }
+                      />
+                      <ContributionValue
+                        label="Linked variable cost"
+                        value={formatCurrencyOrPending(contributionSummary.linked_variable_cost)}
+                      />
+                      <ContributionValue
+                        label="Contribution"
+                        value={formatCurrencyOrPending(contributionSummary.contribution_amount)}
+                        tone="strong"
+                      />
+                      <ContributionValue
+                        label="Contribution margin"
+                        value={formatPercentOrPending(contributionSummary.contribution_margin_percent)}
+                        tone="strong"
+                      />
+                      <ContributionValue
+                        label="Contribution per km"
+                        value={formatCurrencyOrPending(contributionSummary.per_km_contribution)}
+                        detail={
+                          contributionSummary.distance_based_metrics_available
+                            ? "Distance evidence available"
+                            : "Distance-based metrics pending"
+                        }
+                      />
+                      <ContributionValue
+                        label="Contribution per tonne"
+                        value={formatCurrencyOrPending(contributionSummary.per_tonne_contribution)}
+                        detail="Requires billing quantity"
+                      />
+                    </div>
+
+                    {Array.isArray(contributionSummary.caveats) &&
+                      contributionSummary.caveats.length > 0 && (
+                        <div className="mt-5 flex flex-wrap gap-2">
+                          {contributionSummary.caveats.map((note: string) => (
+                            <StatusPill key={note} tone="info">
+                              {note}
+                            </StatusPill>
+                          ))}
+                        </div>
+                      )}
+                  </>
                 )}
               </Panel>
             </section>
@@ -974,6 +1056,34 @@ function Detail({ label, value }: { label: string; value: string }) {
   );
 }
 
+function ContributionValue({
+  label,
+  value,
+  detail,
+  tone = "normal",
+}: {
+  label: string;
+  value: string;
+  detail?: string;
+  tone?: "normal" | "strong";
+}) {
+  return (
+    <div className="rounded-md border border-white/10 bg-white/[0.04] p-4">
+      <div className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">
+        {label}
+      </div>
+      <div
+        className={`mt-2 break-words text-lg font-semibold ${
+          tone === "strong" ? "text-emerald-100" : "text-white"
+        }`}
+      >
+        {value}
+      </div>
+      {detail && <div className="mt-2 text-xs leading-5 text-slate-400">{detail}</div>}
+    </div>
+  );
+}
+
 function EvidenceLine({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex flex-col gap-1 rounded-md border border-white/10 bg-white/[0.04] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
@@ -1083,6 +1193,20 @@ function formatMoney(value: any) {
   return number.toLocaleString(undefined, {
     maximumFractionDigits: number % 1 === 0 ? 0 : 2,
   });
+}
+
+function formatCurrencyOrPending(value: any) {
+  if (value === null || value === undefined || value === "") return "Pending";
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "Pending";
+  return `KES ${formatMoney(number)}`;
+}
+
+function formatPercentOrPending(value: any) {
+  if (value === null || value === undefined || value === "") return "Pending";
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "Pending";
+  return `${formatNumber(number)}%`;
 }
 
 function humanize(value: any) {
