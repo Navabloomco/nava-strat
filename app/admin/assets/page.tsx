@@ -749,11 +749,11 @@ export default function AssetReviewPage() {
                           type="checkbox"
                           checked={selectedAssetIds.has(asset.id)}
                           onChange={() => toggleAssetSelection(asset.id)}
-                          aria-label={`Select ${asset.canonical_truck_id || asset.registration || asset.truck_id || "asset"}`}
+                          aria-label={`Select ${assetDisplayName(asset)}`}
                           className="h-4 w-4 rounded border-white/20 bg-slate-900"
                         />
                         <h2 className="min-w-0 break-words text-lg font-semibold">
-                          {asset.canonical_truck_id || asset.registration || asset.truck_id || "Unknown asset"}
+                          {assetDisplayName(asset)}
                         </h2>
                         <StatusPill tone={statusTone(asset.billing_status)}>
                           {statusLabel(asset.billing_status)}
@@ -786,18 +786,25 @@ export default function AssetReviewPage() {
                       )}
                       <div className="mt-3 grid gap-2 text-sm text-slate-300 md:grid-cols-2">
                         <Detail
-                          label="Truck"
-                          value={asset.canonical_truck_id || asset.truck_id || "Not available"}
+                          label="Asset name"
+                          value={assetDisplayName(asset)}
                         />
                         <Detail
-                          label="Attached trailer"
-                          value={asset.attached_trailer_plate || "None reported"}
+                          label="Provider"
+                          value={asset.provider_name || "Not available"}
                         />
                         <Detail
-                          label="Provider label"
-                          value={asset.provider_label || asset.registration || "Not available"}
+                          label="Internal match key"
+                          value={asset.canonical_truck_id || asset.canonical_vehicle_key || "Not available"}
                         />
-                        <Detail label="Provider" value={asset.provider_name || "Not available"} />
+                        <Detail
+                          label="Label context"
+                          value={
+                            asset.attached_trailer_plate
+                              ? `Includes trailer ${asset.attached_trailer_plate}`
+                              : "No trailer text in provider name"
+                          }
+                        />
                         <Detail label="Provider status" value={asset.status || "Not available"} />
                         <Detail
                           label="Telemetry capability"
@@ -1271,6 +1278,17 @@ function bulkActionLabel(action: string) {
   if (action === "review_later") return "Review later";
   if (action === "set_category") return "Set category only";
   return "Update";
+}
+
+function assetDisplayName(asset: any) {
+  return (
+    asset.display_asset_name ||
+    asset.provider_label ||
+    asset.registration ||
+    asset.truck_id ||
+    asset.canonical_truck_id ||
+    "Unknown asset"
+  );
 }
 
 function effectiveCategory(asset: any) {

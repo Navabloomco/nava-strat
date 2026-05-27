@@ -151,7 +151,7 @@ Open `/admin/assets?companyId=<id>`.
 - [ ] Confirm unreviewed assets are visually obvious.
 - [ ] Confirm imported and unreviewed counts use canonical truck identity, so legacy rows like `KCF529Z ZF3316` do not inflate normal review counts when `KCF529Z` also exists.
 - [ ] Confirm Possible duplicates detects canonical collisions such as `KCF529Z` and legacy `KCF529Z ZF3316`.
-- [ ] Confirm a clean canonical truck row with an attached trailer, such as Truck `KCF529Z` / Attached trailer `ZF3316`, is not marked Possible duplicate unless another competing review row exists.
+- [ ] Confirm a clean provider asset label such as `KCF529Z ZF3316` is shown as the Asset name and is not marked Possible duplicate unless another competing review row exists.
 - [ ] In Possible collisions, select visible legacy rows and apply `Resolve legacy collisions`; confirm only those old rows are excluded as `Legacy duplicate; canonical truck exists`, clean canonical truck rows remain unchanged, and Possible collision groups drop.
 - [ ] Confirm bulk enable refuses selections that include Possible duplicate or already-resolved legacy collision rows and the billable preview does not count those rows as new billable assets.
 - [ ] Confirm obvious non-primary labels such as `MOTOR BIKE`, `TOYOTA PROBOX`, `HILUX PICK-UP`, or raw IMEI/device IDs are kept out of likely-truck and truck-duplicate counts.
@@ -159,7 +159,7 @@ Open `/admin/assets?companyId=<id>`.
 - [ ] Confirm FleetTrack/Oak and Gold assets do not display 1970-style `Last seen` dates; invalid provider timestamps show `Provider timestamp invalid` or `Last seen unavailable`.
 - [ ] Confirm the `Needs timestamp review` filter shows assets with invalid, missing, future, or first-seen-conflicting provider timestamps.
 - [ ] Confirm search works by truck ID/plate, provider, category, and review status.
-- [ ] Confirm truck-and-trailer provider labels show separate fields: Truck, Attached trailer, and Provider label.
+- [ ] Confirm truck-and-trailer provider labels show the provider asset name first, with the internal match key and trailer label context shown only as secondary review detail.
 - [ ] Confirm filters/tabs work for All, Unreviewed, Enabled intelligence, Excluded/disabled, Needs timestamp review, New provider assets, Cars/pickups/motorbikes, Trucks, and Possible duplicates.
 - [ ] Select multiple unreviewed provider assets and bulk exclude cars/pickups/motorbikes with an excluded reason.
 - [ ] Select truck assets and bulk enable only after the confirmation shows projected billable enabled count and planning-only monthly estimate.

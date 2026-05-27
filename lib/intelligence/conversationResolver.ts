@@ -483,7 +483,11 @@ function buildConversationVehicleCandidate(asset: any) {
     id: asset.id,
     truck_id: asset.truck_id || null,
     registration: asset.registration || null,
-    display_label: asset.registration || asset.truck_id || "truck",
+    display_label:
+      identityContext.provider_label ||
+      asset.registration ||
+      asset.truck_id ||
+      "truck",
     attached_trailer_plate: identityContext.attached_trailer_plate,
     provider_label: identityContext.provider_label,
     enabled_for_intelligence: Boolean(asset.intelligence_enabled),

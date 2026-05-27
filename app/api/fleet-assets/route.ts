@@ -71,10 +71,16 @@ function noStoreJson(body: any, init?: ResponseInit) {
 function sanitizeAsset(asset: any, reviewContext: any = {}) {
   const timestampQuality = deriveAssetTimestampQuality(asset);
   const identityContext = readStoredVehicleIdentityContext(asset);
+  const providerAssetName =
+    identityContext.provider_label ||
+    asset.registration ||
+    asset.truck_id ||
+    null;
   return {
     id: asset.id,
     registration: asset.registration || null,
     truck_id: asset.truck_id || null,
+    display_asset_name: providerAssetName,
     canonical_truck_id: identityContext.canonical_truck_plate || asset.truck_id || null,
     canonical_vehicle_key:
       identityContext.canonical_key || normalizeAssetReviewKey(asset.registration || asset.truck_id),

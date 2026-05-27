@@ -2036,7 +2036,10 @@ function buildLiveTruckStatusModel(context: any) {
   const latestTelemetry = telemetry[0] || null;
   const events = Array.isArray(context.recent_events) ? context.recent_events : [];
   const idleEvents = events.filter(isIdleStopEvent);
+  const truckIdentity = readStoredVehicleIdentityContext(truck);
   const matchedLabel =
+    context.vehicle_match?.provider_label ||
+    truckIdentity.provider_label ||
     truck.registration ||
     truck.truck_id ||
     context.vehicle_match?.matched_registration ||
@@ -2161,9 +2164,11 @@ function buildAttachedTrailerLiveContext(context: any, truck: any, truckLabel: s
 function formatAttachedTrailerLiveContext(context: any) {
   if (!context?.attached_trailer_plate) return null;
   const providerLabel = context.provider_label
-    ? ` on the latest provider label ${context.provider_label}`
+    ? ` ${context.provider_label}`
     : "";
-  return `${context.attached_trailer_plate} appears as the attached trailer${providerLabel}. The location follows truck ${context.truck_label} unless trailer-specific tracking is added.`;
+  return context.provider_label
+    ? `${context.attached_trailer_plate} appears in the provider asset name${providerLabel}. The location comes from that tracked asset, not independent trailer tracking.`
+    : `${context.attached_trailer_plate} appears in the provider asset label. The location comes from that tracked asset, not independent trailer tracking.`;
 }
 
 function formatLiveTruckTopLine(

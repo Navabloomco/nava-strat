@@ -122,7 +122,7 @@ export function normalizeVehicle(
   }
   if (identity.attached_trailer_plate) {
     warnings.push(
-      "Provider label included an attached trailer; canonical asset identity uses the truck plate"
+      "Provider asset name includes trailer context; internal matching uses the truck plate"
     );
   }
   if (
