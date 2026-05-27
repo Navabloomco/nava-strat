@@ -232,7 +232,10 @@ Confirm workflow behavior:
 - [ ] Optional commercial fields can store tonnage/rate when known, but Trip Intelligence still marks contribution unsafe until linked cost evidence exists.
 - [ ] Vehicle picker can fill the truck field.
 - [ ] Current standing driver assignment can fill or suggest the driver field.
-- [ ] Fuel entry uses JourneyPicker and submits without changing journey payload names.
+- [ ] Fuel entry creates a fuel issue ledger record. A fuel issue linked with legacy `journey_id` remains a fallback only; exact Trip fuel cost should come from `fuel_allocations`.
+- [ ] Apply the `fuel_allocations` migration before testing allocation workflows.
+- [ ] Create a 700L fuel issue with no exact Trip allocation, then call `POST /api/fuel/allocations` to allocate 450L to Trip A and confirm `GET /api/fuel/allocations?fuelLogId=<id>` shows 250L remaining/unallocated or carry-forward pending.
+- [ ] Confirm the allocation API rejects a second active allocation that would exceed the fuel issue litres/cost, excluding reversed allocations.
 - [ ] Expense entry uses JourneyPicker and submits without changing payload names.
 - [ ] Live Tracking only shows enabled intelligence assets.
 - [ ] Geofence labels render when matched.
@@ -251,7 +254,9 @@ Confirm workflow behavior:
 - [ ] Create one real production Trip in `/ops/journey/new`, then open `/ops/efficiency?range=today` and confirm Trips projected is greater than 0 with clear missing-data notes if revenue/cost/distance links are incomplete.
 - [ ] Confirm Trip Intelligence returns trip identity, asset evidence, driver evidence, movement evidence, delay evidence, stale-tracking evidence, missing-data notes, profitability readiness, and management flags.
 - [ ] Confirm Trip Intelligence labels movement distance as provider-reported, GPS-estimated, journey-recorded, or unavailable, and does not return raw coordinate series.
-- [ ] Confirm Trip Intelligence uses journey revenue plus linked `fuel_logs` / `expenses` only when the role can see finance, and does not use unlinked costs for exact trip contribution.
+- [ ] Confirm Trip Intelligence uses journey revenue plus `fuel_allocations` and linked `expenses` only when the role can see finance, and does not use unlinked fuel/costs for exact trip contribution.
+- [ ] If a journey has no fuel allocations but has legacy `fuel_logs.journey_id`, confirm Trip Intelligence labels the fuel source as `legacy_journey_link`.
+- [ ] Confirm Trip Intelligence uses the 450L allocation/cost for Trip A, not the full 700L fuel issue, and does not claim actual fuel burn, fuel theft, or fuel efficiency.
 - [ ] As an ops-only role, confirm Trip Intelligence hides finance amounts and returns a role visibility note.
 - [ ] As a finance/management/elevated role, confirm Trip Intelligence marks profitability readiness as `calculable`, `partially_linked`, or `not_enough_linked_data` and lists exactly what is missing when contribution is unsafe.
 - [ ] Confirm Trip Intelligence does not require fuel as the only cost source and does not invent profit when linked revenue/cost evidence is missing.

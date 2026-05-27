@@ -6,6 +6,13 @@ import {
   resolveOperationalDayRange,
   resolveOperationalTimeZone,
 } from "../timeFormatting";
+import {
+  FuelIssueAllocationSummary,
+  isFuelAllocationSchemaMissing,
+  isTripFuelAllocation,
+  summarizeFuelIssue,
+  summarizeAllocationsForJourney,
+} from "./fuelAllocation";
 import { normalizeVehicleKey } from "./entityResolver";
 
 export type TripIntelligenceRange = "today" | "yesterday" | "7d";
@@ -26,6 +33,10 @@ type QueryResult<T> = {
   rows: T[];
   missing?: boolean;
   error?: string | null;
+};
+
+type FuelAllocationQueryResult = QueryResult<any> & {
+  issue_summaries?: Record<string, FuelIssueAllocationSummary>;
 };
 
 type TripTimeframe = {
@@ -111,6 +122,7 @@ export async function buildTripIntelligenceSummary(input: TripIntelligenceInput)
     distanceRowsResult,
     telemetryResult,
     eventsResult,
+    fuelAllocationsResult,
     fuelResult,
     expensesResult,
   ] = await Promise.all([
@@ -118,6 +130,7 @@ export async function buildTripIntelligenceSummary(input: TripIntelligenceInput)
     fetchProviderDistanceRows(input.companyId, timeframe, truckIds),
     fetchTelemetryRows(input.companyId, timeframe, truckIds),
     fetchTelemetryEventRows(input.companyId, timeframe, truckIds),
+    includeFinance ? fetchFuelAllocations(input.companyId, journeyIds) : emptyResult<any>(),
     includeFinance ? fetchFuelLogs(input.companyId, journeyIds) : emptyResult<any>(),
     includeFinance ? fetchExpenses(input.companyId, journeyIds) : emptyResult<any>(),
   ]);
@@ -125,6 +138,9 @@ export async function buildTripIntelligenceSummary(input: TripIntelligenceInput)
   const distanceByTruck = groupByTruckKey(distanceRowsResult.rows, "truck_id");
   const telemetryByTruck = groupByTruckKey(telemetryResult.rows, "truck_id");
   const eventsByTruck = groupByTruckKey(eventsResult.rows, "truck_id");
+  const fuelAllocationsByJourney = groupBy(fuelAllocationsResult.rows, "journey_id");
+  const fuelAllocationIssueSummaries =
+    (fuelAllocationsResult as FuelAllocationQueryResult).issue_summaries || {};
   const fuelByJourney = groupBy(fuelResult.rows, "journey_id");
   const expensesByJourney = groupBy(expensesResult.rows, "journey_id");
 
@@ -150,6 +166,7 @@ export async function buildTripIntelligenceSummary(input: TripIntelligenceInput)
       "started_at"
     );
     const linkedFuelLogs = fuelByJourney.get(journey.id) || [];
+    const linkedFuelAllocations = fuelAllocationsByJourney.get(journey.id) || [];
     const linkedExpenses = expensesByJourney.get(journey.id) || [];
     const driverEvidence = resolveDriverEvidence(
       journey,
@@ -162,9 +179,11 @@ export async function buildTripIntelligenceSummary(input: TripIntelligenceInput)
     const delayEvidence = buildDelayEvidence(eventRows, telemetryRows);
     const financeEvidence = buildFinanceEvidence(
       journey,
+      linkedFuelAllocations,
       linkedFuelLogs,
       linkedExpenses,
-      includeFinance
+      includeFinance,
+      fuelAllocationIssueSummaries
     );
     const missingData = buildTripMissingData({
       journey,
@@ -216,6 +235,9 @@ export async function buildTripIntelligenceSummary(input: TripIntelligenceInput)
       provider_trip_summaries: sourceStatus(distanceRowsResult),
       telemetry_logs: sourceStatus(telemetryResult),
       telemetry_events: sourceStatus(eventsResult),
+      fuel_allocations: includeFinance
+        ? sourceStatus(fuelAllocationsResult)
+        : hiddenSourceStatus(),
       fuel_logs: includeFinance ? sourceStatus(fuelResult) : hiddenSourceStatus(),
       expenses: includeFinance ? sourceStatus(expensesResult) : hiddenSourceStatus(),
     },
@@ -484,6 +506,72 @@ async function fetchFuelLogs(companyId: string, journeyIds: string[]): Promise<Q
   }
 }
 
+async function fetchFuelAllocations(
+  companyId: string,
+  journeyIds: string[]
+): Promise<FuelAllocationQueryResult> {
+  if (!journeyIds.length) return { rows: [], issue_summaries: {} };
+
+  try {
+    const { data, error } = await supabaseAdmin
+      .from("fuel_allocations")
+      .select(
+        "id, company_id, fuel_log_id, journey_id, asset_id, truck_text, allocated_liters, allocated_cost, allocation_status, allocation_basis, notes, created_at"
+      )
+      .eq("company_id", companyId)
+      .in("journey_id", journeyIds)
+      .limit(5000);
+
+    if (error) {
+      if (isFuelAllocationSchemaMissing(error) || isMissingSchemaError(error)) {
+        return { rows: [], missing: true, error: safeError(error), issue_summaries: {} };
+      }
+      throw error;
+    }
+
+    const rows = data || [];
+    const fuelLogIds = uniqueStrings(
+      rows.map((row: any) => String(row.fuel_log_id || "")).filter(Boolean)
+    );
+    if (!fuelLogIds.length) return { rows, issue_summaries: {} };
+
+    const [fuelLogResult, allocationResult] = await Promise.all([
+      supabaseAdmin
+        .from("fuel_logs")
+        .select("id, liters, total_cost, truck_text, journey_id, allocation_status, created_at")
+        .eq("company_id", companyId)
+        .in("id", fuelLogIds),
+      supabaseAdmin
+        .from("fuel_allocations")
+        .select(
+          "id, fuel_log_id, journey_id, allocated_liters, allocated_cost, allocation_status, allocation_basis"
+        )
+        .eq("company_id", companyId)
+        .in("fuel_log_id", fuelLogIds),
+    ]);
+
+    if (fuelLogResult.error) throw fuelLogResult.error;
+    if (allocationResult.error) throw allocationResult.error;
+
+    const allAllocationsByFuelLog = groupBy(allocationResult.data || [], "fuel_log_id");
+    const issueSummaries: Record<string, FuelIssueAllocationSummary> = {};
+    for (const fuelLog of fuelLogResult.data || []) {
+      if (!fuelLog.id) continue;
+      issueSummaries[fuelLog.id] = summarizeFuelIssue(
+        fuelLog,
+        allAllocationsByFuelLog.get(fuelLog.id) || []
+      );
+    }
+
+    return { rows, issue_summaries: issueSummaries };
+  } catch (err: any) {
+    if (isFuelAllocationSchemaMissing(err) || isMissingSchemaError(err)) {
+      return { rows: [], missing: true, error: safeError(err), issue_summaries: {} };
+    }
+    throw err;
+  }
+}
+
 async function fetchExpenses(companyId: string, journeyIds: string[]): Promise<QueryResult<any>> {
   if (!journeyIds.length) return { rows: [] };
 
@@ -705,31 +793,80 @@ function buildDelayEvidence(eventRows: any[], telemetryRows: any[]) {
 
 function buildFinanceEvidence(
   journey: any,
+  fuelAllocations: any[],
   fuelLogs: any[],
   expenses: any[],
-  includeFinance: boolean
+  includeFinance: boolean,
+  fuelIssueSummaries: Record<string, FuelIssueAllocationSummary> = {}
 ) {
   if (!includeFinance) {
     return {
       visible: false,
       revenue_kes: null,
       linked_fuel_cost_kes: null,
+      linked_fuel_liters: null,
       linked_expense_cost_kes: null,
       linked_variable_costs_kes: null,
       linked_fuel_log_count: null,
+      linked_fuel_allocation_count: null,
       linked_expense_count: null,
+      fuel_cost_source: null,
+      fuel_allocation_notes: [],
       evidence_label: "finance hidden by role",
     };
   }
 
   const revenue = roundMoney(Number(journey.revenue_kes || 0));
-  const fuelCost = roundMoney(
+  const activeFuelAllocations = fuelAllocations.filter(isTripFuelAllocation);
+  const allocatedFuel = summarizeAllocationsForJourney(activeFuelAllocations);
+  const hasFuelAllocations = activeFuelAllocations.length > 0;
+  const legacyFuelCost = roundMoney(
     fuelLogs.reduce((sum, row) => sum + Number(row.total_cost || 0), 0)
   );
+  const legacyFuelLiters = roundMetric(
+    fuelLogs.reduce((sum, row) => sum + Number(row.liters || 0), 0)
+  );
+  const fuelCost = hasFuelAllocations ? allocatedFuel.allocated_cost : legacyFuelCost;
+  const fuelLiters = hasFuelAllocations ? allocatedFuel.allocated_liters : legacyFuelLiters;
   const expenseCost = roundMoney(
     expenses.reduce((sum, row) => sum + Number(row.amount || 0), 0)
   );
   const rateAmount = numericOrNull(journey.rate_amount);
+  const fuelLogIds = uniqueStrings(
+    (hasFuelAllocations ? activeFuelAllocations : fuelLogs)
+      .map((row: any) => String(row.fuel_log_id || row.id || ""))
+      .filter(Boolean)
+  );
+  const fuelAllocationNotes: string[] = [];
+
+  if (hasFuelAllocations) {
+    for (const fuelLogId of fuelLogIds) {
+      const issueSummary = fuelIssueSummaries[fuelLogId];
+      if (!issueSummary) continue;
+      if (issueSummary.remaining_liters > 0 || issueSummary.remaining_cost > 0) {
+        fuelAllocationNotes.push("fuel issue partially allocated");
+      }
+      if (issueSummary.carried_forward_liters > 0 || issueSummary.carried_forward_cost > 0) {
+        fuelAllocationNotes.push("carried-forward fuel present");
+      }
+      if (issueSummary.over_allocated) {
+        fuelAllocationNotes.push("fuel issue allocation needs review");
+      }
+    }
+    if (fuelCost <= 0 && fuelLiters > 0) {
+      fuelAllocationNotes.push("fuel allocation cost unavailable");
+    }
+  } else if (fuelLogs.length > 0) {
+    fuelAllocationNotes.push("legacy fuel link used");
+  } else {
+    fuelAllocationNotes.push("fuel allocation missing");
+  }
+
+  const fuelCostSource = hasFuelAllocations
+    ? "fuel_allocations"
+    : fuelLogs.length > 0
+      ? "legacy_journey_link"
+      : "missing";
 
   return {
     visible: true,
@@ -741,11 +878,19 @@ function buildFinanceEvidence(
     billing_quantity: numericOrNull(journey.billing_quantity),
     billing_unit: cleanText(journey.billing_unit),
     linked_fuel_cost_kes: fuelCost,
+    linked_fuel_liters: fuelLiters,
     linked_expense_cost_kes: expenseCost,
     linked_variable_costs_kes: roundMoney(fuelCost + expenseCost),
-    linked_fuel_log_count: fuelLogs.length,
+    linked_fuel_log_count: fuelLogIds.length,
+    linked_fuel_allocation_count: activeFuelAllocations.length,
     linked_expense_count: expenses.length,
-    evidence_label: "journey revenue and linked fuel/expense records by journey_id",
+    fuel_cost_source: fuelCostSource,
+    fuel_allocation_notes: uniqueStrings(fuelAllocationNotes),
+    evidence_label: hasFuelAllocations
+      ? "journey revenue, fuel_allocations assigned to this trip, and linked expenses"
+      : fuelLogs.length > 0
+        ? "journey revenue, legacy fuel_logs.journey_id fallback, and linked expenses"
+        : "journey revenue and linked expenses; no fuel allocation evidence",
     unlinked_costs_used_for_profit: false,
   };
 }
@@ -772,12 +917,13 @@ function buildProfitabilityReadiness(
   const revenue = Number(finance.revenue_kes || 0);
   const variableCosts = Number(finance.linked_variable_costs_kes || 0);
   const hasRevenue = revenue > 0;
-  const hasLinkedCostEvidence =
+  const hasLinkedCostRecords =
     Number(finance.linked_fuel_log_count || 0) + Number(finance.linked_expense_count || 0) > 0;
+  const hasLinkedCostEvidence = variableCosts > 0;
   const status: ProfitabilityReadiness =
     hasRevenue && hasLinkedCostEvidence
       ? "calculable"
-      : hasRevenue || hasLinkedCostEvidence || Number(movement.distance_km || 0) > 0
+      : hasRevenue || hasLinkedCostRecords || Number(movement.distance_km || 0) > 0
         ? "partially_linked"
         : "not_enough_linked_data";
 
@@ -833,17 +979,17 @@ function buildTripMissingData(input: {
 
   if (input.includeFinance && input.financeEvidence.visible) {
     if (Number(input.financeEvidence.revenue_kes || 0) <= 0) missing.push("missing revenue");
-    if (Number(input.financeEvidence.linked_fuel_log_count || 0) === 0) {
-      missing.push("missing linked fuel");
+    if (input.financeEvidence.fuel_cost_source === "missing") {
+      missing.push("fuel allocation missing");
+    } else if (input.financeEvidence.fuel_cost_source === "legacy_journey_link") {
+      missing.push("legacy fuel link used");
+    } else if (Number(input.financeEvidence.linked_fuel_cost_kes || 0) <= 0) {
+      missing.push("fuel allocation cost unavailable");
     }
     if (Number(input.financeEvidence.linked_expense_count || 0) === 0) {
       missing.push("missing linked expenses");
     }
-    if (
-      Number(input.financeEvidence.linked_fuel_log_count || 0) +
-        Number(input.financeEvidence.linked_expense_count || 0) ===
-      0
-    ) {
+    if (Number(input.financeEvidence.linked_variable_costs_kes || 0) <= 0) {
       missing.push("missing linked cost evidence");
     }
   }
