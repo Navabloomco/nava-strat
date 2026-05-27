@@ -633,7 +633,8 @@ export async function runProviderSync(
         }
 
         const providerTimestampTrusted =
-          normalized.timestamp_quality?.status === "valid";
+          normalized.timestamp_quality?.status === "valid" ||
+          normalized.timestamp_quality?.status === "slightly_future_clock_skew";
         const assetPayload: Record<string, any> = {
           provider_id: provider.id,
           provider_name: provider.provider_name,

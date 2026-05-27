@@ -8,6 +8,7 @@ import {
 } from "../../../lib/api/roleAccess";
 import { isPendingAssetReview } from "../../../lib/assetReview";
 import { readStoredVehicleIdentityContext } from "../../../lib/providers/vehicleIdentity";
+import { classifyProviderTimestampQuality } from "../../../lib/timeFormatting";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -448,7 +449,15 @@ function trustedAssetSortTime(asset: any) {
 function deriveAssetTimestampQuality(asset: any) {
   const embedded = asset?.telemetry_capabilities?.timestamp_quality;
   const embeddedStatus = String(embedded?.status || "").toLowerCase();
-  if (["invalid", "suspect", "missing"].includes(embeddedStatus)) {
+  if (
+    [
+      "invalid",
+      "suspect",
+      "missing",
+      "slightly_future_clock_skew",
+      "future_suspicious",
+    ].includes(embeddedStatus)
+  ) {
     return {
       status: embeddedStatus,
       reason: String(embedded?.reason || "provider_timestamp_needs_review"),
@@ -466,8 +475,12 @@ function deriveAssetTimestampQuality(asset: any) {
   if (lastSeen.getUTCFullYear() < 2000) {
     return { status: "invalid", reason: "provider_timestamp_before_2000" };
   }
-  if (lastSeen.getTime() > Date.now() + 48 * 60 * 60 * 1000) {
-    return { status: "invalid", reason: "provider_timestamp_in_future" };
+  const futureQuality = classifyProviderTimestampQuality(lastSeen);
+  if (futureQuality.status === "slightly_future_clock_skew") {
+    return { status: "slightly_future_clock_skew", reason: futureQuality.reason };
+  }
+  if (futureQuality.status === "future_suspicious") {
+    return { status: "future_suspicious", reason: futureQuality.reason };
   }
 
   if (asset.first_seen_at) {

@@ -231,6 +231,11 @@ Confirm workflow behavior:
 - [ ] Expense entry uses JourneyPicker and submits without changing payload names.
 - [ ] Live Tracking only shows enabled intelligence assets.
 - [ ] Geofence labels render when matched.
+- [ ] Call `GET /api/ops/efficiency?range=yesterday` with an ops-visible role and confirm the JSON returns movement, idle/stopped, stale-location, productivity, driver-readiness, and client-waiting readiness sections.
+- [ ] Confirm `/api/ops/efficiency` labels metric evidence as provider-reported, GPS-estimated, event-derived, unavailable, or not enough linked data instead of inventing fuel/profit/driver/client conclusions.
+- [ ] Confirm `/api/ops/efficiency` does not return raw coordinate series and does not expose disabled/unreviewed asset telemetry.
+- [ ] Confirm `/api/ops/efficiency` does not let future provider timestamps inflate movement/stopped/productivity metrics or mark an asset fresh when timestamp quality is suspicious.
+- [ ] Confirm ops/management/owner/admin/platform-owner can view operational efficiency summaries and unauthorized roles receive a role boundary.
 
 ## 8. Nava Eye Smoke Test
 
@@ -248,6 +253,7 @@ Open `/nava-eye` and ask:
 - [ ] Ask "Where is KCF529Z?" and confirm Nava Eye can use the internal match key while explaining the matching provider asset name, such as `KCF529Z ZF3316`, where useful.
 - [ ] Ask "Where is ZF3316?" for trailer text seen in a provider label and confirm Nava Eye explains it appears in the provider asset name, location/status comes from that tracked provider asset, this is not independent trailer tracking, and not-enabled provider assets do not leak live status.
 - [ ] Confirm Nava Eye never says `near -`, `at -`, or raw coordinates; blank provider labels should become a human-readable fallback such as "Nava does not yet have a readable place name for the latest GPS point" or be omitted when another readable place is available.
+- [ ] Confirm Nava Eye never displays a provider timestamp ahead of the app clock as an exact future `last seen` time; small skew should read as `just now` / very recent with an approximation warning, and materially future timestamps should say the provider time needs review.
 - [ ] Ask "Where is KDQ265?", then ask "How about KDQ266" and confirm Nava Eye answers that truck if it exists, or suggests the closest workspace match instead of returning generic limited context.
 - [ ] Ask "How about KCW103Z" after a truck-status answer and confirm Nava Eye inherits current-status intent for KCW 103Z.
 - [ ] Ask "Where is KDQ265?", then ask "How much mileage has it covered today?" and confirm the answer stays on KDQ 265T instead of switching to fleet-wide.

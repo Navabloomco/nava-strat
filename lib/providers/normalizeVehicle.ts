@@ -1,5 +1,6 @@
 import {
   DEFAULT_OPERATIONAL_TIME_ZONE,
+  classifyProviderTimestampQuality,
   isAmbiguousProviderTimestampValue,
   parseProviderTimestamp,
 } from "../timeFormatting";
@@ -53,10 +54,17 @@ export type CanonicalVehicle = {
 };
 
 type ProviderTimestampQuality = {
-  status: "valid" | "missing" | "invalid" | "suspect";
+  status:
+    | "valid"
+    | "missing"
+    | "invalid"
+    | "suspect"
+    | "slightly_future_clock_skew"
+    | "future_suspicious";
   source: "provider" | "ingestion_fallback";
   reason: string;
   normalized_unit?: "seconds" | "milliseconds" | "datetime";
+  minutes_ahead?: number | null;
 };
 
 type MappingConfig = {
@@ -853,6 +861,7 @@ function normalizeProviderTimestamp(value: any): {
         source: "ingestion_fallback",
         reason: validation.reason,
         normalized_unit: candidate.unit,
+        minutes_ahead: validation.minutes_ahead ?? null,
       },
     };
   }
@@ -932,21 +941,18 @@ function parseTimestampNumber(value: any): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function validateProviderTimestamp(date: Date): { status: "valid" | "invalid" | "suspect"; reason: string } {
-  const time = date.getTime();
-  if (!Number.isFinite(time)) {
-    return { status: "invalid", reason: "unparseable_provider_timestamp" };
+function validateProviderTimestamp(date: Date): {
+  status: ProviderTimestampQuality["status"];
+  reason: string;
+  minutes_ahead?: number | null;
+} {
+  const quality = classifyProviderTimestampQuality(date);
+  if (quality.status === "valid") {
+    return { status: "valid", reason: quality.reason };
   }
-
-  const year = date.getUTCFullYear();
-  if (year < 2000) {
-    return { status: "invalid", reason: "provider_timestamp_before_2000" };
-  }
-
-  const farFuture = Date.now() + 48 * 60 * 60 * 1000;
-  if (time > farFuture) {
-    return { status: "invalid", reason: "provider_timestamp_in_future" };
-  }
-
-  return { status: "valid", reason: "provider_timestamp_valid" };
+  return {
+    status: quality.status,
+    reason: quality.reason,
+    minutes_ahead: quality.minutes_ahead,
+  };
 }

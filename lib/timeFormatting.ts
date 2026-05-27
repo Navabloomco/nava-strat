@@ -1,6 +1,21 @@
 export const DEFAULT_OPERATIONAL_TIME_ZONE = "Africa/Nairobi";
 
 const KENYA_TIME_ZONE_OFFSET_MINUTES = 180;
+const DEFAULT_FUTURE_CLOCK_SKEW_TOLERANCE_MINUTES = 5;
+
+export type ProviderTimestampQualityStatus =
+  | "valid"
+  | "slightly_future_clock_skew"
+  | "future_suspicious"
+  | "invalid"
+  | "missing";
+
+export type ProviderTimestampQualityRead = {
+  status: ProviderTimestampQualityStatus;
+  reason: string;
+  timestamp_ms: number | null;
+  minutes_ahead: number | null;
+};
 
 export function resolveOperationalTimeZone(source?: any) {
   const candidates = [
@@ -134,6 +149,76 @@ export function parseProviderTimestamp(
 
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? null : date;
+}
+
+export function classifyProviderTimestampQuality(
+  value: any,
+  options: { now?: Date | number; futureToleranceMinutes?: number } = {}
+): ProviderTimestampQualityRead {
+  if (value === undefined || value === null || value === "") {
+    return {
+      status: "missing",
+      reason: "missing_provider_timestamp",
+      timestamp_ms: null,
+      minutes_ahead: null,
+    };
+  }
+
+  const date = value instanceof Date ? value : new Date(value);
+  const timestampMs = date.getTime();
+  if (!Number.isFinite(timestampMs)) {
+    return {
+      status: "invalid",
+      reason: "unparseable_provider_timestamp",
+      timestamp_ms: null,
+      minutes_ahead: null,
+    };
+  }
+
+  if (date.getUTCFullYear() < 2000) {
+    return {
+      status: "invalid",
+      reason: "provider_timestamp_before_2000",
+      timestamp_ms: timestampMs,
+      minutes_ahead: null,
+    };
+  }
+
+  const nowMs =
+    options.now instanceof Date
+      ? options.now.getTime()
+      : typeof options.now === "number"
+        ? options.now
+        : Date.now();
+  const toleranceMinutes =
+    Number.isFinite(Number(options.futureToleranceMinutes))
+      ? Number(options.futureToleranceMinutes)
+      : DEFAULT_FUTURE_CLOCK_SKEW_TOLERANCE_MINUTES;
+  const futureDeltaMs = timestampMs - nowMs;
+  if (futureDeltaMs > 0) {
+    const minutesAhead = Math.ceil(futureDeltaMs / 60000);
+    if (futureDeltaMs <= toleranceMinutes * 60000) {
+      return {
+        status: "slightly_future_clock_skew",
+        reason: "provider_timestamp_slightly_ahead_of_server_clock",
+        timestamp_ms: timestampMs,
+        minutes_ahead: minutesAhead,
+      };
+    }
+    return {
+      status: "future_suspicious",
+      reason: "provider_timestamp_far_ahead_of_server_clock",
+      timestamp_ms: timestampMs,
+      minutes_ahead: minutesAhead,
+    };
+  }
+
+  return {
+    status: "valid",
+    reason: "provider_timestamp_valid",
+    timestamp_ms: timestampMs,
+    minutes_ahead: null,
+  };
 }
 
 export function hasAmbiguousTimestampWarning(value: any) {

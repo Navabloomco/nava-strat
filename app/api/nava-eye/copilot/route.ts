@@ -10,6 +10,7 @@ import { getRoleCapabilities } from "../../../../lib/api/roleAccess";
 import { recordAnalyticsEvent } from "../../../../lib/api/analyticsEvents";
 import {
   DEFAULT_OPERATIONAL_TIME_ZONE,
+  classifyProviderTimestampQuality,
   formatOperationalDateTime,
   hasAmbiguousTimestampWarning,
 } from "../../../../lib/timeFormatting";
@@ -1982,6 +1983,7 @@ function buildTruckStatusFallbackAnswer(context: any, options: any = {}) {
       model.journeyLocationFallback,
       model.hasGpsPoint,
       model.lastSeenAt,
+      model.timestampQuality,
       model.speed,
       model.stale,
       model.timeZone
@@ -2007,11 +2009,12 @@ function buildTruckStatusFallbackAnswer(context: any, options: any = {}) {
 
   parts.push(formatLiveOperationalState(model.speed, model.stale));
 
-  if (hasAmbiguousTimestampWarning(model.timestampWarnings)) {
-    parts.push(
-      "Provider time appears local/ambiguous, so treat this timeline as approximate."
-    );
-  }
+  const timestampNote = formatProviderTimestampQualityNote(
+    model.timestampQuality,
+    model.timestampWarnings,
+    model.skippedFutureTelemetry
+  );
+  if (timestampNote) parts.push(timestampNote);
 
   if (includeIdleRead) {
     const idleRead = formatLiveIdleMarkerRead({
@@ -2058,7 +2061,15 @@ function buildLiveTruckStatusModel(context: any) {
   const telemetry = Array.isArray(context.recent_telemetry)
     ? context.recent_telemetry
     : [];
-  const latestTelemetry = telemetry[0] || null;
+  const rawLatestTelemetry = telemetry[0] || null;
+  const latestTelemetry =
+    telemetry.find(
+      (row: any) =>
+        classifyProviderTimestampQuality(row?.recorded_at).status !==
+        "future_suspicious"
+    ) ||
+    rawLatestTelemetry ||
+    null;
   const events = Array.isArray(context.recent_events) ? context.recent_events : [];
   const idleEvents = events.filter(isIdleStopEvent);
   const truckIdentity = readStoredVehicleIdentityContext(truck);
@@ -2075,6 +2086,11 @@ function buildLiveTruckStatusModel(context: any) {
   const timeZone = context.display_timezone?.time_zone || DEFAULT_OPERATIONAL_TIME_ZONE;
   const latestPoint = latestTelemetry || truck;
   const lastSeenAt = latestTelemetry?.recorded_at || truck.last_seen_at || null;
+  const timestampQuality = classifyProviderTimestampQuality(lastSeenAt);
+  const skippedFutureTelemetry =
+    Boolean(rawLatestTelemetry && latestTelemetry && rawLatestTelemetry !== latestTelemetry) &&
+    classifyProviderTimestampQuality(rawLatestTelemetry?.recorded_at).status ===
+      "future_suspicious";
   const speed = finiteNumberOrNull(latestTelemetry?.speed);
   const locationPoint = {
     ...truck,
@@ -2145,11 +2161,13 @@ function buildLiveTruckStatusModel(context: any) {
   return {
     truck,
     latestTelemetry,
+    skippedFutureTelemetry,
     idleEvents,
     matchedLabel,
     timeZone,
     latestPoint,
     lastSeenAt,
+    timestampQuality,
     speed,
     locationPoint,
     locationText,
@@ -2218,11 +2236,13 @@ function formatLiveTruckTopLine(
   journeyLocationFallback: string | null,
   hasGpsPoint: boolean,
   lastSeenAt: any,
+  timestampQuality: any,
   speed: number | null,
   stale: boolean,
   timeZone: string
 ) {
-  const time = formatTimelineClock(lastSeenAt, timeZone);
+  const shortTimeClause = formatLiveTimestampShortClause(lastSeenAt, timestampQuality, timeZone);
+  const lastSeenClause = formatLiveLastSeenClause(lastSeenAt, timestampQuality, timeZone);
   const locationPhrase = cleanLocationLabel(location);
   const humanFallback = cleanLocationLabel(journeyLocationFallback);
   const missingPlaceText = hasGpsPoint
@@ -2230,38 +2250,92 @@ function formatLiveTruckTopLine(
     : "Location is not available from the latest provider status.";
   if (stale) {
     if (locationPhrase) {
-      return `${label} was last seen ${locationPhrase} at ${time}; this is a last-known position, not confirmed live status.`;
+      return `${label} was last seen ${locationPhrase} ${shortTimeClause}; this is a last-known position, not confirmed live status.`;
     }
     if (humanFallback) {
-      return `${label} was last seen ${humanFallback}. Last seen at ${time}; this is a last-known position, not confirmed live status.`;
+      return `${label} was last seen ${humanFallback}. ${capitalizeSentence(lastSeenClause)}; this is a last-known position, not confirmed live status.`;
     }
-    return `${label} was last seen at ${time}. ${missingPlaceText} This is a last-known position, not confirmed live status.`;
+    return `${label} ${lastSeenClause}. ${missingPlaceText} This is a last-known position, not confirmed live status.`;
   }
   if (speed !== null && speed > 5) {
+    const speedText =
+      timestampQuality?.status === "future_suspicious"
+        ? `; last known speed ${formatNumber(speed)} km/h`
+        : ` at ${formatNumber(speed)} km/h`;
     if (locationPhrase) {
-      return `${label} is moving ${locationPhrase}, last seen at ${time} at ${formatNumber(speed)} km/h.`;
+      return `${label} is moving ${locationPhrase}, ${lastSeenClause}${speedText}.`;
     }
     if (humanFallback) {
-      return `${label} is moving ${humanFallback}. Last seen at ${time} at ${formatNumber(speed)} km/h.`;
+      return `${label} is moving ${humanFallback}. ${capitalizeSentence(lastSeenClause)}${speedText}.`;
     }
-    return `${label} is moving. ${missingPlaceText} Last seen at ${time} at ${formatNumber(speed)} km/h.`;
+    return `${label} is moving. ${missingPlaceText} ${capitalizeSentence(lastSeenClause)}${speedText}.`;
   }
   if (speed !== null) {
+    const speedText =
+      timestampQuality?.status === "future_suspicious"
+        ? `; last known speed ${formatNumber(speed)}`
+        : ` with speed ${formatNumber(speed)}`;
     if (locationPhrase) {
-      return `${label} is currently stopped ${locationPhrase}, last seen at ${time} with speed ${formatNumber(speed)}.`;
+      return `${label} is currently stopped ${locationPhrase}, ${lastSeenClause}${speedText}.`;
     }
     if (humanFallback) {
-      return `${label} is currently stopped ${humanFallback}. Last seen at ${time} with speed ${formatNumber(speed)}.`;
+      return `${label} is currently stopped ${humanFallback}. ${capitalizeSentence(lastSeenClause)}${speedText}.`;
     }
-    return `${label} is currently stopped. ${missingPlaceText} Last seen at ${time} with speed ${formatNumber(speed)}.`;
+    return `${label} is currently stopped. ${missingPlaceText} ${capitalizeSentence(lastSeenClause)}${speedText}.`;
   }
   if (locationPhrase) {
-    return `${label} is at its latest known position ${locationPhrase}, last seen at ${time}; speed is not available.`;
+    return `${label} is at its latest known position ${locationPhrase}, ${lastSeenClause}; speed is not available.`;
   }
   if (humanFallback) {
-    return `${label} is at its latest known position ${humanFallback}. Last seen at ${time}; speed is not available.`;
+    return `${label} is at its latest known position ${humanFallback}. ${capitalizeSentence(lastSeenClause)}; speed is not available.`;
   }
-  return `${label} was last seen at ${time}. ${missingPlaceText} Speed is not available.`;
+  return `${label} ${lastSeenClause}. ${missingPlaceText} Speed is not available.`;
+}
+
+function formatLiveLastSeenClause(lastSeenAt: any, timestampQuality: any, timeZone: string) {
+  const status = timestampQuality?.status;
+  if (status === "slightly_future_clock_skew") return "last seen just now";
+  if (status === "future_suspicious") return "provider update time needs review";
+  if (status === "missing" || status === "invalid" || !lastSeenAt) {
+    return "last seen time is unavailable";
+  }
+  return `last seen at ${formatTimelineClock(lastSeenAt, timeZone)}`;
+}
+
+function formatLiveTimestampShortClause(lastSeenAt: any, timestampQuality: any, timeZone: string) {
+  const status = timestampQuality?.status;
+  if (status === "slightly_future_clock_skew") return "just now";
+  if (status === "future_suspicious") return "with provider update time needing review";
+  if (status === "missing" || status === "invalid" || !lastSeenAt) {
+    return "with last seen time unavailable";
+  }
+  return `at ${formatTimelineClock(lastSeenAt, timeZone)}`;
+}
+
+function formatProviderTimestampQualityNote(
+  timestampQuality: any,
+  warnings: any[],
+  skippedFutureTelemetry = false
+) {
+  if (skippedFutureTelemetry) {
+    return "A newer provider timestamp is ahead of the app clock, so it was skipped for live-status timing.";
+  }
+  const status = timestampQuality?.status;
+  if (status === "slightly_future_clock_skew") {
+    return "Provider timestamp appears slightly ahead of the app clock, so treat this as approximate.";
+  }
+  if (status === "future_suspicious") {
+    return "Provider timestamp is ahead of the app clock and needs review before treating timing as exact.";
+  }
+  if (hasAmbiguousTimestampWarning(warnings)) {
+    return "Provider time appears local/ambiguous, so treat this timeline as approximate.";
+  }
+  return "";
+}
+
+function capitalizeSentence(value: string) {
+  if (!value) return value;
+  return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
 function buildJourneyLocationFallback(journeys: any[]) {
@@ -4510,6 +4584,9 @@ function formatIdleComparison(event: any, timeZone: string) {
 function formatTimelineClock(value: any, timeZone: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "unknown time";
+  const quality = classifyProviderTimestampQuality(date);
+  if (quality.status === "slightly_future_clock_skew") return "just now";
+  if (quality.status === "future_suspicious") return "time needs review";
   return new Intl.DateTimeFormat("en-KE", {
     timeZone,
     hour: "2-digit",
@@ -4646,10 +4723,20 @@ function formatDriverAssignment(assignment: any) {
 }
 
 function formatReadableDate(value: any) {
+  const quality = classifyProviderTimestampQuality(value);
+  if (quality.status === "slightly_future_clock_skew") {
+    return "just now";
+  }
+  if (quality.status === "future_suspicious") {
+    return "provider timestamp needs review";
+  }
   return formatOperationalDateTime(value, DEFAULT_OPERATIONAL_TIME_ZONE);
 }
 
 function freshnessMinutesFromNow(value: any) {
+  const quality = classifyProviderTimestampQuality(value);
+  if (quality.status === "slightly_future_clock_skew") return 0;
+  if (quality.status === "future_suspicious" || quality.status === "invalid") return null;
   const timestamp = new Date(value || 0).getTime();
   if (!Number.isFinite(timestamp)) return null;
   const minutes = Math.floor((Date.now() - timestamp) / 60000);
