@@ -350,6 +350,7 @@ export default function LiveTrackingPage() {
                           <div className="font-semibold text-slate-100">
                             {asset.registration || asset.truck_id}
                           </div>
+                          <TripContext item={asset} compact />
                           <GeofenceBadge match={asset.geofence_match} />
                           <div className="mt-1 text-sm text-slate-300">
                             {asset.location_label || "Location not labeled yet"}
@@ -407,6 +408,7 @@ function TruckRow({ truck }: { truck: any }) {
         <div className="mt-1 text-xs text-slate-400">
           {truck.provider_name || "Provider not specified"}
         </div>
+        <TripContext item={truck} />
       </div>
 
       <div className="text-sm text-slate-200">
@@ -436,6 +438,36 @@ function TruckRow({ truck }: { truck: any }) {
         </div>
       </div>
     </article>
+  );
+}
+
+function TripContext({ item, compact = false }: { item: any; compact?: boolean }) {
+  if (item?.active_trip_conflict) {
+    return (
+      <div className={compact ? "mt-2 text-xs text-amber-100" : "mt-3 text-xs text-amber-100"}>
+        Multiple active trips need review.
+      </div>
+    );
+  }
+
+  if (!item?.active_trip_id) return null;
+
+  const client = item.active_trip_client || "Client pending";
+  const route =
+    item.active_trip_from || item.active_trip_to
+      ? `${item.active_trip_from || "Origin pending"} → ${item.active_trip_to || "Destination pending"}`
+      : item.active_trip_reference || "Route pending";
+  const status = String(item.active_trip_status || "active").toLowerCase();
+
+  return (
+    <div className={compact ? "mt-2 text-xs leading-5 text-cyan-100" : "mt-3 rounded-md border border-cyan-200/15 bg-cyan-300/10 p-3 text-xs leading-5 text-cyan-50"}>
+      <div className="font-semibold">
+        Trip: {client} · {route}
+      </div>
+      <div className="text-cyan-100/80">
+        Trip status: {status}
+      </div>
+    </div>
   );
 }
 

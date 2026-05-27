@@ -11,15 +11,40 @@ import {
   normalizeRole,
   rolesForCompany,
 } from "../../../../lib/api/roleAccess";
+import { normalizeVehicleKey } from "../../../../lib/intelligence/entityResolver";
 import {
   normalizeProviderLocationLabel,
   resolveOperationalLocation,
 } from "../../../../lib/location/resolveOperationalLocation";
+import { readStoredVehicleIdentityContext } from "../../../../lib/providers/vehicleIdentity";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 const FRESHNESS_MINUTES = 30;
+const ACTIVE_TRIP_LOOKBACK_DAYS = 30;
+const ACTIVE_TRIP_FUTURE_TOLERANCE_MINUTES = 5;
+const ACTIVE_TRIP_STATUSES = new Set([
+  "active",
+  "open",
+  "in progress",
+  "in_progress",
+  "en route",
+  "en_route",
+  "started",
+  "loading",
+  "dispatched",
+]);
+const CLOSED_TRIP_STATUSES = new Set([
+  "completed",
+  "complete",
+  "offloaded",
+  "delivered",
+  "cancelled",
+  "canceled",
+  "closed",
+  "archived",
+]);
 
 type ResolvedCompany = {
   id: string;
@@ -326,6 +351,132 @@ function isMissingFuelUnitColumn(error: any) {
   return /fuel_unit|column .* does not exist/i.test(message);
 }
 
+async function fetchRecentProductionJourneys(companyId: string) {
+  const { data, error } = await supabaseAdmin
+    .from("journeys")
+    .select(
+      "id, internal_trip_id, asset_id, client_name, truck, from_location, to_location, route, status, start_time, end_time, created_at"
+    )
+    .eq("company_id", companyId)
+    .eq("is_demo", false)
+    .order("created_at", { ascending: false })
+    .limit(500);
+
+  if (error) throw error;
+  return data || [];
+}
+
+function buildActiveTripContext(input: {
+  row: any;
+  asset?: any | null;
+  journeys: any[];
+}) {
+  const nowMs = Date.now();
+  const activeMatches = input.journeys
+    .filter((journey) => isActiveTrip(journey, nowMs))
+    .filter((journey) => tripMatchesAsset(journey, input.row, input.asset));
+
+  const uniqueMatches = Array.from(
+    new Map(activeMatches.map((journey) => [journey.id, journey])).values()
+  );
+
+  if (uniqueMatches.length > 1) {
+    return {
+      active_trip_id: null,
+      active_trip_reference: null,
+      active_trip_client: null,
+      active_trip_from: null,
+      active_trip_to: null,
+      active_trip_status: null,
+      active_trip_started_at: null,
+      active_trip_conflict: true,
+      active_trip_conflict_count: uniqueMatches.length,
+      active_trip_message: "Multiple active trips need review",
+    };
+  }
+
+  const journey = uniqueMatches[0];
+  if (!journey) return {};
+
+  return {
+    active_trip_id: journey.id || null,
+    active_trip_reference: cleanTripText(journey.internal_trip_id) || null,
+    active_trip_client: cleanTripText(journey.client_name) || null,
+    active_trip_from: cleanTripText(journey.from_location) || null,
+    active_trip_to: cleanTripText(journey.to_location) || null,
+    active_trip_status: cleanTripText(journey.status) || "active",
+    active_trip_started_at: journey.start_time || journey.created_at || null,
+    active_trip_conflict: false,
+    active_trip_conflict_count: 0,
+    active_trip_message: null,
+  };
+}
+
+function isActiveTrip(journey: any, nowMs: number) {
+  const status = normalizeTripStatus(journey.status);
+  if (status && CLOSED_TRIP_STATUSES.has(status)) return false;
+  if (journey.end_time && timestampMs(journey.end_time) !== null) return false;
+  if (!status || !ACTIVE_TRIP_STATUSES.has(status)) return false;
+
+  const anchorMs = timestampMs(journey.start_time) ?? timestampMs(journey.created_at);
+  if (anchorMs === null) return false;
+  const futureToleranceMs = ACTIVE_TRIP_FUTURE_TOLERANCE_MINUTES * 60 * 1000;
+  if (anchorMs > nowMs + futureToleranceMs) return false;
+
+  const lookbackMs = ACTIVE_TRIP_LOOKBACK_DAYS * 24 * 60 * 60 * 1000;
+  return anchorMs >= nowMs - lookbackMs;
+}
+
+function tripMatchesAsset(journey: any, row: any, asset?: any | null) {
+  if (asset?.id && journey.asset_id && journey.asset_id === asset.id) {
+    return true;
+  }
+
+  const tripKey = normalizeVehicleKey(journey.truck || "");
+  if (tripKey.length < 4) return false;
+
+  const keys = buildVehicleMatchKeys(row, asset);
+  return keys.has(tripKey);
+}
+
+function buildVehicleMatchKeys(row: any, asset?: any | null) {
+  const identity = asset ? readStoredVehicleIdentityContext(asset) : null;
+  const values = [
+    row?.truck_id,
+    row?.registration,
+    asset?.truck_id,
+    asset?.registration,
+    identity?.provider_label,
+    identity?.canonical_truck_plate,
+  ];
+
+  return new Set(
+    values
+      .map((value) => normalizeVehicleKey(value || ""))
+      .filter((key) => key.length >= 4)
+  );
+}
+
+function normalizeTripStatus(value: any) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[-\s]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/_/g, " ");
+}
+
+function timestampMs(value: any) {
+  if (!value) return null;
+  const ms = new Date(value).getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function cleanTripText(value: any) {
+  const text = String(value || "").trim();
+  return text || null;
+}
+
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
@@ -345,6 +496,7 @@ export async function GET(req: Request) {
       importedAssetsResult,
       enabledAssetsResult,
       providersResult,
+      journeys,
       geofences,
     ] =
       await Promise.all([
@@ -359,7 +511,7 @@ export async function GET(req: Request) {
         supabaseAdmin
           .from("fleet_assets")
           .select(
-            "truck_id, registration, status, latitude, longitude, last_seen_at, provider_name, provider_location_label"
+            "id, truck_id, registration, status, latitude, longitude, last_seen_at, provider_name, provider_location_label, telemetry_capabilities"
           )
           .eq("company_id", resolved.company.id)
           .eq("status", "active")
@@ -372,6 +524,7 @@ export async function GET(req: Request) {
           )
           .eq("company_id", resolved.company.id)
           .order("created_at", { ascending: false }),
+        fetchRecentProductionJourneys(resolved.company.id),
         fetchActiveGeofences(supabaseAdmin, resolved.company.id),
       ]);
 
@@ -416,6 +569,11 @@ export async function GET(req: Request) {
         cachedLabel: getCachedLocationLabel(locationLabels, truck.latitude, truck.longitude),
         geofences,
       });
+      const activeTrip = buildActiveTripContext({
+        row: truck,
+        asset: matchingAsset,
+        journeys,
+      });
 
       return {
         truck_id: truck.truck_id,
@@ -433,6 +591,7 @@ export async function GET(req: Request) {
         location_source: location.location_source,
         location_note: location.location_note,
         geofence_match: location.geofence_match || matchPointToGeofence(truck, geofences),
+        ...activeTrip,
       };
     }));
 
@@ -447,6 +606,11 @@ export async function GET(req: Request) {
           cachedLabel: getCachedLocationLabel(locationLabels, asset.latitude, asset.longitude),
           geofences,
         });
+        const activeTrip = buildActiveTripContext({
+          row: asset,
+          asset,
+          journeys,
+        });
         return {
           truck_id: asset.truck_id,
           registration: asset.registration || asset.truck_id,
@@ -458,6 +622,7 @@ export async function GET(req: Request) {
           location_source: location.location_source,
           location_note: location.location_note,
           geofence_match: location.geofence_match || matchPointToGeofence(asset, geofences),
+          ...activeTrip,
         };
       }));
 
