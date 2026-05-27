@@ -253,7 +253,7 @@ async function resolveLiveLocationLabel(input: {
     company_id: input.companyId,
     latitude: input.latitude,
     longitude: input.longitude,
-    provider_location_label: providerLabel || cachedLabel,
+    provider_location_label: providerLabel,
     supabase: supabaseAdmin,
     geofences: input.geofences,
   });

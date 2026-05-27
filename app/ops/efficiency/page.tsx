@@ -245,7 +245,7 @@ export default function OpsEfficiencyPage() {
                     key={truck.truck_key || truck.truck_id}
                     title={truck.truck_id || "Unknown truck"}
                     metric={`${formatMinutes(truck.stopped_minutes)} estimated`}
-                    detail={`${formatStoppedConfidence(truck)} · ${formatPercent(truck.productive_ratio ?? truck.stopped_share)} observed-interval ratio`}
+                    detail={formatStoppedConfidence(truck)}
                   />
                 )}
               />
@@ -716,14 +716,28 @@ function formatStoppedConfidence(row: any) {
   const intervals = Number(row?.interval_count || row?.stopped_interval_count || 0);
   const gapCount = Number(row?.large_gap_count || row?.stopped_large_gap_count || 0);
   const parts = [
-    confidence ? `${humanize(confidence)} confidence` : "Estimated from GPS",
-    points || intervals ? `${formatCount(points)} GPS points / ${formatCount(intervals)} intervals` : null,
+    formatMovementObservation(row),
+    points || intervals ? `Estimated from ${formatCount(points)} GPS points across ${formatCount(intervals)} intervals` : null,
+    confidence ? `${humanize(confidence)} confidence${reason ? `: ${reason}` : ""}` : "Estimated from GPS",
     row?.capped_estimate || row?.stopped_time_capped_estimate
       ? `${formatCount(gapCount)} long gap(s) excluded`
       : null,
-    reason || null,
   ].filter(Boolean);
   return parts.join(" · ");
+}
+
+function formatMovementObservation(row: any) {
+  const productiveRatio = Number(row?.productive_ratio);
+  const stoppedShare = Number(row?.stopped_share);
+  const movementRatio = Number.isFinite(productiveRatio)
+    ? productiveRatio
+    : Number.isFinite(stoppedShare)
+      ? Math.max(0, 1 - stoppedShare)
+      : null;
+  if (movementRatio === null) return "Movement evidence sampled from GPS intervals";
+  const percent = Math.round((movementRatio <= 1 ? movementRatio : movementRatio / 100) * 100);
+  if (percent <= 0) return "No movement observed in sampled intervals";
+  return `Movement observed in ${percent}% of sampled intervals`;
 }
 
 function humanize(value: any) {

@@ -3,6 +3,7 @@ import { supabaseAdmin } from "../supabaseAdmin";
 export type OperationalLocationSource =
   | "geofence"
   | "reverse_geocode_cache"
+  | "nearby_reverse_geocode_cache"
   | "provider_label"
   | "coordinates_only";
 
@@ -44,6 +45,8 @@ export type ResolvedOperationalLocation = {
 };
 
 const NEAR_GEOFENCE_BUFFER_METERS = 200;
+const NEARBY_CACHE_RADIUS_METERS = 25000;
+const NEARBY_CACHE_DEGREES = 0.25;
 
 export async function resolveOperationalLocation(
   input: ResolveOperationalLocationInput
@@ -93,6 +96,23 @@ export async function resolveOperationalLocation(
       display_label: cachedLabel,
       confidence_source: "reverse_geocode_cache",
       map_url: mapUrl,
+    };
+  }
+
+  const nearbyCachedLabel = await fetchNearbyCachedLocationLabel(
+    input.supabase || supabaseAdmin,
+    coordinates.latitude,
+    coordinates.longitude
+  );
+
+  if (nearbyCachedLabel) {
+    return {
+      display_label: nearbyCachedLabel.display_label,
+      confidence_source: "nearby_reverse_geocode_cache",
+      map_url: mapUrl,
+      note: `Nearest cached place label within ${formatDistanceKm(
+        nearbyCachedLabel.distance_meters
+      )}; provider did not supply a readable place name.`,
     };
   }
 
@@ -170,6 +190,49 @@ async function fetchCachedLocationLabel(client: ResolverClient, latitude: number
     return cleanCachedLocationLabel(data);
   } catch (err: any) {
     console.warn("Operational location cache lookup skipped:", err.message || err);
+    return null;
+  }
+}
+
+async function fetchNearbyCachedLocationLabel(
+  client: ResolverClient,
+  latitude: number,
+  longitude: number
+) {
+  const minLat = Number((latitude - NEARBY_CACHE_DEGREES).toFixed(5));
+  const maxLat = Number((latitude + NEARBY_CACHE_DEGREES).toFixed(5));
+  const minLng = Number((longitude - NEARBY_CACHE_DEGREES).toFixed(5));
+  const maxLng = Number((longitude + NEARBY_CACHE_DEGREES).toFixed(5));
+
+  try {
+    const { data, error } = await client
+      .from("location_cache")
+      .select("rounded_lat, rounded_lng, town, county, country, display_name, expires_at")
+      .gte("rounded_lat", minLat)
+      .lte("rounded_lat", maxLat)
+      .gte("rounded_lng", minLng)
+      .lte("rounded_lng", maxLng)
+      .gt("expires_at", new Date().toISOString())
+      .limit(250);
+
+    if (error) throw error;
+
+    const point = { latitude, longitude };
+    let best: { display_label: string; distance_meters: number } | null = null;
+    for (const row of data || []) {
+      const cachedPoint = numericCoordinate(row.rounded_lat, row.rounded_lng);
+      const label = cleanCachedLocationLabel(row);
+      if (!cachedPoint || !label) continue;
+      const distance = Math.round(distanceMeters(point, cachedPoint));
+      if (distance > NEARBY_CACHE_RADIUS_METERS) continue;
+      if (!best || distance < best.distance_meters) {
+        best = { display_label: label, distance_meters: distance };
+      }
+    }
+
+    return best;
+  } catch (err: any) {
+    console.warn("Nearby operational location cache lookup skipped:", err.message || err);
     return null;
   }
 }
@@ -274,6 +337,13 @@ function distanceMeters(
 
 function buildMapUrl(latitude: number, longitude: number) {
   return `https://www.google.com/maps?q=${latitude},${longitude}`;
+}
+
+function formatDistanceKm(distanceMetersValue: number) {
+  const km = distanceMetersValue / 1000;
+  return `${km.toLocaleString(undefined, {
+    maximumFractionDigits: km >= 10 ? 0 : 1,
+  })} km`;
 }
 
 function cleanPlacePart(value: any) {
