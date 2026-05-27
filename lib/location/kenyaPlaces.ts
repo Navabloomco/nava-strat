@@ -12,6 +12,9 @@ type KenyaPlace = {
   name: string;
   latitude: number;
   longitude: number;
+  kind?: "town" | "urban_area" | "landmark" | "industrial_area" | "transport_hub";
+  label?: "near" | "around";
+  specificity?: number;
 };
 
 const CLOSE_PLACE_METERS = 12000;
@@ -23,6 +26,78 @@ const CORRIDOR_MIN_ENDPOINT_METERS = 12000;
 
 const KENYA_PLACES: KenyaPlace[] = [
   { name: "Nairobi", latitude: -1.286389, longitude: 36.817223 },
+  {
+    name: "CBD Nairobi",
+    latitude: -1.286389,
+    longitude: 36.817223,
+    kind: "urban_area",
+    label: "around",
+    specificity: 2,
+  },
+  {
+    name: "Westlands",
+    latitude: -1.2674,
+    longitude: 36.8105,
+    kind: "urban_area",
+    label: "around",
+    specificity: 2,
+  },
+  {
+    name: "Karen",
+    latitude: -1.3197,
+    longitude: 36.7066,
+    kind: "urban_area",
+    label: "around",
+    specificity: 2,
+  },
+  {
+    name: "The Hub Karen",
+    latitude: -1.3196,
+    longitude: 36.7077,
+    kind: "landmark",
+    label: "near",
+    specificity: 4,
+  },
+  {
+    name: "Industrial Area",
+    latitude: -1.3032,
+    longitude: 36.8461,
+    kind: "industrial_area",
+    label: "around",
+    specificity: 3,
+  },
+  {
+    name: "JKIA / Embakasi",
+    latitude: -1.3192,
+    longitude: 36.9278,
+    kind: "transport_hub",
+    label: "around",
+    specificity: 3,
+  },
+  {
+    name: "Embakasi",
+    latitude: -1.3175,
+    longitude: 36.9003,
+    kind: "urban_area",
+    label: "around",
+    specificity: 2,
+  },
+  {
+    name: "Syokimau",
+    latitude: -1.3591,
+    longitude: 36.9326,
+    kind: "urban_area",
+    label: "around",
+    specificity: 2,
+  },
+  {
+    name: "SGR Nairobi Terminus",
+    latitude: -1.3647,
+    longitude: 36.9392,
+    kind: "transport_hub",
+    label: "near",
+    specificity: 4,
+  },
   { name: "Mlolongo", latitude: -1.3972, longitude: 36.9397 },
   { name: "Athi River", latitude: -1.4563, longitude: 36.9783 },
   { name: "Kitengela", latitude: -1.473, longitude: 36.959 },
@@ -37,6 +112,14 @@ const KENYA_PLACES: KenyaPlace[] = [
   { name: "Mariakani", latitude: -3.862, longitude: 39.475 },
   { name: "Mazeras", latitude: -3.9706, longitude: 39.545 },
   { name: "Mombasa", latitude: -4.0435, longitude: 39.6682 },
+  {
+    name: "Mombasa Port",
+    latitude: -4.058,
+    longitude: 39.642,
+    kind: "transport_hub",
+    label: "near",
+    specificity: 4,
+  },
   { name: "Nakuru", latitude: -0.3031, longitude: 36.08 },
   { name: "Naivasha", latitude: -0.7167, longitude: 36.4333 },
   { name: "Longonot", latitude: -0.914, longitude: 36.452 },
@@ -47,6 +130,7 @@ const KENYA_PLACES: KenyaPlace[] = [
   { name: "Thika", latitude: -1.0332, longitude: 37.0693 },
   { name: "Ruiru", latitude: -1.145, longitude: 36.96 },
   { name: "Limuru", latitude: -1.107, longitude: 36.642 },
+  { name: "Kiambu", latitude: -1.1714, longitude: 36.8356 },
   { name: "Narok", latitude: -1.078, longitude: 35.871 },
 ];
 
@@ -139,8 +223,10 @@ function formatNearestPlace(
   }
 
   if (proximity === "near") {
+    const prefix = prefixForPlace(place, "around");
     return {
-      display_label: `around ${place.name} area`,
+      display_label:
+        prefix === "around" ? `around ${place.name} area` : `near ${place.name}`,
       evidence_label: "nearest-known-place",
       confidence: "medium",
       distance_meters: distanceMeters,
@@ -149,7 +235,7 @@ function formatNearestPlace(
   }
 
   return {
-    display_label: `near ${place.name}`,
+    display_label: `${prefixForPlace(place, "near")} ${place.name}`,
     evidence_label: "nearest-known-place",
     confidence: "medium",
     distance_meters: distanceMeters,
@@ -158,14 +244,28 @@ function formatNearestPlace(
 }
 
 function findNearestPlace(point: { latitude: number; longitude: number }) {
-  let best: { place: KenyaPlace; distance_meters: number } | null = null;
+  let best: { place: KenyaPlace; distance_meters: number; score: number } | null =
+    null;
   for (const place of KENYA_PLACES) {
     const distance = distanceMeters(point, place);
-    if (!best || distance < best.distance_meters) {
-      best = { place, distance_meters: distance };
+    const score = distance - Number(place.specificity || 0) * 1500;
+    if (!best || score < best.score) {
+      best = { place, distance_meters: distance, score };
     }
   }
   return best;
+}
+
+function prefixForPlace(place: KenyaPlace, fallback: "near" | "around") {
+  if (place.label) return place.label;
+  if (
+    place.kind === "urban_area" ||
+    place.kind === "industrial_area" ||
+    place.kind === "transport_hub"
+  ) {
+    return "around";
+  }
+  return fallback;
 }
 
 function findNearestCorridor(point: { latitude: number; longitude: number }) {
