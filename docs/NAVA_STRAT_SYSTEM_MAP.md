@@ -65,6 +65,7 @@ The main product principle is convenience. Every user-facing page should make th
 | Route | Purpose |
 | --- | --- |
 | `/ops/dashboard` | Operations command center: active journeys, enabled assets, alerts, shared disruption context, geofences, and assigned drivers. |
+| `/ops/efficiency` | Pilot operational efficiency and Trip Intelligence dashboard. Uses authenticated app session fetches to call `/api/ops/efficiency` and `/api/ops/trip-intelligence`, showing movement, stopped-time, stale-location, low productive-time, idle-marker, trip-readiness, missing-data, and evidence-source summaries without raw coordinates or unsafe fuel/profit claims. |
 | `/ops/journey` | Journey list with create CTA and journey cards/table. |
 | `/ops/journey/new` | Create journey form with saved route picker, enabled vehicle picker, and driver picker. |
 | `/ops/journey/templates` | Saved Routes management for route presets. |

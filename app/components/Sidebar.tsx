@@ -210,6 +210,11 @@ export default function Sidebar() {
           show: roles.isOps || roles.isAdmin,
         },
         {
+          name: "Efficiency",
+          href: "/ops/efficiency",
+          show: roles.isOps || roles.isManagement || roles.isAdmin,
+        },
+        {
           name: "Journeys",
           href: "/ops/journey",
           show: roles.isOps || roles.isAdmin,

@@ -204,6 +204,7 @@ Expected result:
 Open these routes with appropriate company roles:
 
 - [ ] `/ops/dashboard`
+- [ ] `/ops/efficiency`
 - [ ] `/ops/journey`
 - [ ] `/ops/journey/new`
 - [ ] `/fuel`
@@ -236,6 +237,10 @@ Confirm workflow behavior:
 - [ ] Confirm `/api/ops/efficiency` does not return raw coordinate series and does not expose disabled/unreviewed asset telemetry.
 - [ ] Confirm `/api/ops/efficiency` does not let future provider timestamps inflate movement/stopped/productivity metrics or mark an asset fresh when timestamp quality is suspicious.
 - [ ] Confirm ops/management/owner/admin/platform-owner can view operational efficiency summaries and unauthorized roles receive a role boundary.
+- [ ] Open `/ops/efficiency` and confirm the page fetches operational efficiency and Trip Intelligence through the authenticated app session pattern instead of requiring direct unauthenticated API browsing.
+- [ ] Confirm `/ops/efficiency` range selector works for today, yesterday, and 7 days.
+- [ ] Confirm `/ops/efficiency` shows trucks moved most, stopped most, stale locations, low productive-time trucks, idle marker windows, evidence labels, Trip Intelligence counts, missing-data summary, and not-enough-linked-data panels.
+- [ ] Confirm `/ops/efficiency` shows a friendly in-page access message instead of raw JSON when the user lacks access.
 - [ ] Call `GET /api/ops/trip-intelligence?range=yesterday` with an ops-visible role and confirm the JSON returns Trip records projected from `journeys`.
 - [ ] Confirm Trip Intelligence returns trip identity, asset evidence, driver evidence, movement evidence, delay evidence, stale-tracking evidence, missing-data notes, profitability readiness, and management flags.
 - [ ] Confirm Trip Intelligence labels movement distance as provider-reported, GPS-estimated, journey-recorded, or unavailable, and does not return raw coordinate series.
