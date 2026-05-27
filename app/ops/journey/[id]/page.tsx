@@ -363,9 +363,7 @@ export default function TripDetailPage() {
               <MetricCard label="Status" value={humanize(journey.status || "unknown")} />
               <MetricCard
                 label="Readiness"
-                value={humanize(
-                  trip?.profitability_readiness?.status || "not_enough_linked_data"
-                )}
+                value={readinessLabel(trip?.profitability_readiness)}
                 tone={readinessTone(trip?.profitability_readiness?.status)}
               />
               <MetricCard
@@ -403,7 +401,7 @@ export default function TripDetailPage() {
                 />
                 <div className="mt-4 flex flex-wrap gap-2">
                   <StatusPill tone={readinessTone(trip?.profitability_readiness?.status)}>
-                    {humanize(trip?.profitability_readiness?.status || "not_enough_linked_data")}
+                    {readinessLabel(trip?.profitability_readiness)}
                   </StatusPill>
                   <StatusPill tone="info">
                     {movement.distance_source || "distance unavailable"}
@@ -414,6 +412,13 @@ export default function TripDetailPage() {
                     </StatusPill>
                   )}
                 </div>
+
+                {Array.isArray(trip?.profitability_readiness?.supporting_notes) &&
+                  trip.profitability_readiness.supporting_notes.length > 0 && (
+                    <div className="mt-4 rounded-md border border-cyan-200/15 bg-cyan-300/10 p-3 text-sm leading-6 text-cyan-50">
+                      {trip.profitability_readiness.supporting_notes.join(". ")}.
+                    </div>
+                  )}
 
                 <div className="mt-5 grid gap-3">
                   <EvidenceLine
@@ -458,7 +463,7 @@ export default function TripDetailPage() {
                     <div className="mt-2 flex flex-wrap gap-2">
                       {missingData.map((item: string) => (
                         <StatusPill key={item} tone="warning">
-                          {humanize(item)}
+                          {missingDataLabel(item)}
                         </StatusPill>
                       ))}
                     </div>
@@ -1094,6 +1099,23 @@ function readinessTone(status: string): "neutral" | "success" | "warning" | "dan
   if (status === "partially_linked") return "warning";
   if (status === "not_enough_linked_data") return "danger";
   return "neutral";
+}
+
+function readinessLabel(readiness: any) {
+  if (readiness?.label || readiness?.customer_label) {
+    return readiness.label || readiness.customer_label;
+  }
+  if (readiness?.status === "calculable") return "Contribution review ready";
+  return humanize(readiness?.status || "not_enough_linked_data");
+}
+
+function missingDataLabel(value: any) {
+  const key = String(value || "").trim().toLowerCase();
+  if (key === "missing distance") return "Distance evidence missing";
+  if (key === "missing linked expenses") return "Other expenses missing";
+  if (key === "missing linked cost evidence") return "Linked cost evidence missing";
+  if (key === "fuel allocation missing") return "Fuel allocation missing";
+  return humanize(value);
 }
 
 function friendlyError(status: number, error?: string) {

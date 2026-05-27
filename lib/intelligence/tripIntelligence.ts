@@ -922,6 +922,11 @@ function buildProfitabilityReadiness(
       contribution_per_km: null,
       contribution_per_tonne: null,
       missing: ["finance visibility for this role"],
+      label: "Finance hidden by role",
+      customer_label: "Finance hidden by role",
+      contribution_review_ready: false,
+      per_km_metrics_available: false,
+      supporting_notes: [],
       note: "Profitability values are hidden for this role.",
     };
   }
@@ -938,11 +943,17 @@ function buildProfitabilityReadiness(
       : hasRevenue || hasLinkedCostRecords || Number(movement.distance_km || 0) > 0
         ? "partially_linked"
         : "not_enough_linked_data";
+  const distanceKm = Number(movement.distance_km || 0);
 
   if (status !== "calculable") {
     return {
       visible: true,
       status,
+      label: profitabilityReadinessLabel(status),
+      customer_label: profitabilityReadinessLabel(status),
+      contribution_review_ready: false,
+      per_km_metrics_available: false,
+      supporting_notes: buildProfitabilitySupportingNotes(finance, movement, missingData, status),
       contribution_kes: null,
       contribution_margin_percent: null,
       contribution_per_km: null,
@@ -952,12 +963,16 @@ function buildProfitabilityReadiness(
   }
 
   const contribution = roundMoney(revenue - variableCosts);
-  const distanceKm = Number(movement.distance_km || 0);
   const billingQuantity = Number(finance.billing_quantity || 0);
 
   return {
     visible: true,
     status,
+    label: "Contribution review ready",
+    customer_label: "Contribution review ready",
+    contribution_review_ready: true,
+    per_km_metrics_available: distanceKm > 0,
+    supporting_notes: buildProfitabilitySupportingNotes(finance, movement, missingData, status),
     contribution_kes: contribution,
     contribution_margin_percent:
       revenue > 0 ? roundMetric((contribution / revenue) * 100) : null,
@@ -990,23 +1005,67 @@ function buildTripMissingData(input: {
   if (input.movementEvidence.missing_distance) missing.push("missing distance");
 
   if (input.includeFinance && input.financeEvidence.visible) {
+    const linkedFuelCost = Number(input.financeEvidence.linked_fuel_cost_kes || 0);
+    const linkedExpenseCost = Number(input.financeEvidence.linked_expense_cost_kes || 0);
+    const linkedVariableCosts = Number(input.financeEvidence.linked_variable_costs_kes || 0);
+    const hasAnyLinkedCostEvidence = linkedVariableCosts > 0;
     if (Number(input.financeEvidence.revenue_kes || 0) <= 0) missing.push("missing revenue");
-    if (input.financeEvidence.fuel_cost_source === "missing") {
+    if (input.financeEvidence.fuel_cost_source === "missing" && linkedExpenseCost <= 0) {
       missing.push("fuel allocation missing");
     } else if (input.financeEvidence.fuel_cost_source === "legacy_journey_link") {
       missing.push("legacy fuel link used");
-    } else if (Number(input.financeEvidence.linked_fuel_cost_kes || 0) <= 0) {
+    } else if (input.financeEvidence.fuel_cost_source === "fuel_allocations" && linkedFuelCost <= 0) {
       missing.push("fuel allocation cost unavailable");
     }
-    if (Number(input.financeEvidence.linked_expense_count || 0) === 0) {
+    if (!hasAnyLinkedCostEvidence && Number(input.financeEvidence.linked_expense_count || 0) === 0) {
       missing.push("missing linked expenses");
     }
-    if (Number(input.financeEvidence.linked_variable_costs_kes || 0) <= 0) {
+    if (!hasAnyLinkedCostEvidence) {
       missing.push("missing linked cost evidence");
     }
   }
 
   return uniqueStrings(missing);
+}
+
+function profitabilityReadinessLabel(status: ProfitabilityReadiness | null) {
+  if (status === "calculable") return "Contribution review ready";
+  if (status === "partially_linked") return "Partially linked";
+  return "Not enough linked data";
+}
+
+function buildProfitabilitySupportingNotes(
+  finance: any,
+  movement: any,
+  missingData: string[],
+  status: ProfitabilityReadiness
+) {
+  const notes: string[] = [];
+  const distanceKm = Number(movement.distance_km || 0);
+  const fuelCost = Number(finance.linked_fuel_cost_kes || 0);
+  const expenseCost = Number(finance.linked_expense_cost_kes || 0);
+  const expenseCount = Number(finance.linked_expense_count || 0);
+  const hasFuelCostEvidence = fuelCost > 0;
+  const hasExpenseCostEvidence = expenseCost > 0;
+
+  if (distanceKm <= 0) notes.push("Distance-based metrics pending");
+  if (hasFuelCostEvidence && expenseCount === 0) {
+    notes.push("No additional trip expenses linked yet");
+  }
+  if (hasExpenseCostEvidence && finance.fuel_cost_source === "missing") {
+    notes.push("No fuel allocation linked yet");
+  }
+  if (finance.fuel_cost_source === "legacy_journey_link") {
+    notes.push("Legacy fuel link used; fuel allocation should replace it");
+  }
+  if (status === "calculable" && missingData.includes("missing asset link")) {
+    notes.push("Asset link still pending");
+  }
+  if (status === "calculable" && missingData.includes("missing client/route")) {
+    notes.push("Client or route link still pending");
+  }
+
+  return uniqueStrings(notes);
 }
 
 function buildManagementFlags(input: any) {
@@ -1086,13 +1145,25 @@ function buildTripSummary(trips: any[]) {
       .map((trip) => trip.profitability_readiness?.status)
       .filter(Boolean)
   );
+  const contributionReadyCount = trips.filter((trip) =>
+    trip.management_flags.includes("ready_for_profit_review")
+  ).length;
   return {
     trip_count: trips.length,
-    ready_for_profit_review_count: trips.filter((trip) =>
-      trip.management_flags.includes("ready_for_profit_review")
-    ).length,
+    ready_for_profit_review_count: contributionReadyCount,
+    contribution_review_ready_count: contributionReadyCount,
     partially_linked_count: readinessCounts.partially_linked || 0,
     not_enough_linked_data_count: readinessCounts.not_enough_linked_data || 0,
+    distance_pending_count: trips.filter((trip) =>
+      (trip.profitability_readiness?.supporting_notes || []).includes(
+        "Distance-based metrics pending"
+      )
+    ).length,
+    no_additional_expenses_count: trips.filter((trip) =>
+      (trip.profitability_readiness?.supporting_notes || []).includes(
+        "No additional trip expenses linked yet"
+      )
+    ).length,
     movement_without_revenue_count: trips.filter((trip) =>
       trip.management_flags.includes("movement_without_revenue")
     ).length,

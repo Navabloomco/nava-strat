@@ -110,6 +110,11 @@ export default function OpsEfficiencyPage() {
   const trips = Array.isArray(data.tripIntelligence?.trips)
     ? data.tripIntelligence.trips
     : [];
+  const contributionReadyCount = Number(
+    tripSummary.contribution_review_ready_count ??
+      tripSummary.ready_for_profit_review_count ??
+      0
+  );
   const incompleteTripCount = Number(tripSummary.partially_linked_count || 0) +
     Number(tripSummary.not_enough_linked_data_count || 0);
 
@@ -208,7 +213,7 @@ export default function OpsEfficiencyPage() {
               <MetricCard
                 label="Trips projected"
                 value={formatCount(tripSummary.trip_count)}
-                detail={`${formatCount(tripSummary.ready_for_profit_review_count)} ready for profit review`}
+                detail={`${formatCount(contributionReadyCount)} contribution review ready`}
               />
             </section>
 
@@ -286,8 +291,8 @@ export default function OpsEfficiencyPage() {
                 />
                 <div className="mt-4 grid gap-3 md:grid-cols-3">
                   <SmallStat
-                    label="Ready for profit review"
-                    value={formatCount(tripSummary.ready_for_profit_review_count)}
+                    label="Contribution review ready"
+                    value={formatCount(contributionReadyCount)}
                   />
                   <SmallStat
                     label="Need finance linking"
@@ -335,7 +340,7 @@ export default function OpsEfficiencyPage() {
                           key={label}
                           className="flex items-center justify-between gap-4 rounded-md border border-white/10 bg-white/[0.04] px-4 py-3"
                         >
-                          <span className="text-sm text-slate-200">{humanize(label)}</span>
+                          <span className="text-sm text-slate-200">{missingDataLabel(label)}</span>
                           <StatusPill tone="warning">{formatCount(count)}</StatusPill>
                         </div>
                       ))
@@ -358,12 +363,19 @@ export default function OpsEfficiencyPage() {
               <ReadinessPanel
                 title="Trip Profitability"
                 item={{
-                  status: incompleteTripCount > 0 ? "not_enough_linked_data" : "available",
-                  reason:
-                    incompleteTripCount > 0
-                      ? `${formatCount(incompleteTripCount)} trip(s) still need linked revenue, cost, distance, driver, asset, or client/route evidence.`
-                      : "Projected trips with available finance evidence are ready for review.",
-                  evidence_label: "journey revenue plus linked fuel/expense records",
+                  status:
+                    contributionReadyCount > 0
+                      ? "available_with_caution"
+                      : incompleteTripCount > 0
+                        ? "not_enough_linked_data"
+                        : "available",
+                  reason: tripProfitabilityReason(
+                    contributionReadyCount,
+                    incompleteTripCount,
+                    Number(tripSummary.trip_count || 0)
+                  ),
+                  evidence_label:
+                    "journey revenue minus linked fuel/expense cost evidence; per-km metrics need distance",
                 }}
                 fallback="Profitability requires linked revenue and cost evidence. Unlinked costs are not used for exact trip contribution."
               />
@@ -462,7 +474,7 @@ function TripRow({ trip }: { trip: any }) {
           </div>
         </div>
         <StatusPill tone={readinessTone(readiness.status)}>
-          {humanize(readiness.status || "not_enough_linked_data")}
+          {readinessLabel(readiness)}
         </StatusPill>
       </div>
       <div className="mt-3 grid gap-2 text-xs text-slate-300 sm:grid-cols-3">
@@ -470,6 +482,15 @@ function TripRow({ trip }: { trip: any }) {
         <span>Source: {movement.distance_source || "unavailable"}</span>
         <span>Flags: {flags.length ? flags.slice(0, 3).map(humanize).join(", ") : "None"}</span>
       </div>
+      {Array.isArray(readiness.supporting_notes) && readiness.supporting_notes.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {readiness.supporting_notes.slice(0, 3).map((note: string) => (
+            <StatusPill key={note} tone="info">
+              {note}
+            </StatusPill>
+          ))}
+        </div>
+      )}
     </div>
   );
 
@@ -593,6 +614,41 @@ function readinessTone(status: string): "neutral" | "success" | "warning" | "dan
   if (status === "partially_linked") return "warning";
   if (status === "not_enough_linked_data") return "danger";
   return "neutral";
+}
+
+function readinessLabel(readiness: any) {
+  if (readiness?.label || readiness?.customer_label) {
+    return readiness.label || readiness.customer_label;
+  }
+  if (readiness?.status === "calculable") return "Contribution review ready";
+  return humanize(readiness?.status || "not_enough_linked_data");
+}
+
+function missingDataLabel(value: any) {
+  const key = String(value || "").trim().toLowerCase();
+  if (key === "missing distance") return "Distance evidence missing";
+  if (key === "missing linked expenses") return "Other expenses missing";
+  if (key === "missing linked cost evidence") return "Linked cost evidence missing";
+  if (key === "fuel allocation missing") return "Fuel allocation missing";
+  return humanize(value);
+}
+
+function tripProfitabilityReason(
+  contributionReadyCount: number,
+  incompleteTripCount: number,
+  tripCount: number
+) {
+  if (tripCount <= 0) {
+    return "No production trips are projected for this range yet.";
+  }
+  if (contributionReadyCount > 0) {
+    const noun = contributionReadyCount === 1 ? "trip has" : "trips have";
+    return `${formatCount(contributionReadyCount)} ${noun} enough linked revenue and fuel/cost evidence for contribution review. Distance or extra expense links may still be incomplete.`;
+  }
+  if (incompleteTripCount > 0) {
+    return `${formatCount(incompleteTripCount)} trip(s) still need linked revenue or linked cost evidence before contribution review is safe.`;
+  }
+  return "Projected trips with available finance evidence are ready for contribution review.";
 }
 
 function formatCount(value: any) {

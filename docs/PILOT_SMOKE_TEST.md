@@ -268,7 +268,9 @@ Confirm workflow behavior:
 - [ ] If a journey has no fuel allocations but has legacy `fuel_logs.journey_id`, confirm Trip Intelligence labels the fuel source as `legacy_journey_link`.
 - [ ] Confirm Trip Intelligence uses the 450L allocation/cost for Trip A, not the full 700L fuel issue, and does not claim actual fuel burn, fuel theft, or fuel efficiency.
 - [ ] As an ops-only role, confirm Trip Intelligence hides finance amounts and returns a role visibility note.
-- [ ] As a finance/management/elevated role, confirm Trip Intelligence marks profitability readiness as `calculable`, `partially_linked`, or `not_enough_linked_data` and lists exactly what is missing when contribution is unsafe.
+- [ ] As a finance/management/elevated role, confirm Trip Intelligence keeps deterministic machine readiness while the UI labels revenue-plus-linked-cost trips as `Contribution review ready`, not raw `Calculable`.
+- [ ] Confirm missing distance appears separately as `Distance evidence missing` / `Distance-based metrics pending` and only blocks per-km metrics, not basic contribution review from linked revenue minus linked costs.
+- [ ] Confirm trips with linked fuel allocation and no other expenses show `No additional trip expenses linked yet` as a supporting note rather than a blocker.
 - [ ] Confirm Trip Intelligence does not require fuel as the only cost source and does not invent profit when linked revenue/cost evidence is missing.
 
 ## 8. Nava Eye Smoke Test
