@@ -29,6 +29,7 @@ import {
   detectBusinessMetricIntent,
   resolveBusinessMetricTimeframe,
 } from "./metricEngine";
+import { buildTripIntelligenceSummary } from "./tripIntelligence";
 
 export type ContextIntent =
   | "fleet_health"
@@ -41,6 +42,7 @@ export type ContextIntent =
   | "country_trucks"
   | "profit_simulation"
   | "profitability"
+  | "trip_performance"
   | "business_metrics"
   | "investigation_context"
   | "spares_context"
@@ -76,11 +78,19 @@ export async function routeContext(
   const operationalTimeZone = resolveOperationalTimeZone(company);
   const lower = question.toLowerCase();
   const detectedCountryName = detectSupportedCountryName(question);
-  const businessMetricIntent = detectBusinessMetricIntent(lower);
+  const tripPerformanceRequest = detectTripPerformanceIntent(lower);
+  const businessMetricIntent = tripPerformanceRequest
+    ? null
+    : detectBusinessMetricIntent(lower);
   const businessMetricTimeframe = businessMetricIntent
     ? resolveBusinessMetricTimeframe(question, company)
     : null;
-  let intent = detectIntent(lower, detectedCountryName, businessMetricIntent);
+  let intent = detectIntent(
+    lower,
+    detectedCountryName,
+    businessMetricIntent,
+    tripPerformanceRequest
+  );
   const locationEvidenceRequest = detectLocationEvidenceRequest(lower);
   const dashboardReference = resolveDashboardReference(
     lower,
@@ -124,7 +134,9 @@ export async function routeContext(
   const sparesCostVisible = roleCapabilities.canViewFinance;
   const financialsVisible = roleCapabilities.canViewFinance;
   const permissionBoundary =
-    getPermissionBoundary(lower, roleCapabilities) ||
+    getPermissionBoundary(lower, roleCapabilities, {
+      allowTripPerformanceSummary: intent === "trip_performance",
+    }) ||
     getIntentPermissionBoundary(intent, roleCapabilities);
   const context: any = {
     company,
@@ -370,6 +382,35 @@ export async function routeContext(
       context.financial_access_message =
         "Financial values are available to owner, admin, finance, management, and platform owner roles.";
     }
+  }
+  if (intent === "trip_performance") {
+    context.trip_performance = await fetchTripPerformanceContext({
+      companyId,
+      company,
+      question,
+      vehicleMatch,
+      financeVisible: financialsVisible,
+    });
+    if (
+      !context.trip_performance?.matched_trip &&
+      truckId &&
+      !context.asset_access_restricted
+    ) {
+      context.truck = await fetchTruckStatus(
+        companyId,
+        truckId,
+        geofences,
+        assignmentLookup
+      );
+      context.recent_events = await fetchTruckEvents(
+        companyId,
+        truckId,
+        geofences,
+        assignmentLookup
+      );
+      context.recent_telemetry = await fetchTruckTelemetry(companyId, truckId);
+    }
+    return context;
   }
   if (intent === "business_metrics" && businessMetricIntent && !context.asset_access_restricted) {
     context.business_metric = await buildBusinessMetricContext({
@@ -620,6 +661,246 @@ function finiteOrNull(value: any) {
   return Number.isFinite(number) ? number : null;
 }
 
+async function fetchTripPerformanceContext(input: {
+  companyId: string;
+  company: any;
+  question: string;
+  vehicleMatch: any;
+  financeVisible: boolean;
+}) {
+  const range = resolveTripPerformanceRange(input.question);
+  const summary = await buildTripIntelligenceSummary({
+    companyId: input.companyId,
+    company: input.company,
+    range,
+    includeFinance: true,
+  });
+  const trips = Array.isArray(summary.trips) ? summary.trips : [];
+  const match = selectTripPerformanceMatch(trips, input.question, input.vehicleMatch);
+
+  return {
+    source: "trip_intelligence",
+    range,
+    timeframe: sanitizeTripPerformanceTimeframe(summary.timeframe),
+    finance_values_visible: input.financeVisible,
+    matched_trip: match
+      ? sanitizeTripPerformanceRecord(match.trip, input.financeVisible)
+      : null,
+    match: match
+      ? {
+          score: match.score,
+          reason: match.reason,
+        }
+      : null,
+    candidate_trips: match
+      ? []
+      : trips.slice(0, 5).map((trip: any) => sanitizeTripCandidate(trip)),
+    trip_count: trips.length,
+  };
+}
+
+function resolveTripPerformanceRange(question: string) {
+  const lower = String(question || "").toLowerCase();
+  if (
+    lower.includes("today") ||
+    lower.includes("current day") ||
+    lower.includes("same day")
+  ) {
+    return "today";
+  }
+  if (
+    lower.includes("yesterday") ||
+    lower.includes("previous day") ||
+    lower.includes("last operating day")
+  ) {
+    return "yesterday";
+  }
+  return "7d";
+}
+
+function selectTripPerformanceMatch(trips: any[], question: string, vehicleMatch: any) {
+  if (!trips.length) return null;
+  const scored = trips
+    .map((trip) => ({
+      trip,
+      ...scoreTripPerformanceMatch(trip, question, vehicleMatch),
+    }))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return tripSortTimeMs(b.trip) - tripSortTimeMs(a.trip);
+    });
+
+  if (!scored.length) {
+    return trips.length === 1
+      ? { trip: trips[0], score: 20, reason: "only projected trip in range" }
+      : null;
+  }
+
+  const top = scored[0];
+  if (top.score >= 35) return top;
+  if (trips.length === 1) return top;
+  return null;
+}
+
+function scoreTripPerformanceMatch(trip: any, question: string, vehicleMatch: any) {
+  const identity = trip.trip_identity || {};
+  const questionText = normalizeTripText(question);
+  const questionKey = normalizeVehicleKey(question);
+  const vehicleKeys = [
+    vehicleMatch?.input,
+    vehicleMatch?.matched_truck_id,
+    vehicleMatch?.matched_registration,
+    vehicleMatch?.matched_display_label,
+    vehicleMatch?.provider_label,
+  ]
+    .map((value) => normalizeVehicleKey(value))
+    .filter(Boolean);
+
+  let score = 0;
+  const reasons: string[] = [];
+  const reference = identity.reference || identity.internal_trip_id;
+  const referenceKey = normalizeVehicleKey(reference);
+  if (referenceKey && questionKey.includes(referenceKey)) {
+    score += 120;
+    reasons.push("internal_trip_id");
+  }
+
+  const truckKey = normalizeVehicleKey(identity.truck);
+  if (truckKey && (questionKey.includes(truckKey) || vehicleKeys.includes(truckKey))) {
+    score += 50;
+    reasons.push("truck");
+  }
+
+  const client = normalizeTripText(identity.client_name);
+  if (client && questionText.includes(client)) {
+    score += 35;
+    reasons.push("client");
+  }
+
+  const route = identity.route || {};
+  for (const [label, value] of [
+    ["origin", route.from_location],
+    ["destination", route.to_location],
+    ["route", route.route_label || route.route_name],
+  ]) {
+    const normalized = normalizeTripText(value);
+    if (normalized && questionText.includes(normalized)) {
+      score += label === "route" ? 25 : 15;
+      reasons.push(label);
+    }
+  }
+
+  return {
+    score,
+    reason: reasons.join("+") || "weak trip text match",
+  };
+}
+
+function sanitizeTripPerformanceRecord(trip: any, financeVisible: boolean) {
+  const identity = trip.trip_identity || {};
+  const readiness = trip.profitability_readiness || {};
+  const contribution = readiness.contribution_summary || {};
+  const finance = trip.finance_evidence || {};
+  const movement = trip.movement_evidence || {};
+  const driver = trip.driver_evidence || {};
+  const flags = Array.isArray(trip.management_flags) ? trip.management_flags : [];
+
+  return {
+    trip_id: identity.journey_id || null,
+    reference: identity.reference || identity.internal_trip_id || "Trip",
+    status: identity.status || null,
+    truck: identity.truck || null,
+    client_name: identity.client_name || null,
+    route_label: identity.route?.route_label || null,
+    driver_name: driver.driver_name || null,
+    driver_evidence_label: driver.evidence_label || null,
+    readiness_label:
+      readiness.label || readiness.customer_label || profitabilityStatusLabel(readiness.status),
+    readiness_status: readiness.status || null,
+    finance_values_visible: financeVisible,
+    revenue_present: Number(contribution.revenue_amount || finance.revenue_kes || 0) > 0,
+    fuel_allocation_linked:
+      finance.fuel_cost_source === "fuel_allocations" ||
+      Number(contribution.linked_fuel_cost || 0) > 0,
+    extra_expenses_linked: Boolean(contribution.extra_expenses_linked),
+    linked_expense_count: Number(finance.linked_expense_count || 0),
+    revenue_amount: financeVisible ? contribution.revenue_amount : null,
+    linked_fuel_cost: financeVisible ? contribution.linked_fuel_cost : null,
+    linked_expense_cost: financeVisible ? contribution.linked_expense_cost : null,
+    linked_variable_cost: financeVisible ? contribution.linked_variable_cost : null,
+    contribution_amount: financeVisible ? contribution.contribution_amount : null,
+    contribution_margin_percent: financeVisible
+      ? contribution.contribution_margin_percent
+      : null,
+    per_tonne_contribution: financeVisible ? contribution.per_tonne_contribution : null,
+    per_km_contribution: financeVisible ? contribution.per_km_contribution : null,
+    distance_based_metrics_available: Boolean(contribution.distance_based_metrics_available),
+    distance_source: movement.distance_source || "unavailable",
+    missing_data: Array.isArray(trip.missing_data) ? trip.missing_data : [],
+    caveats: Array.isArray(contribution.caveats)
+      ? contribution.caveats
+      : Array.isArray(readiness.supporting_notes)
+        ? readiness.supporting_notes
+        : [],
+    flags: flags.filter((flag: string) =>
+      [
+        "revenue_without_movement_evidence",
+        "stale_tracking",
+        "needs_provider_distance",
+        "delay_evidence_present",
+      ].includes(flag)
+    ),
+  };
+}
+
+function sanitizeTripCandidate(trip: any) {
+  const identity = trip.trip_identity || {};
+  return {
+    reference: identity.reference || identity.internal_trip_id || "Trip",
+    truck: identity.truck || null,
+    client_name: identity.client_name || null,
+    route_label: identity.route?.route_label || null,
+    status: identity.status || null,
+  };
+}
+
+function sanitizeTripPerformanceTimeframe(timeframe: any) {
+  if (!timeframe || typeof timeframe !== "object") return null;
+  return {
+    requested: timeframe.requested || null,
+    display_label: timeframe.display_label || null,
+    local_start_date: timeframe.local_start_date || null,
+    local_end_date: timeframe.local_end_date || null,
+  };
+}
+
+function normalizeTripText(value: any) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function tripSortTimeMs(trip: any) {
+  const identity = trip.trip_identity || {};
+  const value =
+    identity.start_time ||
+    identity.end_time ||
+    identity.created_at ||
+    trip.generated_at ||
+    null;
+  const ms = value ? new Date(value).getTime() : 0;
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+function profitabilityStatusLabel(status: any) {
+  if (status === "calculable") return "Contribution review ready";
+  if (status === "partially_linked") return "Partially linked";
+  return "Not enough linked data";
+}
+
 function sanitizeCapabilities(capabilities: ReturnType<typeof getRoleCapabilities>) {
   return {
     canViewFinance: Boolean(capabilities.canViewFinance),
@@ -637,7 +918,8 @@ function sanitizeCapabilities(capabilities: ReturnType<typeof getRoleCapabilitie
 
 function getPermissionBoundary(
   lower: string,
-  capabilities: ReturnType<typeof getRoleCapabilities>
+  capabilities: ReturnType<typeof getRoleCapabilities>,
+  options: { allowTripPerformanceSummary?: boolean } = {}
 ) {
   if (asksForProviderSecrets(lower)) {
     return {
@@ -663,7 +945,11 @@ function getPermissionBoundary(
     };
   }
 
-  if (asksForExpenses(lower) && !capabilities.canViewExpenses) {
+  if (
+    asksForExpenses(lower) &&
+    !capabilities.canViewExpenses &&
+    !options.allowTripPerformanceSummary
+  ) {
     return {
       category: "expenses",
       message:
@@ -671,7 +957,11 @@ function getPermissionBoundary(
     };
   }
 
-  if (asksForFinance(lower) && !capabilities.canViewFinance) {
+  if (
+    asksForFinance(lower) &&
+    !capabilities.canViewFinance &&
+    !options.allowTripPerformanceSummary
+  ) {
     return {
       category: "finance",
       message:
@@ -719,10 +1009,14 @@ function asksForFinance(lower: string) {
 function detectIntent(
   lower: string,
   detectedCountryName: string | null,
-  businessMetricIntent: ReturnType<typeof detectBusinessMetricIntent> = null
+  businessMetricIntent: ReturnType<typeof detectBusinessMetricIntent> = null,
+  tripPerformanceRequest = false
 ): ContextIntent {
   if (detectedCountryName) {
     return "country_trucks";
+  }
+  if (tripPerformanceRequest) {
+    return "trip_performance";
   }
   if (businessMetricIntent && !detectHypotheticalProfitSimulation(lower)) {
     return "business_metrics";
@@ -799,6 +1093,17 @@ function detectIntent(
     return "journey_context";
   }
   return "general";
+}
+
+function detectTripPerformanceIntent(lower: string) {
+  const text = String(lower || "").toLowerCase().replace(/[’]/g, "'");
+  const mentionsTrip = /\b(trip|journey)\b/.test(text);
+  const asksPerformance =
+    /\b(perform|performance|do|did|done|make money|made money|contribution|profit|profitability|margin|ready for profit review|profit review)\b/.test(
+      text
+    );
+
+  return mentionsTrip && asksPerformance;
 }
 
 function detectHypotheticalProfitSimulation(lower: string) {

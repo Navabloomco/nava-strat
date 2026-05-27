@@ -308,6 +308,10 @@ Open `/nava-eye` and ask:
 - [ ] "Did KCW 103Z make money yesterday?" and confirm the answer either calculates from linked revenue/cost/distance or clearly lists missing data.
 - [ ] After a profit readiness answer, ask "What about KDQ265T?" and confirm Nava Eye inherits the profit readiness intent only for roles allowed to see it.
 - [ ] "What is contribution per km for KCW 103Z?" and confirm Nava Eye does not invent revenue, cost, or profit if records are missing.
+- [ ] Ask "How did the KBJ132C Bamburi trip perform?" and confirm Nava Eye answers from Trip Intelligence instead of live truck status.
+- [ ] Ask "Did the Bamburi trip make money?" as a finance/management/elevated role and confirm the answer includes trip reference, truck/client/route, readiness, revenue, linked fuel allocation cost, linked expenses, contribution, margin, per-tonne where available, and per-km pending when distance is missing.
+- [ ] Ask the same trip-performance question as an ops-only role and confirm finance amounts are hidden while trip readiness, revenue-present/fuel-linked/expense-linked status, missing distance, and the finance-role boundary remain useful.
+- [ ] Confirm trip-performance answers do not claim final audited profit, actual fuel burn, fuel efficiency, fuel theft, or engine-on idling from GPS-only evidence.
 - [ ] "Which trucks moved but have no revenue?" and confirm it requires reliable trip/revenue linking before producing an exception list.
 - [ ] "Can we trust KCW 103Z odometer?" and confirm the answer uses odometer health/distance quality evidence.
 - [ ] As an `ops` user, ask a profit/revenue/contribution question and confirm Nava Eye shows a role boundary without leaking finance values.

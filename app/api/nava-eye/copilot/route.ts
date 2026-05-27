@@ -304,6 +304,7 @@ export async function POST(req: Request) {
       !context.investigation_case_file &&
       !context.fuel_investigation &&
       !context.dashboard_followup &&
+      !context.trip_performance &&
       context.intent !== "truck_status" &&
       context.intent !== "truck_compound" &&
       context.intent !== "fleet_movement" &&
@@ -535,6 +536,9 @@ function buildFallbackAnswer(context: any): string {
   const parts: string[] = [];
   if (context.permission_boundary && !context.investigation_case_file) {
     return buildPermissionBoundaryAnswer(context.permission_boundary);
+  }
+  if (context.trip_performance) {
+    return buildTripPerformanceAnswer(context);
   }
   if (
     context.vehicle_match?.match_type === "multiple_candidates" &&
@@ -1649,6 +1653,164 @@ function buildBusinessMetricAnswer(context: any) {
   }
 
   return buildContributionReadinessAnswer(label, metric, timeframe, type);
+}
+
+function buildTripPerformanceAnswer(context: any) {
+  const performance = context.trip_performance || {};
+  const trip = performance.matched_trip || null;
+  const parts: string[] = [];
+
+  if (!trip) {
+    parts.push("No matching production trip was found for that trip-performance question.");
+    if (Array.isArray(performance.candidate_trips) && performance.candidate_trips.length) {
+      parts.push(
+        `Recent trip candidates: ${performance.candidate_trips
+          .slice(0, 3)
+          .map(formatTripCandidate)
+          .join("; ")}.`
+      );
+    }
+    if (context.asset_access_restricted) {
+      parts.push(buildAssetRestrictedAnswer(context.vehicle_match));
+      return parts.join("\n");
+    }
+    if (context.truck) {
+      parts.push("");
+      parts.push("Live truck status instead:");
+      parts.push(buildTruckStatusFallbackAnswer(context));
+    }
+    return parts.join("\n");
+  }
+
+  const reference = trip.reference || "This trip";
+  const readiness = trip.readiness_label || "Trip intelligence pending";
+  const routeParts = [
+    trip.truck ? `Truck ${trip.truck}` : null,
+    trip.client_name ? `client ${trip.client_name}` : null,
+    trip.route_label ? `route ${trip.route_label}` : null,
+  ].filter(Boolean);
+
+  parts.push(`${reference} is ${readiness.toLowerCase()}.`);
+  if (routeParts.length) {
+    parts.push(routeParts.join(" · ") + ".");
+  }
+  if (trip.driver_name) {
+    parts.push(
+      `Driver evidence: ${trip.driver_name}${
+        trip.driver_evidence_label ? ` (${humanizeInline(trip.driver_evidence_label)})` : ""
+      }.`
+    );
+  }
+
+  if (trip.finance_values_visible) {
+    parts.push(
+      `Revenue is ${formatKesPrefix(trip.revenue_amount)}. Linked fuel/cost evidence is ${formatKesPrefix(
+        trip.linked_fuel_cost
+      )}, with ${trip.extra_expenses_linked ? `${formatKesPrefix(trip.linked_expense_cost)} linked trip expenses` : "no additional trip expenses linked yet"}.`
+    );
+    parts.push(
+      `Review-ready contribution is ${formatKesPrefix(
+        trip.contribution_amount
+      )}, a ${formatPercentPrecise(trip.contribution_margin_percent)} margin.`
+    );
+    if (hasNumber(trip.per_tonne_contribution)) {
+      parts.push(`Contribution per tonne is ${formatKesPrefix(trip.per_tonne_contribution)}.`);
+    }
+    if (hasNumber(trip.per_km_contribution)) {
+      parts.push(`Contribution per km is ${formatKesPrefix(trip.per_km_contribution)}.`);
+    } else {
+      parts.push(
+        "Distance-based metrics are pending because distance evidence is unavailable, so per-km performance cannot be calculated yet."
+      );
+    }
+  } else {
+    const revenueText = trip.revenue_present ? "revenue is present" : "revenue is not linked yet";
+    const fuelText = trip.fuel_allocation_linked
+      ? "fuel allocation is linked"
+      : "fuel allocation is not linked yet";
+    const expenseText = trip.extra_expenses_linked
+      ? "trip expenses are linked"
+      : "no additional trip expenses are linked yet";
+    parts.push(
+      `${capitalizeSentence(fuelText)}, ${revenueText}, and ${expenseText}. Contribution amounts are restricted to finance and management roles.`
+    );
+    if (!trip.distance_based_metrics_available) {
+      parts.push(
+        "Distance-based metrics are pending because distance evidence is unavailable."
+      );
+    }
+  }
+
+  const conciseFlags = Array.isArray(trip.flags)
+    ? trip.flags.map(formatTripPerformanceFlag).filter(Boolean)
+    : [];
+  if (conciseFlags.length) {
+    parts.push(`Operational caveats: ${conciseFlags.join(", ")}.`);
+  }
+
+  const caveats = Array.isArray(trip.caveats)
+    ? trip.caveats.filter((item: string) => {
+        const text = String(item || "").toLowerCase();
+        return !text.includes("distance-based metrics pending") &&
+          !text.includes("no additional trip expenses linked yet");
+      })
+    : [];
+  if (caveats.length) {
+    parts.push(`Still to review: ${caveats.map(humanizeInline).join(", ")}.`);
+  }
+
+  parts.push(
+    "This is not final audited profit and does not prove actual fuel burn or theft."
+  );
+
+  return parts.join("\n");
+}
+
+function formatTripCandidate(trip: any) {
+  const bits = [
+    trip.reference || "Trip",
+    trip.truck || null,
+    trip.client_name || null,
+    trip.route_label || null,
+  ].filter(Boolean);
+  return bits.join(" · ");
+}
+
+function formatTripPerformanceFlag(flag: string) {
+  const labels: Record<string, string> = {
+    revenue_without_movement_evidence: "revenue without movement evidence",
+    stale_tracking: "stale tracking",
+    needs_provider_distance: "needs provider distance",
+    delay_evidence_present: "delay evidence present",
+  };
+  return labels[flag] || humanizeInline(flag);
+}
+
+function formatKesPrefix(value: any) {
+  if (!hasNumber(value)) return "unavailable";
+  return `KES ${Number(value).toLocaleString(undefined, {
+    maximumFractionDigits: Number(value) % 1 === 0 ? 0 : 2,
+  })}`;
+}
+
+function formatPercentPrecise(value: any) {
+  if (!hasNumber(value)) return "unavailable";
+  return `${Number(value).toLocaleString(undefined, {
+    maximumFractionDigits: 2,
+  })}%`;
+}
+
+function hasNumber(value: any) {
+  if (value === null || value === undefined || value === "") return false;
+  return Number.isFinite(Number(value));
+}
+
+function humanizeInline(value: any) {
+  const text = String(value || "")
+    .replace(/_/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return text || "unavailable";
 }
 
 function buildDistanceCoveredAnswer(context: any, metric: any, timeframe: string) {
