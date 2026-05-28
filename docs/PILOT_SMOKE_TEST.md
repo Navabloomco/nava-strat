@@ -312,6 +312,8 @@ Confirm workflow behavior:
 - [ ] Confirm stopped-time rows show customer-readable evidence such as "No movement observed in sampled intervals", "Movement observed in X% of sampled intervals", GPS point/interval counts, and low-confidence sparse/capped labels instead of technical observed-interval ratios.
 - [ ] Confirm stopped-time rows are labeled GPS-estimated stopped time and do not claim engine-on idling, fuel burn, driver waste, or fuel misuse.
 - [ ] Confirm idle/excessive-idle event sections are labeled provider idle markers/provider-derived marker windows unless ignition/engine/CAN data verifies true engine-on idle.
+- [ ] Confirm provider idle markers are present in `telemetry_events` as canonical `provider_idle_marker` rows when the provider feed supplies idle/excessive-idle marker values, and that GPS-only stopped windows are not counted as provider-derived idle markers.
+- [ ] Ask Nava Eye "which trucks have idle markers?" and confirm it answers with provider idle marker evidence first, while saying engine-on idling and fuel burn are not verified without ignition/engine/CAN support.
 - [ ] Confirm `/api/ops/efficiency` does not return raw coordinate series and does not expose disabled/unreviewed asset telemetry.
 - [ ] Confirm `/api/ops/efficiency` does not let future provider timestamps inflate movement/stopped/productivity metrics or mark an asset fresh when timestamp quality is suspicious.
 - [ ] Confirm ops/management/owner/admin/platform-owner can view operational efficiency summaries and unauthorized roles receive a role boundary.

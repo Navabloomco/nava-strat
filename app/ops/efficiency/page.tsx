@@ -276,8 +276,8 @@ export default function OpsEfficiencyPage() {
                   <RankRow
                     key={truck.truck_key || truck.truck_id}
                     title={truck.truck_id || "Unknown truck"}
-                    metric={formatMinutes(truck.total_alert_span_minutes)}
-                    detail={`${formatCount(truck.alert_window_count)} provider-derived window(s), ${formatCount(truck.marker_count)} marker(s). Engine-on idle not verified unless ignition/engine data supports it.`}
+                    metric={formatProviderIdleMetric(truck)}
+                    detail={`${formatCount(truck.alert_window_count)} provider-derived window(s), ${formatCount(truck.marker_count)} marker(s). ${formatProviderIdleDurationNote(truck)} Engine-on idle not verified unless ignition/engine data supports it.`}
                   />
                 )}
               />
@@ -743,6 +743,20 @@ function formatStoppedConfidence(row: any) {
       : null,
   ].filter(Boolean);
   return parts.join(" · ");
+}
+
+function formatProviderIdleMetric(row: any) {
+  const providerDuration = Number(row?.total_provider_duration_minutes || 0);
+  if (providerDuration > 0) return `${formatMinutes(providerDuration)} provider duration`;
+  return `${formatMinutes(row?.total_alert_span_minutes)} marker span`;
+}
+
+function formatProviderIdleDurationNote(row: any) {
+  const providerDuration = Number(row?.total_provider_duration_minutes || 0);
+  if (providerDuration > 0) {
+    return "Duration comes from provider marker values where available.";
+  }
+  return "Window span is estimated from marker timestamps.";
 }
 
 function formatMovementObservation(row: any) {

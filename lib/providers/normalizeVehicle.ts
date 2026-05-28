@@ -13,6 +13,10 @@ import {
   resolveTelemetryCapability,
 } from "../telemetry/capabilities";
 import { parseProviderVehicleIdentity } from "./vehicleIdentity";
+import {
+  extractProviderIdleMarkersFromRow,
+  type ProviderIdleMarkerDetection,
+} from "./providerIdleMarkers";
 
 export type CanonicalVehicle = {
   truck_id: string;
@@ -41,6 +45,7 @@ export type CanonicalVehicle = {
   telemetry_capability_source: string;
   signal_quality: Record<string, any>;
   provider_signal_flags: Record<string, any>;
+  provider_idle_markers: ProviderIdleMarkerDetection[];
 
   provider: string;
 
@@ -109,6 +114,7 @@ export function normalizeVehicle(
       ? null
       : rawFuelLevel;
   const location_label = getLocationLabel(raw, mapping);
+  const providerIdleMarkers = extractProviderIdleMarkersFromRow(raw);
   const recordedAtValue = getValue(raw, mapping.recorded_at);
   if (isAmbiguousProviderTimestampValue(recordedAtValue)) {
     warnings.push(
@@ -256,7 +262,9 @@ export function normalizeVehicle(
       attached_trailer_plate: identity.attached_trailer_plate,
       identity_source: identity.identity_source,
       asset_identity_role: identity.asset_identity_role,
+      provider_idle_markers_detected: providerIdleMarkers.length,
     },
+    provider_idle_markers: providerIdleMarkers,
 
     provider: providerName,
 

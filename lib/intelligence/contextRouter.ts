@@ -30,6 +30,10 @@ import {
   resolveBusinessMetricTimeframe,
 } from "./metricEngine";
 import { buildTripIntelligenceSummary } from "./tripIntelligence";
+import {
+  CANONICAL_PROVIDER_IDLE_EVENT_TYPE,
+  isProviderIdleMarkerEvent,
+} from "../providers/providerIdleMarkers";
 
 export type ContextIntent =
   | "fleet_health"
@@ -1660,17 +1664,24 @@ async function fetchRecentDashboardIdleEvents(companyId: string, truckId: string
   const { data, error } = await supabaseAdmin
     .from("telemetry_events")
     .select(
-      "truck_id, event_type, severity, location_name, created_at, started_at, duration_minutes, context_label, context_type"
+      "truck_id, event_type, severity, location_name, created_at, started_at, duration_minutes, context_label, context_type, metadata"
     )
     .eq("company_id", companyId)
     .eq("truck_id", truckId)
-    .in("event_type", ["excessive_idle", "idle", "stopped", "long_stop"])
+    .in("event_type", [
+      CANONICAL_PROVIDER_IDLE_EVENT_TYPE,
+      "excessive_idle",
+      "idle",
+      "idling",
+      "prolonged_idle",
+      "stop_idle",
+    ])
     .gte("created_at", since)
     .order("created_at", { ascending: false })
     .limit(5);
 
   if (error) throw error;
-  return data || [];
+  return (data || []).filter((event) => isProviderIdleMarkerEvent(event));
 }
 
 function assessDashboardTruckStatus(asset: any, latestTelemetry: any, idleEvents: any[]) {
@@ -1747,6 +1758,12 @@ function assessDashboardTruckStatus(asset: any, latestTelemetry: any, idleEvents
     reason:
       "Telemetry is fresh, but speed/status are not enough to classify it confidently.",
   };
+}
+
+function isStopOrProviderIdleMarkerEvent(event: any) {
+  if (isProviderIdleMarkerEvent(event)) return true;
+  const type = String(event?.event_type || "").trim().toLowerCase();
+  return ["stopped", "long_stop"].includes(type);
 }
 
 function normalizeTruckKey(value: string | null | undefined) {
@@ -1946,7 +1963,7 @@ async function fetchFleetHealth(companyId: string) {
       .eq("intelligence_enabled", true),
     supabaseAdmin
       .from("telemetry_events")
-      .select("truck_id, event_type, severity, location_name, created_at")
+      .select("truck_id, event_type, severity, location_name, created_at, context_label, context_type, metadata")
       .eq("company_id", companyId)
       .gte("created_at", since.toISOString()),
   ]);
@@ -1968,7 +1985,7 @@ async function fetchFleetHealth(companyId: string) {
   const fuelEvents = events.filter((e) =>
     ["fuel_drop_stationary", "low_fuel"].includes(e.event_type)
   );
-  const idleEvents = events.filter((e) => e.event_type === "excessive_idle");
+  const idleEvents = events.filter((e) => isProviderIdleMarkerEvent(e));
 
   return {
     total_trucks: assets.length,
@@ -2233,7 +2250,7 @@ async function fetchTruckEvents(
 ) {
   const { data } = await supabaseAdmin
     .from("telemetry_events")
-    .select("truck_id, event_type, severity, location_name, latitude, longitude, created_at, started_at, context_label, context_type")
+    .select("truck_id, event_type, severity, location_name, latitude, longitude, created_at, started_at, context_label, context_type, metadata")
     .eq("company_id", companyId)
     .eq("truck_id", truckId)
     .order("created_at", { ascending: false })
@@ -2348,9 +2365,7 @@ async function fetchFuelSuspicionInvestigation(
   const fuelRelatedEvents = recentEvents.filter((event: any) =>
     ["fuel_drop_stationary", "low_fuel"].includes(event.event_type)
   );
-  const idleStopEvents = recentEvents.filter((event: any) =>
-    ["excessive_idle", "idle", "stopped", "long_stop"].includes(event.event_type)
-  );
+  const idleStopEvents = recentEvents.filter((event: any) => isStopOrProviderIdleMarkerEvent(event));
 
   return {
     truck,
@@ -2536,9 +2551,7 @@ async function fetchVehicleInvestigationCaseFile(
       : Promise.resolve({ visible: false }),
   ]);
 
-  const stopLikeEvents = recentEvents.filter((event: any) =>
-    ["excessive_idle", "idle", "stopped", "long_stop"].includes(event.event_type)
-  );
+  const stopLikeEvents = recentEvents.filter((event: any) => isStopOrProviderIdleMarkerEvent(event));
   const fuelEvents = recentEvents.filter((event: any) =>
     ["fuel_drop_stationary", "low_fuel"].includes(event.event_type)
   );

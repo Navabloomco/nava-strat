@@ -34,6 +34,10 @@ import {
 import { resolveNavaEyeConversationFollowup } from "../../../../lib/intelligence/conversationResolver";
 import { applyNavaEyeAnswerQualityGuardrails } from "../../../../lib/intelligence/answerQuality";
 import { readStoredVehicleIdentityContext } from "../../../../lib/providers/vehicleIdentity";
+import {
+  isProviderIdleMarkerEvent,
+  providerIdleMarkerLabel,
+} from "../../../../lib/providers/providerIdleMarkers";
 
 export async function POST(req: Request) {
   try {
@@ -434,7 +438,7 @@ export async function POST(req: Request) {
 
     // Truck-specific risk from events (e.g., repeated idle or overspeed)
     if (context.detected_truck_id && context.recent_events?.length > 0) {
-      const idleCount = context.recent_events.filter((e: any) => e.event_type === "excessive_idle").length;
+      const idleCount = context.recent_events.filter((e: any) => isProviderIdleMarkerEvent(e)).length;
       const overspeedCount = context.recent_events.filter((e: any) => e.event_type === "overspeed").length;
       if (idleCount > 2) {
         storePromises.push(
@@ -2635,10 +2639,7 @@ function capabilityBoundarySentence(telemetryCapability: any) {
 }
 
 function formatIdleMarkerLabel(event: any) {
-  const type = String(event?.event_type || "").trim().toLowerCase();
-  if (type === "excessive_idle") return "A provider excessive-idle marker";
-  if (type === "idle") return "A provider idle marker";
-  return "A provider stop/idle marker";
+  return `A ${providerIdleMarkerLabel(event).toLowerCase()}`;
 }
 
 function isRecentOperationalEvent(event: any, hours: number) {
@@ -3657,9 +3658,8 @@ function buildTruckJourneyNarrative(
 }
 
 function isIdleStopEvent(event: any) {
-  return ["excessive_idle", "idle", "stopped", "long_stop"].includes(
-    String(event?.event_type || "").trim().toLowerCase()
-  );
+  if (isProviderIdleMarkerEvent(event)) return true;
+  return ["stopped", "long_stop"].includes(String(event?.event_type || "").trim().toLowerCase());
 }
 
 function hasMovementAfterEvent(telemetry: any[], event: any) {

@@ -6,6 +6,10 @@ import {
   resolveOperationalDayRange,
   resolveOperationalTimeZone,
 } from "../timeFormatting";
+import {
+  canonicalProviderIdleEventType,
+  isProviderIdleMarkerEvent,
+} from "../providers/providerIdleMarkers";
 
 export type OperationalEfficiencyRange = "today" | "yesterday" | "7d";
 
@@ -344,7 +348,7 @@ async function fetchIdleEventRows(
   try {
     const { data, error } = await supabaseAdmin
       .from("telemetry_events")
-      .select("id, truck_id, event_type, severity, created_at, started_at, context_label")
+      .select("id, truck_id, event_type, severity, created_at, started_at, duration_minutes, context_label, context_type, metadata")
       .eq("company_id", companyId)
       .in("truck_id", truckIds)
       .gte("created_at", timeframe.start_utc)
@@ -357,7 +361,7 @@ async function fetchIdleEventRows(
       throw error;
     }
 
-    const idleRows = (data || []).filter((row: any) => isIdleEvent(row.event_type));
+    const idleRows = (data || []).filter((row: any) => isProviderIdleMarkerEvent(row));
     return { rows: idleRows };
   } catch (err: any) {
     if (isMissingSchemaError(err)) {
@@ -759,7 +763,7 @@ function buildIdleWindowsByTruck(
       const previous = current[current.length - 1];
       const gapMinutes = (eventTimeMs(row) - eventTimeMs(previous)) / 60000;
       const sameType =
-        normalizeEventType(row.event_type) === normalizeEventType(previous.event_type);
+        normalizeEventType(row) === normalizeEventType(previous);
       if (sameType && gapMinutes <= 15) {
         current.push(row);
       } else {
@@ -780,6 +784,10 @@ function buildIdleWindowsByTruck(
         (sum, window) => sum + Number(window.alert_span_minutes || 0),
         0
       ),
+      total_provider_duration_minutes: windows.reduce(
+        (sum, window) => sum + Number(window.provider_duration_minutes || 0),
+        0
+      ),
       evidence_label: "provider-derived idle marker windows",
       windows: windows.slice(0, 6),
       interpretation:
@@ -796,7 +804,7 @@ function buildIdleWindow(rows: any[]) {
   const startMs = eventTimeMs(first);
   const endMs = eventTimeMs(last);
   return {
-    event_type: normalizeEventType(first?.event_type) || "idle",
+    event_type: normalizeEventType(first) || "idle",
     first_marker_at: first?.created_at || first?.started_at || null,
     last_marker_at: last?.created_at || last?.started_at || null,
     marker_count: rows.length,
@@ -804,6 +812,8 @@ function buildIdleWindow(rows: any[]) {
       Number.isFinite(startMs) && Number.isFinite(endMs)
         ? Math.max(0, Math.round((endMs - startMs) / 60000))
         : 0,
+    provider_duration_minutes: providerDurationFromRows(rows),
+    evidence_source: "provider-derived",
   };
 }
 
@@ -1192,20 +1202,16 @@ function eventTimeMs(row: any) {
   return quality.timestamp_ms ?? new Date(row?.created_at || row?.started_at || 0).getTime();
 }
 
-function isIdleEvent(eventType: any) {
-  const type = normalizeEventType(eventType);
-  return (
-    type.includes("idle") ||
-    type.includes("excessive") ||
-    type.includes("stationary")
-  );
+function normalizeEventType(rowOrType: any) {
+  return canonicalProviderIdleEventType(rowOrType);
 }
 
-function normalizeEventType(eventType: any) {
-  return String(eventType || "")
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, "_");
+function providerDurationFromRows(rows: any[]) {
+  const values = rows
+    .map((row) => Number(row?.duration_minutes))
+    .filter((value) => Number.isFinite(value) && value > 0 && value <= 24 * 60);
+  if (!values.length) return null;
+  return Math.round(values.reduce((sum, value) => sum + value, 0));
 }
 
 function displayTruckLabel(value: any, asset?: EnabledAsset | null) {

@@ -1,5 +1,6 @@
 // lib/intelligence/fleetHealthService.ts
 import { supabaseAdmin } from "../supabaseAdmin";
+import { isProviderIdleMarkerEvent } from "../providers/providerIdleMarkers";
 
 export async function getFleetHealth(companyId: string) {
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
@@ -12,7 +13,7 @@ export async function getFleetHealth(companyId: string) {
       .eq("intelligence_enabled", true),
     supabaseAdmin
       .from("telemetry_events")
-      .select("truck_id, event_type, severity, location_name, created_at, duration_minutes")
+      .select("truck_id, event_type, severity, location_name, created_at, duration_minutes, context_label, context_type, metadata")
       .eq("company_id", companyId)
       .gte("created_at", since.toISOString())
       .order("created_at", { ascending: false }),
@@ -32,7 +33,7 @@ export async function getFleetHealth(companyId: string) {
 
   const critical = events.filter((e) => e.severity === "high");
   const fuelEvents = events.filter((e) => ["fuel_drop_stationary", "low_fuel"].includes(e.event_type));
-  const idleEvents = events.filter((e) => e.event_type === "excessive_idle");
+  const idleEvents = events.filter((e) => isProviderIdleMarkerEvent(e));
 
   // Idle minutes per truck
   const idleMinutes: Record<string, number> = {};

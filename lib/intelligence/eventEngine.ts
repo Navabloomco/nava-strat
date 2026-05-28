@@ -243,7 +243,8 @@ async function detectLowFuel(latest: TelemetryLog) {
 }
 
 /**
- * Truck stayed idle for 30+ minutes.
+ * Truck appeared GPS-stopped for 30+ minutes.
+ * This does not prove engine-on idle without ignition/engine evidence.
  */
 async function detectExcessiveIdle(logs: TelemetryLog[]) {
   const idleLogs = logs
@@ -289,10 +290,13 @@ async function detectExcessiveIdle(logs: TelemetryLog[]) {
     location_name: locationName,
     country: country,
     metadata: {
+      evidence_source: "gps-estimated",
+      engine_on_idling_confirmed: false,
+      fuel_burn_confirmed: false,
       duration_minutes: Math.floor(durationMinutes),
-      message: `${newest.truck_id} has been idle for ${Math.floor(
+      message: `${newest.truck_id} appeared GPS-stopped for ${Math.floor(
         durationMinutes
-      )} minutes.`,
+      )} minutes. Engine-on idling is not verified without ignition/engine evidence.`,
     },
   });
 }

@@ -1,3 +1,4 @@
+import { createHash } from "crypto";
 import { supabaseAdmin } from "../supabaseAdmin";
 import { normalizeVehicle } from "./normalizeVehicle";
 import {
@@ -24,6 +25,10 @@ import {
   normalizeFieldMappingsRelativeToRow,
   normalizeRowPath,
 } from "./configNormalization";
+import {
+  CANONICAL_PROVIDER_IDLE_EVENT_TYPE,
+  type ProviderIdleMarkerDetection,
+} from "./providerIdleMarkers";
 
 export type ProviderRecord = {
   id: string;
@@ -745,6 +750,8 @@ export async function runProviderSync(
         });
 
         if (telemetryError) throw new Error(`Telemetry log write failed: ${telemetryError.message}`);
+
+        await insertProviderIdleMarkerEvents(provider, normalized);
 
         syncedCount++;
       } catch (err: any) {
@@ -2304,6 +2311,103 @@ async function insertTelemetryLogWithCapabilityFallback(payload: Record<string, 
   return retryError;
 }
 
+async function insertProviderIdleMarkerEvents(provider: ProviderRecord, normalized: any) {
+  const markers: ProviderIdleMarkerDetection[] = Array.isArray(normalized.provider_idle_markers)
+    ? normalized.provider_idle_markers
+    : [];
+  if (!markers.length || !provider.company_id || !normalized.truck_id) return;
+
+  for (const marker of markers) {
+    const startedAt = normalized.recorded_at || new Date().toISOString();
+    const payload = {
+      company_id: provider.company_id,
+      provider_id: provider.id,
+      truck_id: normalized.truck_id,
+      event_type: CANONICAL_PROVIDER_IDLE_EVENT_TYPE,
+      severity: marker.severity,
+      started_at: startedAt,
+      ended_at: null,
+      duration_minutes: marker.duration_minutes,
+      latitude: normalized.latitude,
+      longitude: normalized.longitude,
+      location_name: normalized.location_label || null,
+      context_type: CANONICAL_PROVIDER_IDLE_EVENT_TYPE,
+      context_label: marker.display_label,
+      metadata: {
+        evidence_source: "provider-derived",
+        provider_marker_kind: marker.marker_kind,
+        provider_marker_label: marker.original_label,
+        provider_marker_source_key: marker.source_key,
+        engine_on_idling_confirmed: false,
+        fuel_burn_confirmed: false,
+        message:
+          "Provider supplied an idle/excessive-idle marker. This does not prove engine-on idling or fuel burn without ignition/engine evidence.",
+      },
+      event_hash: providerIdleMarkerHash({
+        companyId: provider.company_id,
+        providerId: provider.id,
+        truckId: normalized.truck_id,
+        marker,
+        startedAt,
+      }),
+    };
+
+    const result = await insertTelemetryEventWithFallback(payload);
+    if (result.error && !result.duplicate) {
+      console.warn("Provider idle marker event write skipped:", result.error);
+    }
+  }
+}
+
+async function insertTelemetryEventWithFallback(payload: Record<string, any>) {
+  const { error } = await supabaseAdmin.from("telemetry_events").insert(payload);
+  if (!error) return { error: null, duplicate: false };
+  if (isDuplicateTelemetryEventError(error)) return { error: null, duplicate: true };
+
+  if (isMissingTelemetryEventOptionalColumnError(error)) {
+    const { context_type, context_label, event_hash, ...withoutOptional } = payload;
+    const retryPayload = isMissingTelemetryEventHashError(error)
+      ? withoutOptional
+      : { ...withoutOptional, event_hash };
+    const { error: retryError } = await supabaseAdmin
+      .from("telemetry_events")
+      .insert(retryPayload);
+    if (!retryError) return { error: null, duplicate: false };
+    if (isDuplicateTelemetryEventError(retryError)) return { error: null, duplicate: true };
+    return { error: retryError.message || "telemetry event insert failed", duplicate: false };
+  }
+
+  if (isMissingTelemetryEventsTableError(error)) {
+    return { error: null, duplicate: false };
+  }
+
+  return { error: error.message || "telemetry event insert failed", duplicate: false };
+}
+
+function providerIdleMarkerHash(input: {
+  companyId: string;
+  providerId: string;
+  truckId: string;
+  marker: ProviderIdleMarkerDetection;
+  startedAt: string;
+}) {
+  return createHash("sha256")
+    .update(
+      [
+        input.companyId,
+        input.providerId,
+        input.truckId,
+        CANONICAL_PROVIDER_IDLE_EVENT_TYPE,
+        input.marker.marker_kind,
+        input.marker.source_key || "",
+        input.marker.original_label || "",
+        input.startedAt,
+      ].join("|")
+    )
+    .digest("hex")
+    .slice(0, 32);
+}
+
 async function processProviderTripSummaries(
   provider: ProviderRecord,
   feeds: SupplementalFeedRows[],
@@ -2572,6 +2676,49 @@ function isMissingDistanceColumnError(error: any) {
     message.includes("schema cache") ||
     message.includes("column")
   );
+}
+
+function isDuplicateTelemetryEventError(error: any) {
+  if (!error) return false;
+  const message = String(error.message || error.details || error.hint || "").toLowerCase();
+  const code = String(error.code || "").toUpperCase();
+  return (
+    code === "23505" ||
+    message.includes("duplicate key value") ||
+    message.includes("unique constraint") ||
+    message.includes("idx_telemetry_events_event_hash")
+  );
+}
+
+function isMissingTelemetryEventsTableError(error: any) {
+  if (!error) return false;
+  const message = String(error.message || error.details || error.hint || "").toLowerCase();
+  const code = String(error.code || "").toUpperCase();
+  return (
+    code === "42P01" ||
+    code === "PGRST205" ||
+    message.includes("telemetry_events") && message.includes("could not find the table")
+  );
+}
+
+function isMissingTelemetryEventOptionalColumnError(error: any) {
+  if (!error) return false;
+  const message = String(error.message || error.details || error.hint || "").toLowerCase();
+  const code = String(error.code || "").toUpperCase();
+  return (
+    code === "PGRST204" ||
+    message.includes("context_type") ||
+    message.includes("context_label") ||
+    message.includes("event_hash") ||
+    message.includes("schema cache") ||
+    message.includes("column")
+  );
+}
+
+function isMissingTelemetryEventHashError(error: any) {
+  if (!error) return false;
+  const message = String(error.message || error.details || error.hint || "").toLowerCase();
+  return message.includes("event_hash");
 }
 
 function stripCapabilityAssetColumns(payload: Record<string, any>) {

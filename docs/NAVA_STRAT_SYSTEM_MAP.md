@@ -268,7 +268,7 @@ The main product principle is convenience. Every user-facing page should make th
 | `fleet_assets` | Provider asset records, latest asset state, review status, intelligence enablement, billing readiness, and asset telemetry capability profile. |
 | `telemetry_logs` | Historical telemetry points from provider sync: location, speed, fuel level, normalized engine/ignition/fuel/tank signal placeholders where supported, provider location label, validation, capability flags, and raw payload server-side. |
 | `provider_trip_summaries` | Recommended additive table for provider report/trip-level distance evidence such as start/end odometer, provider-reported mileage, motion duration, start/end locations, violations, distance source, and distance quality. |
-| `telemetry_events` | Derived operational events and alert context annotations. |
+| `telemetry_events` | Derived operational events, provider-derived idle markers, and alert context annotations. Canonical provider idle markers use `event_type = provider_idle_marker` with safe metadata such as original marker label/source key; GPS-derived stopped windows must be labeled separately and must not be treated as true engine-on idle. |
 | `location_cache` | Reverse-geocoded location cache. |
 | `fuel_risk_scores` | Fuel risk scoring output from fuel risk engine. |
 
@@ -475,6 +475,7 @@ New provider records must not start active by default, and provider sync must no
 6. If the same provider has already imported the asset, upsert that provider-owned `fleet_assets` row by `(provider_id, truck_id)`.
 7. If a different provider reports the same normalized registration/truck ID for an existing company asset, treat it as cross-provider telemetry for that asset and do not create a duplicate billable-review asset automatically.
 8. Insert `telemetry_logs` with the incoming `provider_id`, normalized signal quality, timestamp quality, and capability flags preserved. Provider timestamps must be normalized and validated before use: Unix seconds/milliseconds should be interpreted safely when possible, while epoch/default dates, years before 2000, far-future dates, or dates that conflict with asset first-seen evidence must be marked invalid/suspect instead of being displayed as real last-seen telemetry. Asset Review should show `Last seen unavailable` or `Provider timestamp invalid` rather than 1970-style dates.
+   Provider current-feed rows are also scanned for safe idle/excessive-idle marker values such as `idle`, `idling`, `excessive idle`, `prolonged idle`, and `stop idle` in event/status/alert-style fields. Detected provider markers are written to `telemetry_events` as canonical `provider_idle_marker` rows with company, provider, truck, timestamp, optional duration, safe marker label/source metadata, and explicit `engine_on_idling_confirmed = false` / `fuel_burn_confirmed = false` metadata. Generic GPS stop/stationary values are not promoted to provider idle markers.
 9. Do not overwrite reviewed asset classification, billing, or intelligence enablement fields on sync.
 
 ### Second Provider Onboarding

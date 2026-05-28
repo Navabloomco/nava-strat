@@ -15,6 +15,7 @@ import {
   summarizeAllocationsForJourney,
 } from "./fuelAllocation";
 import { normalizeVehicleKey } from "./entityResolver";
+import { isProviderIdleMarkerEvent } from "../providers/providerIdleMarkers";
 
 export type TripIntelligenceRange = "today" | "yesterday" | "7d" | "30d";
 export type ProfitabilityReadiness =
@@ -477,7 +478,7 @@ async function fetchTelemetryEventRows(
   try {
     const { data, error } = await supabaseAdmin
       .from("telemetry_events")
-      .select("id, truck_id, event_type, severity, created_at, started_at, duration_minutes, context_label, context_type")
+      .select("id, truck_id, event_type, severity, created_at, started_at, duration_minutes, context_label, context_type, metadata")
       .eq("company_id", companyId)
       .in("truck_id", truckIds)
       .gte("created_at", timeframe.start_utc)
@@ -822,7 +823,7 @@ function buildMovementEvidence(distanceRows: any[], telemetryRows: any[]) {
 }
 
 function buildDelayEvidence(eventRows: any[], telemetryRows: any[]) {
-  const idleRows = eventRows.filter((row) => isIdleEvent(row.event_type));
+  const idleRows = eventRows.filter((row) => isProviderIdleMarkerEvent(row));
   const highSeverityRows = eventRows.filter(
     (row) => String(row.severity || "").toLowerCase() === "high"
   );
@@ -889,6 +890,16 @@ function classifyDelayCategory(row: any) {
     .filter(Boolean)
     .join(" ")
     .toLowerCase();
+
+  if (isProviderIdleMarkerEvent(row)) {
+    return {
+      key: "provider_idle_marker",
+      label: "Provider idle markers",
+      attribution: "provider-derived",
+      evidence_label:
+        "provider supplied idle/excessive-idle marker; engine-on idle and fuel burn are not independently verified",
+    };
+  }
 
   if (
     /\b(client_waiting|customer_waiting|client delay|customer delay)\b/.test(text) ||
@@ -1744,12 +1755,6 @@ function effectiveDistanceKm(row: any) {
   const odometerDelta = Number(row?.odometer_delta_km || 0);
   if (Number.isFinite(odometerDelta) && odometerDelta > 0) return odometerDelta;
   return 0;
-}
-
-function isIdleEvent(value: any) {
-  return /\b(idle|idling|excessive_idle|excessive idle|stationary|stopped)\b/i.test(
-    String(value || "")
-  );
 }
 
 function firstTimestamp(rows: any[]) {

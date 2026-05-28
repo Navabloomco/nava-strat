@@ -14,6 +14,11 @@ import {
   matchPointToGeofence,
 } from "./geofenceMatcher";
 import { getVehicleMatchKeys, normalizeVehicleKey } from "./entityResolver";
+import {
+  CANONICAL_PROVIDER_IDLE_EVENT_TYPE,
+  canonicalProviderIdleEventType,
+  isProviderIdleMarkerEvent,
+} from "../providers/providerIdleMarkers";
 
 type TimelineInput = {
   companyId: string;
@@ -168,11 +173,18 @@ export async function buildTruckTimelineIntelligence(input: TimelineInput) {
     supabaseAdmin
       .from("telemetry_events")
       .select(
-        "truck_id, event_type, severity, location_name, latitude, longitude, created_at, started_at, ended_at, duration_minutes, context_label, context_type"
+        "truck_id, event_type, severity, location_name, latitude, longitude, created_at, started_at, ended_at, duration_minutes, context_label, context_type, metadata"
       )
       .eq("company_id", input.companyId)
       .eq("truck_id", canonicalTruckId)
-      .in("event_type", ["idle", "excessive_idle"])
+      .in("event_type", [
+        CANONICAL_PROVIDER_IDLE_EVENT_TYPE,
+        "idle",
+        "idling",
+        "excessive_idle",
+        "prolonged_idle",
+        "stop_idle",
+      ])
       .gte("created_at", eventFetchStartUtc)
       .lt("created_at", eventFetchEndUtc)
       .order("created_at", { ascending: true })
@@ -202,6 +214,7 @@ export async function buildTruckTimelineIntelligence(input: TimelineInput) {
   const windowStartMs = new Date(localDayRange.startUtc).getTime();
   const windowEndMs = new Date(localDayRange.endUtc).getTime();
   const idleEvents = (eventsResult.data || [])
+    .filter((event) => isProviderIdleMarkerEvent(event))
     .filter((event) => eventIsInTimelineWindow(event, windowStartMs, windowEndMs))
     .map((event) => ({
       ...event,
@@ -743,7 +756,7 @@ function buildIdleAlertWindows(events: any[], blocks: TimelineBlock[]) {
 
     draftWindows.push({
       _markers: [event],
-      event_type: normalizeIdleEventType(event.event_type),
+      event_type: normalizeIdleEventType(event),
       continuity_status: String(event.classification || "continuity_unknown"),
       location_group_key: idleEventLocationGroupKey(event),
       location_resolution: event.location_resolution || null,
@@ -765,7 +778,7 @@ function canJoinIdleAlertWindow(window: any, event: any) {
     : Number.POSITIVE_INFINITY;
 
   return (
-    normalizeIdleEventType(event.event_type) === window.event_type &&
+    normalizeIdleEventType(event) === window.event_type &&
     String(event.classification || "continuity_unknown") === window.continuity_status &&
     gapMinutes >= 0 &&
     gapMinutes <= 15 &&
@@ -911,10 +924,7 @@ function hasRepeatedProviderDurationValues(markers: any[]) {
 }
 
 function normalizeIdleEventType(value: any) {
-  const type = String(value || "").trim().toLowerCase();
-  if (type === "excessive_idle") return "excessive_idle";
-  if (type === "idle") return "idle";
-  return type || "idle";
+  return canonicalProviderIdleEventType(value) || "idle";
 }
 
 function idleEventLocationGroupKey(event: any) {
