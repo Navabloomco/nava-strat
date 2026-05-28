@@ -3,6 +3,7 @@ import { supabase } from "../../../lib/supabase";
 import { supabaseAdmin } from "../../../lib/supabaseAdmin";
 import {
   canEditExpenses,
+  canEditJourneys,
   canViewExpenses,
   normalizeRole,
   rolesForCompany,
@@ -183,14 +184,16 @@ export async function POST(req: Request) {
     const body = await req.json();
     const resolved = await resolveCompany(req, body.companyId || null);
     if (resolved.error) return resolved.error;
-    if (!canEditExpenses(resolved.roles)) {
+    const journeyId = body.journey_id || null;
+    const canCreateTripExpense =
+      Boolean(journeyId) && (canEditExpenses(resolved.roles) || canEditJourneys(resolved.roles));
+    if (!canEditExpenses(resolved.roles) && !canCreateTripExpense) {
       return NextResponse.json(
         { success: false, error: "Expense edit access required" },
         { status: 403 }
       );
     }
 
-    const journeyId = body.journey_id || null;
     if (journeyId) {
       const { data: journey, error: journeyError } = await supabaseAdmin
         .from("journeys")

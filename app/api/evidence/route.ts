@@ -1,4 +1,4 @@
-import { randomUUID } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import { NextResponse } from "next/server";
 import {
   canViewJourneys,
@@ -262,6 +262,7 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   let uploadedPath: string | null = null;
+  let duplicateRelatedType = "record";
 
   try {
     const form = await req.formData();
@@ -275,6 +276,7 @@ export async function POST(req: Request) {
     }
 
     const relatedType = normalizeRelatedType(form.get("relatedType"));
+    duplicateRelatedType = relatedType;
     const relatedId = cleanUuid(form.get("relatedId"));
     if (!ALLOWED_RELATED_TYPES.has(relatedType) || !relatedId) {
       return noStoreJson(
@@ -317,6 +319,8 @@ export async function POST(req: Request) {
     let contentType: string | null = null;
     let storagePath: string | null = null;
     let fileSizeBytes: number | null = null;
+    let fileBuffer: Buffer | null = null;
+    let evidenceHash: string | null = null;
 
     if (hasFile) {
       const validation = validateEvidenceFile(file);
@@ -330,12 +334,36 @@ export async function POST(req: Request) {
         relatedType
       )}/${relatedId}/${attachmentId}-${originalFilename}`;
       fileSizeBytes = file.size;
-      const fileBuffer = Buffer.from(await file.arrayBuffer());
+      fileBuffer = Buffer.from(await file.arrayBuffer());
+      evidenceHash = evidenceHashForFile(fileBuffer);
+    } else if (textContent) {
+      evidenceHash = evidenceHashForText(textContent);
+    }
 
+    if (evidenceHash) {
+      const duplicate = await findDuplicateEvidence({
+        companyId: resolved.company.id,
+        relatedType,
+        relatedId,
+        evidenceHash,
+      });
+      if (duplicate) {
+        return noStoreJson(
+          {
+            success: false,
+            duplicate: true,
+            error: duplicateEvidenceMessage(relatedType),
+          },
+          { status: 409 }
+        );
+      }
+    }
+
+    if (hasFile && fileBuffer && storagePath) {
       const uploadResult = await supabaseAdmin.storage
         .from(EVIDENCE_BUCKET)
         .upload(storagePath, fileBuffer, {
-          contentType,
+          contentType: contentType || "application/octet-stream",
           upsert: false,
         });
 
@@ -359,6 +387,7 @@ export async function POST(req: Request) {
         original_filename: originalFilename,
         mime_type: contentType,
         file_size_bytes: fileSizeBytes,
+        evidence_hash: evidenceHash,
         text_content: textContent,
         notes: normalizeNotes(form.get("notes")),
         verification_status: "uploaded",
@@ -390,6 +419,16 @@ export async function POST(req: Request) {
     if (uploadedPath) {
       await supabaseAdmin.storage.from(EVIDENCE_BUCKET).remove([uploadedPath]);
     }
+    if (isDuplicateEvidenceError(err)) {
+      return noStoreJson(
+        {
+          success: false,
+          duplicate: true,
+          error: duplicateEvidenceMessage(duplicateRelatedType),
+        },
+        { status: 409 }
+      );
+    }
     if (isEvidenceSchemaMissing(err)) return evidenceSetupRequiredResponse();
     if (isEvidenceStorageMissing(err)) return storageSetupRequiredResponse();
     return noStoreJson(
@@ -397,6 +436,56 @@ export async function POST(req: Request) {
       { status: 500 }
     );
   }
+}
+
+async function findDuplicateEvidence({
+  companyId,
+  relatedType,
+  relatedId,
+  evidenceHash,
+}: {
+  companyId: string;
+  relatedType: string;
+  relatedId: string;
+  evidenceHash: string;
+}) {
+  const { data, error } = await supabaseAdmin
+    .from("evidence_attachments")
+    .select("id")
+    .eq("company_id", companyId)
+    .eq("related_type", relatedType)
+    .eq("related_id", relatedId)
+    .eq("evidence_hash", evidenceHash)
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data || null;
+}
+
+function evidenceHashForFile(buffer: Buffer) {
+  return `file:${sha256Hex(buffer)}`;
+}
+
+function evidenceHashForText(text: string) {
+  return `text:${sha256Hex(normalizeTextForHash(text))}`;
+}
+
+function normalizeTextForHash(text: string) {
+  return String(text || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+}
+
+function sha256Hex(value: Buffer | string) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function duplicateEvidenceMessage(relatedType: string) {
+  if (relatedType === "expense") return "This proof already exists for this expense.";
+  if (relatedType === "trip") return "This proof already exists for this trip.";
+  return "This proof already exists for this record.";
 }
 
 async function loadRelatedRecord(
@@ -709,12 +798,22 @@ function storageSetupRequiredResponse() {
 function isEvidenceSchemaMissing(err: any) {
   const text = String(err?.message || err?.details || err?.hint || err || "").toLowerCase();
   return (
+    text.includes("evidence_hash") ||
     text.includes("evidence_attachments_related_type_check") ||
     text.includes("evidence_attachments") &&
     (text.includes("does not exist") ||
       text.includes("schema cache") ||
       text.includes("could not find") ||
       text.includes("relation"))
+  );
+}
+
+function isDuplicateEvidenceError(err: any) {
+  const text = String(err?.message || err?.details || err?.hint || err || "").toLowerCase();
+  return (
+    err?.code === "23505" ||
+    text.includes("evidence_attachments_unique_related_hash") ||
+    text.includes("duplicate key")
   );
 }
 

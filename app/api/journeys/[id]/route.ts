@@ -4,10 +4,12 @@ import {
   canEditExpenses,
   canEditFuel,
   canEditJourneys,
+  canEditTripExpenses,
   canViewExpenses,
   canViewFinance,
   canViewFuel,
   canViewJourneys,
+  canViewTripExpenses,
   normalizeRole,
   rolesForCompany,
 } from "../../../../lib/api/roleAccess";
@@ -387,6 +389,8 @@ function buildCapabilities(roles: string[]) {
     can_edit_fuel: canEditFuel(roles),
     can_view_expenses: canViewExpenses(roles),
     can_edit_expenses: canEditExpenses(roles),
+    can_view_trip_expenses: canViewTripExpenses(roles),
+    can_edit_trip_expenses: canEditTripExpenses(roles),
   };
 }
 
@@ -417,7 +421,7 @@ export async function GET(
 
     const [drivers, expenses, fuel, intelligence] = await Promise.all([
       canEditJourneys(resolved.roles) ? loadDrivers(resolved.company.id) : Promise.resolve([]),
-      canViewExpenses(resolved.roles)
+      canViewTripExpenses(resolved.roles)
         ? loadExpenses(resolved.company.id, journey.id)
         : Promise.resolve([]),
       canViewFuel(resolved.roles)

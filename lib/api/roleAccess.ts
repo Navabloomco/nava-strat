@@ -71,6 +71,14 @@ export function canEditExpenses(roles: string[]) {
   return hasAnyRole(roles, [...ELEVATED_ROLES, "finance"]);
 }
 
+export function canViewTripExpenses(roles: string[]) {
+  return canViewExpenses(roles) || canEditJourneys(roles);
+}
+
+export function canEditTripExpenses(roles: string[]) {
+  return canEditExpenses(roles) || canEditJourneys(roles);
+}
+
 export function canViewBilling(roles: string[]) {
   return canViewFinance(roles);
 }
@@ -98,6 +106,8 @@ export function getRoleCapabilities(roles: string[]) {
     canViewFinance: canViewFinance(normalizedRoles),
     canEditFinance: canEditFinance(normalizedRoles),
     canViewExpenses: canViewExpenses(normalizedRoles),
+    canViewTripExpenses: canViewTripExpenses(normalizedRoles),
+    canEditTripExpenses: canEditTripExpenses(normalizedRoles),
     canViewBilling: canViewBilling(normalizedRoles),
     canViewPlatformBilling: canViewPlatformBilling(normalizedRoles),
     canViewOps: canViewOps(normalizedRoles),

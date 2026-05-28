@@ -554,6 +554,13 @@ export default function TripDetailPage() {
 
   const journey = data?.journey || {};
   const capabilities = data?.capabilities || {};
+  const canViewFinance = Boolean(capabilities.can_view_finance);
+  const canViewTripExpenses = Boolean(
+    capabilities.can_view_trip_expenses ?? capabilities.can_view_expenses
+  );
+  const canEditTripExpenses = Boolean(
+    capabilities.can_edit_trip_expenses ?? capabilities.can_edit_expenses
+  );
   const trip = data?.trip_intelligence?.trip || null;
   const missingData = trip?.missing_data || [];
   const flags = trip?.management_flags || [];
@@ -572,6 +579,10 @@ export default function TripDetailPage() {
   const expenseEvidenceById = evidence?.expenses || {};
   const fuelTotals = useMemo(() => summarizeTripAllocations(tripAllocations), [tripAllocations]);
   const expenseCategoryTotals = useMemo(() => summarizeExpenseCategories(expenses), [expenses]);
+  const visibleMissingData = useMemo(
+    () => filterMissingDataForRole(missingData, canViewFinance),
+    [missingData, canViewFinance]
+  );
   const expenseTotal = expenses.reduce(
     (sum: number, expense: any) => sum + Number(expense.amount || 0),
     0
@@ -602,7 +613,7 @@ export default function TripDetailPage() {
           dark
           eyebrow="Operations"
           title={journey.internal_trip_id || "Trip detail"}
-          body="Complete the links that make Trip Intelligence useful: driver, revenue, fuel allocation, expenses, and evidence readiness."
+          body="Complete operational records and evidence. Finance roles can review revenue, rates, and contribution separately."
           actions={
             <div className="flex flex-col gap-2 sm:flex-row">
               <Link href={`/ops/journey${companyQuery}`}>
@@ -634,20 +645,29 @@ export default function TripDetailPage() {
             <section className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               <MetricCard label="Status" value={humanize(journey.status || "unknown")} />
               <MetricCard
-                label="Readiness"
-                value={readinessLabel(trip?.profitability_readiness)}
-                tone={readinessTone(trip?.profitability_readiness?.status)}
+                label="Driver"
+                value={displayDriver}
+                detail={driverEvidence.evidence_label ? humanize(driverEvidence.evidence_label) : undefined}
               />
               <MetricCard
-                label="Allocated fuel"
-                value={`${formatNumber(fuelTotals.liters)} L`}
-                detail={`KES ${formatMoney(fuelTotals.cost)}`}
+                label="Distance evidence"
+                value={movement.distance_km ? `${formatNumber(movement.distance_km)} km` : "Pending"}
+                detail={movement.distance_source || "unavailable"}
               />
-              <MetricCard
-                label="Linked expenses"
-                value={`KES ${formatMoney(expenseTotal)}`}
-                detail={`${formatNumber(expenses.length)} expense record(s)`}
-              />
+              {canViewTripExpenses && (
+                <MetricCard
+                  label="Expense records"
+                  value={formatNumber(expenses.length)}
+                  detail={canViewFinance ? `KES ${formatMoney(expenseTotal)}` : "Proof entry enabled"}
+                />
+              )}
+              {canViewFinance && (
+                <MetricCard
+                  label="Contribution readiness"
+                  value={readinessLabel(trip?.profitability_readiness)}
+                  tone={readinessTone(trip?.profitability_readiness?.status)}
+                />
+              )}
             </section>
 
             <section className="mt-8 grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
@@ -668,24 +688,31 @@ export default function TripDetailPage() {
 
               <Panel dark className="p-5">
                 <SectionTitle
-                  title="Trip Intelligence"
-                  subtitle="Deterministic readiness, not guessed profit."
+                  title={canViewFinance ? "Management intelligence" : "Operational readiness"}
+                  subtitle={
+                    canViewFinance
+                      ? "Contribution and readiness are deterministic, not guessed profit."
+                      : "Operational links for clerks and ops users. Finance values stay hidden."
+                  }
                 />
                 <div className="mt-4 flex flex-wrap gap-2">
-                  <StatusPill tone={readinessTone(trip?.profitability_readiness?.status)}>
-                    {readinessLabel(trip?.profitability_readiness)}
-                  </StatusPill>
+                  {canViewFinance && (
+                    <StatusPill tone={readinessTone(trip?.profitability_readiness?.status)}>
+                      {readinessLabel(trip?.profitability_readiness)}
+                    </StatusPill>
+                  )}
                   <StatusPill tone="info">
                     {movement.distance_source || "distance unavailable"}
                   </StatusPill>
-                  {finance.fuel_cost_source && (
+                  {canViewFinance && finance.fuel_cost_source && (
                     <StatusPill tone="info">
                       Fuel: {humanize(finance.fuel_cost_source)}
                     </StatusPill>
                   )}
                 </div>
 
-                {Array.isArray(trip?.profitability_readiness?.supporting_notes) &&
+                {canViewFinance &&
+                  Array.isArray(trip?.profitability_readiness?.supporting_notes) &&
                   trip.profitability_readiness.supporting_notes.length > 0 && (
                     <div className="mt-4 rounded-md border border-cyan-200/15 bg-cyan-300/10 p-3 text-sm leading-6 text-cyan-50">
                       {trip.profitability_readiness.supporting_notes.join(". ")}.
@@ -709,31 +736,27 @@ export default function TripDetailPage() {
                         : "Unavailable"
                     }
                   />
-                  <EvidenceLine
-                    label="Revenue"
-                    value={
-                      capabilities.can_view_finance
-                        ? `KES ${formatMoney(finance.revenue_kes)}`
-                        : "Hidden by role"
-                    }
-                  />
-                  <EvidenceLine
-                    label="Linked variable costs"
-                    value={
-                      capabilities.can_view_finance
-                        ? `KES ${formatMoney(finance.linked_variable_costs_kes)}`
-                        : "Hidden by role"
-                    }
-                  />
+                  {canViewFinance && (
+                    <>
+                      <EvidenceLine
+                        label="Revenue"
+                        value={`KES ${formatMoney(finance.revenue_kes)}`}
+                      />
+                      <EvidenceLine
+                        label="Linked variable costs"
+                        value={`KES ${formatMoney(finance.linked_variable_costs_kes)}`}
+                      />
+                    </>
+                  )}
                 </div>
 
-                {missingData.length > 0 && (
+                {visibleMissingData.length > 0 && (
                   <div className="mt-5">
                     <div className="text-xs font-bold uppercase tracking-[0.12em] text-amber-100">
                       Missing links
                     </div>
                     <div className="mt-2 flex flex-wrap gap-2">
-                      {missingData.map((item: string) => (
+                      {visibleMissingData.map((item: string) => (
                         <StatusPill key={item} tone="warning">
                           {missingDataLabel(item)}
                         </StatusPill>
@@ -742,7 +765,7 @@ export default function TripDetailPage() {
                   </div>
                 )}
 
-                {flags.length > 0 && (
+                {canViewFinance && flags.length > 0 && (
                   <div className="mt-5">
                     <div className="text-xs font-bold uppercase tracking-[0.12em] text-slate-400">
                       Management flags
@@ -759,81 +782,77 @@ export default function TripDetailPage() {
               </Panel>
             </section>
 
-            <section className="mt-8">
-              <Panel dark className="p-5">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <SectionTitle
-                    title="Contribution summary"
-                    subtitle="Linked revenue minus allocated fuel and linked trip expenses. This is review-ready contribution, not final audited profit."
-                  />
-                  <StatusPill tone={readinessTone(readiness.status)}>
-                    {readinessLabel(readiness)}
-                  </StatusPill>
-                </div>
+            {canViewFinance && (
+              <section className="mt-8">
+                <Panel dark className="p-5">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <SectionTitle
+                      title="Management intelligence"
+                      subtitle="Linked revenue minus allocated fuel and linked trip expenses. This is review-ready contribution, not final audited profit."
+                    />
+                    <StatusPill tone={readinessTone(readiness.status)}>
+                      {readinessLabel(readiness)}
+                    </StatusPill>
+                  </div>
 
-                {!capabilities.can_view_finance ? (
-                  <ReadOnlyNotice text="Contribution values are hidden for this role." />
-                ) : (
-                  <>
-                    <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                      <ContributionValue
-                        label="Revenue"
-                        value={formatCurrencyOrPending(contributionSummary.revenue_amount)}
-                      />
-                      <ContributionValue
-                        label="Allocated fuel/cost"
-                        value={formatCurrencyOrPending(contributionSummary.linked_fuel_cost)}
-                        detail="Fuel allocation evidence only"
-                      />
-                      <ContributionValue
-                        label="Linked expenses"
-                        value={formatCurrencyOrPending(contributionSummary.linked_expense_cost)}
-                        detail={
-                          contributionSummary.extra_expenses_linked
-                            ? "Trip expense records linked"
-                            : "No additional trip expenses linked yet"
-                        }
-                      />
-                      <ContributionValue
-                        label="Linked variable cost"
-                        value={formatCurrencyOrPending(contributionSummary.linked_variable_cost)}
-                      />
-                      <ContributionValue
-                        label="Contribution"
-                        value={formatCurrencyOrPending(contributionSummary.contribution_amount)}
-                        tone="strong"
-                      />
-                      <ContributionValue
-                        label="Contribution margin"
-                        value={formatPercentOrPending(contributionSummary.contribution_margin_percent)}
-                        tone="strong"
-                      />
-                      <ContributionValue
-                        label={contributionPerKmLabel(contributionSummary)}
-                        value={formatCurrencyOrPending(contributionSummary.per_km_contribution)}
-                        detail={contributionPerKmDetail(contributionSummary)}
-                      />
-                      <ContributionValue
-                        label="Contribution per tonne"
-                        value={formatCurrencyOrPending(contributionSummary.per_tonne_contribution)}
-                        detail={contributionPerTonneDetail(contributionSummary)}
-                      />
-                    </div>
+                  <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                    <ContributionValue
+                      label="Revenue"
+                      value={formatCurrencyOrPending(contributionSummary.revenue_amount)}
+                    />
+                    <ContributionValue
+                      label="Allocated fuel/cost"
+                      value={formatCurrencyOrPending(contributionSummary.linked_fuel_cost)}
+                      detail="Fuel allocation evidence only"
+                    />
+                    <ContributionValue
+                      label="Linked expenses"
+                      value={formatCurrencyOrPending(contributionSummary.linked_expense_cost)}
+                      detail={
+                        contributionSummary.extra_expenses_linked
+                          ? "Trip expense records linked"
+                          : "No additional trip expenses linked yet"
+                      }
+                    />
+                    <ContributionValue
+                      label="Linked variable cost"
+                      value={formatCurrencyOrPending(contributionSummary.linked_variable_cost)}
+                    />
+                    <ContributionValue
+                      label="Contribution"
+                      value={formatCurrencyOrPending(contributionSummary.contribution_amount)}
+                      tone="strong"
+                    />
+                    <ContributionValue
+                      label="Contribution margin"
+                      value={formatPercentOrPending(contributionSummary.contribution_margin_percent)}
+                      tone="strong"
+                    />
+                    <ContributionValue
+                      label={contributionPerKmLabel(contributionSummary)}
+                      value={formatCurrencyOrPending(contributionSummary.per_km_contribution)}
+                      detail={contributionPerKmDetail(contributionSummary)}
+                    />
+                    <ContributionValue
+                      label="Contribution per tonne"
+                      value={formatCurrencyOrPending(contributionSummary.per_tonne_contribution)}
+                      detail={contributionPerTonneDetail(contributionSummary)}
+                    />
+                  </div>
 
-                    {Array.isArray(contributionSummary.caveats) &&
-                      contributionSummary.caveats.length > 0 && (
-                        <div className="mt-5 flex flex-wrap gap-2">
-                          {contributionSummary.caveats.map((note: string) => (
-                            <StatusPill key={note} tone="info">
-                              {note}
-                            </StatusPill>
-                          ))}
-                        </div>
-                      )}
-                  </>
-                )}
-              </Panel>
-            </section>
+                  {Array.isArray(contributionSummary.caveats) &&
+                    contributionSummary.caveats.length > 0 && (
+                      <div className="mt-5 flex flex-wrap gap-2">
+                        {contributionSummary.caveats.map((note: string) => (
+                          <StatusPill key={note} tone="info">
+                            {note}
+                          </StatusPill>
+                        ))}
+                      </div>
+                    )}
+                </Panel>
+              </section>
+            )}
 
             <section className="mt-8 grid gap-6 xl:grid-cols-2">
               <Panel dark className="p-5">
@@ -935,102 +954,102 @@ export default function TripDetailPage() {
                 )}
               </Panel>
 
-              <Panel dark className="p-5">
-                <SectionTitle
-                  title="Revenue"
-                  subtitle="Revenue is required before contribution can be calculated."
-                />
-                {capabilities.can_edit_finance ? (
-                  <form onSubmit={saveRevenue} className="mt-5 grid gap-5">
-                    <div className="grid gap-5 md:grid-cols-2">
-                      <FormField label="Loaded quantity" dark>
-                        <input
-                          type="number"
-                          min="0"
-                          step="0.01"
-                          value={loadedQuantity}
-                          onChange={(event) => setLoadedQuantity(event.target.value)}
+              {canViewFinance && (
+                <Panel dark className="p-5">
+                  <SectionTitle
+                    title="Finance / revenue"
+                    subtitle="Revenue, rate, and FX fields are finance-controlled. Clerks should not need confidential pricing to complete operational records."
+                  />
+                  {capabilities.can_edit_finance ? (
+                    <form onSubmit={saveRevenue} className="mt-5 grid gap-5">
+                      <div className="grid gap-5 md:grid-cols-2">
+                        <FormField label="Loaded quantity" dark>
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={loadedQuantity}
+                            onChange={(event) => setLoadedQuantity(event.target.value)}
+                            className={inputClass}
+                          />
+                        </FormField>
+                        <FormField label="Offloaded / billing quantity" dark>
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={offloadedQuantity}
+                            onChange={(event) => setOffloadedQuantity(event.target.value)}
+                            className={inputClass}
+                          />
+                        </FormField>
+                      </div>
+                      <div className="grid gap-5 md:grid-cols-3">
+                        <FormField label="Rate amount" dark>
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={rateAmount}
+                            onChange={(event) => setRateAmount(event.target.value)}
+                            className={inputClass}
+                            required
+                          />
+                        </FormField>
+                        <FormField label="Currency" dark>
+                          <select
+                            value={rateCurrency}
+                            onChange={(event) => setRateCurrency(event.target.value)}
+                            className={inputClass}
+                          >
+                            <option value="KES">KES</option>
+                            <option value="USD">USD</option>
+                          </select>
+                        </FormField>
+                        <FormField label="Rate basis" dark>
+                          <select
+                            value={rateType}
+                            onChange={(event) => setRateType(event.target.value)}
+                            className={inputClass}
+                          >
+                            <option value="per_tonne">Per tonne</option>
+                            <option value="per_truck">Per truck</option>
+                          </select>
+                        </FormField>
+                      </div>
+                      {rateCurrency !== "KES" && (
+                        <FormField label="FX rate to KES" dark>
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.0001"
+                            value={fxRate}
+                            onChange={(event) => setFxRate(event.target.value)}
+                            className={inputClass}
+                          />
+                        </FormField>
+                      )}
+                      <FormField label="Revenue notes optional" dark>
+                        <textarea
+                          value={revenueNotes}
+                          onChange={(event) => setRevenueNotes(event.target.value)}
+                          rows={3}
                           className={inputClass}
                         />
                       </FormField>
-                      <FormField label="Offloaded / billing quantity" dark>
-                        <input
-                          type="number"
-                          min="0"
-                          step="0.01"
-                          value={offloadedQuantity}
-                          onChange={(event) => setOffloadedQuantity(event.target.value)}
-                          className={inputClass}
-                        />
-                      </FormField>
+                      <PrimaryButton type="submit" className="w-full sm:w-auto">
+                        Save revenue
+                      </PrimaryButton>
+                    </form>
+                  ) : (
+                    <div className="mt-5 grid gap-3">
+                      <EvidenceLine label="Revenue" value={`KES ${formatMoney(journey.revenue_kes)}`} />
+                      <EvidenceLine label="Rate" value={`${formatMoney(journey.rate_amount)} ${journey.rate_currency || "KES"} · ${humanize(journey.rate_type)}`} />
+                      <ReadOnlyNotice text="Your role can view finance values but cannot edit revenue." />
                     </div>
-                    <div className="grid gap-5 md:grid-cols-3">
-                      <FormField label="Rate amount" dark>
-                        <input
-                          type="number"
-                          min="0"
-                          step="0.01"
-                          value={rateAmount}
-                          onChange={(event) => setRateAmount(event.target.value)}
-                          className={inputClass}
-                          required
-                        />
-                      </FormField>
-                      <FormField label="Currency" dark>
-                        <select
-                          value={rateCurrency}
-                          onChange={(event) => setRateCurrency(event.target.value)}
-                          className={inputClass}
-                        >
-                          <option value="KES">KES</option>
-                          <option value="USD">USD</option>
-                        </select>
-                      </FormField>
-                      <FormField label="Rate basis" dark>
-                        <select
-                          value={rateType}
-                          onChange={(event) => setRateType(event.target.value)}
-                          className={inputClass}
-                        >
-                          <option value="per_tonne">Per tonne</option>
-                          <option value="per_truck">Per truck</option>
-                        </select>
-                      </FormField>
-                    </div>
-                    {rateCurrency !== "KES" && (
-                      <FormField label="FX rate to KES" dark>
-                        <input
-                          type="number"
-                          min="0"
-                          step="0.0001"
-                          value={fxRate}
-                          onChange={(event) => setFxRate(event.target.value)}
-                          className={inputClass}
-                        />
-                      </FormField>
-                    )}
-                    <FormField label="Revenue notes optional" dark>
-                      <textarea
-                        value={revenueNotes}
-                        onChange={(event) => setRevenueNotes(event.target.value)}
-                        rows={3}
-                        className={inputClass}
-                      />
-                    </FormField>
-                    <PrimaryButton type="submit" className="w-full sm:w-auto">
-                      Save revenue
-                    </PrimaryButton>
-                  </form>
-                ) : capabilities.can_view_finance ? (
-                  <div className="mt-5 grid gap-3">
-                    <EvidenceLine label="Revenue" value={`KES ${formatMoney(journey.revenue_kes)}`} />
-                    <EvidenceLine label="Rate" value={`${formatMoney(journey.rate_amount)} ${journey.rate_currency || "KES"} · ${humanize(journey.rate_type)}`} />
-                    <ReadOnlyNotice text="Your role can view finance values but cannot edit revenue." />
-                  </div>
-                ) : (
-                  <ReadOnlyNotice text="Revenue values are hidden for this role." />
-                )}
-              </Panel>
+                  )}
+                </Panel>
+              )}
             </section>
 
             <section className="mt-8 grid gap-6 xl:grid-cols-2">
@@ -1152,12 +1171,12 @@ export default function TripDetailPage() {
 
               <Panel dark className="p-5">
                 <SectionTitle
-                  title="Trip expenses"
+                  title="Operational expenses & proof"
                   subtitle="Structured supplier, payment, reference, amount, and date details live on the expense record. Receipts support that record; they do not replace it."
                 />
 
-                {!capabilities.can_view_expenses ? (
-                  <ReadOnlyNotice text="Expense values are hidden for this role." />
+                {!canViewTripExpenses ? (
+                  <ReadOnlyNotice text="Trip expense entry is not available for this role." />
                 ) : (
                   <>
                     <div className="mt-5 rounded-md border border-white/10 bg-slate-950/35 p-4">
@@ -1266,7 +1285,7 @@ export default function TripDetailPage() {
                                   <ReadOnlyNotice text={expenseEvidence.error} />
                                 ) : null}
 
-                                {data?.capabilities?.can_edit_expenses ? (
+                                {canEditTripExpenses ? (
                                   <details className="mt-4 rounded-md border border-white/10 bg-white/[0.04] p-4">
                                     <summary className="cursor-pointer text-sm font-semibold text-white">
                                       Attach proof
@@ -1348,7 +1367,7 @@ export default function TripDetailPage() {
                                     </form>
                                   </details>
                                 ) : (
-                                  <ReadOnlyNotice text="Your role can view expenses but cannot attach expense evidence." />
+                                  <ReadOnlyNotice text="Your role can view trip expenses but cannot attach expense proof." />
                                 )}
                               </div>
                             </EvidenceCard>
@@ -1357,7 +1376,7 @@ export default function TripDetailPage() {
                       )}
                     </div>
 
-                    {data?.capabilities?.can_edit_expenses ? (
+                    {canEditTripExpenses ? (
                       <details className="mt-5 rounded-md border border-white/10 bg-white/[0.04] p-4">
                         <summary className="cursor-pointer text-sm font-semibold text-white">
                           Add trip expense
@@ -1497,7 +1516,7 @@ export default function TripDetailPage() {
                         </form>
                       </details>
                     ) : (
-                      <ReadOnlyNotice text="Your role can view expenses but cannot add trip expenses." />
+                      <ReadOnlyNotice text="Your role can view trip expenses but cannot add trip expenses." />
                     )}
                   </>
                 )}
@@ -1993,6 +2012,26 @@ function readinessLabel(readiness: any) {
   }
   if (readiness?.status === "calculable") return "Contribution review ready";
   return humanize(readiness?.status || "not_enough_linked_data");
+}
+
+function filterMissingDataForRole(items: any[], canViewFinance: boolean) {
+  if (canViewFinance) return items || [];
+  const financeTerms = [
+    "revenue",
+    "expense",
+    "expenses",
+    "cost",
+    "costs",
+    "fuel allocation",
+    "finance",
+    "contribution",
+    "profit",
+    "rate",
+  ];
+  return (items || []).filter((item) => {
+    const text = String(item || "").toLowerCase();
+    return !financeTerms.some((term) => text.includes(term));
+  });
 }
 
 function missingDataLabel(value: any) {
