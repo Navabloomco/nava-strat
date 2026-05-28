@@ -1279,6 +1279,17 @@ export default function TripDetailPage() {
                                   emptyBody="This expense has structured details, but no receipt or payment proof attached yet."
                                 />
 
+                                {Number(
+                                  expenseEvidence?.guardrails?.hidden_legacy_duplicate_count || 0
+                                ) > 0 ? (
+                                  <ReadOnlyNotice
+                                    text={
+                                      expenseEvidence.guardrails.duplicate_pre_hash_note ||
+                                      "Duplicate-looking pre-hash evidence hidden."
+                                    }
+                                  />
+                                ) : null}
+
                                 {expenseEvidence?.setup_required ? (
                                   <ReadOnlyNotice text={expenseEvidence.error || "Evidence storage is not set up yet."} />
                                 ) : expenseEvidence?.error ? (
@@ -1544,6 +1555,15 @@ export default function TripDetailPage() {
                   emptyTitle="No general trip evidence attached yet"
                   emptyBody="Upload delivery notes, weighbridge tickets, invoices, or other trip-level supporting documents here."
                 />
+
+                {Number(tripEvidence?.guardrails?.hidden_legacy_duplicate_count || 0) > 0 ? (
+                  <ReadOnlyNotice
+                    text={
+                      tripEvidence.guardrails.duplicate_pre_hash_note ||
+                      "Duplicate-looking pre-hash evidence hidden."
+                    }
+                  />
+                ) : null}
 
                 <form onSubmit={uploadTripEvidence} className="mt-6 grid gap-5">
                   <div className="grid gap-5 md:grid-cols-2">

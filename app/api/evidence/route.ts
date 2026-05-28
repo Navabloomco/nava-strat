@@ -16,7 +16,8 @@ const SIGNED_URL_SECONDS = 300;
 const MAX_FILE_SIZE_BYTES = 4 * 1024 * 1024;
 const MAX_TEXT_CONTENT_CHARS = 4000;
 const EVIDENCE_FIELDS =
-  "id, company_id, related_type, related_id, evidence_type, storage_bucket, storage_path, original_filename, mime_type, file_size_bytes, text_content, notes, verification_status, uploaded_by, uploaded_at";
+  "id, company_id, related_type, related_id, evidence_type, storage_bucket, storage_path, original_filename, mime_type, file_size_bytes, evidence_hash, text_content, notes, verification_status, uploaded_by, uploaded_at";
+const LEGACY_DUPLICATE_NOTE = "Duplicate-looking pre-hash evidence hidden.";
 const ALLOWED_RELATED_TYPES = new Set(["trip", "expense", "fuel_log", "fuel_allocation"]);
 const ALLOWED_EVIDENCE_TYPES = new Set([
   "receipt",
@@ -229,8 +230,9 @@ export async function GET(req: Request) {
 
     if (error) throw error;
 
+    const collapsedEvidence = collapseDuplicateLookingEvidenceRows(data || []);
     const attachments = await Promise.all(
-      (data || []).map((row: any) => toSafeAttachment(row, true))
+      collapsedEvidence.rows.map((row: any) => toSafeAttachment(row, true))
     );
 
     return noStoreJson({
@@ -248,6 +250,9 @@ export async function GET(req: Request) {
         signed_url_ttl_seconds: SIGNED_URL_SECONDS,
         no_public_file_urls: true,
         mpesa_parsing_deferred: true,
+        hidden_legacy_duplicate_count: collapsedEvidence.hiddenCount,
+        duplicate_pre_hash_note:
+          collapsedEvidence.hiddenCount > 0 ? LEGACY_DUPLICATE_NOTE : null,
       },
     });
   } catch (err: any) {
@@ -340,23 +345,53 @@ export async function POST(req: Request) {
       evidenceHash = evidenceHashForText(textContent);
     }
 
-    if (evidenceHash) {
-      const duplicate = await findDuplicateEvidence({
-        companyId: resolved.company.id,
-        relatedType,
-        relatedId,
-        evidenceHash,
-      });
-      if (duplicate) {
-        return noStoreJson(
-          {
-            success: false,
-            duplicate: true,
-            error: duplicateEvidenceMessage(relatedType),
-          },
-          { status: 409 }
-        );
-      }
+    if (!evidenceHash) {
+      return noStoreJson(
+        {
+          success: false,
+          error:
+            "Evidence hashing is required before upload. Apply the evidence_hash migration and try again.",
+        },
+        { status: 424 }
+      );
+    }
+
+    const duplicate = await findDuplicateEvidence({
+      companyId: resolved.company.id,
+      relatedType,
+      relatedId,
+      evidenceHash,
+    });
+    if (duplicate) {
+      return noStoreJson(
+        {
+          success: false,
+          duplicate: true,
+          error: duplicateEvidenceMessage(relatedType),
+        },
+        { status: 409 }
+      );
+    }
+
+    const legacyDuplicate = await findLegacyDuplicateEvidence({
+      companyId: resolved.company.id,
+      relatedType,
+      relatedId,
+      originalFilename,
+      mimeType: contentType,
+      fileSizeBytes,
+      textContent,
+    });
+    if (legacyDuplicate) {
+      return noStoreJson(
+        {
+          success: false,
+          duplicate: true,
+          legacy_duplicate: true,
+          error: duplicateEvidenceMessage(relatedType),
+        },
+        { status: 409 }
+      );
     }
 
     if (hasFile && fileBuffer && storagePath) {
@@ -461,6 +496,126 @@ async function findDuplicateEvidence({
 
   if (error) throw error;
   return data || null;
+}
+
+async function findLegacyDuplicateEvidence({
+  companyId,
+  relatedType,
+  relatedId,
+  originalFilename,
+  mimeType,
+  fileSizeBytes,
+  textContent,
+}: {
+  companyId: string;
+  relatedType: string;
+  relatedId: string;
+  originalFilename: string | null;
+  mimeType: string | null;
+  fileSizeBytes: number | null;
+  textContent: string | null;
+}) {
+  if (originalFilename && mimeType && Number(fileSizeBytes || 0) > 0) {
+    const { data, error } = await supabaseAdmin
+      .from("evidence_attachments")
+      .select("id")
+      .eq("company_id", companyId)
+      .eq("related_type", relatedType)
+      .eq("related_id", relatedId)
+      .is("evidence_hash", null)
+      .eq("original_filename", originalFilename)
+      .eq("mime_type", mimeType)
+      .eq("file_size_bytes", fileSizeBytes)
+      .limit(1)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (data) return data;
+  }
+
+  if (textContent) {
+    const normalizedText = normalizeTextForHash(textContent);
+    const { data, error } = await supabaseAdmin
+      .from("evidence_attachments")
+      .select("id, text_content, storage_path")
+      .eq("company_id", companyId)
+      .eq("related_type", relatedType)
+      .eq("related_id", relatedId)
+      .is("evidence_hash", null)
+      .is("storage_path", null)
+      .limit(50);
+
+    if (error) throw error;
+    return (
+      (data || []).find(
+        (row: any) => normalizeTextForHash(row.text_content || "") === normalizedText
+      ) || null
+    );
+  }
+
+  return null;
+}
+
+function collapseDuplicateLookingEvidenceRows(rows: any[]) {
+  const passthrough: any[] = [];
+  const groups = new Map<string, any[]>();
+
+  for (const row of rows || []) {
+    const key = duplicateLookingEvidenceKey(row);
+    if (!key) {
+      passthrough.push(row);
+      continue;
+    }
+    const existing = groups.get(key) || [];
+    existing.push(row);
+    groups.set(key, existing);
+  }
+
+  let hiddenCount = 0;
+  const visibleRows = [...passthrough];
+
+  for (const group of groups.values()) {
+    const hasLegacyNullHash = group.some((row) => !row.evidence_hash);
+    if (group.length === 1 || !hasLegacyNullHash) {
+      visibleRows.push(...group);
+      continue;
+    }
+
+    const sorted = [...group].sort(preferHashedThenNewest);
+    visibleRows.push(sorted[0]);
+    hiddenCount += sorted.length - 1;
+  }
+
+  return {
+    rows: visibleRows.sort(sortUploadedNewestFirst),
+    hiddenCount,
+  };
+}
+
+function duplicateLookingEvidenceKey(row: any) {
+  const filename = String(row.original_filename || "").trim().toLowerCase();
+  const mimeType = String(row.mime_type || "").trim().toLowerCase();
+  const size = Number(row.file_size_bytes || 0);
+
+  if (filename && mimeType && size > 0) {
+    return `file:${filename}|${mimeType}|${size}`;
+  }
+
+  if (!row.storage_path && row.text_content) {
+    return `text:${normalizeTextForHash(row.text_content)}`;
+  }
+
+  return "";
+}
+
+function preferHashedThenNewest(a: any, b: any) {
+  const hashRank = Number(Boolean(b.evidence_hash)) - Number(Boolean(a.evidence_hash));
+  if (hashRank !== 0) return hashRank;
+  return sortUploadedNewestFirst(a, b);
+}
+
+function sortUploadedNewestFirst(a: any, b: any) {
+  return Date.parse(b.uploaded_at || "") - Date.parse(a.uploaded_at || "");
 }
 
 function evidenceHashForFile(buffer: Buffer) {
@@ -777,7 +932,8 @@ function evidenceSetupRequiredResponse() {
     {
       success: false,
       setup_required: true,
-      error: "Evidence attachment table is not available yet. Apply the evidence_attachments migration first.",
+      error:
+        "Evidence attachment hashing is not available yet. Apply the evidence_attachments and evidence_hash migrations first.",
     },
     { status: 424 }
   );

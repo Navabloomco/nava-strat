@@ -246,6 +246,9 @@ Confirm workflow behavior:
 - [ ] Confirm pasted M-Pesa or other payment text appears as evidence under the expense and is not parsed into amount/date/name/transaction-code facts yet.
 - [ ] Upload the same proof file to the same expense twice and confirm the second upload is blocked with a safe duplicate-proof message.
 - [ ] Paste the same proof text twice with different spacing/case and confirm the second paste is blocked with a safe duplicate-proof message.
+- [ ] If an older pre-hash attachment already exists with the same filename, MIME type, and file size, upload the same proof again and confirm Nava blocks it with the same duplicate-proof message.
+- [ ] If both a legacy null-hash proof row and a newer hashed proof row exist for the same expense, confirm Trip Detail shows one proof item, prefers the hashed/newer row, and may show the subtle note `Duplicate-looking pre-hash evidence hidden.`
+- [ ] Confirm old pre-hash duplicate rows are not deleted automatically; any permanent cleanup remains a company-scoped manual/admin task.
 - [ ] If proof upload fails after expense creation, confirm the expense remains saved and the page says proof can be attached from the expense card.
 - [ ] Attach a receipt, invoice, payment proof, or M-Pesa proof later from an existing expense row's Attach proof flow.
 - [ ] Confirm the proof appears under that exact expense row, not only in the general Trip evidence list.
