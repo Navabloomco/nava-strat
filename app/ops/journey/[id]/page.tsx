@@ -34,13 +34,18 @@ const expenseTypes = [
   "other",
 ];
 
-const evidenceTypes = [
-  { value: "receipt", label: "Receipt" },
-  { value: "mpesa_screenshot", label: "M-Pesa screenshot" },
+const tripEvidenceTypes = [
   { value: "delivery_note", label: "Delivery note" },
   { value: "weighbridge", label: "Weighbridge ticket" },
   { value: "invoice", label: "Invoice" },
+  { value: "receipt", label: "General trip receipt" },
   { value: "other", label: "Other trip document" },
+];
+
+const expenseEvidenceTypes = [
+  { value: "receipt", label: "Receipt" },
+  { value: "mpesa_screenshot", label: "M-Pesa screenshot" },
+  { value: "other", label: "Other expense proof" },
 ];
 
 export default function TripDetailPage() {
@@ -78,10 +83,12 @@ export default function TripDetailPage() {
   const [expenseReference, setExpenseReference] = useState("");
   const [expenseNotes, setExpenseNotes] = useState("");
 
-  const [evidenceType, setEvidenceType] = useState("receipt");
-  const [evidenceFile, setEvidenceFile] = useState<File | null>(null);
-  const [evidenceNotes, setEvidenceNotes] = useState("");
-  const [evidenceUploading, setEvidenceUploading] = useState(false);
+  const [tripEvidenceType, setTripEvidenceType] = useState("delivery_note");
+  const [tripEvidenceFile, setTripEvidenceFile] = useState<File | null>(null);
+  const [tripEvidenceNotes, setTripEvidenceNotes] = useState("");
+  const [tripEvidenceUploading, setTripEvidenceUploading] = useState(false);
+  const [expenseEvidenceForms, setExpenseEvidenceForms] = useState<Record<string, any>>({});
+  const [expenseEvidenceUploadingId, setExpenseEvidenceUploadingId] = useState("");
 
   useEffect(() => {
     loadDetail();
@@ -122,18 +129,48 @@ export default function TripDetailPage() {
       return;
     }
 
-    const evidence = await loadEvidence(session.access_token, companyId);
+    const evidence = await loadEvidenceBundle(
+      session.access_token,
+      companyId,
+      json.expenses || []
+    );
     setData({ ...json, evidence });
     primeForms(json.journey || {});
     setLoading(false);
   }
 
-  async function loadEvidence(token: string, companyId: string | null) {
-    if (!tripId) return { attachments: [] };
+  async function loadEvidenceBundle(token: string, companyId: string | null, expenses: any[]) {
+    if (!tripId) return { trip: { attachments: [] }, expenses: {} };
+
+    const tripEvidence = await loadEvidenceForRecord(token, companyId, "trip", tripId);
+    const expenseEvidenceEntries = await Promise.all(
+      (expenses || [])
+        .filter((expense: any) => expense?.id)
+        .map(async (expense: any) => [
+          expense.id,
+          await loadEvidenceForRecord(token, companyId, "expense", expense.id),
+        ])
+    );
+
+    return {
+      trip: tripEvidence,
+      expenses: Object.fromEntries(expenseEvidenceEntries),
+      setup_required: tripEvidence.setup_required,
+      error: tripEvidence.error,
+    };
+  }
+
+  async function loadEvidenceForRecord(
+    token: string,
+    companyId: string | null,
+    relatedType: string,
+    relatedId: string
+  ) {
+    if (!relatedId) return { attachments: [] };
 
     const query = new URLSearchParams({
-      relatedType: "trip",
-      relatedId: tripId,
+      relatedType,
+      relatedId,
     });
     if (companyId) query.set("companyId", companyId);
 
@@ -153,6 +190,7 @@ export default function TripDetailPage() {
       return {
         attachments: json.attachments || [],
         guardrails: json.guardrails || {},
+        related: json.related || null,
       };
     } catch (err: any) {
       return {
@@ -333,22 +371,22 @@ export default function TripDetailPage() {
     setExpensePaymentMethod("");
     setExpenseReference("");
     setExpenseNotes("");
-    await loadDetail("Expense linked to trip.");
+    await loadDetail("Expense linked to trip. Use Attach receipt on the expense row to add proof.");
   }
 
-  async function uploadEvidence(e: any) {
+  async function uploadTripEvidence(e: any) {
     e.preventDefault();
-    if (!evidenceFile) {
-      setMessage("Choose a receipt, screenshot, PDF, or trip document first.");
+    if (!tripEvidenceFile) {
+      setMessage("Choose a delivery note, weighbridge ticket, PDF, or trip document first.");
       return;
     }
 
-    setEvidenceUploading(true);
-    setMessage("Uploading trip evidence...");
+    setTripEvidenceUploading(true);
+    setMessage("Uploading general trip evidence...");
     const token = await getToken();
     if (!token) {
       setMessage("Session expired. Please log in again.");
-      setEvidenceUploading(false);
+      setTripEvidenceUploading(false);
       return;
     }
 
@@ -357,9 +395,9 @@ export default function TripDetailPage() {
     if (companyId) formData.append("companyId", companyId);
     formData.append("relatedType", "trip");
     formData.append("relatedId", tripId || "");
-    formData.append("evidenceType", evidenceType);
-    formData.append("notes", evidenceNotes);
-    formData.append("file", evidenceFile);
+    formData.append("evidenceType", tripEvidenceType);
+    formData.append("notes", tripEvidenceNotes);
+    formData.append("file", tripEvidenceFile);
 
     const res = await fetch("/api/evidence", {
       method: "POST",
@@ -369,18 +407,89 @@ export default function TripDetailPage() {
       body: formData,
     });
     const json = await res.json();
-    setEvidenceUploading(false);
+    setTripEvidenceUploading(false);
     if (!res.ok || !json.success) {
       setMessage(json.error || "Failed to upload trip evidence.");
       return;
     }
 
-    setEvidenceFile(null);
-    setEvidenceType("receipt");
-    setEvidenceNotes("");
+    setTripEvidenceFile(null);
+    setTripEvidenceType("delivery_note");
+    setTripEvidenceNotes("");
     const fileInput = document.getElementById("trip-evidence-file") as HTMLInputElement | null;
     if (fileInput) fileInput.value = "";
-    await loadDetail("Evidence uploaded and attached to this trip.");
+    await loadDetail("General trip evidence uploaded.");
+  }
+
+  async function uploadExpenseEvidence(e: any, expenseId: string) {
+    e.preventDefault();
+    const form = expenseEvidenceForm(expenseId);
+    if (!form.file) {
+      setMessage("Choose a receipt, M-Pesa screenshot, or expense proof first.");
+      return;
+    }
+
+    setExpenseEvidenceUploadingId(expenseId);
+    setMessage("Uploading expense receipt...");
+    const token = await getToken();
+    if (!token) {
+      setMessage("Session expired. Please log in again.");
+      setExpenseEvidenceUploadingId("");
+      return;
+    }
+
+    const formData = new FormData();
+    const companyId = currentCompanyId();
+    if (companyId) formData.append("companyId", companyId);
+    formData.append("relatedType", "expense");
+    formData.append("relatedId", expenseId);
+    formData.append("evidenceType", form.evidenceType || "receipt");
+    formData.append("notes", form.notes || "");
+    formData.append("file", form.file);
+
+    const res = await fetch("/api/evidence", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      body: formData,
+    });
+    const json = await res.json();
+    setExpenseEvidenceUploadingId("");
+    if (!res.ok || !json.success) {
+      setMessage(json.error || "Failed to upload expense receipt.");
+      return;
+    }
+
+    setExpenseEvidenceForms((current) => ({
+      ...current,
+      [expenseId]: { evidenceType: "receipt", file: null, notes: "" },
+    }));
+    const fileInput = document.getElementById(
+      `expense-evidence-file-${expenseId}`
+    ) as HTMLInputElement | null;
+    if (fileInput) fileInput.value = "";
+    await loadDetail("Receipt attached to expense.");
+  }
+
+  function expenseEvidenceForm(expenseId: string) {
+    return (
+      expenseEvidenceForms[expenseId] || {
+        evidenceType: "receipt",
+        file: null,
+        notes: "",
+      }
+    );
+  }
+
+  function updateExpenseEvidenceForm(expenseId: string, patch: Record<string, any>) {
+    setExpenseEvidenceForms((current) => ({
+      ...current,
+      [expenseId]: {
+        ...expenseEvidenceForm(expenseId),
+        ...patch,
+      },
+    }));
   }
 
   const journey = data?.journey || {};
@@ -398,7 +507,9 @@ export default function TripDetailPage() {
   const expenses = data?.expenses || [];
   const fuelIssueSummaries = fuel?.fuel_issue_summaries || {};
   const evidence = data?.evidence || {};
-  const evidenceAttachments = evidence?.attachments || [];
+  const tripEvidence = evidence?.trip || {};
+  const tripEvidenceAttachments = tripEvidence?.attachments || [];
+  const expenseEvidenceById = evidence?.expenses || {};
   const fuelTotals = useMemo(() => summarizeTripAllocations(tripAllocations), [tripAllocations]);
   const expenseTotal = expenses.reduce(
     (sum: number, expense: any) => sum + Number(expense.amount || 0),
@@ -995,46 +1106,154 @@ export default function TripDetailPage() {
                           body="Trip Intelligence will keep linked expenses missing until costs are assigned to this trip."
                         />
                       ) : (
-                        expenses.map((expense: any) => (
-                          <EvidenceCard key={expense.id}>
-                            <div className="flex flex-wrap items-start justify-between gap-3">
-                              <div>
-                                <div className="text-sm font-semibold text-white">
-                                  KES {formatMoney(expense.amount)} · {humanize(expense.expense_type)}
+                        expenses.map((expense: any) => {
+                          const expenseEvidence = expenseEvidenceById[expense.id] || {};
+                          const attachments = expenseEvidence.attachments || [];
+                          const form = expenseEvidenceForm(expense.id);
+                          const isUploading = expenseEvidenceUploadingId === expense.id;
+
+                          return (
+                            <EvidenceCard key={expense.id}>
+                              <div className="flex flex-wrap items-start justify-between gap-3">
+                                <div>
+                                  <div className="text-sm font-semibold text-white">
+                                    KES {formatMoney(expense.amount)} · {humanize(expense.expense_type)}
+                                  </div>
+                                  <div className="mt-1 text-xs leading-5 text-slate-400">
+                                    Supplier/payee: {expense.vendor || "Not captured"}
+                                  </div>
                                 </div>
-                                <div className="mt-1 text-xs leading-5 text-slate-400">
-                                  Supplier/payee: {expense.vendor || "Not captured"}
+                                <StatusPill tone="neutral">
+                                  {formatDate(expense.created_at)}
+                                </StatusPill>
+                              </div>
+                              <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                                <ExpenseFact
+                                  label="Supplier / payee"
+                                  value={expense.vendor || "Not captured"}
+                                />
+                                <ExpenseFact
+                                  label="Payment method"
+                                  value={humanize(expense.payment_method || "not captured")}
+                                />
+                                <ExpenseFact
+                                  label="Reference"
+                                  value={expense.reference_number || "Not captured"}
+                                />
+                                <ExpenseFact
+                                  label="Expense date"
+                                  value={formatDate(expense.created_at)}
+                                />
+                              </div>
+                              {expense.notes && (
+                                <div className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-300">
+                                  {expense.notes}
                                 </div>
+                              )}
+
+                              <div className="mt-5 rounded-md border border-white/10 bg-slate-950/35 p-4">
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <div>
+                                    <div className="text-sm font-semibold text-white">
+                                      Expense receipt evidence
+                                    </div>
+                                    <div className="mt-1 text-xs leading-5 text-slate-400">
+                                      Attach M-Pesa screenshots, receipts, or payment proof to this expense record.
+                                    </div>
+                                  </div>
+                                  <StatusPill tone={attachments.length ? "info" : "neutral"}>
+                                    {attachments.length} file(s)
+                                  </StatusPill>
+                                </div>
+
+                                <EvidenceAttachmentList
+                                  attachments={attachments}
+                                  emptyTitle="No receipt attached"
+                                  emptyBody="This expense has structured details, but no receipt or payment proof attached yet."
+                                />
+
+                                {expenseEvidence?.setup_required ? (
+                                  <ReadOnlyNotice text={expenseEvidence.error || "Evidence storage is not set up yet."} />
+                                ) : expenseEvidence?.error ? (
+                                  <ReadOnlyNotice text={expenseEvidence.error} />
+                                ) : null}
+
+                                {data?.capabilities?.can_edit_expenses ? (
+                                  <details className="mt-4 rounded-md border border-white/10 bg-white/[0.04] p-4">
+                                    <summary className="cursor-pointer text-sm font-semibold text-white">
+                                      Attach receipt
+                                    </summary>
+                                    <form
+                                      onSubmit={(event) => uploadExpenseEvidence(event, expense.id)}
+                                      className="mt-5 grid gap-5"
+                                    >
+                                      <div className="grid gap-5 md:grid-cols-2">
+                                        <FormField label="Evidence type" dark>
+                                          <select
+                                            value={form.evidenceType || "receipt"}
+                                            onChange={(event) =>
+                                              updateExpenseEvidenceForm(expense.id, {
+                                                evidenceType: event.target.value,
+                                              })
+                                            }
+                                            className={inputClass}
+                                          >
+                                            {expenseEvidenceTypes.map((type) => (
+                                              <option key={type.value} value={type.value}>
+                                                {type.label}
+                                              </option>
+                                            ))}
+                                          </select>
+                                        </FormField>
+                                        <FormField label="File" dark>
+                                          <input
+                                            id={`expense-evidence-file-${expense.id}`}
+                                            type="file"
+                                            accept="image/*,.pdf"
+                                            onChange={(event) =>
+                                              updateExpenseEvidenceForm(expense.id, {
+                                                file: event.target.files?.[0] || null,
+                                              })
+                                            }
+                                            className={inputClass}
+                                            required
+                                          />
+                                        </FormField>
+                                      </div>
+                                      <FormField label="Notes optional" dark>
+                                        <textarea
+                                          value={form.notes || ""}
+                                          onChange={(event) =>
+                                            updateExpenseEvidenceForm(expense.id, {
+                                              notes: event.target.value,
+                                            })
+                                          }
+                                          rows={3}
+                                          placeholder="Example: M-Pesa receipt or toll slip reference."
+                                          className={inputClass}
+                                        />
+                                      </FormField>
+                                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                                        <PrimaryButton
+                                          type="submit"
+                                          disabled={isUploading || Boolean(expenseEvidence?.setup_required)}
+                                          className="w-full sm:w-auto"
+                                        >
+                                          {isUploading ? "Uploading..." : "Attach receipt"}
+                                        </PrimaryButton>
+                                        <div className="text-xs leading-5 text-slate-400">
+                                          Files stay private and attach to this expense, not the general trip.
+                                        </div>
+                                      </div>
+                                    </form>
+                                  </details>
+                                ) : (
+                                  <ReadOnlyNotice text="Your role can view expenses but cannot attach expense evidence." />
+                                )}
                               </div>
-                              <StatusPill tone="neutral">
-                                {formatDate(expense.created_at)}
-                              </StatusPill>
-                            </div>
-                            <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                              <ExpenseFact
-                                label="Supplier / payee"
-                                value={expense.vendor || "Not captured"}
-                              />
-                              <ExpenseFact
-                                label="Payment method"
-                                value={humanize(expense.payment_method || "not captured")}
-                              />
-                              <ExpenseFact
-                                label="Reference"
-                                value={expense.reference_number || "Not captured"}
-                              />
-                              <ExpenseFact
-                                label="Expense date"
-                                value={formatDate(expense.created_at)}
-                              />
-                            </div>
-                            {expense.notes && (
-                              <div className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-300">
-                                {expense.notes}
-                              </div>
-                            )}
-                          </EvidenceCard>
-                        ))
+                            </EvidenceCard>
+                          );
+                        })
                       )}
                     </div>
 
@@ -1131,80 +1350,33 @@ export default function TripDetailPage() {
               <Panel dark className="p-5">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <SectionTitle
-                    title="Evidence / receipts"
-                    subtitle="Attach receipts, M-Pesa screenshots, delivery notes, weighbridge tickets, invoices, and other trip documents. Expense receipts support the structured expense record above; general trip evidence supports delivery, movement, or tonnage. Files stay private."
+                    title="General trip evidence"
+                    subtitle="Use this for delivery notes, weighbridge tickets, invoices, and trip-level documents. Expense receipts belong under the matching expense above."
                   />
                   <StatusPill tone="info">Private trip files</StatusPill>
                 </div>
 
-                {evidence?.setup_required ? (
-                  <ReadOnlyNotice text={evidence.error || "Trip evidence storage is not set up yet. Apply the evidence migration and create the private storage bucket."} />
-                ) : evidence?.error ? (
-                  <ReadOnlyNotice text={evidence.error} />
+                {tripEvidence?.setup_required ? (
+                  <ReadOnlyNotice text={tripEvidence.error || "Trip evidence storage is not set up yet. Apply the evidence migration and create the private storage bucket."} />
+                ) : tripEvidence?.error ? (
+                  <ReadOnlyNotice text={tripEvidence.error} />
                 ) : null}
 
-                <div className="mt-5 grid gap-3">
-                  {evidenceAttachments.length === 0 ? (
-                    <InlineEmpty
-                      title="No evidence attached yet"
-                      body="Upload the trip receipt, M-Pesa screenshot, delivery note, weighbridge ticket, invoice, or other supporting document."
-                    />
-                  ) : (
-                    evidenceAttachments.map((attachment: any) => (
-                      <EvidenceCard key={attachment.id}>
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                          <div className="min-w-0">
-                            <div className="break-words text-sm font-semibold text-white">
-                              {attachment.original_filename || evidenceTypeLabel(attachment.evidence_type)}
-                            </div>
-                            <div className="mt-1 flex flex-wrap gap-2">
-                              <StatusPill tone="neutral">
-                                {evidenceTypeLabel(attachment.evidence_type)}
-                              </StatusPill>
-                              <StatusPill tone="info">
-                                {humanize(attachment.verification_status || "uploaded")}
-                              </StatusPill>
-                            </div>
-                            <div className="mt-2 text-xs leading-5 text-slate-400">
-                              Uploaded {formatDateTime(attachment.uploaded_at)} · {attachment.mime_type || "file"} · {formatFileSize(attachment.file_size_bytes)}
-                            </div>
-                            {attachment.notes && (
-                              <div className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-300">
-                                {attachment.notes}
-                              </div>
-                            )}
-                          </div>
-                          <div className="shrink-0">
-                            {attachment.signed_url ? (
-                              <a
-                                href={attachment.signed_url}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="inline-flex rounded-md border border-white/15 px-3 py-2 text-sm font-semibold text-slate-100 hover:bg-white/10"
-                              >
-                                Open secure file
-                              </a>
-                            ) : (
-                              <span className="text-xs text-slate-400">
-                                {attachment.download_error || "Secure file link unavailable"}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      </EvidenceCard>
-                    ))
-                  )}
-                </div>
+                <EvidenceAttachmentList
+                  attachments={tripEvidenceAttachments}
+                  emptyTitle="No general trip evidence attached yet"
+                  emptyBody="Upload delivery notes, weighbridge tickets, invoices, or other trip-level supporting documents here."
+                />
 
-                <form onSubmit={uploadEvidence} className="mt-6 grid gap-5">
+                <form onSubmit={uploadTripEvidence} className="mt-6 grid gap-5">
                   <div className="grid gap-5 md:grid-cols-2">
                     <FormField label="Evidence type" dark>
                       <select
-                        value={evidenceType}
-                        onChange={(event) => setEvidenceType(event.target.value)}
+                        value={tripEvidenceType}
+                        onChange={(event) => setTripEvidenceType(event.target.value)}
                         className={inputClass}
                       >
-                        {evidenceTypes.map((type) => (
+                        {tripEvidenceTypes.map((type) => (
                           <option key={type.value} value={type.value}>
                             {type.label}
                           </option>
@@ -1216,7 +1388,7 @@ export default function TripDetailPage() {
                         id="trip-evidence-file"
                         type="file"
                         accept="image/*,.pdf"
-                        onChange={(event) => setEvidenceFile(event.target.files?.[0] || null)}
+                        onChange={(event) => setTripEvidenceFile(event.target.files?.[0] || null)}
                         className={inputClass}
                         required
                       />
@@ -1224,20 +1396,20 @@ export default function TripDetailPage() {
                   </div>
                   <FormField label="Notes optional" dark>
                     <textarea
-                      value={evidenceNotes}
-                      onChange={(event) => setEvidenceNotes(event.target.value)}
+                      value={tripEvidenceNotes}
+                      onChange={(event) => setTripEvidenceNotes(event.target.value)}
                       rows={3}
-                      placeholder="Example: M-Pesa fuel receipt, delivery note, or weighbridge ticket reference."
+                      placeholder="Example: delivery note, weighbridge ticket, or trip invoice reference."
                       className={inputClass}
                     />
                   </FormField>
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                     <PrimaryButton
                       type="submit"
-                      disabled={evidenceUploading || Boolean(evidence?.setup_required)}
+                      disabled={tripEvidenceUploading || Boolean(tripEvidence?.setup_required)}
                       className="w-full sm:w-auto"
                     >
-                      {evidenceUploading ? "Uploading..." : "Upload evidence"}
+                      {tripEvidenceUploading ? "Uploading..." : "Upload general trip evidence"}
                     </PrimaryButton>
                     <div className="text-xs leading-5 text-slate-400">
                       Accepted: PDF, JPG, PNG, WebP, HEIC up to 4MB. Files are opened through short-lived private links.
@@ -1357,6 +1529,68 @@ function EvidenceCard({ children }: { children: ReactNode }) {
   return (
     <div className="rounded-md border border-white/10 bg-white/[0.04] p-4">
       {children}
+    </div>
+  );
+}
+
+function EvidenceAttachmentList({
+  attachments,
+  emptyTitle,
+  emptyBody,
+}: {
+  attachments: any[];
+  emptyTitle: string;
+  emptyBody: string;
+}) {
+  return (
+    <div className="mt-5 grid gap-3">
+      {attachments.length === 0 ? (
+        <InlineEmpty title={emptyTitle} body={emptyBody} />
+      ) : (
+        attachments.map((attachment: any) => (
+          <EvidenceCard key={attachment.id}>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0">
+                <div className="break-words text-sm font-semibold text-white">
+                  {attachment.original_filename || evidenceTypeLabel(attachment.evidence_type)}
+                </div>
+                <div className="mt-1 flex flex-wrap gap-2">
+                  <StatusPill tone="neutral">
+                    {evidenceTypeLabel(attachment.evidence_type)}
+                  </StatusPill>
+                  <StatusPill tone="info">
+                    {humanize(attachment.verification_status || "uploaded")}
+                  </StatusPill>
+                </div>
+                <div className="mt-2 text-xs leading-5 text-slate-400">
+                  Uploaded {formatDateTime(attachment.uploaded_at)} · {attachment.mime_type || "file"} · {formatFileSize(attachment.file_size_bytes)}
+                </div>
+                {attachment.notes && (
+                  <div className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-300">
+                    {attachment.notes}
+                  </div>
+                )}
+              </div>
+              <div className="shrink-0">
+                {attachment.signed_url ? (
+                  <a
+                    href={attachment.signed_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex rounded-md border border-white/15 px-3 py-2 text-sm font-semibold text-slate-100 hover:bg-white/10"
+                  >
+                    Open secure file
+                  </a>
+                ) : (
+                  <span className="text-xs text-slate-400">
+                    {attachment.download_error || "Secure file link unavailable"}
+                  </span>
+                )}
+              </div>
+            </div>
+          </EvidenceCard>
+        ))
+      )}
     </div>
   );
 }
@@ -1508,8 +1742,14 @@ function humanize(value: any) {
 }
 
 function evidenceTypeLabel(value: any) {
-  const found = evidenceTypes.find((type) => type.value === String(value || "").toLowerCase());
-  return found?.label || humanize(value || "Evidence");
+  const key = String(value || "").toLowerCase();
+  if (key === "receipt") return "Receipt";
+  if (key === "mpesa_screenshot") return "M-Pesa screenshot";
+  if (key === "delivery_note") return "Delivery note";
+  if (key === "weighbridge") return "Weighbridge ticket";
+  if (key === "invoice") return "Invoice";
+  if (key === "other") return "Other evidence";
+  return humanize(value || "Evidence");
 }
 
 function readinessTone(status: string): "neutral" | "success" | "warning" | "danger" {

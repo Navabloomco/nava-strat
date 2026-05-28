@@ -240,10 +240,12 @@ Confirm workflow behavior:
 - [ ] On Trip Detail, allocate part of an existing fuel issue to the Trip only when the role can edit fuel; confirm the fuel issue remaining/carry-forward balance is still shown safely.
 - [ ] On Trip Detail, add a linked expense with a finance/elevated role and confirm it appears as a separate trip expense, not merged into fuel.
 - [ ] Confirm linked expense cards clearly show supplier/vendor/payee, payment method, reference number, amount, and date before attached evidence files.
-- [ ] Apply the `evidence_attachments` migration and confirm the private `trip-evidence` Supabase Storage bucket exists before testing Trip evidence uploads.
-- [ ] On Trip Detail, upload a receipt, M-Pesa screenshot, delivery note, weighbridge ticket, invoice, or other trip document and confirm it appears in the Evidence / receipts section.
+- [ ] Apply the `evidence_attachments` migration and the forward migration that expands `related_type` to `trip`, `expense`, `fuel_log`, and `fuel_allocation`; confirm the private `trip-evidence` Supabase Storage bucket exists before testing evidence uploads.
+- [ ] On Trip Detail, add a linked trip expense, then attach a receipt or M-Pesa screenshot from that expense row's Attach receipt flow.
+- [ ] Confirm the receipt appears under that exact expense row, not only in the general Trip evidence list.
+- [ ] On Trip Detail, upload a delivery note, weighbridge ticket, invoice, or other trip-level document in General trip evidence and confirm it stays separate from expense receipts.
 - [ ] Confirm an expense receipt supports the specific expense/vendor/payment record, while general trip evidence supports delivery, movement, cargo, or tonnage and is not treated as supplier-payment proof by itself.
-- [ ] Confirm Trip evidence opens only through a short-lived secure link, does not expose a public file URL or raw storage path, and remains inaccessible to users outside the Trip's company.
+- [ ] Confirm evidence opens only through a short-lived secure link, does not expose a public file URL or raw storage path, and remains inaccessible to users outside the related record's company.
 - [ ] Confirm M-Pesa screenshots are stored as evidence only; no M-Pesa text parsing, fuel-burn, theft, or expense inference is claimed yet.
 - [ ] Vehicle picker can fill the truck field.
 - [ ] Current standing driver assignment can fill or suggest the driver field.
