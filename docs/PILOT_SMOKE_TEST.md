@@ -204,6 +204,7 @@ Expected result:
 
 Open these routes with appropriate company roles:
 
+- [ ] `/finance/rate-rules`
 - [ ] `/ops/dashboard`
 - [ ] `/ops/efficiency`
 - [ ] `/ops/journey`
@@ -270,6 +271,8 @@ Confirm workflow behavior:
 - [ ] As an ops/clerk-style user, open `/ops/journey/new` and confirm only operational Trip fields are visible; rate, currency, billing quantity, FX, revenue, and contribution fields are not shown or saved.
 - [ ] As a finance/management/elevated user with Trip creation access, confirm commercial Trip creation fields are available where intended and still store through role-gated server logic.
 - [ ] As a finance/elevated user, create a Client Rate Rule through `POST /api/finance/rate-rules` with client, optional route, unit type, billing quantity source, rate, currency, FX policy, effective date, and status.
+- [ ] As a finance/admin user, open `/finance/rate-rules`, confirm existing current-company rules appear, and create a new test rule without any hardcoded tenant examples in the form.
+- [ ] As a management user, confirm `/finance/rate-rules` is visible read-only if the role can view finance but cannot edit finance.
 - [ ] As a management/finance/elevated user, call `GET /api/finance/rate-rules` and confirm rules are returned only for the selected company.
 - [ ] As an ops/clerk-style user without finance visibility, confirm `GET /api/finance/rate-rules` and `GET /api/finance/revenue-rules/match?journeyId=<id>` return a finance access boundary instead of rates or revenue amounts.
 - [ ] For a same-company Trip with matching client/route and available billing quantity, call `GET /api/finance/revenue-rules/match?journeyId=<id>` and confirm the match status is `unique_match` with a revenue preview.

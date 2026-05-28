@@ -13,6 +13,11 @@ import {
 
 const financeCards = [
   {
+    title: "Client Rates",
+    body: "Configure client and route revenue rules controlled by finance.",
+    href: "/finance/rate-rules",
+  },
+  {
     title: "Revenue Management",
     body: "Set trip rates, quantities, and revenue for active journeys.",
     href: "/finance/revenue",

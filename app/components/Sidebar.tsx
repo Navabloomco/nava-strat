@@ -269,6 +269,11 @@ export default function Sidebar() {
           show: roles.isFinance || roles.isAdmin,
         },
         {
+          name: "Client Rates",
+          href: "/finance/rate-rules",
+          show: roles.isFinance || roles.isManagement || roles.isAdmin,
+        },
+        {
           name: "Management",
           href: "/management/dashboard",
           show: roles.isManagement || roles.isAdmin,

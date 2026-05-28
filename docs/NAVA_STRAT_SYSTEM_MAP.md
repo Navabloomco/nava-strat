@@ -80,6 +80,7 @@ The main product principle is convenience. Every user-facing page should make th
 | --- | --- |
 | `/finance/dashboard` | Role-aware Finance Hub linking to safe finance workflows. |
 | `/finance/revenue` | Revenue management, rate/quantity workflow, and the current Finance surface that will consume Client Rates / Revenue Rules. Phase 1 backend support stores Finance-owned rate rules and auditable Trip revenue application records while existing journey revenue fields remain compatibility snapshots. |
+| `/finance/rate-rules` | Client Rates / Revenue Rules Phase 1 UI. Finance/management/elevated roles can view company-scoped rate rules; finance/elevated roles can create them. Ops/clerk users should not see the route or rates. This is a setup/review surface only, not invoicing or a supplier-payment workflow. |
 | `/fuel` | Fuel ledger. |
 | `/fuel/new` | Fuel entry form with JourneyPicker. |
 | `/fuel/providers` | Company-scoped fuel provider management. |
