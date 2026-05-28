@@ -14,6 +14,7 @@ export const revalidate = 0;
 const EVIDENCE_BUCKET = "trip-evidence";
 const SIGNED_URL_SECONDS = 300;
 const MAX_FILE_SIZE_BYTES = 4 * 1024 * 1024;
+const MAX_TEXT_CONTENT_CHARS = 4000;
 const EVIDENCE_FIELDS =
   "id, company_id, related_type, related_id, evidence_type, storage_bucket, storage_path, original_filename, mime_type, file_size_bytes, text_content, notes, verification_status, uploaded_by, uploaded_at";
 const ALLOWED_RELATED_TYPES = new Set(["trip", "expense", "fuel_log", "fuel_allocation"]);
@@ -295,38 +296,48 @@ export async function POST(req: Request) {
     }
 
     const file = form.get("file");
-    if (!isUploadFile(file)) {
+    const hasFile = isUploadFile(file);
+    const textContent = normalizeTextContent(form.get("textContent"));
+    if (!hasFile && !textContent) {
       return noStoreJson(
-        { success: false, error: "Evidence file is required" },
+        { success: false, error: "Evidence file or pasted proof text is required" },
         { status: 400 }
       );
     }
 
-    const validation = validateEvidenceFile(file);
-    if (!validation.valid) {
-      return noStoreJson({ success: false, error: validation.error }, { status: 400 });
-    }
-
     const attachmentId = randomUUID();
-    const originalFilename = sanitizeOriginalFilename(file.name || "trip-evidence");
-    const contentType = validation.contentType;
-    const storagePath = `${resolved.company.id}/${storagePathSegment(
-      relatedType
-    )}/${relatedId}/${attachmentId}-${originalFilename}`;
-    const fileBuffer = Buffer.from(await file.arrayBuffer());
+    let originalFilename: string | null = null;
+    let contentType: string | null = null;
+    let storagePath: string | null = null;
+    let fileSizeBytes: number | null = null;
 
-    const uploadResult = await supabaseAdmin.storage
-      .from(EVIDENCE_BUCKET)
-      .upload(storagePath, fileBuffer, {
-        contentType,
-        upsert: false,
-      });
+    if (hasFile) {
+      const validation = validateEvidenceFile(file);
+      if (!validation.valid) {
+        return noStoreJson({ success: false, error: validation.error }, { status: 400 });
+      }
 
-    if (uploadResult.error) {
-      if (isEvidenceStorageMissing(uploadResult.error)) return storageSetupRequiredResponse();
-      throw uploadResult.error;
+      originalFilename = sanitizeOriginalFilename(file.name || "trip-evidence");
+      contentType = validation.contentType;
+      storagePath = `${resolved.company.id}/${storagePathSegment(
+        relatedType
+      )}/${relatedId}/${attachmentId}-${originalFilename}`;
+      fileSizeBytes = file.size;
+      const fileBuffer = Buffer.from(await file.arrayBuffer());
+
+      const uploadResult = await supabaseAdmin.storage
+        .from(EVIDENCE_BUCKET)
+        .upload(storagePath, fileBuffer, {
+          contentType,
+          upsert: false,
+        });
+
+      if (uploadResult.error) {
+        if (isEvidenceStorageMissing(uploadResult.error)) return storageSetupRequiredResponse();
+        throw uploadResult.error;
+      }
+      uploadedPath = storagePath;
     }
-    uploadedPath = storagePath;
 
     const { data: attachment, error: insertError } = await supabaseAdmin
       .from("evidence_attachments")
@@ -336,11 +347,12 @@ export async function POST(req: Request) {
         related_type: relatedType,
         related_id: relatedId,
         evidence_type: evidenceType,
-        storage_bucket: EVIDENCE_BUCKET,
+        storage_bucket: storagePath ? EVIDENCE_BUCKET : null,
         storage_path: storagePath,
         original_filename: originalFilename,
         mime_type: contentType,
-        file_size_bytes: file.size,
+        file_size_bytes: fileSizeBytes,
+        text_content: textContent,
         notes: normalizeNotes(form.get("notes")),
         verification_status: "uploaded",
         uploaded_by: resolved.userId,
@@ -519,9 +531,11 @@ async function toSafeAttachment(row: any, includeSignedUrl: boolean) {
     mime_type: row.mime_type,
     file_size_bytes: row.file_size_bytes,
     notes: row.notes,
+    text_content: row.text_content,
     verification_status: row.verification_status,
     uploaded_at: row.uploaded_at,
     has_file: Boolean(row.storage_path),
+    has_text_content: Boolean(row.text_content),
     signed_url: signedUrl,
     signed_url_expires_in_seconds: signedUrl ? SIGNED_URL_SECONDS : null,
     download_error: signedUrlError,
@@ -573,6 +587,12 @@ function normalizeNotes(value: FormDataEntryValue | null) {
   const text = stringFormValue(value);
   if (!text) return null;
   return text.slice(0, 1000);
+}
+
+function normalizeTextContent(value: FormDataEntryValue | null) {
+  const text = stringFormValue(value).replace(/\r\n/g, "\n");
+  if (!text) return null;
+  return text.slice(0, MAX_TEXT_CONTENT_CHARS);
 }
 
 function stringFormValue(value: FormDataEntryValue | null) {

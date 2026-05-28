@@ -44,9 +44,18 @@ const tripEvidenceTypes = [
 
 const expenseEvidenceTypes = [
   { value: "receipt", label: "Receipt" },
-  { value: "mpesa_screenshot", label: "M-Pesa screenshot" },
+  { value: "mpesa_screenshot", label: "M-Pesa screenshot/message" },
   { value: "other", label: "Other expense proof" },
 ];
+
+function emptyExpenseEvidenceForm() {
+  return {
+    evidenceType: "receipt",
+    file: null as File | null,
+    textContent: "",
+    notes: "",
+  };
+}
 
 export default function TripDetailPage() {
   const params = useParams<{ id: string }>();
@@ -82,6 +91,10 @@ export default function TripDetailPage() {
   const [expensePaymentMethod, setExpensePaymentMethod] = useState("");
   const [expenseReference, setExpenseReference] = useState("");
   const [expenseNotes, setExpenseNotes] = useState("");
+  const [newExpenseEvidenceType, setNewExpenseEvidenceType] = useState("receipt");
+  const [newExpenseEvidenceFile, setNewExpenseEvidenceFile] = useState<File | null>(null);
+  const [newExpenseProofText, setNewExpenseProofText] = useState("");
+  const [newExpenseEvidenceNotes, setNewExpenseEvidenceNotes] = useState("");
 
   const [tripEvidenceType, setTripEvidenceType] = useState("delivery_note");
   const [tripEvidenceFile, setTripEvidenceFile] = useState<File | null>(null);
@@ -365,13 +378,34 @@ export default function TripDetailPage() {
       setMessage(json.error || "Failed to save expense.");
       return;
     }
+
+    const createdExpense = json.expense || {};
+    let nextMessage = "Expense linked to trip.";
+    if (createdExpense.id && (newExpenseEvidenceFile || newExpenseProofText.trim())) {
+      const proofResult = await uploadExpenseProof(createdExpense.id, token, {
+        evidenceType: newExpenseEvidenceType,
+        file: newExpenseEvidenceFile,
+        textContent: newExpenseProofText,
+        notes: newExpenseEvidenceNotes,
+      });
+      nextMessage = proofResult.success
+        ? "Expense linked to trip with proof attached."
+        : `Expense saved, but proof upload failed. You can attach proof from the expense card.\n${proofResult.error}`;
+    }
+
     setExpenseType("");
     setExpenseAmount("");
     setExpenseVendor("");
     setExpensePaymentMethod("");
     setExpenseReference("");
     setExpenseNotes("");
-    await loadDetail("Expense linked to trip. Use Attach receipt on the expense row to add proof.");
+    setNewExpenseEvidenceType("receipt");
+    setNewExpenseEvidenceFile(null);
+    setNewExpenseProofText("");
+    setNewExpenseEvidenceNotes("");
+    const proofFileInput = document.getElementById("new-expense-proof-file") as HTMLInputElement | null;
+    if (proofFileInput) proofFileInput.value = "";
+    await loadDetail(nextMessage);
   }
 
   async function uploadTripEvidence(e: any) {
@@ -424,13 +458,13 @@ export default function TripDetailPage() {
   async function uploadExpenseEvidence(e: any, expenseId: string) {
     e.preventDefault();
     const form = expenseEvidenceForm(expenseId);
-    if (!form.file) {
-      setMessage("Choose a receipt, M-Pesa screenshot, or expense proof first.");
+    if (!form.file && !String(form.textContent || "").trim()) {
+      setMessage("Choose a receipt/M-Pesa screenshot or paste proof text first.");
       return;
     }
 
     setExpenseEvidenceUploadingId(expenseId);
-    setMessage("Uploading expense receipt...");
+    setMessage("Uploading expense proof...");
     const token = await getToken();
     if (!token) {
       setMessage("Session expired. Please log in again.");
@@ -438,14 +472,51 @@ export default function TripDetailPage() {
       return;
     }
 
+    const proofResult = await uploadExpenseProof(expenseId, token, {
+      evidenceType: form.evidenceType || "receipt",
+      file: form.file || null,
+      textContent: form.textContent || "",
+      notes: form.notes || "",
+    });
+    setExpenseEvidenceUploadingId("");
+    if (!proofResult.success) {
+      setMessage(proofResult.error || "Failed to upload expense proof.");
+      return;
+    }
+
+    setExpenseEvidenceForms((current) => ({
+      ...current,
+      [expenseId]: emptyExpenseEvidenceForm(),
+    }));
+    const fileInput = document.getElementById(
+      `expense-evidence-file-${expenseId}`
+    ) as HTMLInputElement | null;
+    if (fileInput) fileInput.value = "";
+    await loadDetail("Proof attached to expense.");
+  }
+
+  async function uploadExpenseProof(
+    expenseId: string,
+    token: string,
+    proof: {
+      evidenceType: string;
+      file?: File | null;
+      textContent?: string;
+      notes?: string;
+    }
+  ) {
+    const textContent = String(proof.textContent || "").trim();
+    if (!proof.file && !textContent) return { success: true, skipped: true };
+
     const formData = new FormData();
     const companyId = currentCompanyId();
     if (companyId) formData.append("companyId", companyId);
     formData.append("relatedType", "expense");
     formData.append("relatedId", expenseId);
-    formData.append("evidenceType", form.evidenceType || "receipt");
-    formData.append("notes", form.notes || "");
-    formData.append("file", form.file);
+    formData.append("evidenceType", proof.evidenceType || "receipt");
+    formData.append("notes", proof.notes || "");
+    if (textContent) formData.append("textContent", textContent);
+    if (proof.file) formData.append("file", proof.file);
 
     const res = await fetch("/api/evidence", {
       method: "POST",
@@ -455,38 +526,25 @@ export default function TripDetailPage() {
       body: formData,
     });
     const json = await res.json();
-    setExpenseEvidenceUploadingId("");
     if (!res.ok || !json.success) {
-      setMessage(json.error || "Failed to upload expense receipt.");
-      return;
+      return {
+        success: false,
+        error: json.error || "Failed to attach proof to expense.",
+      };
     }
 
-    setExpenseEvidenceForms((current) => ({
-      ...current,
-      [expenseId]: { evidenceType: "receipt", file: null, notes: "" },
-    }));
-    const fileInput = document.getElementById(
-      `expense-evidence-file-${expenseId}`
-    ) as HTMLInputElement | null;
-    if (fileInput) fileInput.value = "";
-    await loadDetail("Receipt attached to expense.");
+    return { success: true, attachment: json.attachment };
   }
 
   function expenseEvidenceForm(expenseId: string) {
-    return (
-      expenseEvidenceForms[expenseId] || {
-        evidenceType: "receipt",
-        file: null,
-        notes: "",
-      }
-    );
+    return expenseEvidenceForms[expenseId] || emptyExpenseEvidenceForm();
   }
 
   function updateExpenseEvidenceForm(expenseId: string, patch: Record<string, any>) {
     setExpenseEvidenceForms((current) => ({
       ...current,
       [expenseId]: {
-        ...expenseEvidenceForm(expenseId),
+        ...(current[expenseId] || emptyExpenseEvidenceForm()),
         ...patch,
       },
     }));
@@ -1162,7 +1220,7 @@ export default function TripDetailPage() {
                                     </div>
                                   </div>
                                   <StatusPill tone={attachments.length ? "info" : "neutral"}>
-                                    {attachments.length} file(s)
+                                    {attachments.length} proof item(s)
                                   </StatusPill>
                                 </div>
 
@@ -1181,7 +1239,7 @@ export default function TripDetailPage() {
                                 {data?.capabilities?.can_edit_expenses ? (
                                   <details className="mt-4 rounded-md border border-white/10 bg-white/[0.04] p-4">
                                     <summary className="cursor-pointer text-sm font-semibold text-white">
-                                      Attach receipt
+                                      Attach receipt/proof
                                     </summary>
                                     <form
                                       onSubmit={(event) => uploadExpenseEvidence(event, expense.id)}
@@ -1216,10 +1274,22 @@ export default function TripDetailPage() {
                                               })
                                             }
                                             className={inputClass}
-                                            required
                                           />
                                         </FormField>
                                       </div>
+                                      <FormField label="Paste M-Pesa message or receipt text optional" dark>
+                                        <textarea
+                                          value={form.textContent || ""}
+                                          onChange={(event) =>
+                                            updateExpenseEvidenceForm(expense.id, {
+                                              textContent: event.target.value,
+                                            })
+                                          }
+                                          rows={4}
+                                          placeholder="Paste the M-Pesa message or receipt/reference text. Nava stores it as evidence only and does not parse it yet."
+                                          className={inputClass}
+                                        />
+                                      </FormField>
                                       <FormField label="Notes optional" dark>
                                         <textarea
                                           value={form.notes || ""}
@@ -1239,10 +1309,10 @@ export default function TripDetailPage() {
                                           disabled={isUploading || Boolean(expenseEvidence?.setup_required)}
                                           className="w-full sm:w-auto"
                                         >
-                                          {isUploading ? "Uploading..." : "Attach receipt"}
+                                          {isUploading ? "Uploading..." : "Attach proof"}
                                         </PrimaryButton>
                                         <div className="text-xs leading-5 text-slate-400">
-                                          Files stay private and attach to this expense, not the general trip.
+                                          Files and pasted messages stay private and attach to this expense, not the general trip.
                                         </div>
                                       </div>
                                     </form>
@@ -1295,7 +1365,13 @@ export default function TripDetailPage() {
                             <FormField label="Payment method" dark>
                               <select
                                 value={expensePaymentMethod}
-                                onChange={(event) => setExpensePaymentMethod(event.target.value)}
+                                onChange={(event) => {
+                                  const nextMethod = event.target.value;
+                                  setExpensePaymentMethod(nextMethod);
+                                  if (nextMethod === "mpesa") {
+                                    setNewExpenseEvidenceType("mpesa_screenshot");
+                                  }
+                                }}
                                 className={inputClass}
                                 required
                               >
@@ -1333,6 +1409,58 @@ export default function TripDetailPage() {
                               className={inputClass}
                             />
                           </FormField>
+                          <div className="rounded-md border border-cyan-200/15 bg-cyan-300/10 p-4">
+                            <div className="text-sm font-semibold text-cyan-50">
+                              Proof optional
+                            </div>
+                            <p className="mt-2 text-sm leading-6 text-cyan-100/80">
+                              Upload a receipt/M-Pesa screenshot or paste the M-Pesa message now. Proof will be attached to this expense.
+                            </p>
+                            <div className="mt-5 grid gap-5 md:grid-cols-2">
+                              <FormField label="Proof type" dark>
+                                <select
+                                  value={newExpenseEvidenceType}
+                                  onChange={(event) => setNewExpenseEvidenceType(event.target.value)}
+                                  className={inputClass}
+                                >
+                                  {expenseEvidenceTypes.map((type) => (
+                                    <option key={type.value} value={type.value}>
+                                      {type.label}
+                                    </option>
+                                  ))}
+                                </select>
+                              </FormField>
+                              <FormField label="Upload receipt / M-Pesa screenshot optional" dark>
+                                <input
+                                  id="new-expense-proof-file"
+                                  type="file"
+                                  accept="image/*,.pdf"
+                                  onChange={(event) =>
+                                    setNewExpenseEvidenceFile(event.target.files?.[0] || null)
+                                  }
+                                  className={inputClass}
+                                />
+                              </FormField>
+                            </div>
+                            <FormField label="Paste M-Pesa message optional" dark>
+                              <textarea
+                                value={newExpenseProofText}
+                                onChange={(event) => setNewExpenseProofText(event.target.value)}
+                                rows={4}
+                                placeholder="Paste the M-Pesa message or receipt/reference text. Nava stores it as evidence only and does not parse it yet."
+                                className={inputClass}
+                              />
+                            </FormField>
+                            <FormField label="Proof notes optional" dark>
+                              <textarea
+                                value={newExpenseEvidenceNotes}
+                                onChange={(event) => setNewExpenseEvidenceNotes(event.target.value)}
+                                rows={2}
+                                placeholder="Any context for this proof."
+                                className={inputClass}
+                              />
+                            </FormField>
+                          </div>
                           <PrimaryButton type="submit" className="w-full sm:w-auto">
                             Save expense
                           </PrimaryButton>
@@ -1552,7 +1680,7 @@ function EvidenceAttachmentList({
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div className="min-w-0">
                 <div className="break-words text-sm font-semibold text-white">
-                  {attachment.original_filename || evidenceTypeLabel(attachment.evidence_type)}
+                  {attachment.original_filename || evidenceAttachmentTitle(attachment)}
                 </div>
                 <div className="mt-1 flex flex-wrap gap-2">
                   <StatusPill tone="neutral">
@@ -1563,8 +1691,18 @@ function EvidenceAttachmentList({
                   </StatusPill>
                 </div>
                 <div className="mt-2 text-xs leading-5 text-slate-400">
-                  Uploaded {formatDateTime(attachment.uploaded_at)} · {attachment.mime_type || "file"} · {formatFileSize(attachment.file_size_bytes)}
+                  Uploaded {formatDateTime(attachment.uploaded_at)} · {attachment.has_file ? `${attachment.mime_type || "file"} · ${formatFileSize(attachment.file_size_bytes)}` : "pasted text evidence"}
                 </div>
+                {attachment.text_content && (
+                  <div className="mt-3 rounded-md border border-white/10 bg-slate-950/50 p-3">
+                    <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-slate-500">
+                      {pastedEvidenceLabel(attachment)}
+                    </div>
+                    <div className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-slate-200">
+                      {attachment.text_content}
+                    </div>
+                  </div>
+                )}
                 {attachment.notes && (
                   <div className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-300">
                     {attachment.notes}
@@ -1750,6 +1888,20 @@ function evidenceTypeLabel(value: any) {
   if (key === "invoice") return "Invoice";
   if (key === "other") return "Other evidence";
   return humanize(value || "Evidence");
+}
+
+function evidenceAttachmentTitle(attachment: any) {
+  if (attachment?.has_text_content && !attachment?.has_file) {
+    return pastedEvidenceLabel(attachment);
+  }
+  return evidenceTypeLabel(attachment?.evidence_type);
+}
+
+function pastedEvidenceLabel(attachment: any) {
+  if (String(attachment?.evidence_type || "").toLowerCase() === "mpesa_screenshot") {
+    return "Pasted M-Pesa message evidence";
+  }
+  return "Pasted proof text";
 }
 
 function readinessTone(status: string): "neutral" | "success" | "warning" | "danger" {

@@ -241,7 +241,11 @@ Confirm workflow behavior:
 - [ ] On Trip Detail, add a linked expense with a finance/elevated role and confirm it appears as a separate trip expense, not merged into fuel.
 - [ ] Confirm linked expense cards clearly show supplier/vendor/payee, payment method, reference number, amount, and date before attached evidence files.
 - [ ] Apply the `evidence_attachments` migration and the forward migration that expands `related_type` to `trip`, `expense`, `fuel_log`, and `fuel_allocation`; confirm the private `trip-evidence` Supabase Storage bucket exists before testing evidence uploads.
-- [ ] On Trip Detail, add a linked trip expense, then attach a receipt or M-Pesa screenshot from that expense row's Attach receipt flow.
+- [ ] On Trip Detail, add a linked trip expense and use the Proof optional fields in the same Add trip expense form to upload a receipt/M-Pesa screenshot and/or paste a M-Pesa message.
+- [ ] Confirm saving creates the expense first, then attaches the uploaded file and pasted proof text to that new expense.
+- [ ] Confirm pasted M-Pesa message text appears as evidence under the expense and is not parsed into amount/date/name/transaction-code facts yet.
+- [ ] If proof upload fails after expense creation, confirm the expense remains saved and the page says proof can be attached from the expense card.
+- [ ] Attach a receipt or M-Pesa screenshot later from an existing expense row's Attach receipt/proof flow.
 - [ ] Confirm the receipt appears under that exact expense row, not only in the general Trip evidence list.
 - [ ] On Trip Detail, upload a delivery note, weighbridge ticket, invoice, or other trip-level document in General trip evidence and confirm it stays separate from expense receipts.
 - [ ] Confirm an expense receipt supports the specific expense/vendor/payment record, while general trip evidence supports delivery, movement, cargo, or tonnage and is not treated as supplier-payment proof by itself.
