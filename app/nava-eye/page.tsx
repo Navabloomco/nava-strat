@@ -76,6 +76,8 @@ export default function NavaEyeChatPage() {
     useState<ConversationStatusTab>("open");
   const [messages, setMessages] = useState<NavaEyeMessage[]>([]);
   const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
+  const [deleteConversationTarget, setDeleteConversationTarget] =
+    useState<NavaEyeConversation | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const pendingConversationIdRef = useRef("");
 
@@ -322,6 +324,8 @@ export default function NavaEyeChatPage() {
     setMessages([]);
     setSelectedConversationId("");
     setConversationStatusTab("open");
+    setCloseConfirmOpen(false);
+    setDeleteConversationTarget(null);
     await createConversation();
   }
 
@@ -399,7 +403,6 @@ export default function NavaEyeChatPage() {
 
   async function closeConversation() {
     if (!selectedConversationId || selectedConversation?.status === "closed") return;
-    const closingConversationId = selectedConversationId;
     setLoading(true);
     setErrorDetail("");
 
@@ -428,22 +431,61 @@ export default function NavaEyeChatPage() {
       return;
     }
 
-    const lists = await loadConversationLists(selectedCompanyId, {
+    await loadConversationLists(selectedCompanyId, {
       skipSelectionUpdate: true,
     });
-    const nextOpen = (lists?.open || []).find(
-      (conversation: NavaEyeConversation) =>
-        conversation.id !== closingConversationId
-    );
-    if (nextOpen) {
-      setConversationStatusTab("open");
-      await loadConversation(nextOpen.id);
-    } else {
-      setConversationStatusTab("open");
+    setConversationStatusTab("open");
+    setSelectedConversationId("");
+    setMessages([]);
+    setQuestion("");
+    setCloseConfirmOpen(false);
+    setLoading(false);
+  }
+
+  async function deleteConversation(conversation: NavaEyeConversation | null) {
+    if (!conversation) return;
+    setLoading(true);
+    setErrorDetail("");
+
+    const token = await getAccessToken();
+    if (!token) {
+      setErrorDetail("Session expired. Please log in again.");
+      setLoading(false);
+      setDeleteConversationTarget(null);
+      return;
+    }
+
+    const res = await fetch(`/api/nava-eye/conversations/${conversation.id}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const json = await res.json();
+
+    if (json.setup_required) {
+      setSetupRequired(json.error || "Conversation delete needs setup.");
+      setLoading(false);
+      setDeleteConversationTarget(null);
+      return;
+    }
+
+    if (!res.ok || !json.success) {
+      setErrorDetail(json.error || "Unable to delete this conversation.");
+      setLoading(false);
+      setDeleteConversationTarget(null);
+      return;
+    }
+
+    if (selectedConversationId === conversation.id) {
       setSelectedConversationId("");
       setMessages([]);
+      setQuestion("");
+      setConversationStatusTab("open");
     }
-    setCloseConfirmOpen(false);
+
+    await loadConversationLists(selectedCompanyId, {
+      skipSelectionUpdate: true,
+    });
+    setDeleteConversationTarget(null);
     setLoading(false);
   }
 
@@ -591,6 +633,7 @@ export default function NavaEyeChatPage() {
               conversations={visibleConversations}
               selectedConversationId={selectedConversationId}
               onSelect={loadConversation}
+              onDelete={(conversation) => setDeleteConversationTarget(conversation)}
             />
           </Panel>
 
@@ -760,6 +803,14 @@ export default function NavaEyeChatPage() {
           onConfirm={closeConversation}
         />
       )}
+      {deleteConversationTarget && (
+        <DeleteConversationDialog
+          conversation={deleteConversationTarget}
+          loading={loading}
+          onCancel={() => setDeleteConversationTarget(null)}
+          onConfirm={() => deleteConversation(deleteConversationTarget)}
+        />
+      )}
     </main>
   );
 }
@@ -770,12 +821,14 @@ function ConversationGroup({
   conversations,
   selectedConversationId,
   onSelect,
+  onDelete,
 }: {
   title: string;
   emptyText: string;
   conversations: NavaEyeConversation[];
   selectedConversationId: string;
   onSelect: (conversationId: string) => void;
+  onDelete: (conversation: NavaEyeConversation) => void;
 }) {
   return (
     <div className="mt-6">
@@ -789,23 +842,86 @@ function ConversationGroup({
         {conversations.map((conversation) => {
           const active = conversation.id === selectedConversationId;
           return (
-            <button
+            <div
               key={conversation.id}
-              type="button"
-              onClick={() => onSelect(conversation.id)}
               className={`w-full rounded-lg border p-3 text-left transition ${
                 active
                   ? "border-cyan-300/40 bg-cyan-300/10 text-cyan-50"
                   : "border-white/10 bg-white/[0.04] text-slate-300 hover:border-cyan-200/30 hover:bg-cyan-300/10"
               }`}
             >
-              <span className="block truncate text-sm font-semibold">{conversation.title}</span>
-              <span className="mt-1 block text-xs text-slate-500">
-                {conversation.last_intent || conversation.status} · {formatMessageTime(conversation.updated_at)}
-              </span>
-            </button>
+              <div className="flex min-w-0 items-start gap-2">
+                <button
+                  type="button"
+                  onClick={() => onSelect(conversation.id)}
+                  className="min-w-0 flex-1 text-left"
+                >
+                  <span className="block truncate text-sm font-semibold">{conversation.title}</span>
+                  <span className="mt-1 block text-xs text-slate-500">
+                    {conversation.last_intent || conversation.status} · {formatMessageTime(conversation.updated_at)}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onDelete(conversation);
+                  }}
+                  className="shrink-0 rounded-md border border-white/10 px-2 py-1 text-xs font-semibold text-slate-400 hover:border-rose-300/30 hover:bg-rose-500/10 hover:text-rose-100"
+                  aria-label={`Delete ${conversation.title}`}
+                  title="Delete conversation"
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+function DeleteConversationDialog({
+  conversation,
+  loading,
+  onCancel,
+  onConfirm,
+}: {
+  conversation: NavaEyeConversation;
+  loading: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/80 px-4 py-5 sm:items-center">
+      <div className="w-full max-w-md rounded-lg border border-white/10 bg-slate-900 p-5 shadow-2xl">
+        <h2 className="text-lg font-semibold text-white">Delete this conversation?</h2>
+        <p className="mt-2 text-sm leading-6 text-slate-300">
+          This removes the thread from your Nava Eye conversation list. It does
+          not delete other users&apos; conversations.
+        </p>
+        <p className="mt-3 truncate rounded-md border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-slate-300">
+          {conversation.title}
+        </p>
+        <div className="mt-5 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+          <SecondaryButton
+            type="button"
+            onClick={onCancel}
+            disabled={loading}
+            className="w-full sm:w-auto"
+          >
+            Cancel
+          </SecondaryButton>
+          <PrimaryButton
+            type="button"
+            onClick={onConfirm}
+            disabled={loading}
+            className="w-full bg-rose-500 text-white hover:bg-rose-400 sm:w-auto"
+          >
+            {loading ? "Deleting..." : "Delete conversation"}
+          </PrimaryButton>
+        </div>
       </div>
     </div>
   );

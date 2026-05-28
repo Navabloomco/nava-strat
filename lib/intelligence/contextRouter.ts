@@ -126,7 +126,8 @@ export async function routeContext(
   if (dashboardReference) {
     intent = "dashboard_followup";
   }
-  const vehicleMatch = await matchVehicleInFleet(queryText, companyId);
+  const vehicleLookupText = buildVehicleLookupText(queryText, structuredQuery);
+  const vehicleMatch = await matchVehicleInFleet(vehicleLookupText, companyId);
   const timelineHistoryRequest =
     detectTimelineHistoryRequest(lower) || locationEvidenceRequest;
   const compoundTruckRequest = vehicleMatch.input
@@ -1150,6 +1151,7 @@ function sanitizeStructuredQuery(query: NavaEyeStructuredQuery | null | undefine
     intent_family: query.intent_family,
     subject_type: query.subject_type,
     subject_label: query.subject_label ? String(query.subject_label).slice(0, 160) : null,
+    scope: query.scope || "unknown",
     detected_entities: {
       vehicles: (query.detected_entities?.vehicles || []).slice(0, 6),
       providers: (query.detected_entities?.providers || []).slice(0, 6),
@@ -1166,6 +1168,20 @@ function sanitizeStructuredQuery(query: NavaEyeStructuredQuery | null | undefine
     follow_up: Boolean(query.follow_up),
     answer_mode: query.answer_mode,
   };
+}
+
+function buildVehicleLookupText(queryText: string, structuredQuery: NavaEyeStructuredQuery) {
+  const subjectLabel = String(structuredQuery.subject_label || "").trim();
+  if (
+    subjectLabel &&
+    structuredQuery.subject_type === "truck" &&
+    structuredQuery.scope !== "fleet" &&
+    !queryText.toLowerCase().includes(subjectLabel.toLowerCase())
+  ) {
+    return `${queryText} ${subjectLabel}`.slice(0, 650);
+  }
+
+  return queryText;
 }
 
 function getPermissionBoundary(
@@ -2524,7 +2540,10 @@ async function fetchMetricComparisonContext(
   const metric = structuredQuery.comparison?.metric || structuredQuery.metric;
   const periods = resolveComparisonPeriods(structuredQuery);
   const supportedPeriods = periods.filter(
-    (period) => period === "today" || period === "yesterday"
+    (period) =>
+      period === "today" ||
+      period === "yesterday" ||
+      period === "day_before_yesterday"
   );
 
   if (metric !== "distance" || supportedPeriods.length < 2) {
@@ -2533,7 +2552,7 @@ async function fetchMetricComparisonContext(
       status: "unsupported",
       metric,
       message:
-        "I can compare today and yesterday distance now. Other comparison types need more linked evidence before Nava Eye can answer safely.",
+        "I can compare day-by-day distance now. Other comparison types need more linked evidence before Nava Eye can answer safely.",
     };
   }
 
@@ -2594,10 +2613,20 @@ function resolveComparisonPeriods(query: NavaEyeStructuredQuery): NavaEyePeriod[
     ? query.comparison.periods
     : query.detected_periods;
   const supported = periods.filter(
-    (period) => period === "today" || period === "yesterday" || period === "7d" || period === "30d"
+    (period) =>
+      period === "today" ||
+      period === "yesterday" ||
+      period === "day_before_yesterday" ||
+      period === "7d" ||
+      period === "30d"
   );
   if (supported.includes("yesterday") && supported.includes("today")) {
     return ["yesterday", "today"];
+  }
+  if (supported.includes("yesterday") && supported.includes("day_before_yesterday")) {
+    return supported[0] === "day_before_yesterday"
+      ? ["day_before_yesterday", "yesterday"]
+      : ["yesterday", "day_before_yesterday"];
   }
   return supported.slice(0, 2);
 }

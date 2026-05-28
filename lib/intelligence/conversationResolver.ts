@@ -35,6 +35,8 @@ export async function resolveNavaEyeConversationFollowup(
   const pending = sanitizeResolverMetadata(input.pendingFollowup || {});
   const activeTopic = getActiveTruckTopic(pending, input.companyId);
   const activeMetricTopic = getActiveMetricTopic(pending, input.companyId);
+  const activeMetricFollowupTopic =
+    activeMetricTopic || buildMetricTopicFromActiveTruckTopic(activeTopic);
   const activeTripTopic = getActiveTripTopic(pending, input.companyId);
   const prompt = typeof pending.prompt === "string" ? pending.prompt.trim() : "";
   const parsedQuery =
@@ -166,15 +168,15 @@ export async function resolveNavaEyeConversationFollowup(
   }
 
   if (
-    activeMetricTopic &&
+    activeMetricFollowupTopic &&
     isMetricComparisonFollowup(parsedQuery, normalizedQuestion) &&
     !explicitVehicleInput &&
     !explicitFleetScope
   ) {
     return {
-      question: buildActiveMetricComparisonQuestion(activeMetricTopic, parsedQuery),
+      question: buildActiveMetricComparisonQuestion(activeMetricFollowupTopic, parsedQuery),
       usedPendingFollowup: false,
-      usedActiveTopic: activeMetricTopic.entity_type === "truck",
+      usedActiveTopic: activeMetricFollowupTopic.entity_type === "truck",
       usedMetricTopic: true,
       inheritedIntent: true,
       pendingType: typeof pending.type === "string" ? pending.type : "business_metric_followup",
@@ -198,35 +200,35 @@ export async function resolveNavaEyeConversationFollowup(
   }
 
   if (
-    activeMetricTopic &&
+    activeMetricFollowupTopic &&
     isMetricPeriodChangeFollowup(normalizedQuestion) &&
     !explicitVehicleInput &&
     !explicitFleetScope
   ) {
     return {
-      question: buildActiveMetricPeriodQuestion(normalizedQuestion, activeMetricTopic),
+      question: buildActiveMetricPeriodQuestion(normalizedQuestion, activeMetricFollowupTopic),
       usedPendingFollowup: false,
-      usedActiveTopic: activeMetricTopic.entity_type === "truck",
+      usedActiveTopic: activeMetricFollowupTopic.entity_type === "truck",
       usedMetricTopic: true,
       inheritedIntent: true,
       pendingType: typeof pending.type === "string" ? pending.type : "business_metric_followup",
     };
   }
 
-  if (metricFollowupType && activeMetricTopic && !explicitVehicleInput && !explicitFleetScope) {
+  if (metricFollowupType && activeMetricFollowupTopic && !explicitVehicleInput && !explicitFleetScope) {
     return {
       question,
       usedPendingFollowup: false,
-      usedActiveTopic: activeMetricTopic.entity_type === "truck",
+      usedActiveTopic: activeMetricFollowupTopic.entity_type === "truck",
       usedMetricTopic: true,
       metricFollowup: true,
       metricFollowupType,
-      metricTopic: activeMetricTopic,
+      metricTopic: activeMetricFollowupTopic,
       pendingType: typeof pending.type === "string" ? pending.type : "business_metric_followup",
     };
   }
 
-  if (metricFollowupType && !activeMetricTopic && !explicitVehicleInput && !explicitFleetScope) {
+  if (metricFollowupType && !activeMetricFollowupTopic && !explicitVehicleInput && !explicitFleetScope) {
     return {
       question,
       usedPendingFollowup: false,
@@ -553,13 +555,17 @@ function isNegativeClarificationReply(normalizedQuestion: string) {
 }
 
 function isMetricPeriodChangeFollowup(normalizedQuestion: string) {
-  return /^(what about|how about|and)?\s*(today|yesterday)\??$/.test(
+  return /^(what about|how about|and)?\s*(today|yesterday|previous day|day before yesterday|the day before yesterday|day before|the day before|two days ago)\??$/.test(
     normalizedQuestion.replace(/[.!]+$/g, "")
   );
 }
 
 function buildActiveMetricPeriodQuestion(normalizedQuestion: string, activeMetricTopic: any) {
-  const timeframe = normalizedQuestion.includes("yesterday") ? "yesterday" : "today";
+  const timeframe = normalizedQuestion.includes("day before") || normalizedQuestion.includes("two days ago")
+    ? "day before yesterday"
+    : normalizedQuestion.includes("yesterday") || normalizedQuestion.includes("previous day")
+      ? "yesterday"
+      : "today";
   const label =
     activeMetricTopic.entity_type === "fleet"
       ? "the fleet"
@@ -610,8 +616,7 @@ function buildActiveMetricComparisonQuestion(
       : activeMetricTopic.display_label || activeMetricTopic.truck_id || "that truck";
   const metricIntent = sanitizeMetricIntent(activeMetricTopic.metric_intent);
   const periods = parsedQuery.comparison?.periods || parsedQuery.detected_periods || [];
-  const first = periods.includes("yesterday") ? "yesterday" : periods[0] || "yesterday";
-  const second = periods.includes("today") ? "today" : periods[1] || "today";
+  const [first, second] = normalizeComparisonPeriodPair(periods);
 
   if (metricIntent === "distance_covered" || parsedQuery.metric === "distance") {
     return `Compare distance for ${label} between ${first} and ${second}.`;
@@ -626,9 +631,22 @@ function buildActiveTruckComparisonQuestion(
 ) {
   const truckId = activeTopic.display_label || activeTopic.truck_id || "that truck";
   const periods = parsedQuery.comparison?.periods || parsedQuery.detected_periods || [];
-  const first = periods.includes("yesterday") ? "yesterday" : periods[0] || "yesterday";
-  const second = periods.includes("today") ? "today" : periods[1] || "today";
+  const [first, second] = normalizeComparisonPeriodPair(periods);
   return `Compare distance for ${truckId} between ${first} and ${second}.`;
+}
+
+function normalizeComparisonPeriodPair(periods: string[]) {
+  const supported = (periods || []).filter((period) =>
+    ["today", "yesterday", "day_before_yesterday", "7d", "30d"].includes(period)
+  );
+  const first = supported[0] || "yesterday";
+  const second = supported.find((period) => period !== first) || "today";
+  return [formatPeriodForQuestion(first), formatPeriodForQuestion(second)];
+}
+
+function formatPeriodForQuestion(period: string) {
+  if (period === "day_before_yesterday") return "day before yesterday";
+  return period || "today";
 }
 
 function isTripEvidenceFollowup(normalizedQuestion: string) {
@@ -1074,6 +1092,28 @@ function getActiveMetricTopic(pending: any, companyId?: string | null) {
   };
 }
 
+function buildMetricTopicFromActiveTruckTopic(activeTopic: any) {
+  if (!activeTopic || activeTopic.entity_type !== "truck") return null;
+  const metricIntent = sanitizeMetricIntent(activeTopic.metric_intent);
+  if (!metricIntent) return null;
+
+  return {
+    entity_type: "truck",
+    truck_id: activeTopic.truck_id,
+    display_label: activeTopic.display_label || activeTopic.truck_id,
+    company_id: activeTopic.company_id || null,
+    last_intent: activeTopic.last_intent || "business_metrics",
+    metric_intent: metricIntent,
+    timeframe: activeTopic.timeframe || null,
+    local_day: activeTopic.local_day || null,
+    display_date_label: activeTopic.display_date_label || null,
+    metric_result: activeTopic.metric_result || {},
+    result_summary: activeTopic.result_summary || activeTopic.metric_result || {},
+    comparison_result: activeTopic.comparison_result || null,
+    updated_at: activeTopic.updated_at || null,
+  };
+}
+
 function getActiveTripTopic(pending: any, companyId?: string | null) {
   const topic = pending?.active_trip;
   if (!topic || typeof topic !== "object") return null;
@@ -1197,12 +1237,20 @@ function sanitizeDistanceSource(value: any) {
 function sanitizeTopicTimeframe(value: any) {
   if (!value || typeof value !== "object") return null;
   const requested = String(value.requested || "").trim().toLowerCase();
-  if (requested !== "today" && requested !== "yesterday") return null;
+  if (
+    requested !== "today" &&
+    requested !== "yesterday" &&
+    requested !== "day_before_yesterday"
+  ) {
+    return null;
+  }
   const rawDayOffset = value.dayOffset ?? value.day_offset;
   const dayOffset = Number.isFinite(Number(rawDayOffset))
     ? Number(rawDayOffset)
     : requested === "yesterday"
       ? -1
+      : requested === "day_before_yesterday"
+        ? -2
       : 0;
   return {
     requested,
@@ -1311,6 +1359,9 @@ function questionHasExplicitTimeframe(lower: string) {
   return (
     lower.includes("today") ||
     lower.includes("yesterday") ||
+    lower.includes("day before yesterday") ||
+    lower.includes("day_before_yesterday") ||
+    lower.includes("two days ago") ||
     lower.includes("previous day") ||
     lower.includes("previous-day") ||
     lower.includes("last operating day") ||
@@ -1390,6 +1441,14 @@ function detectMetricFollowupType(question: string) {
   }
 
   if (
+    /\b(so\s+which\s+is\s+it|which\s+one\s+is\s+correct|which\s+is\s+correct|wait\s+what|that\s+doesn't\s+make\s+sense|that\s+does\s+not\s+make\s+sense|doesn't\s+make\s+sense|does\s+not\s+make\s+sense|why\s+the\s+conflict|what\s+is\s+the\s+conflict)\b/.test(
+      lower
+    )
+  ) {
+    return "conflict_explanation";
+  }
+
+  if (
     /\b(?:is|was)\s+(?:that|it)\s+(?:dashboard\s+)?odometer\s+mileage\b/.test(lower) ||
     /\b(?:is|was)\s+(?:that|it)\s+(?:odometer|dashboard odometer|odo)\b/.test(lower) ||
     /\bodometer\s+mileage\b/.test(lower)
@@ -1413,7 +1472,7 @@ function detectMetricFollowupType(question: string) {
 
 function asksForExplicitFleetScope(question: string) {
   const lower = normalizeQuestion(question);
-  return /\b(fleet|all trucks|all vehicles|whole fleet|every truck|every vehicle|all assets|company-wide)\b/.test(
+  return /\b(fleet|all trucks|all vehicles|whole fleet|every truck|every vehicle|all assets|company-wide|company wide|company total|fleet total)\b/.test(
     lower
   );
 }

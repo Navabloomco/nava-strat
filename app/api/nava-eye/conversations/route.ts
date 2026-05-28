@@ -1,5 +1,6 @@
 import {
   authenticateNavaEyeRequest,
+  isMissingConversationDeleteColumnError,
   isMissingConversationSchemaError,
   jsonResponse,
   resolveNavaEyeCompanyAccess,
@@ -25,13 +26,14 @@ export async function GET(req: Request) {
     });
     if ("response" in resolved) return resolved.response;
 
+    const selectFields =
+      "id, company_id, created_by, title, status, last_intent, pending_followup, created_at, updated_at, closed_at, closed_by";
     let query = supabaseAdmin
       .from("nava_eye_conversations")
-      .select(
-        "id, company_id, created_by, title, status, last_intent, pending_followup, created_at, updated_at, closed_at, closed_by"
-      )
+      .select(selectFields)
       .eq("company_id", resolved.company.id)
       .eq("created_by", auth.user.id)
+      .is("deleted_at", null)
       .order("updated_at", { ascending: false })
       .limit(50);
 
@@ -39,7 +41,27 @@ export async function GET(req: Request) {
       query = query.eq("status", status);
     }
 
-    const { data, error } = await query;
+    let { data, error } = await query;
+    if (error) {
+      if (isMissingConversationDeleteColumnError(error)) {
+        let fallbackQuery = supabaseAdmin
+          .from("nava_eye_conversations")
+          .select(selectFields)
+          .eq("company_id", resolved.company.id)
+          .eq("created_by", auth.user.id)
+          .order("updated_at", { ascending: false })
+          .limit(50);
+
+        if (status) {
+          fallbackQuery = fallbackQuery.eq("status", status);
+        }
+
+        const fallback = await fallbackQuery;
+        data = fallback.data;
+        error = fallback.error;
+      }
+    }
+
     if (error) {
       if (isMissingConversationSchemaError(error)) {
         return jsonResponse({

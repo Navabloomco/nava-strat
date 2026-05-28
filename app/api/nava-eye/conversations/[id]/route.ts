@@ -1,6 +1,7 @@
 import {
   authenticateNavaEyeRequest,
   fetchAccessibleConversation,
+  isMissingConversationDeleteColumnError,
   isMissingConversationSchemaError,
   jsonResponse,
   resolveNavaEyeCompanyAccess,
@@ -197,6 +198,120 @@ export async function PATCH(
     console.error("Nava Eye conversation close error:", err);
     return jsonResponse(
       { success: false, error: "Unable to close Nava Eye conversation" },
+      { status: 500 }
+    );
+  }
+}
+
+export async function DELETE(
+  req: Request,
+  context: { params: { id: string } }
+) {
+  try {
+    const auth = await authenticateNavaEyeRequest(req);
+    if ("response" in auth) return auth.response;
+
+    const conversationId = sanitizeId(context.params.id);
+    if (!conversationId) {
+      return jsonResponse(
+        { success: false, error: "Valid conversation id required" },
+        { status: 400 }
+      );
+    }
+
+    const { data: conversation, error: conversationError } =
+      await fetchAccessibleConversation(conversationId, auth.user.id);
+    if (conversationError) {
+      if (isMissingConversationSchemaError(conversationError)) {
+        return jsonResponse(
+          {
+            success: false,
+            setup_required: true,
+            error: NAVA_EYE_CONVERSATION_SETUP_MESSAGE,
+          },
+          { status: 503 }
+        );
+      }
+      throw conversationError;
+    }
+
+    if (!conversation) {
+      return jsonResponse(
+        { success: false, error: "Conversation not found" },
+        { status: 404 }
+      );
+    }
+
+    const resolved = await resolveNavaEyeCompanyAccess(auth, {
+      conversationCompanyId: conversation.company_id,
+    });
+    if ("response" in resolved) return resolved.response;
+
+    const now = new Date().toISOString();
+    const { data: updated, error: deleteError } = await supabaseAdmin
+      .from("nava_eye_conversations")
+      .update({
+        status: "closed",
+        closed_at: conversation.closed_at || now,
+        closed_by: conversation.closed_by || auth.user.id,
+        deleted_at: now,
+        deleted_by: auth.user.id,
+        pending_followup: {},
+        updated_at: now,
+      })
+      .eq("id", conversation.id)
+      .eq("created_by", auth.user.id)
+      .eq("company_id", resolved.company.id)
+      .select(
+        "id, company_id, created_by, title, status, last_intent, pending_followup, created_at, updated_at, closed_at, closed_by"
+      )
+      .single();
+
+    if (deleteError) {
+      if (isMissingConversationDeleteColumnError(deleteError)) {
+        return jsonResponse(
+          {
+            success: false,
+            setup_required: true,
+            error:
+              "Conversation delete is not set up yet. Apply the Nava Eye conversation delete migration before deleting threads.",
+          },
+          { status: 503 }
+        );
+      }
+      if (isMissingConversationSchemaError(deleteError)) {
+        return jsonResponse(
+          {
+            success: false,
+            setup_required: true,
+            error: NAVA_EYE_CONVERSATION_SETUP_MESSAGE,
+          },
+          { status: 503 }
+        );
+      }
+      throw deleteError;
+    }
+
+    await recordAnalyticsEvent({
+      companyId: resolved.company.id,
+      userId: auth.user.id,
+      eventName: "nava_eye_conversation_deleted",
+      eventCategory: "nava_eye",
+      source: "api/nava-eye/conversations/[id]",
+      metadata: {
+        conversation_id: conversation.id,
+        previous_status: conversation.status || "open",
+      },
+    });
+
+    return jsonResponse({
+      success: true,
+      conversation: sanitizeConversation(updated),
+    });
+  } catch (err: any) {
+    console.error("Nava Eye conversation delete error:", err);
+    return jsonResponse(
+      { success: false, error: "Unable to delete Nava Eye conversation" },
       { status: 500 }
     );
   }

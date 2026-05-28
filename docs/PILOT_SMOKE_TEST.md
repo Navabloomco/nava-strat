@@ -387,6 +387,8 @@ Open `/nava-eye` and ask:
 - [ ] After a truck mileage answer, ask "what about yesterday?" and confirm Nava Eye keeps the same truck and distance intent while changing only the operating period.
 - [ ] After a truck mileage answer, ask "what about yday?" and confirm the query understanding layer normalizes it to yesterday and keeps the same truck and distance intent.
 - [ ] After a truck mileage answer, ask "diff in distance btwn yday and today" and confirm Nava Eye compares yesterday versus today for the same truck, gives the distance difference, source/caveat, and does not expose raw coordinates.
+- [ ] After a truck mileage answer, ask "diff in distance btwn yday and the day before yesterday" and confirm Nava Eye compares yesterday versus the day before yesterday for the same truck, not the company/fleet total.
+- [ ] After a truck distance comparison, ask "so which is it?" and confirm Nava Eye explains the relative-date/period ambiguity for the same truck and latest comparison instead of routing to generic fleet health.
 - [ ] After a distance comparison, ask "how did u calculate that?" or "why so low?" and confirm Nava Eye gives audit detail for the comparison/latest distance answer instead of a generic fallback.
 - [ ] After a truck mileage answer, ask "where is it now?" and confirm Nava Eye switches source to live status/location for the same truck.
 - [ ] After a truck status or mileage answer, ask "was it stuck or idling?" and confirm Nava Eye answers with provider idle marker or GPS-stopped evidence for the same truck without claiming true engine-on idle unless supported.
@@ -421,8 +423,11 @@ Open `/nava-eye` and ask:
 - [ ] Close the conversation and confirm the thread becomes read-only.
 - [ ] Refresh `/nava-eye` and confirm the selected company, selected thread, and open/closed tab remain stable.
 - [ ] Close an open conversation from the bottom action after the latest assistant answer.
-- [ ] Confirm closing requires confirmation and then removes the thread from Open conversations.
+- [ ] Confirm closing requires confirmation, removes the thread from Open conversations, and returns the page to the conversation list/new state without requiring a manual New click.
 - [ ] Reopen the same thread from Closed conversations and confirm it is read-only.
+- [ ] Click New and confirm the old truck/trip/client context is not reused; a pronoun-only question such as "where is it now?" should ask which truck or trip to check.
+- [ ] Delete a non-active Nava Eye conversation and confirm it disappears after confirmation without deleting other users' conversations.
+- [ ] Delete the active Nava Eye conversation and confirm the active thread clears safely.
 - [ ] In a mobile viewport, confirm the conversation list, message body, input, close actions, and long answers do not overflow horizontally and remain reachable.
 
 Expected result:
@@ -439,6 +444,7 @@ Expected result:
 - [ ] Investigation answers include practical next checks instead of stopping at "no data."
 - [ ] Current role permissions still apply on every message inside a conversation.
 - [ ] Closed conversations are archived, not hard-deleted, and remain accessible under Closed conversations.
+- [ ] Deleted Nava Eye conversations are soft-deleted from the current user's visible list after the delete migration is applied.
 
 ## 9. Client Visibility Smoke Test
 

@@ -204,14 +204,26 @@ export async function fetchAccessibleConversation(
   conversationId: string,
   userId: string
 ) {
-  const { data, error } = await supabaseAdmin
+  const query = supabaseAdmin
     .from("nava_eye_conversations")
     .select(
       "id, company_id, created_by, title, status, last_intent, pending_followup, created_at, updated_at, closed_at, closed_by"
     )
     .eq("id", conversationId)
-    .eq("created_by", userId)
-    .maybeSingle();
+    .eq("created_by", userId);
+
+  const { data, error } = await query.is("deleted_at", null).maybeSingle();
+
+  if (error && isMissingConversationDeleteColumnError(error)) {
+    return supabaseAdmin
+      .from("nava_eye_conversations")
+      .select(
+        "id, company_id, created_by, title, status, last_intent, pending_followup, created_at, updated_at, closed_at, closed_by"
+      )
+      .eq("id", conversationId)
+      .eq("created_by", userId)
+      .maybeSingle();
+  }
 
   return { data, error };
 }
@@ -227,6 +239,14 @@ export function isMissingConversationSchemaError(error: any) {
     message.includes("nava_eye_conversation_messages") ||
     message.includes("could not find the table") ||
     message.includes("relation") && message.includes("does not exist")
+  );
+}
+
+export function isMissingConversationDeleteColumnError(error: any) {
+  const message = String(error?.message || error?.details || error?.hint || "").toLowerCase();
+  return (
+    message.includes("deleted_at") ||
+    message.includes("deleted_by")
   );
 }
 

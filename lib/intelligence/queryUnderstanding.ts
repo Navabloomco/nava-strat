@@ -28,7 +28,13 @@ export type NavaEyeMetric =
   | "proof_status"
   | "unknown";
 
-export type NavaEyePeriod = "today" | "yesterday" | "7d" | "30d" | "tomorrow";
+export type NavaEyePeriod =
+  | "today"
+  | "yesterday"
+  | "day_before_yesterday"
+  | "7d"
+  | "30d"
+  | "tomorrow";
 
 export type NavaEyeStructuredQuery = {
   original_text: string;
@@ -38,6 +44,7 @@ export type NavaEyeStructuredQuery = {
   subject_type: NavaEyeSubjectType;
   subject_label: string | null;
   subject_id: string | null;
+  scope: "explicit_subject" | "active_subject" | "fleet" | "unknown";
   detected_entities: {
     vehicles: string[];
     providers: string[];
@@ -66,6 +73,7 @@ const SHORTHAND_REPLACEMENTS: Array<[RegExp, string, string]> = [
   [/\btdy\b/gi, "today", "tdy->today"],
   [/\btmw\b/gi, "tomorrow", "tmw->tomorrow"],
   [/\btmrw\b/gi, "tomorrow", "tmrw->tomorrow"],
+  [/\bb4\b/gi, "before", "b4->before"],
   [/\bu\b/gi, "you", "u->you"],
   [/\bur\b/gi, "your", "ur->your"],
   [/\bkms\b/gi, "kilometers", "kms->kilometers"],
@@ -117,6 +125,7 @@ export function parseNavaEyeQuery(
   });
   const subjectType = detectSubjectType(lower, detectedEntities, options.pendingFollowup);
   const subjectLabel = detectSubjectLabel(detectedEntities, options.pendingFollowup);
+  const scope = detectScope(lower, detectedEntities, followUp, subjectLabel);
 
   return {
     original_text: normalized.original_text,
@@ -126,6 +135,7 @@ export function parseNavaEyeQuery(
     subject_type: subjectType,
     subject_label: subjectLabel,
     subject_id: null,
+    scope,
     detected_entities: detectedEntities,
     detected_periods: detectedPeriods,
     comparison,
@@ -177,19 +187,43 @@ function detectEntities(text: string) {
 }
 
 function detectPeriods(lower: string): NavaEyePeriod[] {
-  const periods = new Set<NavaEyePeriod>();
-  if (/\btoday\b|\bcurrent day\b|\bsame day\b/.test(lower)) periods.add("today");
-  if (/\byesterday\b|\bprevious day\b|\blast operating day\b/.test(lower)) {
-    periods.add("yesterday");
+  const mentions: Array<{ period: NavaEyePeriod; index: number; end: number }> = [];
+  const dayBeforeSpans = collectPeriodMatches(
+    lower,
+    /\b(?:the\s+)?day\s+before\s+yesterday\b|\bday\s+before\s+yday\b|\bday\s+before\s+previous\s+day\b|\btwo\s+days\s+ago\b|\b(?:the\s+)?day\s+before\b|\bprevious\s+previous\s+day\b/g,
+    "day_before_yesterday"
+  );
+  mentions.push(...dayBeforeSpans);
+  mentions.push(...collectPeriodMatches(lower, /\btoday\b|\bcurrent day\b|\bsame day\b/g, "today"));
+  mentions.push(
+    ...collectPeriodMatches(
+      lower,
+      /\byesterday\b|\bprevious day\b|\blast operating day\b/g,
+      "yesterday"
+    ).filter((match) => !isInsideAnySpan(match.index, dayBeforeSpans))
+  );
+  mentions.push(
+    ...collectPeriodMatches(
+      lower,
+      /\b7\s*(?:days?|d)\b|\bseven days\b|\blast week\b|\bthis week\b/g,
+      "7d"
+    )
+  );
+  mentions.push(
+    ...collectPeriodMatches(
+      lower,
+      /\b30\s*(?:days?|d)\b|\bthirty days\b|\blast month\b/g,
+      "30d"
+    )
+  );
+  mentions.push(...collectPeriodMatches(lower, /\btomorrow\b|\bnext day\b/g, "tomorrow"));
+
+  const ordered = mentions.sort((a, b) => a.index - b.index);
+  const periods: NavaEyePeriod[] = [];
+  for (const mention of ordered) {
+    if (!periods.includes(mention.period)) periods.push(mention.period);
   }
-  if (/\b7\s*(?:days?|d)\b|\bseven days\b|\blast week\b|\bthis week\b/.test(lower)) {
-    periods.add("7d");
-  }
-  if (/\b30\s*(?:days?|d)\b|\bthirty days\b|\blast month\b/.test(lower)) {
-    periods.add("30d");
-  }
-  if (/\btomorrow\b|\bnext day\b/.test(lower)) periods.add("tomorrow");
-  return Array.from(periods);
+  return periods;
 }
 
 function detectMetric(lower: string): NavaEyeMetric {
@@ -217,7 +251,7 @@ function detectMetric(lower: string): NavaEyeMetric {
 }
 
 function detectAuditMode(lower: string) {
-  return /\b(how did you calculate|how was .*calculated|why is it different|why different|why so low|why low|why is .* low|show evidence|show the evidence|what data did you use|data used|source hierarchy|why should i trust|audit|details?|explain the source)\b/.test(
+  return /\b(how did you calculate|how was .*calculated|why is it different|why different|why so low|why low|why is .* low|show evidence|show the evidence|what data did you use|data used|source hierarchy|why should i trust|audit|details?|explain the source|so which is it|which one is correct|which is correct|that does(?:n't| not) make sense|does(?:n't| not) make sense|wait what|explain that|explain)\b/.test(
     lower
   );
 }
@@ -228,14 +262,16 @@ function detectComparison(
   metric: NavaEyeMetric
 ) {
   const comparisonLanguage =
-    /\b(compare|comparison|difference|between|versus|vs|more than|less than|better than|worse than|how much more|how much less)\b/.test(
+    /\b(compare|comparison|difference|between|versus|vs|more than|less than|better than|worse than|how much more|how much less|this to that|that to this)\b/.test(
       lower
     );
   if (!comparisonLanguage) return null;
 
   const comparisonPeriods =
     periods.length >= 2
-      ? periods.filter((period) => period === "today" || period === "yesterday" || period === "7d" || period === "30d")
+      ? periods.filter((period) =>
+          ["today", "yesterday", "day_before_yesterday", "7d", "30d"].includes(period)
+        )
       : /\btoday\b/.test(lower) && /\byesterday\b/.test(lower)
         ? (["yesterday", "today"] as NavaEyePeriod[])
         : [];
@@ -245,6 +281,26 @@ function detectComparison(
     metric: metric === "unknown" ? "distance" : metric,
     periods: uniquePeriods(comparisonPeriods).slice(0, 2),
   };
+}
+
+function detectScope(
+  lower: string,
+  entities: NavaEyeStructuredQuery["detected_entities"],
+  followUp: boolean,
+  subjectLabel: string | null
+): NavaEyeStructuredQuery["scope"] {
+  if (/\b(fleet|whole fleet|all trucks|all vehicles|all assets|company total|company-wide|company wide|fleet total)\b/.test(lower)) {
+    return "fleet";
+  }
+  if (
+    entities.vehicles.length ||
+    entities.providers.length ||
+    entities.trip_references.length
+  ) {
+    return "explicit_subject";
+  }
+  if (followUp && subjectLabel) return "active_subject";
+  return "unknown";
 }
 
 function detectFollowUp(lower: string, pendingFollowup: any) {
@@ -372,4 +428,26 @@ function cleanEntityLabel(value: string) {
 
 function uniquePeriods(periods: NavaEyePeriod[]) {
   return Array.from(new Set(periods));
+}
+
+function collectPeriodMatches(
+  text: string,
+  pattern: RegExp,
+  period: NavaEyePeriod
+) {
+  const matches: Array<{ period: NavaEyePeriod; index: number; end: number }> = [];
+  pattern.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(text)) !== null) {
+    matches.push({
+      period,
+      index: match.index,
+      end: match.index + match[0].length,
+    });
+  }
+  return matches;
+}
+
+function isInsideAnySpan(index: number, spans: Array<{ index: number; end: number }>) {
+  return spans.some((span) => index >= span.index && index < span.end);
 }

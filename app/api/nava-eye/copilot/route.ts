@@ -1056,12 +1056,20 @@ function sanitizeDistanceSource(value: any) {
 function sanitizeTopicTimeframe(value: any) {
   if (!value || typeof value !== "object") return null;
   const requested = String(value.requested || "").trim().toLowerCase();
-  if (requested !== "today" && requested !== "yesterday") return null;
+  if (
+    requested !== "today" &&
+    requested !== "yesterday" &&
+    requested !== "day_before_yesterday"
+  ) {
+    return null;
+  }
   const rawDayOffset = value.dayOffset ?? value.day_offset;
   const dayOffset = Number.isFinite(Number(rawDayOffset))
     ? Number(rawDayOffset)
     : requested === "yesterday"
       ? -1
+      : requested === "day_before_yesterday"
+        ? -2
       : 0;
   return {
     requested,
@@ -1263,13 +1271,21 @@ function buildActiveMetricTopic(context: any, truckLabel: string | null) {
 function sanitizeBusinessMetricTopicTimeframe(timeframe: any) {
   if (!timeframe || typeof timeframe !== "object") return null;
   const requested = String(timeframe.requested || "").trim().toLowerCase();
-  if (requested !== "today" && requested !== "yesterday") return null;
+  if (
+    requested !== "today" &&
+    requested !== "yesterday" &&
+    requested !== "day_before_yesterday"
+  ) {
+    return null;
+  }
   return {
     requested,
     dayOffset: Number.isFinite(Number(timeframe.dayOffset))
       ? Number(timeframe.dayOffset)
       : requested === "yesterday"
         ? -1
+        : requested === "day_before_yesterday"
+          ? -2
         : 0,
     local_day: timeframe.local_day ? String(timeframe.local_day).slice(0, 20) : null,
     day_start_utc: timeframe.day_start_utc ? String(timeframe.day_start_utc).slice(0, 40) : null,
@@ -1623,6 +1639,12 @@ function buildMetricFollowupAnswer(context: any) {
       }
       return buildDistanceMetricAuditAnswer(label, topic, summary);
     }
+    if (followup.followup_type === "conflict_explanation") {
+      if (topic.comparison_result) {
+        return buildDistanceComparisonConflictAnswer(label, topic.comparison_result);
+      }
+      return buildDistanceMetricConflictAnswer(label, topic, summary);
+    }
     return buildDistanceMetricFollowupAnswer(label, topic, summary, followup.followup_type);
   }
 
@@ -1957,6 +1979,43 @@ function buildDistanceComparisonAuditAnswer(label: string, comparison: any) {
   return parts.join("\n");
 }
 
+function buildDistanceComparisonConflictAnswer(label: string, comparison: any) {
+  const left = comparison.left || {};
+  const right = comparison.right || {};
+  const leftLabel = formatComparisonPeriodLabel(left);
+  const rightLabel = formatComparisonPeriodLabel(right);
+  const todayLabel = formatOperationalTodayLabel();
+  const parts = [
+    `The safe reading is: ${label} is being compared across ${leftLabel} and ${rightLabel}, not the whole fleet.`,
+  ];
+
+  if (todayLabel) {
+    parts.push(`Today is ${todayLabel}; relative periods are resolved in EAT/company time.`);
+  }
+
+  const leftKm = hasNumber(left.distance_km) ? formatStoredMetricKm(left.distance_km) : "distance unavailable";
+  const rightKm = hasNumber(right.distance_km) ? formatStoredMetricKm(right.distance_km) : "distance unavailable";
+  parts.push(`${leftLabel}: ${leftKm}. ${rightLabel}: ${rightKm}.`);
+
+  if (hasNumber(comparison.delta_km)) {
+    parts.push(`Difference: ${formatStoredMetricKm(Math.abs(Number(comparison.delta_km)))}.`);
+  }
+  if (comparison.provisional) {
+    parts.push(
+      "At least one side uses GPS-estimated or partial telemetry, so treat the comparison as provisional route-distance evidence."
+    );
+  }
+  return parts.join(" ");
+}
+
+function buildDistanceMetricConflictAnswer(label: string, topic: any, summary: any) {
+  const datePhrase = formatMetricTopicDatePhrase(topic, summary);
+  const distanceKm = Number(summary.distance_km || 0);
+  const source = sanitizeDistanceSource(summary.distance_source);
+  const distance = distanceKm > 0 ? formatStoredMetricKm(distanceKm) : "distance unavailable";
+  return `For ${label} on ${datePhrase}, the distance answer is ${distance}. Source: ${metricTopicSourceLabel(source)}. Relative dates are resolved in EAT/company time, so today, yesterday, and the day before yesterday can shift after midnight.`;
+}
+
 function formatComparisonEvidenceLine(label: string, evidence: any) {
   const distanceKm = hasNumber(evidence.distance_km)
     ? formatStoredMetricKm(evidence.distance_km)
@@ -2003,6 +2062,9 @@ function formatMetricTopicDatePhrase(topic: any, summary: any) {
 
   if (timeframe.requested === "today") return `today, ${cleanDate}`;
   if (timeframe.requested === "yesterday") return `yesterday, ${cleanDate}`;
+  if (timeframe.requested === "day_before_yesterday") {
+    return `the day before yesterday, ${cleanDate}`;
+  }
   return cleanDate;
 }
 
@@ -2147,9 +2209,29 @@ function sanitizeComparisonDistanceForTopic(value: any) {
 }
 
 function formatComparisonPeriodLabel(period: any) {
-  if (period?.period === "today") return "today";
-  if (period?.period === "yesterday") return "yesterday";
+  const rawDate = period?.display_label || period?.local_day || "";
+  const cleanDate = rawDate ? cleanMetricDateLabel(rawDate) : "";
+  if (period?.period === "today") return cleanDate ? `today, ${cleanDate}` : "today";
+  if (period?.period === "yesterday") {
+    return cleanDate ? `yesterday, ${cleanDate}` : "yesterday";
+  }
+  if (period?.period === "day_before_yesterday") {
+    return cleanDate
+      ? `the day before yesterday, ${cleanDate}`
+      : "the day before yesterday";
+  }
   return cleanMetricDateLabel(period?.display_label || period?.local_day || "that period");
+}
+
+function formatOperationalTodayLabel() {
+  const date = new Date();
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("en-KE", {
+    timeZone: DEFAULT_OPERATIONAL_TIME_ZONE,
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(date);
 }
 
 function comparisonSourceLabel(left: any, right: any) {
