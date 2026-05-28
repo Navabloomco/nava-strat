@@ -272,6 +272,11 @@ Confirm workflow behavior:
 - [ ] As a finance/management/elevated user with Trip creation access, confirm commercial Trip creation fields are available where intended and still store through role-gated server logic.
 - [ ] As a finance/elevated user, create a Client Rate Rule through `POST /api/finance/rate-rules` with client, optional route, unit type, billing quantity source, rate, currency, FX policy, effective date, and status.
 - [ ] As a finance/admin user, open `/finance/rate-rules`, confirm existing current-company rules appear, and create a new test rule without any hardcoded tenant examples in the form.
+- [ ] Confirm the Client Rates form uses separate editable `From / Origin` and `To / Destination` fields, not only a combined route selector.
+- [ ] If the optional Trip route helper is shown, select a current-company Trip and confirm it fills client, From / Origin, and To / Destination while leaving the fields editable before saving.
+- [ ] Create a route-specific rate rule with From / Origin and To / Destination populated, then confirm the table displays the lane in origin-to-destination order.
+- [ ] Create a client-wide/default rate rule with From / Origin and To / Destination blank, then confirm the table displays `Default / all routes`.
+- [ ] Confirm the reverse lane is not treated as the same rate unless finance creates a separate reverse-direction rule.
 - [ ] As a management user, confirm `/finance/rate-rules` is visible read-only if the role can view finance but cannot edit finance.
 - [ ] As a management/finance/elevated user, call `GET /api/finance/rate-rules` and confirm rules are returned only for the selected company.
 - [ ] As an ops/clerk-style user without finance visibility, confirm `GET /api/finance/rate-rules` and `GET /api/finance/revenue-rules/match?journeyId=<id>` return a finance access boundary instead of rates or revenue amounts.

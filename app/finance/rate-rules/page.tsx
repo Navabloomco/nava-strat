@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { supabase } from "../../../lib/supabase";
+import JourneyPicker from "../../components/JourneyPicker";
 import {
   EmptyState,
   FormField,
@@ -61,6 +62,21 @@ type RateRuleForm = {
   notes: string;
 };
 
+type JourneyHint = {
+  id: string;
+  internal_trip_id?: string | null;
+  truck?: string | null;
+  client_name?: string | null;
+  from_location?: string | null;
+  to_location?: string | null;
+  status?: string | null;
+  created_at?: string | null;
+  loaded_quantity?: any;
+  offloaded_quantity?: any;
+  billing_quantity?: any;
+  billing_unit?: string | null;
+};
+
 const initialForm = (): RateRuleForm => ({
   client_name: "",
   route_from: "",
@@ -86,6 +102,9 @@ export default function FinanceRateRulesPage() {
   const [companyName, setCompanyName] = useState("");
   const [canEditFinance, setCanEditFinance] = useState(false);
   const [form, setForm] = useState<RateRuleForm>(initialForm);
+  const [journeyHints, setJourneyHints] = useState<JourneyHint[]>([]);
+  const [selectedJourneyHintId, setSelectedJourneyHintId] = useState("");
+  const [routeHelperError, setRouteHelperError] = useState("");
 
   useEffect(() => {
     loadRateRules();
@@ -137,12 +156,51 @@ export default function FinanceRateRulesPage() {
       }
 
       setCompanyName(json.company?.name || "");
-      setCanEditFinance(Boolean(json.capabilities?.can_edit_finance));
+      const canEdit = Boolean(json.capabilities?.can_edit_finance);
+      setCanEditFinance(canEdit);
       setRateRules(json.rate_rules || []);
+      if (canEdit) {
+        await loadJourneyHints(token);
+      } else {
+        setJourneyHints([]);
+        setSelectedJourneyHintId("");
+        setRouteHelperError("");
+      }
     } catch (err: any) {
       setError(err.message || "Unable to load client rate rules.");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadJourneyHints(token: string) {
+    setRouteHelperError("");
+    try {
+      const res = await fetch(`/api/finance/revenue${companyQuery()}`, {
+        cache: "no-store",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      const json = await res.json();
+
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || "Unable to load trip route helper.");
+      }
+
+      const hints = (json.journeys || [])
+        .filter(
+          (journey: JourneyHint) =>
+            journey.client_name || journey.from_location || journey.to_location
+        )
+        .slice(0, 100);
+
+      setJourneyHints(hints);
+    } catch {
+      setJourneyHints([]);
+      setRouteHelperError(
+        "Trip route helper is unavailable. Enter client and route fields manually."
+      );
     }
   }
 
@@ -154,6 +212,18 @@ export default function FinanceRateRulesPage() {
       }
       return next;
     });
+  }
+
+  function applyJourneyHint(journeyId: string, journey: JourneyHint | null) {
+    setSelectedJourneyHintId(journeyId);
+    if (!journey) return;
+
+    setForm((current) => ({
+      ...current,
+      client_name: journey.client_name || current.client_name,
+      route_from: journey.from_location || current.route_from,
+      route_to: journey.to_location || current.route_to,
+    }));
   }
 
   function validateForm() {
@@ -221,6 +291,7 @@ export default function FinanceRateRulesPage() {
       }
 
       setForm(initialForm());
+      setSelectedJourneyHintId("");
       setMessage("Client rate rule created.");
       await loadRateRules({ preserveMessage: true });
     } catch (err: any) {
@@ -243,6 +314,15 @@ export default function FinanceRateRulesPage() {
 
   function effectiveWindow(rule: any) {
     return [rule.effective_from, rule.effective_to || "open ended"].filter(Boolean).join(" to ");
+  }
+
+  function routeDisplay(fromValue: any, toValue: any, emptyLabel = "Default / all routes") {
+    const from = String(fromValue || "").trim();
+    const to = String(toValue || "").trim();
+    if (from && to) return `${from} → ${to}`;
+    if (from) return `From ${from}`;
+    if (to) return `To ${to}`;
+    return emptyLabel;
   }
 
   if (loading) {
@@ -330,11 +410,36 @@ export default function FinanceRateRulesPage() {
             <div className="mb-5">
               <h2 className="text-xl font-semibold">Create rate rule</h2>
               <p className="mt-2 text-sm leading-6 text-slate-300">
-                Use client and route text from the current company. FX is manual or configured here; Nava does not call external FX feeds.
+                Use client and route text from the current company. Direction matters, so origin-to-destination can be priced differently from the reverse. FX is manual or configured here; Nava does not call external FX feeds.
               </p>
             </div>
 
             <form onSubmit={createRateRule} className="grid gap-5">
+              {journeyHints.length > 0 && (
+                <Panel dark className="border-cyan-200/20 bg-cyan-300/10 p-4">
+                  <div className="mb-4">
+                    <h3 className="text-sm font-semibold text-cyan-50">
+                      Fill from an existing Trip optional
+                    </h3>
+                    <p className="mt-1 text-sm leading-6 text-slate-300">
+                      Selecting a Trip copies its client, From / Origin, and To / Destination into the fields below. You can still edit the rule before saving.
+                    </p>
+                  </div>
+                  <JourneyPicker
+                    journeys={journeyHints}
+                    value={selectedJourneyHintId}
+                    onChange={applyJourneyHint}
+                    placeholder="Search trips by truck, client, route, or reference"
+                  />
+                </Panel>
+              )}
+
+              {routeHelperError && (
+                <div className="rounded-md border border-amber-200/20 bg-amber-300/10 p-3 text-sm text-amber-50">
+                  {routeHelperError}
+                </div>
+              )}
+
               <div className="grid gap-5 md:grid-cols-3">
                 <FormField label="Client name" dark>
                   <input
@@ -345,7 +450,7 @@ export default function FinanceRateRulesPage() {
                     required
                   />
                 </FormField>
-                <FormField label="Route from optional" dark>
+                <FormField label="From / Origin optional" dark>
                   <input
                     value={form.route_from}
                     onChange={(event) => updateForm("route_from", event.target.value)}
@@ -353,7 +458,7 @@ export default function FinanceRateRulesPage() {
                     placeholder="Origin"
                   />
                 </FormField>
-                <FormField label="Route to optional" dark>
+                <FormField label="To / Destination optional" dark>
                   <input
                     value={form.route_to}
                     onChange={(event) => updateForm("route_to", event.target.value)}
@@ -362,6 +467,9 @@ export default function FinanceRateRulesPage() {
                   />
                 </FormField>
               </div>
+              <p className="-mt-2 text-sm text-slate-400">
+                Leave From / Origin and To / Destination blank for a client-wide/default rate.
+              </p>
 
               <div className="grid gap-5 md:grid-cols-4">
                 <FormField label="Unit type" dark>
@@ -527,7 +635,7 @@ export default function FinanceRateRulesPage() {
                 <thead className="bg-white/[0.04] text-xs uppercase tracking-[0.12em] text-slate-400">
                   <tr>
                     <th className="px-4 py-3 font-semibold">Client</th>
-                    <th className="px-4 py-3 font-semibold">Route</th>
+                    <th className="px-4 py-3 font-semibold">Route / lane</th>
                     <th className="px-4 py-3 font-semibold">Unit</th>
                     <th className="px-4 py-3 font-semibold">Quantity source</th>
                     <th className="px-4 py-3 font-semibold">Rate</th>
@@ -542,13 +650,7 @@ export default function FinanceRateRulesPage() {
                       <td className="px-4 py-4 font-semibold text-white">
                         {rule.client_name}
                       </td>
-                      <td className="px-4 py-4">
-                        {rule.route_from || rule.route_to
-                          ? `${rule.route_from || "Any origin"} to ${
-                              rule.route_to || "any destination"
-                            }`
-                          : "Any route"}
-                      </td>
+                      <td className="px-4 py-4">{routeDisplay(rule.route_from, rule.route_to)}</td>
                       <td className="px-4 py-4 capitalize">{humanize(rule.unit_type)}</td>
                       <td className="px-4 py-4 capitalize">
                         {humanize(rule.billing_quantity_source)}
