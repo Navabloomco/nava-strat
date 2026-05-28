@@ -293,7 +293,7 @@ function buildDelaySummary(trips: any[]) {
           Number(b.trip_count || 0) - Number(a.trip_count || 0)
       ),
     caveat:
-      "GPS-stopped time and provider idle markers are operational drag evidence, not true engine-on idle or fuel-burn proof. Client attribution requires explicit client/customer waiting evidence.",
+      "GPS-stopped time and provider/legacy idle markers are operational drag evidence, not true engine-on idle or fuel-burn proof. Client attribution requires explicit client/customer waiting evidence.",
   };
 }
 

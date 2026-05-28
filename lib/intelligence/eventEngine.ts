@@ -291,6 +291,9 @@ async function detectExcessiveIdle(logs: TelemetryLog[]) {
     country: country,
     metadata: {
       evidence_source: "gps-estimated",
+      generated_by: "eventEngine",
+      generated_from: "gps_stopped_intervals",
+      gps_generated: true,
       engine_on_idling_confirmed: false,
       fuel_burn_confirmed: false,
       duration_minutes: Math.floor(durationMinutes),

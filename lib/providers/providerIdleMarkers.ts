@@ -1,4 +1,22 @@
 export const CANONICAL_PROVIDER_IDLE_EVENT_TYPE = "provider_idle_marker";
+export const LEGACY_PROVIDER_IDLE_EVENT_TYPES = ["excessive_idle", "long_idle"] as const;
+export const PROVIDER_IDLE_EVENT_TYPES = [
+  CANONICAL_PROVIDER_IDLE_EVENT_TYPE,
+  ...LEGACY_PROVIDER_IDLE_EVENT_TYPES,
+] as const;
+export const IDLE_COMPATIBILITY_EVENT_TYPES = [
+  ...PROVIDER_IDLE_EVENT_TYPES,
+  "idle",
+  "idling",
+  "prolonged_idle",
+  "stop_idle",
+] as const;
+
+export type IdleEvidenceSource =
+  | "provider-derived"
+  | "legacy-provider-marker"
+  | "gps-estimated"
+  | "unclassified";
 
 export type ProviderIdleMarkerKind =
   | "idle"
@@ -101,34 +119,97 @@ export function normalizeProviderIdleMarker(
 }
 
 export function isProviderIdleMarkerEvent(rowOrType: any): boolean {
+  return ["provider-derived", "legacy-provider-marker"].includes(
+    getIdleEvidenceSource(rowOrType)
+  );
+}
+
+export function isGpsGeneratedIdleEstimate(rowOrType: any): boolean {
   const row =
     rowOrType && typeof rowOrType === "object"
       ? rowOrType
       : { event_type: rowOrType };
-  if (String(row.event_type || "") === CANONICAL_PROVIDER_IDLE_EVENT_TYPE) return true;
+  const metadata = row.metadata && typeof row.metadata === "object" ? row.metadata : {};
+
+  if (
+    metadata.gps_generated === true ||
+    metadata.is_gps_generated === true ||
+    metadata.generated_from_gps === true ||
+    metadata.gps_stopped_estimate === true
+  ) {
+    return true;
+  }
+
+  const text = normalizeText(
+    [
+      metadata.evidence_source,
+      metadata.source,
+      metadata.source_type,
+      metadata.generated_by,
+      metadata.generator,
+      metadata.generated_from,
+      metadata.derivation,
+      metadata.calculation_source,
+      metadata.message,
+      row.context_type,
+      row.context_label,
+    ]
+      .filter(Boolean)
+      .join(" ")
+  );
+
+  if (!text) return false;
+  if (/\bgps\s*(?:estimated|stopped|stationary|generated)\b/.test(text)) return true;
+  if (/\b(?:generated|derived)\s+from\s+gps\b/.test(text)) return true;
+  if (/\b(?:gps|stationary|stopped)\s+intervals?\b/.test(text)) return true;
+  if (/\bevent\s*engine\b/.test(text) && /\b(?:gps|stopped|stationary)\b/.test(text)) {
+    return true;
+  }
+
+  return false;
+}
+
+export function getIdleEvidenceSource(rowOrType: any): IdleEvidenceSource {
+  const row =
+    rowOrType && typeof rowOrType === "object"
+      ? rowOrType
+      : { event_type: rowOrType };
+  if (isGpsGeneratedIdleEstimate(row)) return "gps-estimated";
+
+  const type = normalizeEventTypeValue(row.event_type);
+  if (type === CANONICAL_PROVIDER_IDLE_EVENT_TYPE) return "provider-derived";
+  if (LEGACY_PROVIDER_IDLE_EVENT_TYPES.includes(type as any)) {
+    return "legacy-provider-marker";
+  }
 
   const metadata = row.metadata && typeof row.metadata === "object" ? row.metadata : {};
-  const evidenceSource = normalizeText(metadata.evidence_source || metadata.source || "");
-  if (evidenceSource.includes("gps") && !metadata.provider_marker_kind && !metadata.provider_marker_label) {
-    return false;
-  }
   const text = [
     row.event_type,
     row.context_type,
     row.context_label,
     metadata.evidence_source,
+    metadata.source,
     metadata.provider_marker_kind,
     metadata.provider_marker_label,
   ]
     .filter(Boolean)
     .join(" ");
-
   const normalized = normalizeText(text);
-  if (!normalized) return false;
+  if (!normalized) return "unclassified";
   if (/\b(?:stopped|stationary|long stop|long_stop)\b/.test(normalized) && !/\bidle|idling\b/.test(normalized)) {
-    return false;
+    return "unclassified";
   }
-  return Boolean(markerKindFromText(normalized));
+  if (!markerKindFromText(normalized)) return "unclassified";
+
+  if (
+    normalizeText(metadata.evidence_source || metadata.source || "").includes("provider") ||
+    metadata.provider_marker_kind ||
+    metadata.provider_marker_label
+  ) {
+    return "provider-derived";
+  }
+
+  return "legacy-provider-marker";
 }
 
 export function canonicalProviderIdleEventType(rowOrType: any): string {
@@ -156,6 +237,16 @@ export function providerIdleMarkerLabel(rowOrType: any): string {
   if (type === "prolonged_idle") return "Provider prolonged-idle marker";
   if (type === "stop_idle") return "Provider stop-idle marker";
   return "Provider idle marker";
+}
+
+export function providerIdleMarkerEvidenceLabel(rowOrType: any): string {
+  const source = getIdleEvidenceSource(rowOrType);
+  if (source === "gps-estimated") return "GPS-stopped evidence";
+  const base = providerIdleMarkerLabel(rowOrType);
+  if (source === "legacy-provider-marker") {
+    return base.replace(/^Provider /, "Legacy provider ");
+  }
+  return base;
 }
 
 function buildMarker(
@@ -296,6 +387,13 @@ function normalizeText(value: any) {
     .replace(/\s+/g, " ")
     .trim()
     .toLowerCase();
+}
+
+function normalizeEventTypeValue(value: any) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
 }
 
 function keyLabel(value: string) {

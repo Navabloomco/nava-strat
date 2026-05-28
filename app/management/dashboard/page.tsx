@@ -280,7 +280,7 @@ export default function ManagementDashboard() {
           <Panel dark className="p-5">
             <SectionTitle
               title="Operational drag"
-              subtitle="GPS-stopped evidence, provider idle markers, and delay evidence by safe attribution"
+              subtitle="GPS-stopped evidence, provider and legacy idle markers, and delay evidence by safe attribution"
             />
             {delayCategories.length === 0 ? (
               <EmptyState

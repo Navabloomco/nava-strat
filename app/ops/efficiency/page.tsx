@@ -270,14 +270,14 @@ export default function OpsEfficiencyPage() {
                 title="Provider Idle Markers"
                 subtitle={idle.evidence_label}
                 emptyTitle="No provider idle markers"
-                emptyBody="No provider idle or excessive-idle marker windows were found, or event evidence is not available."
+                emptyBody="No canonical provider idle markers or qualifying legacy excessive-idle/long-idle markers were found for this range. GPS-stopped evidence remains separate."
                 rows={(idle.top_idle_alert_windows || []).slice(0, 8)}
                 renderRow={(truck: any) => (
                   <RankRow
                     key={truck.truck_key || truck.truck_id}
                     title={truck.truck_id || "Unknown truck"}
                     metric={formatProviderIdleMetric(truck)}
-                    detail={`${formatCount(truck.alert_window_count)} provider-derived window(s), ${formatCount(truck.marker_count)} marker(s). ${formatProviderIdleDurationNote(truck)} Engine-on idle not verified unless ignition/engine data supports it.`}
+                    detail={`${formatProviderIdleSourceSummary(truck)} ${formatProviderIdleDurationNote(truck)} Engine-on idle not verified unless ignition/engine data supports it.`}
                   />
                 )}
               />
@@ -774,6 +774,17 @@ function formatProviderIdleDurationNote(row: any) {
     return "Duration comes from provider marker values where available.";
   }
   return "Window span is estimated from marker timestamps.";
+}
+
+function formatProviderIdleSourceSummary(row: any) {
+  const windows = formatCount(row?.alert_window_count);
+  const markers = formatCount(row?.marker_count);
+  const legacy = Number(row?.legacy_provider_marker_count || 0);
+  const canonical = Number(row?.canonical_provider_marker_count || 0);
+  const parts = [`${windows} provider-derived window(s)`, `${markers} marker(s)`];
+  if (legacy > 0) parts.push(`${formatCount(legacy)} legacy provider marker(s)`);
+  if (canonical > 0 && legacy > 0) parts.push(`${formatCount(canonical)} canonical marker(s)`);
+  return `${parts.join(", ")}.`;
 }
 
 function formatMovementObservation(row: any) {

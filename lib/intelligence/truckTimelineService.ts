@@ -15,8 +15,8 @@ import {
 } from "./geofenceMatcher";
 import { getVehicleMatchKeys, normalizeVehicleKey } from "./entityResolver";
 import {
-  CANONICAL_PROVIDER_IDLE_EVENT_TYPE,
   canonicalProviderIdleEventType,
+  IDLE_COMPATIBILITY_EVENT_TYPES,
   isProviderIdleMarkerEvent,
 } from "../providers/providerIdleMarkers";
 
@@ -177,14 +177,7 @@ export async function buildTruckTimelineIntelligence(input: TimelineInput) {
       )
       .eq("company_id", input.companyId)
       .eq("truck_id", canonicalTruckId)
-      .in("event_type", [
-        CANONICAL_PROVIDER_IDLE_EVENT_TYPE,
-        "idle",
-        "idling",
-        "excessive_idle",
-        "prolonged_idle",
-        "stop_idle",
-      ])
+      .in("event_type", Array.from(IDLE_COMPATIBILITY_EVENT_TYPES))
       .gte("created_at", eventFetchStartUtc)
       .lt("created_at", eventFetchEndUtc)
       .order("created_at", { ascending: true })

@@ -447,7 +447,7 @@ export async function POST(req: Request) {
             memoryType: "idle_pattern",
             severity: "warning",
             title: `Provider idle markers for ${context.detected_truck_id}`,
-            summary: `${idleCount} provider excessive-idle markers detected for ${context.detected_truck_id} in recent telemetry.`,
+            summary: `${idleCount} provider idle markers detected for ${context.detected_truck_id} in recent telemetry. Engine-on idle and fuel burn are not verified without ignition/engine evidence.`,
             entityType: "truck",
             entityId: context.detected_truck_id,
             confidence: 0.7,
@@ -3248,7 +3248,7 @@ function formatAndList(items: string[]) {
 
 function buildNarrativeIdleAlerts(idleEvents: any[], continuity: any, summary: any) {
   if (!idleEvents.length) {
-    return "No same-day provider idle or excessive-idle markers are present in the event trail for this truck.";
+    return "No same-day provider idle, excessive-idle, or long-idle markers are present in the event trail for this truck.";
   }
 
   const broken = idleEvents.filter(
@@ -3399,7 +3399,7 @@ function buildDetailedTruckTimelineAnswer({
       parts.push(...idleEvents.map((event: any) => formatIdleComparison(event, timeZone)));
     }
   } else {
-    parts.push("- No provider idle or excessive-idle events were found for this truck in this operating window.");
+      parts.push("- No provider idle, excessive-idle, or long-idle events were found for this truck in this operating window.");
   }
 
   parts.push("");
@@ -3524,7 +3524,7 @@ function formatExecutiveMetrics(stopSummary: any, summary: any, timeZone: string
 
 function formatExecutiveIdleVerdict(idleEvents: any[], continuity: any, summary: any) {
   if (!idleEvents.length) {
-    return "No same-day provider idle or excessive-idle markers are present in the event trail for this truck.";
+    return "No same-day provider idle, excessive-idle, or long-idle markers are present in the event trail for this truck.";
   }
 
   const currentMarkers = idleEvents.filter(
@@ -3954,7 +3954,7 @@ function buildFuelSuspicionFallbackAnswer(context: any) {
       );
     }
   } else {
-    parts.push("No recent fuel-drop events or provider excessive-idle markers appear for this vehicle.");
+    parts.push("No recent fuel-drop events or provider idle markers appear for this vehicle.");
   }
 
   if (journeys.length) {

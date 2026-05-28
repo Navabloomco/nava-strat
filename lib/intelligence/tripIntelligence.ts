@@ -15,7 +15,10 @@ import {
   summarizeAllocationsForJourney,
 } from "./fuelAllocation";
 import { normalizeVehicleKey } from "./entityResolver";
-import { isProviderIdleMarkerEvent } from "../providers/providerIdleMarkers";
+import {
+  getIdleEvidenceSource,
+  isProviderIdleMarkerEvent,
+} from "../providers/providerIdleMarkers";
 
 export type TripIntelligenceRange = "today" | "yesterday" | "7d" | "30d";
 export type ProfitabilityReadiness =
@@ -476,9 +479,29 @@ async function fetchTelemetryEventRows(
   if (!truckIds.length) return { rows: [] };
 
   try {
-    const { data, error } = await supabaseAdmin
+    const selectColumns =
+      "id, truck_id, event_type, severity, created_at, started_at, ended_at, duration_minutes, context_label, context_type, metadata";
+
+    const startedResult = await supabaseAdmin
       .from("telemetry_events")
-      .select("id, truck_id, event_type, severity, created_at, started_at, duration_minutes, context_label, context_type, metadata")
+      .select(selectColumns)
+      .eq("company_id", companyId)
+      .in("truck_id", truckIds)
+      .gte("started_at", timeframe.start_utc)
+      .lt("started_at", timeframe.end_utc)
+      .order("started_at", { ascending: true })
+      .limit(10000);
+
+    if (startedResult.error) {
+      if (isMissingSchemaError(startedResult.error)) {
+        return { rows: [], missing: true, error: safeError(startedResult.error) };
+      }
+      throw startedResult.error;
+    }
+
+    const createdResult = await supabaseAdmin
+      .from("telemetry_events")
+      .select(selectColumns)
       .eq("company_id", companyId)
       .in("truck_id", truckIds)
       .gte("created_at", timeframe.start_utc)
@@ -486,11 +509,16 @@ async function fetchTelemetryEventRows(
       .order("created_at", { ascending: true })
       .limit(10000);
 
+    const { data, error } = createdResult;
     if (error) {
       if (isMissingSchemaError(error)) return { rows: [], missing: true, error: safeError(error) };
       throw error;
     }
-    return { rows: data || [] };
+    const rowsById = new Map<string, any>();
+    for (const row of [...(startedResult.data || []), ...(data || [])]) {
+      rowsById.set(String(row.id || `${row.truck_id}-${row.event_type}-${row.started_at || row.created_at}`), row);
+    }
+    return { rows: Array.from(rowsById.values()) };
   } catch (err: any) {
     if (isMissingSchemaError(err)) return { rows: [], missing: true, error: safeError(err) };
     throw err;
@@ -880,7 +908,7 @@ function buildDelayEvidence(eventRows: any[], telemetryRows: any[]) {
         category.duration_minutes > 0 ? Math.round(category.duration_minutes) : null,
     })),
     evidence_label:
-      "provider-derived idle/alert markers and GPS-estimated stopped intervals; not engine-on idling proof",
+      "canonical or qualifying legacy provider idle markers plus GPS-estimated stopped intervals; not engine-on idling proof",
     engine_on_idling_confirmed: false,
   };
 }
@@ -892,12 +920,16 @@ function classifyDelayCategory(row: any) {
     .toLowerCase();
 
   if (isProviderIdleMarkerEvent(row)) {
+    const source = getIdleEvidenceSource(row);
+    const legacy = source === "legacy-provider-marker";
     return {
       key: "provider_idle_marker",
-      label: "Provider idle markers",
-      attribution: "provider-derived",
+      label: legacy ? "Legacy provider idle markers" : "Provider idle markers",
+      attribution: legacy ? "legacy provider-derived evidence" : "provider-derived",
       evidence_label:
-        "provider supplied idle/excessive-idle marker; engine-on idle and fuel burn are not independently verified",
+        legacy
+          ? "legacy excessive-idle/long-idle marker treated as provider-derived because metadata does not mark it as GPS-generated; engine-on idle and fuel burn are not independently verified"
+          : "provider supplied idle/excessive-idle marker; engine-on idle and fuel burn are not independently verified",
     };
   }
 

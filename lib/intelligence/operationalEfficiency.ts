@@ -8,7 +8,10 @@ import {
 } from "../timeFormatting";
 import {
   canonicalProviderIdleEventType,
+  getIdleEvidenceSource,
+  IDLE_COMPATIBILITY_EVENT_TYPES,
   isProviderIdleMarkerEvent,
+  providerIdleMarkerEvidenceLabel,
 } from "../providers/providerIdleMarkers";
 import { providerReportedDistanceValueFromSignalFlags } from "../providers/providerReportedFields";
 
@@ -379,22 +382,52 @@ async function fetchIdleEventRows(
   if (!truckIds.length) return { rows: [] };
 
   try {
-    const { data, error } = await supabaseAdmin
+    const selectColumns =
+      "id, truck_id, event_type, severity, created_at, started_at, ended_at, duration_minutes, context_label, context_type, metadata";
+    const eventTypes = Array.from(IDLE_COMPATIBILITY_EVENT_TYPES);
+
+    const startedResult = await supabaseAdmin
       .from("telemetry_events")
-      .select("id, truck_id, event_type, severity, created_at, started_at, duration_minutes, context_label, context_type, metadata")
+      .select(selectColumns)
       .eq("company_id", companyId)
       .in("truck_id", truckIds)
+      .in("event_type", eventTypes)
+      .gte("started_at", timeframe.start_utc)
+      .lt("started_at", timeframe.end_utc)
+      .order("started_at", { ascending: true })
+      .limit(5000);
+
+    if (startedResult.error) {
+      if (isMissingSchemaError(startedResult.error)) {
+        return { rows: [], missing: true, error: safeErrorMessage(startedResult.error) };
+      }
+      throw startedResult.error;
+    }
+
+    const createdResult = await supabaseAdmin
+      .from("telemetry_events")
+      .select(selectColumns)
+      .eq("company_id", companyId)
+      .in("truck_id", truckIds)
+      .in("event_type", eventTypes)
       .gte("created_at", timeframe.start_utc)
       .lt("created_at", timeframe.end_utc)
       .order("created_at", { ascending: true })
       .limit(5000);
 
+    const { data, error } = createdResult;
     if (error) {
       if (isMissingSchemaError(error)) return { rows: [], missing: true, error: safeErrorMessage(error) };
       throw error;
     }
 
-    const idleRows = (data || []).filter((row: any) => isProviderIdleMarkerEvent(row));
+    const rowsById = new Map<string, any>();
+    for (const row of [...(startedResult.data || []), ...(data || [])]) {
+      rowsById.set(String(row.id || `${row.truck_id}-${row.event_type}-${row.started_at || row.created_at}`), row);
+    }
+    const idleRows = Array.from(rowsById.values()).filter((row: any) =>
+      isProviderIdleMarkerEvent(row)
+    );
     return { rows: idleRows };
   } catch (err: any) {
     if (isMissingSchemaError(err)) {
@@ -824,7 +857,7 @@ function buildIdleTimeSummary(
     status:
       alertRank.length || stoppedRank.length ? "available" : "not_enough_evidence",
     evidence_label:
-      "Provider idle markers are provider-derived event windows; GPS-stopped time is not engine-on idle proof.",
+      "Provider idle markers include canonical provider_idle_marker rows and qualifying legacy excessive_idle/long_idle rows; GPS-stopped time is separate and not engine-on idle proof.",
     top_idle_alert_windows: alertRank.slice(0, 15),
     top_stopped_by_gps: stoppedRank.slice(0, 15),
     idle_alert_truck_count: alertRank.length,
@@ -882,10 +915,27 @@ function buildIdleWindowsByTruck(
     if (current.length) windows.push(buildIdleWindow(current));
 
     const asset = assetLookups.byKey.get(truckKey);
+    const sourceCounts = sorted.reduce(
+      (counts, row) => {
+        const source = getIdleEvidenceSource(row);
+        if (source === "legacy-provider-marker") counts.legacy_provider_markers += 1;
+        if (source === "provider-derived") counts.canonical_provider_markers += 1;
+        return counts;
+      },
+      { canonical_provider_markers: 0, legacy_provider_markers: 0 }
+    );
+    const evidenceLabel =
+      sourceCounts.legacy_provider_markers > 0 && sourceCounts.canonical_provider_markers > 0
+        ? "provider-derived and legacy provider idle marker windows"
+        : sourceCounts.legacy_provider_markers > 0
+          ? "legacy provider idle marker windows"
+          : "provider-derived idle marker windows";
     summaries.set(truckKey, {
       truck_key: truckKey,
       truck_id: displayTruckLabel(sorted[0]?.truck_id, asset),
       marker_count: sorted.length,
+      canonical_provider_marker_count: sourceCounts.canonical_provider_markers,
+      legacy_provider_marker_count: sourceCounts.legacy_provider_markers,
       alert_window_count: windows.length,
       total_alert_span_minutes: windows.reduce(
         (sum, window) => sum + Number(window.alert_span_minutes || 0),
@@ -895,10 +945,10 @@ function buildIdleWindowsByTruck(
         (sum, window) => sum + Number(window.provider_duration_minutes || 0),
         0
       ),
-      evidence_label: "provider-derived idle marker windows",
+      evidence_label: evidenceLabel,
       windows: windows.slice(0, 6),
       interpretation:
-        "This is provider marker evidence, not confirmed engine-on idling unless ignition/engine data is available.",
+        "This is provider marker evidence, including legacy markers where present. It is not confirmed engine-on idling unless ignition/engine data is available.",
     });
   }
 
@@ -920,7 +970,8 @@ function buildIdleWindow(rows: any[]) {
         ? Math.max(0, Math.round((endMs - startMs) / 60000))
         : 0,
     provider_duration_minutes: providerDurationFromRows(rows),
-    evidence_source: "provider-derived",
+    evidence_source: getIdleEvidenceSource(first),
+    evidence_label: providerIdleMarkerEvidenceLabel(first),
   };
 }
 

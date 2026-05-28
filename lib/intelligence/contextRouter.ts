@@ -31,7 +31,7 @@ import {
 } from "./metricEngine";
 import { buildTripIntelligenceSummary } from "./tripIntelligence";
 import {
-  CANONICAL_PROVIDER_IDLE_EVENT_TYPE,
+  IDLE_COMPATIBILITY_EVENT_TYPES,
   isProviderIdleMarkerEvent,
 } from "../providers/providerIdleMarkers";
 
@@ -1668,14 +1668,7 @@ async function fetchRecentDashboardIdleEvents(companyId: string, truckId: string
     )
     .eq("company_id", companyId)
     .eq("truck_id", truckId)
-    .in("event_type", [
-      CANONICAL_PROVIDER_IDLE_EVENT_TYPE,
-      "excessive_idle",
-      "idle",
-      "idling",
-      "prolonged_idle",
-      "stop_idle",
-    ])
+    .in("event_type", Array.from(IDLE_COMPATIBILITY_EVENT_TYPES))
     .gte("created_at", since)
     .order("created_at", { ascending: false })
     .limit(5);
@@ -2180,7 +2173,7 @@ async function fetchRecentFuelEvents(companyId: string) {
 
   const { data } = await supabaseAdmin
     .from("telemetry_events")
-    .select("truck_id, event_type, severity, location_name, latitude, longitude, created_at, started_at")
+    .select("truck_id, event_type, severity, location_name, latitude, longitude, created_at, started_at, metadata")
     .eq("company_id", companyId)
     .in("truck_id", enabledTruckIds)
     .in("event_type", ["fuel_drop_stationary", "low_fuel"])
