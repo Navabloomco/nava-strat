@@ -125,7 +125,7 @@ export function parseNavaEyeQuery(
   });
   const subjectType = detectSubjectType(lower, detectedEntities, options.pendingFollowup);
   const subjectLabel = detectSubjectLabel(detectedEntities, options.pendingFollowup);
-  const scope = detectScope(lower, detectedEntities, followUp, subjectLabel);
+  const scope = detectScope(lower, detectedEntities, followUp, subjectLabel, intentFamily);
 
   return {
     original_text: normalized.original_text,
@@ -287,9 +287,13 @@ function detectScope(
   lower: string,
   entities: NavaEyeStructuredQuery["detected_entities"],
   followUp: boolean,
-  subjectLabel: string | null
+  subjectLabel: string | null,
+  intentFamily: NavaEyeIntentFamily
 ): NavaEyeStructuredQuery["scope"] {
   if (/\b(fleet|whole fleet|all trucks|all vehicles|all assets|company total|company-wide|company wide|fleet total)\b/.test(lower)) {
+    return "fleet";
+  }
+  if (intentFamily === "management_actions" && isBroadActionRequest(lower)) {
     return "fleet";
   }
   if (
@@ -372,8 +376,18 @@ function detectSubjectLabel(
 }
 
 function detectManagementAction(lower: string) {
-  return /\b(what should i do|what should we do|act on|needs attention|action items?|management actions?|attention today)\b/.test(
+  return /\b(what should i do|what should we do|what should i check|so what should i check|what now|so what|what does that mean|act on|needs attention|action items?|management actions?|attention today|urgent|issues today)\b/.test(
     lower
+  );
+}
+
+function isBroadActionRequest(lower: string) {
+  return (
+    /\bwhat\s+should\s+(i|we)\s+do\s+today\b/.test(lower) ||
+    /\bwhat\s+should\s+i\s+act\s+on\b/.test(lower) ||
+    /\bwhat\s+needs\s+attention\b/.test(lower) ||
+    /\battention\s+today\b/.test(lower) ||
+    /\b(action\s+items?|management\s+actions?|urgent|issues\s+today)\b/.test(lower)
   );
 }
 

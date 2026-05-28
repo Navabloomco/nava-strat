@@ -118,6 +118,9 @@ export async function routeContext(
   const locationEvidenceRequest = detectLocationEvidenceRequest(lower);
   const answerDetailRequest = detectAnswerDetailRequest(lower);
   const providerIdleMarkerRequest = detectProviderIdleMarkerRequest(lower);
+  const managementActionRequest =
+    structuredQuery.intent_family === "management_actions" ||
+    detectManagementActionRequest(lower);
   const dashboardReference = resolveDashboardReference(
     lower,
     options.dashboardContext,
@@ -198,7 +201,7 @@ export async function routeContext(
     provider_idle_marker_request: providerIdleMarkerRequest,
     timeline_history_requested: timelineHistoryRequest,
     timeline_timeframe: resolveTruckTimelineTimeframe(lower),
-    management_action_request: detectManagementActionRequest(lower),
+    management_action_request: managementActionRequest,
     business_metric_intent: businessMetricIntent,
     business_metric_timeframe: businessMetricTimeframe,
     compound_truck_request: compoundTruckRequest,
@@ -1439,6 +1442,15 @@ function detectTripPerformanceIntent(lower: string) {
 
 function detectManagementActionRequest(lower: string) {
   return (
+    /\bwhat\s+should\s+i\s+do\b/.test(lower) ||
+    /\bwhat\s+should\s+we\s+do\b/.test(lower) ||
+    /\bwhat\s+should\s+i\s+check\b/.test(lower) ||
+    /\bso\s+what\s+should\s+i\s+check\b/.test(lower) ||
+    /\bwhat\s+now\b/.test(lower) ||
+    /\bso\s+what\b/.test(lower) ||
+    /\bwhat\s+does\s+that\s+mean\b/.test(lower) ||
+    /\bwhat\s+is\s+urgent\b/.test(lower) ||
+    /\bwhat\s+are\s+the\s+issues\s+today\b/.test(lower) ||
     /\bwhat\s+should\s+i\s+act\s+on\b/.test(lower) ||
     /\bwhat\s+needs\s+attention\b/.test(lower) ||
     /\baction\s+items?\b/.test(lower) ||
