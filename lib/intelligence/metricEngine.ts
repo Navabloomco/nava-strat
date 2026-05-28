@@ -17,7 +17,7 @@ export type BusinessMetricIntent =
   | "missing_profit_data";
 
 export type BusinessMetricTimeframe = {
-  requested: "today" | "yesterday" | "all_available";
+  requested: "today" | "yesterday" | "day_before_yesterday" | "all_available";
   dayOffset: number | null;
   local_day: string | null;
   day_start_utc: string | null;
@@ -112,6 +112,16 @@ export function resolveBusinessMetricTimeframe(
     .toLowerCase()
     .replace(/[’]/g, "'");
   const timeZone = resolveOperationalTimeZone(company);
+
+  if (
+    lower.includes("day_before_yesterday") ||
+    lower.includes("day before yesterday") ||
+    lower.includes("day-before-yesterday") ||
+    lower.includes("two days ago") ||
+    lower.includes("previous previous day")
+  ) {
+    return buildMetricDayRange(timeZone, -2, "day_before_yesterday");
+  }
 
   if (
     lower.includes("yesterday") ||
@@ -712,7 +722,7 @@ export async function calculateOdometerReliability(filters: MetricFilters) {
 function buildMetricDayRange(
   timeZone: string,
   dayOffset: number,
-  requested: "today" | "yesterday"
+  requested: "today" | "yesterday" | "day_before_yesterday"
 ): BusinessMetricTimeframe {
   const range = resolveOperationalDayRange(timeZone, dayOffset);
   const displayDate = formatLocalDayLabel(range.localDate);
