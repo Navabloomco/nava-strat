@@ -2,9 +2,14 @@ import { supabaseAdmin } from "../supabaseAdmin";
 import { normalizeVehicleKey } from "./entityResolver";
 import { resolveTruckTimelineTimeframe } from "./contextRouter";
 import { readStoredVehicleIdentityContext } from "../providers/vehicleIdentity";
+import {
+  parseNavaEyeQuery,
+  type NavaEyeStructuredQuery,
+} from "./queryUnderstanding";
 
 type ConversationResolverInput = {
   question: string;
+  structuredQuery?: NavaEyeStructuredQuery;
   pendingFollowup: any;
   companyId: string;
 };
@@ -32,7 +37,10 @@ export async function resolveNavaEyeConversationFollowup(
   const activeMetricTopic = getActiveMetricTopic(pending, input.companyId);
   const activeTripTopic = getActiveTripTopic(pending, input.companyId);
   const prompt = typeof pending.prompt === "string" ? pending.prompt.trim() : "";
-  const question = String(input.question || "");
+  const parsedQuery =
+    input.structuredQuery ||
+    parseNavaEyeQuery(input.question, { pendingFollowup: input.pendingFollowup });
+  const question = String(parsedQuery.normalized_text || input.question || "");
   const normalizedQuestion = normalizeQuestion(question);
   const pendingClarification = getPendingVehicleClarification(pending, input.companyId);
   if (pendingClarification) {
@@ -159,6 +167,38 @@ export async function resolveNavaEyeConversationFollowup(
 
   if (
     activeMetricTopic &&
+    isMetricComparisonFollowup(parsedQuery, normalizedQuestion) &&
+    !explicitVehicleInput &&
+    !explicitFleetScope
+  ) {
+    return {
+      question: buildActiveMetricComparisonQuestion(activeMetricTopic, parsedQuery),
+      usedPendingFollowup: false,
+      usedActiveTopic: activeMetricTopic.entity_type === "truck",
+      usedMetricTopic: true,
+      inheritedIntent: true,
+      pendingType: typeof pending.type === "string" ? pending.type : "business_metric_followup",
+    };
+  }
+
+  if (
+    activeTopic &&
+    isMetricComparisonFollowup(parsedQuery, normalizedQuestion) &&
+    !explicitVehicleInput &&
+    !explicitFleetScope
+  ) {
+    return {
+      question: buildActiveTruckComparisonQuestion(activeTopic, parsedQuery),
+      usedPendingFollowup: false,
+      usedActiveTopic: true,
+      usedMetricTopic: false,
+      inheritedIntent: true,
+      pendingType: typeof pending.type === "string" ? pending.type : "active_truck_topic",
+    };
+  }
+
+  if (
+    activeMetricTopic &&
     isMetricPeriodChangeFollowup(normalizedQuestion) &&
     !explicitVehicleInput &&
     !explicitFleetScope
@@ -196,6 +236,22 @@ export async function resolveNavaEyeConversationFollowup(
       needsClarification: true,
       clarificationReason: "missing_metric_topic",
       clarification: "Which mileage figure should I check?",
+    };
+  }
+
+  if (
+    activeTripTopic &&
+    isTripPerformanceFollowup(normalizedQuestion) &&
+    !explicitVehicleInput &&
+    !explicitFleetScope
+  ) {
+    return {
+      question: buildActiveTripPerformanceQuestion(activeTripTopic),
+      usedPendingFollowup: true,
+      usedActiveTopic: false,
+      usedMetricTopic: false,
+      inheritedIntent: true,
+      pendingType: typeof pending.type === "string" ? pending.type : "active_trip_topic",
     };
   }
 
@@ -528,6 +584,53 @@ function buildActiveMetricPeriodQuestion(normalizedQuestion: string, activeMetri
   return `What about ${label} ${timeframe}?`;
 }
 
+function isMetricComparisonFollowup(
+  parsedQuery: NavaEyeStructuredQuery,
+  normalizedQuestion: string
+) {
+  if (parsedQuery.intent_family === "compare_metric" && parsedQuery.metric === "distance") {
+    return true;
+  }
+  return (
+    /\b(compare|difference|between|versus|vs|more than|less than|how much more|how much less)\b/.test(
+      normalizedQuestion
+    ) &&
+    /\btoday\b/.test(normalizedQuestion) &&
+    /\byesterday\b/.test(normalizedQuestion)
+  );
+}
+
+function buildActiveMetricComparisonQuestion(
+  activeMetricTopic: any,
+  parsedQuery: NavaEyeStructuredQuery
+) {
+  const label =
+    activeMetricTopic.entity_type === "fleet"
+      ? "the fleet"
+      : activeMetricTopic.display_label || activeMetricTopic.truck_id || "that truck";
+  const metricIntent = sanitizeMetricIntent(activeMetricTopic.metric_intent);
+  const periods = parsedQuery.comparison?.periods || parsedQuery.detected_periods || [];
+  const first = periods.includes("yesterday") ? "yesterday" : periods[0] || "yesterday";
+  const second = periods.includes("today") ? "today" : periods[1] || "today";
+
+  if (metricIntent === "distance_covered" || parsedQuery.metric === "distance") {
+    return `Compare distance for ${label} between ${first} and ${second}.`;
+  }
+
+  return `Compare ${metricIntent || "the previous metric"} for ${label} between ${first} and ${second}.`;
+}
+
+function buildActiveTruckComparisonQuestion(
+  activeTopic: any,
+  parsedQuery: NavaEyeStructuredQuery
+) {
+  const truckId = activeTopic.display_label || activeTopic.truck_id || "that truck";
+  const periods = parsedQuery.comparison?.periods || parsedQuery.detected_periods || [];
+  const first = periods.includes("yesterday") ? "yesterday" : periods[0] || "yesterday";
+  const second = periods.includes("today") ? "today" : periods[1] || "today";
+  return `Compare distance for ${truckId} between ${first} and ${second}.`;
+}
+
 function isTripEvidenceFollowup(normalizedQuestion: string) {
   return (
     /\b(expenses?|proof|receipt|receipts|evidence|attachments?|documents?)\b/.test(
@@ -537,6 +640,20 @@ function isTripEvidenceFollowup(normalizedQuestion: string) {
       normalizedQuestion
     )
   );
+}
+
+function isTripPerformanceFollowup(normalizedQuestion: string) {
+  return (
+    /\b(it|that trip|this trip|the trip)\b/.test(normalizedQuestion) &&
+    /\b(make money|made money|contribution|contribute|profit|margin|perform|performance|profit review)\b/.test(
+      normalizedQuestion
+    )
+  );
+}
+
+function buildActiveTripPerformanceQuestion(activeTripTopic: any) {
+  const reference = activeTripTopic.reference || activeTripTopic.journey_id || "that trip";
+  return `How did trip ${reference} perform?`;
 }
 
 function buildActiveTripEvidenceQuestion(normalizedQuestion: string, activeTripTopic: any) {
@@ -952,6 +1069,7 @@ function getActiveMetricTopic(pending: any, companyId?: string | null) {
       typeof topic.display_date_label === "string" ? topic.display_date_label.slice(0, 80) : null,
     metric_result: sanitizeMetricResultSummary(topic.metric_result || topic.result_summary),
     result_summary: sanitizeMetricResultSummary(topic.result_summary || topic.metric_result),
+    comparison_result: sanitizeMetricComparisonSummary(topic.comparison_result),
     updated_at: typeof topic.updated_at === "string" ? topic.updated_at.slice(0, 40) : null,
   };
 }
@@ -1018,6 +1136,42 @@ function sanitizeMetricResultSummary(value: any) {
     ),
     skipped_stationary_jitter_segments: safeMetricNumber(
       value.skipped_stationary_jitter_segments ?? gpsFallback.skipped_stationary_jitter_segments
+    ),
+  };
+}
+
+function sanitizeMetricComparisonSummary(value: any) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return {
+    metric: typeof value.metric === "string" ? value.metric.slice(0, 40) : "distance",
+    periods: Array.isArray(value.periods)
+      ? value.periods.map((period: any) => String(period).slice(0, 20)).slice(0, 2)
+      : [],
+    left: sanitizeComparisonDistanceSummary(value.left),
+    right: sanitizeComparisonDistanceSummary(value.right),
+    delta_km: safeMetricNumber(value.delta_km),
+    direction: typeof value.direction === "string" ? value.direction.slice(0, 40) : null,
+    provisional: Boolean(value.provisional),
+  };
+}
+
+function sanitizeComparisonDistanceSummary(value: any) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return {
+    period: typeof value.period === "string" ? value.period.slice(0, 20) : null,
+    display_label:
+      typeof value.display_label === "string" ? value.display_label.slice(0, 80) : null,
+    local_day: typeof value.local_day === "string" ? value.local_day.slice(0, 20) : null,
+    distance_km: safeMetricNumber(value.distance_km),
+    distance_source: sanitizeDistanceSource(value.distance_source),
+    provider_summary_count: safeMetricNumber(value.provider_summary_count),
+    telemetry_point_count: safeMetricNumber(value.telemetry_point_count),
+    segment_count: safeMetricNumber(value.segment_count),
+    rows_truncated: Boolean(value.rows_truncated),
+    skipped_invalid_points: safeMetricNumber(value.skipped_invalid_points),
+    skipped_unrealistic_segments: safeMetricNumber(value.skipped_unrealistic_segments),
+    skipped_stationary_jitter_segments: safeMetricNumber(
+      value.skipped_stationary_jitter_segments
     ),
   };
 }
@@ -1127,10 +1281,13 @@ function buildTruckScopedFollowupQuestion(question: string, activeTopic: any) {
 
   if (
     /\b(?:is|was)\s+it\s+idling\b/.test(normalized) ||
+    /\b(?:is|was)\s+it\s+(?:stuck|stopped|stationary)(?:\s+or\s+idling)?\b/.test(normalized) ||
     /\b(?:is|was)\s+(?:that truck|this truck|the truck)\s+idling\b/.test(normalized) ||
     /\bidle\s+risk\b/.test(normalized)
   ) {
-    return `Is ${truckId} idling?`;
+    return /\bstuck|stopped|stationary\b/.test(normalized)
+      ? `Was ${truckId} stuck or idling?`
+      : `Is ${truckId} idling?`;
   }
 
   if (/\bis\s+it\s+moving\b/.test(normalized)) {
@@ -1174,8 +1331,9 @@ function isEllipticalTruckQuestion(question: string) {
     /\bwhere\s+did\s+it\s+go\b/.test(lower) ||
     /\bwhere\s+(?:is|are)\s+(?:it|that truck|this truck|the truck)\b/.test(lower) ||
     /\bwhat\s+should\s+i\s+do\s+about\s+(?:it|that|this)\b/.test(lower) ||
+    /\bwhat\s+should\s+i\s+do\b/.test(lower) ||
     /\bis\s+it\s+(?:moving|idling|stopped|stationary)\b/.test(lower) ||
-    /\bwas\s+it\s+(?:idling|stopped|stationary)\b/.test(lower) ||
+    /\bwas\s+it\s+(?:idling|stopped|stationary|stuck)\b/.test(lower) ||
     /\bidle\s+risk\b/.test(lower) ||
     isLocationEvidenceRequest(lower) ||
     isMileageDistanceQuestion(lower) ||
@@ -1213,6 +1371,7 @@ function isMileageDistanceQuestion(question: string) {
     /\b(distance covered|covered distance|distance today|distance yesterday)\b/.test(lower) ||
     /\bhow far\b/.test(lower) ||
     /\bhow many\s+km\b/.test(lower) ||
+    /\bhow many\s+kilomet(?:er|re)s?\b/.test(lower) ||
     /\bkm\s+covered\b/.test(lower) ||
     /\bkilomet(?:er|re)s?\s+covered\b/.test(lower)
   );
@@ -1223,7 +1382,7 @@ function detectMetricFollowupType(question: string) {
   if (!lower) return null;
 
   if (
-    /\b(how\s+did\s+you\s+calculate|how\s+was\s+.*calculated|show\s+evidence|show\s+the\s+evidence|what\s+data\s+did\s+you\s+use|data\s+used|source\s+hierarchy|why\s+should\s+i\s+trust|why\s+is\s+it\s+different|why\s+different|audit|details?|explain\s+the\s+source)\b/.test(
+    /\b(how\s+did\s+you\s+calculate|how\s+was\s+.*calculated|show\s+evidence|show\s+the\s+evidence|what\s+data\s+did\s+you\s+use|data\s+used|source\s+hierarchy|why\s+should\s+i\s+trust|why\s+is\s+it\s+different|why\s+different|why\s+so\s+low|why\s+low|why\s+is\s+.*\s+low|audit|details?|explain\s+the\s+source)\b/.test(
       lower
     )
   ) {

@@ -385,8 +385,11 @@ Open `/nava-eye` and ask:
 - [ ] Ask "Where is KDQ265?", then ask "How much mileage has it covered today?" and confirm the answer stays on KDQ 265T instead of switching to fleet-wide.
 - [ ] After a truck mileage answer, ask "how did you calculate that?" and confirm Nava Eye gives audit detail for the same truck and metric: source hierarchy, provider summary count if any, GPS point/segment counts if used, filtered jumps/gaps, and provisional caveats without raw coordinates.
 - [ ] After a truck mileage answer, ask "what about yesterday?" and confirm Nava Eye keeps the same truck and distance intent while changing only the operating period.
+- [ ] After a truck mileage answer, ask "what about yday?" and confirm the query understanding layer normalizes it to yesterday and keeps the same truck and distance intent.
+- [ ] After a truck mileage answer, ask "diff in distance btwn yday and today" and confirm Nava Eye compares yesterday versus today for the same truck, gives the distance difference, source/caveat, and does not expose raw coordinates.
+- [ ] After a distance comparison, ask "how did u calculate that?" or "why so low?" and confirm Nava Eye gives audit detail for the comparison/latest distance answer instead of a generic fallback.
 - [ ] After a truck mileage answer, ask "where is it now?" and confirm Nava Eye switches source to live status/location for the same truck.
-- [ ] After a truck status or mileage answer, ask "was it idling?" and confirm Nava Eye answers with provider idle marker or GPS-stopped evidence for the same truck without claiming true engine-on idle unless supported.
+- [ ] After a truck status or mileage answer, ask "was it stuck or idling?" and confirm Nava Eye answers with provider idle marker or GPS-stopped evidence for the same truck without claiming true engine-on idle unless supported.
 - [ ] After the KDQ265 mileage answer, ask "What about KCW 103Z?" and confirm Nava Eye inherits the mileage intent for KCW 103Z.
 - [ ] After the KDQ265 mileage answer, say "The 307km was covered today the 25th" and confirm Nava Eye refers to the previous KDQ 265T metric, resolved date, and exact GPS-estimated distance instead of losing context.
 - [ ] Ask "Is that odometer mileage?" and confirm Nava Eye says GPS-estimated route distance is not dashboard odometer mileage when that was the previous source.
@@ -407,6 +410,7 @@ Open `/nava-eye` and ask:
 - [ ] Ask "What should I act on today?" and confirm Nava Eye returns role-appropriate action items from company-scoped fleet health without leaking finance amounts to non-finance roles.
 - [ ] Confirm Nava Eye copilot answers are deterministic/source-grounded in Phase 1 and do not call external LLM APIs.
 - [ ] Ask "Which expenses on this trip are missing proof?" after a Trip performance answer and confirm Nava Eye checks same-company expenses plus private `evidence_attachments`; normal roles must not receive raw storage paths or public URLs, and finance-restricted roles must not see restricted money fields.
+- [ ] After a Trip performance answer, ask "did it make money?" and confirm Nava Eye keeps the active Trip topic; finance roles see allowed contribution amounts, while ops-only roles get a useful restricted summary.
 - [ ] Ask "Which trips need revenue review?" as a finance/management/elevated role and confirm Nava Eye summarizes production Trips using `journeys` plus latest `journey_revenue_entries`; ask as an ops-only role and confirm a finance boundary appears.
 - [ ] Ask "Does my tracking provider expose fuel or engine data?" and confirm Nava Eye answers from Provider Vault safe capability summaries as detected/mapped/not detected evidence, not final truth or a fuel-burn/theft claim.
 - [ ] Ask an idle/stopped question and confirm Nava Eye distinguishes GPS-stationary evidence, provider idle markers, and true engine-on idle; without ignition/engine/CAN support it says engine-on idling and fuel burn are not verified.

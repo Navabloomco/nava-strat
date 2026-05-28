@@ -35,6 +35,11 @@ import {
   isProviderIdleMarkerEvent,
 } from "../providers/providerIdleMarkers";
 import { buildSafeProviderTestSummary } from "../providers/testSummary";
+import {
+  parseNavaEyeQuery,
+  type NavaEyeStructuredQuery,
+  type NavaEyePeriod,
+} from "./queryUnderstanding";
 
 export type ContextIntent =
   | "fleet_health"
@@ -51,6 +56,7 @@ export type ContextIntent =
   | "evidence_review"
   | "finance_review"
   | "provider_capability"
+  | "metric_comparison"
   | "business_metrics"
   | "investigation_context"
   | "spares_context"
@@ -62,6 +68,7 @@ type RouteContextOptions = {
   roles?: string[];
   roleCapabilities?: ReturnType<typeof getRoleCapabilities>;
   dashboardContext?: any;
+  structuredQuery?: NavaEyeStructuredQuery;
 };
 
 export async function getCompanyBySlug(slug: string) {
@@ -84,20 +91,29 @@ export async function routeContext(
   const company = await getCompanyBySlug(tenantSlug);
   const companyId = company.id;
   const operationalTimeZone = resolveOperationalTimeZone(company);
-  const lower = question.toLowerCase();
-  const detectedCountryName = detectSupportedCountryName(question);
+  const structuredQuery =
+    options.structuredQuery || parseNavaEyeQuery(question);
+  const queryText = structuredQuery.normalized_text || question;
+  const lower = queryText.toLowerCase();
+  const detectedCountryName = detectSupportedCountryName(queryText);
   const tripPerformanceRequest = detectTripPerformanceIntent(lower);
+  const parsedBusinessMetricIntent =
+    structuredQuery.intent_family === "distance" ||
+    (structuredQuery.intent_family === "compare_metric" && structuredQuery.metric === "distance")
+      ? "distance_covered"
+      : null;
   const businessMetricIntent = tripPerformanceRequest
     ? null
-    : detectBusinessMetricIntent(lower);
+    : parsedBusinessMetricIntent || detectBusinessMetricIntent(lower);
   const businessMetricTimeframe = businessMetricIntent
-    ? resolveBusinessMetricTimeframe(question, company)
+    ? resolveBusinessMetricTimeframe(queryText, company)
     : null;
   let intent = detectIntent(
     lower,
     detectedCountryName,
     businessMetricIntent,
-    tripPerformanceRequest
+    tripPerformanceRequest,
+    structuredQuery
   );
   const locationEvidenceRequest = detectLocationEvidenceRequest(lower);
   const answerDetailRequest = detectAnswerDetailRequest(lower);
@@ -110,7 +126,7 @@ export async function routeContext(
   if (dashboardReference) {
     intent = "dashboard_followup";
   }
-  const vehicleMatch = await matchVehicleInFleet(question, companyId);
+  const vehicleMatch = await matchVehicleInFleet(queryText, companyId);
   const timelineHistoryRequest =
     detectTimelineHistoryRequest(lower) || locationEvidenceRequest;
   const compoundTruckRequest = vehicleMatch.input
@@ -185,6 +201,7 @@ export async function routeContext(
     business_metric_intent: businessMetricIntent,
     business_metric_timeframe: businessMetricTimeframe,
     compound_truck_request: compoundTruckRequest,
+    query_understanding: sanitizeStructuredQuery(structuredQuery),
     capabilities: sanitizeCapabilities(roleCapabilities),
     permission_boundary: permissionBoundary,
     display_timezone: {
@@ -208,10 +225,20 @@ export async function routeContext(
   if (intent === "fleet_health") {
     context.fleet_health = await fetchFleetHealth(companyId);
   }
+  if (intent === "metric_comparison") {
+    context.metric_comparison = await fetchMetricComparisonContext(
+      companyId,
+      company,
+      truckId,
+      null,
+      structuredQuery
+    );
+    return context;
+  }
   if (intent === "evidence_review") {
     context.evidence_review = await fetchEvidenceReviewContext(
       companyId,
-      question,
+      queryText,
       financialsVisible
     );
     return context;
@@ -221,7 +248,7 @@ export async function routeContext(
     return context;
   }
   if (intent === "provider_capability") {
-    context.provider_capability = await fetchProviderCapabilityContext(companyId, question);
+    context.provider_capability = await fetchProviderCapabilityContext(companyId, queryText);
     return context;
   }
   if (intent === "fleet_movement") {
@@ -402,7 +429,7 @@ export async function routeContext(
   }
   if (intent === "profit_simulation") {
     if (financialsVisible) {
-      context.profit_simulation = simulateProfit(question);
+      context.profit_simulation = simulateProfit(queryText);
     } else {
       context.financial_access_restricted = true;
       context.financial_access_message =
@@ -422,7 +449,7 @@ export async function routeContext(
     context.trip_performance = await fetchTripPerformanceContext({
       companyId,
       company,
-      question,
+      question: queryText,
       vehicleMatch,
       financeVisible: financialsVisible,
     });
@@ -460,7 +487,7 @@ export async function routeContext(
   if (intent === "spares_context" && !context.asset_access_restricted) {
     context.spares = await fetchSparesContext(
       companyId,
-      question,
+      queryText,
       truckId,
       sparesCostVisible
     );
@@ -518,6 +545,7 @@ function getIntentPermissionBoundary(
     "country_trucks",
     "investigation_context",
     "truck_compound",
+    "metric_comparison",
   ];
   if (opsIntents.includes(intent) && !capabilities.canViewOps) {
     return {
@@ -1111,6 +1139,35 @@ function sanitizeCapabilities(capabilities: ReturnType<typeof getRoleCapabilitie
   };
 }
 
+function sanitizeStructuredQuery(query: NavaEyeStructuredQuery | null | undefined) {
+  if (!query) return null;
+  return {
+    original_text: String(query.original_text || "").slice(0, 500),
+    normalized_text: String(query.normalized_text || "").slice(0, 500),
+    replacements: Array.isArray(query.replacements)
+      ? query.replacements.slice(0, 20)
+      : [],
+    intent_family: query.intent_family,
+    subject_type: query.subject_type,
+    subject_label: query.subject_label ? String(query.subject_label).slice(0, 160) : null,
+    detected_entities: {
+      vehicles: (query.detected_entities?.vehicles || []).slice(0, 6),
+      providers: (query.detected_entities?.providers || []).slice(0, 6),
+      trip_references: (query.detected_entities?.trip_references || []).slice(0, 6),
+    },
+    detected_periods: (query.detected_periods || []).slice(0, 4),
+    comparison: query.comparison
+      ? {
+          metric: query.comparison.metric,
+          periods: query.comparison.periods.slice(0, 2),
+        }
+      : null,
+    metric: query.metric,
+    follow_up: Boolean(query.follow_up),
+    answer_mode: query.answer_mode,
+  };
+}
+
 function getPermissionBoundary(
   lower: string,
   capabilities: ReturnType<typeof getRoleCapabilities>,
@@ -1207,10 +1264,40 @@ function detectIntent(
   lower: string,
   detectedCountryName: string | null,
   businessMetricIntent: ReturnType<typeof detectBusinessMetricIntent> = null,
-  tripPerformanceRequest = false
+  tripPerformanceRequest = false,
+  structuredQuery: NavaEyeStructuredQuery | null = null
 ): ContextIntent {
   if (detectedCountryName) {
     return "country_trucks";
+  }
+  if (structuredQuery?.intent_family === "compare_metric") {
+    return "metric_comparison";
+  }
+  if (structuredQuery?.intent_family === "management_actions") {
+    return "fleet_health";
+  }
+  if (structuredQuery?.intent_family === "provider_capability") {
+    return "provider_capability";
+  }
+  if (structuredQuery?.intent_family === "finance_revenue") {
+    return "finance_review";
+  }
+  if (structuredQuery?.intent_family === "expense_evidence") {
+    return "evidence_review";
+  }
+  if (
+    structuredQuery?.intent_family === "live_status" &&
+    /\b(which|what|show|list)\b.*\b(trucks|assets|vehicles)\b.*\blive\b|\blive\s+(trucks|assets|vehicles)\b/.test(
+      lower
+    )
+  ) {
+    return "fleet_health";
+  }
+  if (structuredQuery?.intent_family === "live_status") {
+    return "truck_status";
+  }
+  if (structuredQuery?.intent_family === "idle_or_stopped") {
+    return "truck_status";
   }
   if (tripPerformanceRequest) {
     return "trip_performance";
@@ -1385,7 +1472,7 @@ function detectProviderIdleMarkerRequest(lower: string) {
 }
 
 function detectAnswerDetailRequest(lower: string) {
-  return /\b(how\s+did\s+you\s+calculate|how\s+was\s+.*calculated|why\s+is\s+it\s+different|why\s+different|show\s+evidence|show\s+the\s+evidence|what\s+data\s+did\s+you\s+use|data\s+used|source\s+hierarchy|why\s+should\s+i\s+trust|audit|details?|explain\s+the\s+source)\b/.test(
+  return /\b(how\s+did\s+you\s+calculate|how\s+was\s+.*calculated|why\s+is\s+it\s+different|why\s+different|why\s+so\s+low|why\s+low|why\s+is\s+.*\s+low|show\s+evidence|show\s+the\s+evidence|what\s+data\s+did\s+you\s+use|data\s+used|source\s+hierarchy|why\s+should\s+i\s+trust|audit|details?|explain\s+the\s+source)\b/.test(
     lower
   );
 }
@@ -2425,6 +2512,141 @@ async function fetchProviderCapabilityContext(companyId: string, question: strin
     safety_note:
       "Provider capability fields are provider-reported evidence, not audited truth. Nava does not infer fuel burn, theft, diagnostics, or true engine-on idle from detection alone.",
   };
+}
+
+async function fetchMetricComparisonContext(
+  companyId: string,
+  company: any,
+  truckId: string | null,
+  assetId: string | null,
+  structuredQuery: NavaEyeStructuredQuery
+) {
+  const metric = structuredQuery.comparison?.metric || structuredQuery.metric;
+  const periods = resolveComparisonPeriods(structuredQuery);
+  const supportedPeriods = periods.filter(
+    (period) => period === "today" || period === "yesterday"
+  );
+
+  if (metric !== "distance" || supportedPeriods.length < 2) {
+    return {
+      source: "query understanding + metric engine",
+      status: "unsupported",
+      metric,
+      message:
+        "I can compare today and yesterday distance now. Other comparison types need more linked evidence before Nava Eye can answer safely.",
+    };
+  }
+
+  const [leftPeriod, rightPeriod] = supportedPeriods.slice(0, 2);
+  const [leftMetric, rightMetric] = await Promise.all([
+    buildBusinessMetricContext({
+      companyId,
+      company,
+      intent: "distance_covered",
+      truckId,
+      assetId,
+      timeframe: resolveBusinessMetricTimeframe(leftPeriod, company),
+    }),
+    buildBusinessMetricContext({
+      companyId,
+      company,
+      intent: "distance_covered",
+      truckId,
+      assetId,
+      timeframe: resolveBusinessMetricTimeframe(rightPeriod, company),
+    }),
+  ]);
+  const left = summarizeComparisonDistance(leftPeriod, leftMetric);
+  const right = summarizeComparisonDistance(rightPeriod, rightMetric);
+  const leftKm = Number(left.distance_km || 0);
+  const rightKm = Number(right.distance_km || 0);
+  const bothAvailable = leftKm > 0 && rightKm > 0;
+  const deltaKm = bothAvailable ? roundComparisonKm(rightKm - leftKm) : null;
+
+  return {
+    source: "metricEngine distance_covered",
+    status: "available",
+    metric: "distance",
+    subject_type: truckId ? "truck" : "fleet",
+    truck_id: truckId,
+    label: truckId || company?.name || "This fleet",
+    periods: [leftPeriod, rightPeriod],
+    left,
+    right,
+    delta_km: deltaKm,
+    direction:
+      deltaKm === null
+        ? "unavailable"
+        : deltaKm > 0
+          ? "higher"
+          : deltaKm < 0
+            ? "lower"
+            : "same",
+    provisional:
+      left.distance_source === "gps_estimated_distance" ||
+      right.distance_source === "gps_estimated_distance" ||
+      Boolean(left.rows_truncated || right.rows_truncated),
+  };
+}
+
+function resolveComparisonPeriods(query: NavaEyeStructuredQuery): NavaEyePeriod[] {
+  const periods = query.comparison?.periods?.length
+    ? query.comparison.periods
+    : query.detected_periods;
+  const supported = periods.filter(
+    (period) => period === "today" || period === "yesterday" || period === "7d" || period === "30d"
+  );
+  if (supported.includes("yesterday") && supported.includes("today")) {
+    return ["yesterday", "today"];
+  }
+  return supported.slice(0, 2);
+}
+
+function summarizeComparisonDistance(period: NavaEyePeriod, metric: any) {
+  const distance = metric.distance || {};
+  const gpsFallback = distance.gps_fallback || {};
+  return {
+    period,
+    display_label: metric.timeframe?.display_label || period,
+    local_day: metric.timeframe?.local_day || null,
+    distance_km: Number.isFinite(Number(distance.distance_km))
+      ? Number(distance.distance_km)
+      : null,
+    distance_source: normalizeComparisonDistanceSource(distance),
+    provider_summary_count: safeComparisonNumber(distance.provider_summary_count),
+    telemetry_point_count: safeComparisonNumber(
+      distance.telemetry_point_count || gpsFallback.point_count
+    ),
+    segment_count: safeComparisonNumber(gpsFallback.segment_count),
+    rows_truncated: Boolean(gpsFallback.rows_truncated),
+    skipped_invalid_points: safeComparisonNumber(gpsFallback.skipped_invalid_points),
+    skipped_unrealistic_segments: safeComparisonNumber(
+      gpsFallback.skipped_unrealistic_segments
+    ),
+    skipped_stationary_jitter_segments: safeComparisonNumber(
+      gpsFallback.skipped_stationary_jitter_segments
+    ),
+    missing: Array.isArray(distance.missing) ? distance.missing.slice(0, 5) : [],
+  };
+}
+
+function normalizeComparisonDistanceSource(distance: any) {
+  const source = String(distance.primary_distance_source || distance.distance_source || "");
+  if (source === "provider_mileage") return "provider_reported_mileage";
+  if (source === "gps_estimated") return "gps_estimated_distance";
+  if (source === "physical_odometer") return "dashboard_odometer";
+  if (source === "can_odometer") return "can_odometer";
+  if (source === "mixed") return "mixed_distance_sources";
+  return "unavailable";
+}
+
+function roundComparisonKm(value: number) {
+  return Math.round(value * 100) / 100;
+}
+
+function safeComparisonNumber(value: any) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
 }
 
 function matchJourneyFromQuestion(journeys: any[], question: string) {

@@ -523,6 +523,7 @@ function asksForMileageOrDistanceCovered(lower: string) {
     ) ||
     /\bhow far\b/.test(lower) ||
     /\bhow many\s+km\b/.test(lower) ||
+    /\bhow many\s+kilomet(?:er|re)s?\b/.test(lower) ||
     /\bkm\s+covered\b/.test(lower) ||
     /\bkilomet(?:er|re)s?\s+covered\b/.test(lower)
   );

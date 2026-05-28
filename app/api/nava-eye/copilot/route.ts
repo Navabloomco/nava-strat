@@ -38,6 +38,7 @@ import {
   isProviderIdleMarkerEvent,
   providerIdleMarkerLabel,
 } from "../../../../lib/providers/providerIdleMarkers";
+import { parseNavaEyeQuery } from "../../../../lib/intelligence/queryUnderstanding";
 
 export async function POST(req: Request) {
   try {
@@ -116,12 +117,20 @@ export async function POST(req: Request) {
       );
     }
 
+    const queryUnderstanding = parseNavaEyeQuery(question, {
+      pendingFollowup: conversation?.pending_followup,
+    });
+
     const pendingFollowupResolution = await resolveNavaEyeConversationFollowup({
       question,
+      structuredQuery: queryUnderstanding,
       pendingFollowup: conversation?.pending_followup,
       companyId: company.id,
     });
     const effectiveQuestion = pendingFollowupResolution.question;
+    const effectiveQueryUnderstanding = parseNavaEyeQuery(effectiveQuestion, {
+      pendingFollowup: conversation?.pending_followup,
+    });
 
     if (pendingFollowupResolution.needsClarification) {
       if (conversation) {
@@ -197,6 +206,8 @@ export async function POST(req: Request) {
           pending_followup_type: pendingFollowupResolution.pendingType || null,
           used_active_topic: pendingFollowupResolution.usedActiveTopic,
           used_metric_topic: pendingFollowupResolution.usedMetricTopic || false,
+          query_intent_family: queryUnderstanding.intent_family,
+          query_answer_mode: queryUnderstanding.answer_mode,
         },
       });
     }
@@ -208,6 +219,7 @@ export async function POST(req: Request) {
           roles: companyRoles,
           roleCapabilities,
           dashboardContext,
+          structuredQuery: effectiveQueryUnderstanding,
         });
     context.conversation_followup = {
       used_active_topic: pendingFollowupResolution.usedActiveTopic,
@@ -215,7 +227,9 @@ export async function POST(req: Request) {
       used_metric_topic: pendingFollowupResolution.usedMetricTopic || false,
       original_question: question,
       effective_question: effectiveQuestion,
+      structured_intent: effectiveQueryUnderstanding,
     };
+    context.query_understanding = effectiveQueryUnderstanding;
 
     await recordAnalyticsEvent({
       companyId: company.id,
@@ -234,6 +248,8 @@ export async function POST(req: Request) {
         used_pending_followup: pendingFollowupResolution.usedPendingFollowup,
         used_active_topic: pendingFollowupResolution.usedActiveTopic,
         used_metric_topic: pendingFollowupResolution.usedMetricTopic || false,
+        structured_intent_family: effectiveQueryUnderstanding.intent_family,
+        structured_answer_mode: effectiveQueryUnderstanding.answer_mode,
       },
     });
 
@@ -561,6 +577,9 @@ function buildFallbackAnswer(context: any): string {
   }
   if (context.provider_capability) {
     return buildProviderCapabilityAnswer(context);
+  }
+  if (context.metric_comparison) {
+    return buildMetricComparisonAnswer(context);
   }
   if (context.dashboard_followup) {
     return buildDashboardFollowupAnswer(context);
@@ -1080,6 +1099,13 @@ function buildPendingFollowup(context: any, answer: string) {
     };
   }
 
+  if (context.metric_comparison) {
+    return {
+      type: "business_metric_followup",
+      active_topic: buildMetricComparisonTopic(context, truckLabel),
+    };
+  }
+
   if (context.trip_performance?.matched_trip) {
     const trip = context.trip_performance.matched_trip;
     return {
@@ -1592,6 +1618,9 @@ function buildMetricFollowupAnswer(context: any) {
 
   if (metricIntent === "distance_covered") {
     if (followup.followup_type === "audit_detail") {
+      if (topic.comparison_result) {
+        return buildDistanceComparisonAuditAnswer(label, topic.comparison_result);
+      }
       return buildDistanceMetricAuditAnswer(label, topic, summary);
     }
     return buildDistanceMetricFollowupAnswer(label, topic, summary, followup.followup_type);
@@ -1904,6 +1933,64 @@ function buildDistanceMetricAuditAnswer(label: string, topic: any, summary: any)
   return parts.join("\n");
 }
 
+function buildDistanceComparisonAuditAnswer(label: string, comparison: any) {
+  const left = comparison.left || {};
+  const right = comparison.right || {};
+  const leftLabel = formatComparisonPeriodLabel(left);
+  const rightLabel = formatComparisonPeriodLabel(right);
+  const parts = [
+    `${label} distance comparison audit: ${leftLabel} versus ${rightLabel}.`,
+    "Source hierarchy: provider trip/report distance first, provider current-feed mileage or odometer deltas second, GPS-estimated point-to-point movement third, then unavailable.",
+  ];
+
+  parts.push(formatComparisonEvidenceLine(leftLabel, left));
+  parts.push(formatComparisonEvidenceLine(rightLabel, right));
+
+  if (hasNumber(comparison.delta_km)) {
+    parts.push(`Difference used in the answer: ${formatStoredMetricKm(comparison.delta_km)}.`);
+  }
+  if (comparison.provisional) {
+    parts.push(
+      "Caveat: at least one side is GPS-estimated or partial, so the comparison is provisional route-distance evidence."
+    );
+  }
+  return parts.join("\n");
+}
+
+function formatComparisonEvidenceLine(label: string, evidence: any) {
+  const distanceKm = hasNumber(evidence.distance_km)
+    ? formatStoredMetricKm(evidence.distance_km)
+    : "distance unavailable";
+  const bits = [
+    `${label}: ${distanceKm}`,
+    `source ${metricTopicSourceLabel(sanitizeDistanceSource(evidence.distance_source))}`,
+  ];
+  if (hasNumber(evidence.provider_summary_count)) {
+    bits.push(`${Number(evidence.provider_summary_count).toLocaleString()} provider summary row(s)`);
+  }
+  if (hasNumber(evidence.telemetry_point_count) || hasNumber(evidence.segment_count)) {
+    bits.push(
+      `${Number(evidence.telemetry_point_count || 0).toLocaleString()} telemetry point(s), ${Number(
+        evidence.segment_count || 0
+      ).toLocaleString()} accepted segment(s)`
+    );
+  }
+  const filtered = [
+    Number(evidence.skipped_invalid_points || 0) > 0
+      ? `${Number(evidence.skipped_invalid_points).toLocaleString()} invalid point(s)`
+      : null,
+    Number(evidence.skipped_unrealistic_segments || 0) > 0
+      ? `${Number(evidence.skipped_unrealistic_segments).toLocaleString()} unrealistic jump(s)`
+      : null,
+    Number(evidence.skipped_stationary_jitter_segments || 0) > 0
+      ? `${Number(evidence.skipped_stationary_jitter_segments).toLocaleString()} stationary jitter segment(s)`
+      : null,
+  ].filter(Boolean);
+  if (filtered.length) bits.push(`filtered ${filtered.join(", ")}`);
+  if (evidence.rows_truncated) bits.push("telemetry cap reached");
+  return bits.join("; ") + ".";
+}
+
 function formatMetricTopicDatePhrase(topic: any, summary: any) {
   const timeframe = topic.timeframe || {};
   const cleanDate = cleanMetricDateLabel(
@@ -1964,6 +2051,114 @@ function buildBusinessMetricAnswer(context: any) {
   }
 
   return buildContributionReadinessAnswer(label, metric, timeframe, type);
+}
+
+function buildMetricComparisonAnswer(context: any) {
+  const comparison = context.metric_comparison || {};
+  if (comparison.status !== "available") {
+    return comparison.message || "I can compare that once the required metric evidence is available.";
+  }
+
+  const label = comparison.label || comparison.truck_id || "This fleet";
+  const left = comparison.left || {};
+  const right = comparison.right || {};
+  const leftKm = Number(left.distance_km || 0);
+  const rightKm = Number(right.distance_km || 0);
+  const deltaKm = Number(comparison.delta_km || 0);
+  const leftLabel = formatComparisonPeriodLabel(left);
+  const rightLabel = formatComparisonPeriodLabel(right);
+
+  if (leftKm <= 0 || rightKm <= 0) {
+    return `${label} distance comparison is not complete. ${leftLabel}: ${
+      leftKm > 0 ? formatStoredMetricKm(leftKm) : "distance unavailable"
+    }. ${rightLabel}: ${
+      rightKm > 0 ? formatStoredMetricKm(rightKm) : "distance unavailable"
+    }. Source: Operational Efficiency distance evidence. Missing evidence needs review before comparing the periods.`;
+  }
+
+  const direction =
+    deltaKm > 0
+      ? `${rightLabel} is ${formatStoredMetricKm(Math.abs(deltaKm))} higher than ${leftLabel}`
+      : deltaKm < 0
+        ? `${rightLabel} is ${formatStoredMetricKm(Math.abs(deltaKm))} lower than ${leftLabel}`
+        : `${rightLabel} matches ${leftLabel}`;
+  const sourceText = comparisonSourceLabel(left, right);
+  const parts = [
+    `${label} covered about ${formatStoredMetricKm(leftKm)} ${leftLabel} and ${formatStoredMetricKm(
+      rightKm
+    )} ${rightLabel}. Difference: ${direction}.`,
+    `Source: ${sourceText}.`,
+  ];
+
+  if (comparison.provisional) {
+    parts.push(
+      "Treat this as provisional route-distance evidence where GPS-estimated distance is used or telemetry coverage is partial."
+    );
+  }
+  return parts.join(" ");
+}
+
+function buildMetricComparisonTopic(context: any, truckLabel: string | null) {
+  const comparison = context.metric_comparison || {};
+  return {
+    entity_type: truckLabel ? "truck" : "fleet",
+    truck_id: truckLabel || null,
+    display_label: truckLabel || context.company?.name || "Fleet",
+    company_id: context.company?.id || null,
+    last_intent: "metric_comparison",
+    metric_intent: "distance_covered",
+    timeframe: null,
+    comparison_result: sanitizeMetricComparisonTopic(comparison),
+    updated_at: new Date().toISOString(),
+  };
+}
+
+function sanitizeMetricComparisonTopic(comparison: any) {
+  if (!comparison || comparison.status !== "available") return null;
+  return {
+    metric: comparison.metric || "distance",
+    periods: Array.isArray(comparison.periods) ? comparison.periods.slice(0, 2) : [],
+    left: sanitizeComparisonDistanceForTopic(comparison.left),
+    right: sanitizeComparisonDistanceForTopic(comparison.right),
+    delta_km: safeNumberOrNull(comparison.delta_km),
+    direction: comparison.direction || null,
+    provisional: Boolean(comparison.provisional),
+  };
+}
+
+function sanitizeComparisonDistanceForTopic(value: any) {
+  if (!value || typeof value !== "object") return null;
+  return {
+    period: value.period || null,
+    display_label: value.display_label || null,
+    local_day: value.local_day || null,
+    distance_km: safeNumberOrNull(value.distance_km),
+    distance_source: sanitizeDistanceSource(value.distance_source),
+    provider_summary_count: safeNumberOrNull(value.provider_summary_count),
+    telemetry_point_count: safeNumberOrNull(value.telemetry_point_count),
+    segment_count: safeNumberOrNull(value.segment_count),
+    rows_truncated: Boolean(value.rows_truncated),
+    skipped_invalid_points: safeNumberOrNull(value.skipped_invalid_points),
+    skipped_unrealistic_segments: safeNumberOrNull(value.skipped_unrealistic_segments),
+    skipped_stationary_jitter_segments: safeNumberOrNull(
+      value.skipped_stationary_jitter_segments
+    ),
+  };
+}
+
+function formatComparisonPeriodLabel(period: any) {
+  if (period?.period === "today") return "today";
+  if (period?.period === "yesterday") return "yesterday";
+  return cleanMetricDateLabel(period?.display_label || period?.local_day || "that period");
+}
+
+function comparisonSourceLabel(left: any, right: any) {
+  const leftSource = sanitizeDistanceSource(left?.distance_source);
+  const rightSource = sanitizeDistanceSource(right?.distance_source);
+  if (leftSource === rightSource) return metricTopicSourceLabel(leftSource);
+  return `${metricTopicSourceLabel(leftSource)} for ${formatComparisonPeriodLabel(
+    left
+  )}; ${metricTopicSourceLabel(rightSource)} for ${formatComparisonPeriodLabel(right)}`;
 }
 
 function buildTripPerformanceAnswer(context: any) {
@@ -2163,10 +2358,6 @@ function buildDistanceCoveredAnswer(context: any, metric: any, timeframe: string
   const distanceKm = Number(distance.distance_km || 0);
   const source = String(distance.primary_distance_source || distance.distance_source || "unknown");
   const parts: string[] = [];
-
-  if (context.conversation_followup?.used_active_topic) {
-    parts.push(`${label} is the active truck in this thread.`);
-  }
 
   if (distanceKm <= 0) {
     parts.push(
