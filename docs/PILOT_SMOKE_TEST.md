@@ -240,17 +240,20 @@ Confirm workflow behavior:
 - [ ] On Trip Detail, allocate part of an existing fuel issue to the Trip only when the role can edit fuel; confirm the fuel issue remaining/carry-forward balance is still shown safely.
 - [ ] On Trip Detail, add a linked expense with a finance/elevated role and confirm it appears as a separate trip expense, not merged into fuel.
 - [ ] Confirm linked expense cards clearly show supplier/vendor/payee, payment method, reference number, amount, and date before attached evidence files.
-- [ ] Apply the `evidence_attachments` migration and the forward migration that expands `related_type` to `trip`, `expense`, `fuel_log`, and `fuel_allocation`; confirm the private `trip-evidence` Supabase Storage bucket exists before testing evidence uploads.
-- [ ] On Trip Detail, add a linked trip expense and use the Proof optional fields in the same Add trip expense form to upload a receipt/M-Pesa screenshot and/or paste a M-Pesa message.
+- [ ] Apply the `evidence_attachments` migration, the forward migration that expands `related_type` to `trip`, `expense`, `fuel_log`, and `fuel_allocation`, and the forward migration that adds expense `payment_proof`; confirm the private `trip-evidence` Supabase Storage bucket exists before testing evidence uploads.
+- [ ] On Trip Detail, add a linked trip expense and use the Proof optional fields in the same Add trip expense form to upload a receipt, invoice, payment proof, or M-Pesa proof and/or paste payment/receipt text.
 - [ ] Confirm saving creates the expense first, then attaches the uploaded file and pasted proof text to that new expense.
-- [ ] Confirm pasted M-Pesa message text appears as evidence under the expense and is not parsed into amount/date/name/transaction-code facts yet.
+- [ ] Confirm pasted M-Pesa or other payment text appears as evidence under the expense and is not parsed into amount/date/name/transaction-code facts yet.
 - [ ] If proof upload fails after expense creation, confirm the expense remains saved and the page says proof can be attached from the expense card.
-- [ ] Attach a receipt or M-Pesa screenshot later from an existing expense row's Attach receipt/proof flow.
-- [ ] Confirm the receipt appears under that exact expense row, not only in the general Trip evidence list.
+- [ ] Attach a receipt, invoice, payment proof, or M-Pesa proof later from an existing expense row's Attach proof flow.
+- [ ] Confirm the proof appears under that exact expense row, not only in the general Trip evidence list.
+- [ ] Add two expenses of the same category, for example `Per diem` KES 6,000 and `Per diem` KES 5,000, and confirm Trip Detail shows `Per diem` total KES 11,000 from 2 records.
+- [ ] Confirm each expense keeps its own proof list even when category totals roll up together.
+- [ ] Confirm Trip Intelligence contribution linked expenses include both records in linked expense cost and linked variable cost.
 - [ ] On Trip Detail, upload a delivery note, weighbridge ticket, invoice, or other trip-level document in General trip evidence and confirm it stays separate from expense receipts.
 - [ ] Confirm an expense receipt supports the specific expense/vendor/payment record, while general trip evidence supports delivery, movement, cargo, or tonnage and is not treated as supplier-payment proof by itself.
 - [ ] Confirm evidence opens only through a short-lived secure link, does not expose a public file URL or raw storage path, and remains inaccessible to users outside the related record's company.
-- [ ] Confirm M-Pesa screenshots are stored as evidence only; no M-Pesa text parsing, fuel-burn, theft, or expense inference is claimed yet.
+- [ ] Confirm M-Pesa proof is stored as evidence only; no M-Pesa text parsing, fuel-burn, theft, or expense inference is claimed yet.
 - [ ] Vehicle picker can fill the truck field.
 - [ ] Current standing driver assignment can fill or suggest the driver field.
 - [ ] Fuel entry creates a fuel issue ledger record. A fuel issue linked with legacy `journey_id` remains a fallback only; exact Trip fuel cost should come from `fuel_allocations`.

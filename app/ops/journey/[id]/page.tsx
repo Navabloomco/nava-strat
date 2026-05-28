@@ -44,8 +44,10 @@ const tripEvidenceTypes = [
 
 const expenseEvidenceTypes = [
   { value: "receipt", label: "Receipt" },
-  { value: "mpesa_screenshot", label: "M-Pesa screenshot/message" },
-  { value: "other", label: "Other expense proof" },
+  { value: "mpesa_screenshot", label: "M-Pesa proof" },
+  { value: "invoice", label: "Invoice" },
+  { value: "payment_proof", label: "Payment proof" },
+  { value: "other", label: "Other" },
 ];
 
 function emptyExpenseEvidenceForm() {
@@ -459,7 +461,7 @@ export default function TripDetailPage() {
     e.preventDefault();
     const form = expenseEvidenceForm(expenseId);
     if (!form.file && !String(form.textContent || "").trim()) {
-      setMessage("Choose a receipt/M-Pesa screenshot or paste proof text first.");
+      setMessage("Choose a proof document or paste proof text first.");
       return;
     }
 
@@ -569,6 +571,7 @@ export default function TripDetailPage() {
   const tripEvidenceAttachments = tripEvidence?.attachments || [];
   const expenseEvidenceById = evidence?.expenses || {};
   const fuelTotals = useMemo(() => summarizeTripAllocations(tripAllocations), [tripAllocations]);
+  const expenseCategoryTotals = useMemo(() => summarizeExpenseCategories(expenses), [expenses]);
   const expenseTotal = expenses.reduce(
     (sum: number, expense: any) => sum + Number(expense.amount || 0),
     0
@@ -1157,6 +1160,33 @@ export default function TripDetailPage() {
                   <ReadOnlyNotice text="Expense values are hidden for this role." />
                 ) : (
                   <>
+                    <div className="mt-5 rounded-md border border-white/10 bg-slate-950/35 p-4">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <div className="text-sm font-semibold text-white">
+                            Expense totals by category
+                          </div>
+                          <div className="mt-1 text-xs leading-5 text-slate-400">
+                            Each expense keeps its own proof; these totals roll up linked trip expenses for contribution review.
+                          </div>
+                        </div>
+                        <StatusPill tone="info">
+                          Total KES {formatMoney(expenseTotal)}
+                        </StatusPill>
+                      </div>
+                      {expenseCategoryTotals.length === 0 ? (
+                        <div className="mt-4 text-sm leading-6 text-slate-400">
+                          No linked expense categories yet.
+                        </div>
+                      ) : (
+                        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                          {expenseCategoryTotals.map((category) => (
+                            <ExpenseCategoryTotal key={category.type} category={category} />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
                     <div className="mt-5 grid gap-3">
                       {expenses.length === 0 ? (
                         <InlineEmpty
@@ -1213,10 +1243,10 @@ export default function TripDetailPage() {
                                 <div className="flex flex-wrap items-center justify-between gap-2">
                                   <div>
                                     <div className="text-sm font-semibold text-white">
-                                      Expense receipt evidence
+                                      Expense proof
                                     </div>
                                     <div className="mt-1 text-xs leading-5 text-slate-400">
-                                      Attach M-Pesa screenshots, receipts, or payment proof to this expense record.
+                                      Attach receipts, invoices, payment proof, screenshots, or pasted proof text to this expense record.
                                     </div>
                                   </div>
                                   <StatusPill tone={attachments.length ? "info" : "neutral"}>
@@ -1226,7 +1256,7 @@ export default function TripDetailPage() {
 
                                 <EvidenceAttachmentList
                                   attachments={attachments}
-                                  emptyTitle="No receipt attached"
+                                  emptyTitle="No proof attached"
                                   emptyBody="This expense has structured details, but no receipt or payment proof attached yet."
                                 />
 
@@ -1239,7 +1269,7 @@ export default function TripDetailPage() {
                                 {data?.capabilities?.can_edit_expenses ? (
                                   <details className="mt-4 rounded-md border border-white/10 bg-white/[0.04] p-4">
                                     <summary className="cursor-pointer text-sm font-semibold text-white">
-                                      Attach receipt/proof
+                                      Attach proof
                                     </summary>
                                     <form
                                       onSubmit={(event) => uploadExpenseEvidence(event, expense.id)}
@@ -1277,7 +1307,7 @@ export default function TripDetailPage() {
                                           />
                                         </FormField>
                                       </div>
-                                      <FormField label="Paste M-Pesa message or receipt text optional" dark>
+                                      <FormField label="Paste payment message or receipt text optional" dark>
                                         <textarea
                                           value={form.textContent || ""}
                                           onChange={(event) =>
@@ -1286,7 +1316,7 @@ export default function TripDetailPage() {
                                             })
                                           }
                                           rows={4}
-                                          placeholder="Paste the M-Pesa message or receipt/reference text. Nava stores it as evidence only and does not parse it yet."
+                                          placeholder="Paste payment message, receipt text, invoice reference, or other proof details. Nava stores it as evidence only and does not parse or verify it yet."
                                           className={inputClass}
                                         />
                                       </FormField>
@@ -1414,7 +1444,7 @@ export default function TripDetailPage() {
                               Proof optional
                             </div>
                             <p className="mt-2 text-sm leading-6 text-cyan-100/80">
-                              Upload a receipt/M-Pesa screenshot or paste the M-Pesa message now. Proof will be attached to this expense.
+                              Upload a receipt, invoice, payment proof, or screenshot. You can also paste payment/receipt text. Proof will be attached to this expense.
                             </p>
                             <div className="mt-5 grid gap-5 md:grid-cols-2">
                               <FormField label="Proof type" dark>
@@ -1430,7 +1460,7 @@ export default function TripDetailPage() {
                                   ))}
                                 </select>
                               </FormField>
-                              <FormField label="Upload receipt / M-Pesa screenshot optional" dark>
+                              <FormField label="Upload proof document optional" dark>
                                 <input
                                   id="new-expense-proof-file"
                                   type="file"
@@ -1442,12 +1472,12 @@ export default function TripDetailPage() {
                                 />
                               </FormField>
                             </div>
-                            <FormField label="Paste M-Pesa message optional" dark>
+                            <FormField label="Paste payment message or receipt text optional" dark>
                               <textarea
                                 value={newExpenseProofText}
                                 onChange={(event) => setNewExpenseProofText(event.target.value)}
                                 rows={4}
-                                placeholder="Paste the M-Pesa message or receipt/reference text. Nava stores it as evidence only and does not parse it yet."
+                                placeholder="Paste payment message, receipt text, invoice reference, or other proof details. Nava stores it as evidence only and does not parse or verify it yet."
                                 className={inputClass}
                               />
                             </FormField>
@@ -1744,6 +1774,24 @@ function ExpenseFact({ label, value }: { label: string; value: string }) {
   );
 }
 
+function ExpenseCategoryTotal({
+  category,
+}: {
+  category: { type: string; amount: number; count: number };
+}) {
+  return (
+    <div className="rounded-md border border-white/10 bg-white/[0.04] p-4">
+      <div className="text-sm font-semibold text-white">{humanize(category.type)}</div>
+      <div className="mt-2 text-lg font-semibold text-slate-100">
+        KES {formatMoney(category.amount)}
+      </div>
+      <div className="mt-1 text-xs leading-5 text-slate-400">
+        from {formatNumber(category.count)} {category.count === 1 ? "record" : "records"}
+      </div>
+    </div>
+  );
+}
+
 function SectionTitle({ title, subtitle }: { title: string; subtitle?: string }) {
   return (
     <div>
@@ -1780,6 +1828,30 @@ function summarizeTripAllocations(allocations: any[]) {
       }),
       { liters: 0, cost: 0 }
     );
+}
+
+function summarizeExpenseCategories(expenses: any[]) {
+  const totals = new Map<string, { type: string; amount: number; count: number }>();
+  for (const expense of expenses || []) {
+    const type = String(expense?.expense_type || "other").trim() || "other";
+    const current = totals.get(type) || { type, amount: 0, count: 0 };
+    current.amount += Number(expense?.amount || 0);
+    current.count += 1;
+    totals.set(type, current);
+  }
+
+  return Array.from(totals.values())
+    .map((category) => ({
+      ...category,
+      amount: roundMoney(category.amount),
+    }))
+    .sort((a, b) => b.amount - a.amount || a.type.localeCompare(b.type));
+}
+
+function roundMoney(value: any) {
+  const number = Number(value || 0);
+  if (!Number.isFinite(number)) return 0;
+  return Math.round(number * 100) / 100;
 }
 
 function routeLabel(journey: any) {
@@ -1882,10 +1954,11 @@ function humanize(value: any) {
 function evidenceTypeLabel(value: any) {
   const key = String(value || "").toLowerCase();
   if (key === "receipt") return "Receipt";
-  if (key === "mpesa_screenshot") return "M-Pesa screenshot";
+  if (key === "mpesa_screenshot") return "M-Pesa proof";
   if (key === "delivery_note") return "Delivery note";
   if (key === "weighbridge") return "Weighbridge ticket";
   if (key === "invoice") return "Invoice";
+  if (key === "payment_proof") return "Payment proof";
   if (key === "other") return "Other evidence";
   return humanize(value || "Evidence");
 }
@@ -1898,9 +1971,12 @@ function evidenceAttachmentTitle(attachment: any) {
 }
 
 function pastedEvidenceLabel(attachment: any) {
-  if (String(attachment?.evidence_type || "").toLowerCase() === "mpesa_screenshot") {
+  const key = String(attachment?.evidence_type || "").toLowerCase();
+  if (key === "mpesa_screenshot") {
     return "Pasted M-Pesa message evidence";
   }
+  if (key === "payment_proof") return "Pasted payment proof";
+  if (key === "invoice") return "Pasted invoice/reference evidence";
   return "Pasted proof text";
 }
 

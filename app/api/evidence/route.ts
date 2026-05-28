@@ -24,9 +24,16 @@ const ALLOWED_EVIDENCE_TYPES = new Set([
   "delivery_note",
   "weighbridge",
   "invoice",
+  "payment_proof",
   "other",
 ]);
-const EXPENSE_EVIDENCE_TYPES = new Set(["receipt", "mpesa_screenshot", "other"]);
+const EXPENSE_EVIDENCE_TYPES = new Set([
+  "receipt",
+  "mpesa_screenshot",
+  "invoice",
+  "payment_proof",
+  "other",
+]);
 const TRIP_EVIDENCE_TYPES = new Set([
   "receipt",
   "delivery_note",
@@ -559,7 +566,7 @@ function isAllowedEvidenceTypeForRelatedType(relatedType: string, evidenceType: 
 
 function unsupportedEvidenceMessage(relatedType: string) {
   if (relatedType === "expense") {
-    return "Expense evidence must be a receipt, M-Pesa screenshot, or other expense proof.";
+    return "Expense evidence must be a receipt, M-Pesa proof, invoice, payment proof, or other expense proof.";
   }
   if (relatedType === "trip") {
     return "Trip evidence must be a delivery note, weighbridge ticket, invoice, receipt, or other trip document.";
@@ -638,7 +645,7 @@ function validateEvidenceFile(file: File):
   if (!supportedByMime && !supportedByExtension) {
     return {
       valid: false,
-      error: "Unsupported file type. Upload a receipt image or PDF.",
+      error: "Unsupported file type. Upload a proof image or PDF.",
     };
   }
 
