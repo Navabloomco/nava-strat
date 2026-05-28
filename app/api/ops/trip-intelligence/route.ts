@@ -156,7 +156,7 @@ export async function GET(req: Request) {
       );
     }
 
-    const range = searchParams.get("range") || searchParams.get("timeframe") || "yesterday";
+    const range = searchParams.get("range") || searchParams.get("timeframe") || "today";
     const tripIntelligence = await buildTripIntelligenceSummary({
       companyId: resolved.company.id,
       company: resolved.company,

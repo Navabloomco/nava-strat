@@ -150,7 +150,7 @@ export async function GET(req: Request) {
       );
     }
 
-    const range = searchParams.get("range") || searchParams.get("timeframe") || "yesterday";
+    const range = searchParams.get("range") || searchParams.get("timeframe") || "today";
     const summary = await buildOperationalEfficiencySummary({
       companyId: resolved.company.id,
       company: resolved.company,

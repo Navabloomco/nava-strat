@@ -19,11 +19,18 @@ export type OperationalEfficiencyRange = "today" | "yesterday" | "7d";
 
 export type OperationalEfficiencyTimeframe = {
   requested: OperationalEfficiencyRange;
+  selected_range_label: string;
   time_zone: string;
   start_utc: string;
   end_utc: string;
+  query_start_utc: string;
+  query_end_utc: string;
   local_start_date: string;
   local_end_date: string;
+  period_start_local: string;
+  period_end_local: string;
+  data_window_start_local: string;
+  data_window_end_local: string;
   display_label: string;
 };
 
@@ -70,6 +77,7 @@ type TruckTelemetryStats = {
   stopped_time_confidence_reason: string;
   skipped_invalid_points: number;
   skipped_unrealistic_segments: number;
+  first_recorded_at: string | null;
   latest_recorded_at: string | null;
 };
 
@@ -82,11 +90,13 @@ export function resolveOperationalEfficiencyTimeframe(
   const requested = normalizeEfficiencyRange(input.range);
   const timeZone = resolveOperationalTimeZone(input.company);
   const endDay = resolveOperationalDayRange(timeZone, 0);
+  const nowMs = Date.now();
 
   if (requested === "7d") {
     const startDay = resolveOperationalDayRange(timeZone, -6);
-    return {
+    return buildEfficiencyTimeframe({
       requested,
+      selectedRangeLabel: "7 days",
       time_zone: timeZone,
       start_utc: startDay.startUtc,
       end_utc: endDay.endUtc,
@@ -95,19 +105,22 @@ export function resolveOperationalEfficiencyTimeframe(
       display_label: `${formatLocalDayLabel(startDay.localDate)} to ${formatLocalDayLabel(
         endDay.localDate
       )} (${shortTimeZoneLabel(timeZone)})`,
-    };
+      nowMs,
+    });
   }
 
   const day = resolveOperationalDayRange(timeZone, requested === "yesterday" ? -1 : 0);
-  return {
+  return buildEfficiencyTimeframe({
     requested,
+    selectedRangeLabel: requested === "today" ? "Today" : "Yesterday",
     time_zone: timeZone,
     start_utc: day.startUtc,
     end_utc: day.endUtc,
     local_start_date: day.localDate,
     local_end_date: day.localDate,
     display_label: `${formatLocalDayLabel(day.localDate)} (${shortTimeZoneLabel(timeZone)})`,
-  };
+    nowMs,
+  });
 }
 
 export async function buildOperationalEfficiencySummary(
@@ -149,7 +162,8 @@ export async function buildOperationalEfficiencySummary(
     providerDistanceByTruck,
     telemetryStatsByTruck,
     providerDistanceResult,
-    telemetryResult
+    telemetryResult,
+    timeframe
   );
   const idle = buildIdleTimeSummary(
     idleEventResult.rows,
@@ -233,7 +247,49 @@ function normalizeEfficiencyRange(value: any): OperationalEfficiencyRange {
   if (["7d", "7day", "7days", "week", "last_7_days", "last-7-days"].includes(text)) {
     return "7d";
   }
-  return "yesterday";
+  if (["yesterday", "previous_day", "previous-day"].includes(text)) return "yesterday";
+  return "today";
+}
+
+function buildEfficiencyTimeframe(input: {
+  requested: OperationalEfficiencyRange;
+  selectedRangeLabel: string;
+  time_zone: string;
+  start_utc: string;
+  end_utc: string;
+  local_start_date: string;
+  local_end_date: string;
+  display_label: string;
+  nowMs: number;
+}): OperationalEfficiencyTimeframe {
+  const endMs = new Date(input.end_utc).getTime();
+  const queryEndMs =
+    input.requested === "today" || input.requested === "7d"
+      ? Math.min(endMs, input.nowMs)
+      : endMs;
+  const queryEndUtc = new Date(
+    Number.isFinite(queryEndMs) ? queryEndMs : endMs
+  ).toISOString();
+
+  return {
+    requested: input.requested,
+    selected_range_label: input.selectedRangeLabel,
+    time_zone: input.time_zone,
+    start_utc: input.start_utc,
+    end_utc: input.end_utc,
+    query_start_utc: input.start_utc,
+    query_end_utc: queryEndUtc,
+    local_start_date: input.local_start_date,
+    local_end_date: input.local_end_date,
+    period_start_local: formatLocalBoundary(input.start_utc, input.time_zone),
+    period_end_local: formatLocalBoundary(
+      new Date(new Date(input.end_utc).getTime() - 1).toISOString(),
+      input.time_zone
+    ),
+    data_window_start_local: formatLocalBoundary(input.start_utc, input.time_zone),
+    data_window_end_local: formatLocalBoundary(queryEndUtc, input.time_zone),
+    display_label: input.display_label,
+  };
 }
 
 async function fetchEnabledAssets(companyId: string): Promise<QueryResult<EnabledAsset>> {
@@ -329,8 +385,8 @@ async function fetchTelemetryRows(
       .select("truck_id, recorded_at, latitude, longitude, speed, provider_signal_flags")
       .eq("company_id", companyId)
       .in("truck_id", truckIds)
-      .gte("recorded_at", timeframe.start_utc)
-      .lt("recorded_at", timeframe.end_utc)
+      .gte("recorded_at", timeframe.query_start_utc)
+      .lt("recorded_at", timeframe.query_end_utc)
       .order("recorded_at", { ascending: true })
       .limit(30000);
 
@@ -364,8 +420,8 @@ async function fetchTelemetryRowsWithoutProviderSignalFlags(
     .select("truck_id, recorded_at, latitude, longitude, speed")
     .eq("company_id", companyId)
     .in("truck_id", truckIds)
-    .gte("recorded_at", timeframe.start_utc)
-    .lt("recorded_at", timeframe.end_utc)
+    .gte("recorded_at", timeframe.query_start_utc)
+    .lt("recorded_at", timeframe.query_end_utc)
     .order("recorded_at", { ascending: true })
     .limit(30000);
 
@@ -395,8 +451,8 @@ async function fetchIdleEventRows(
       .eq("company_id", companyId)
       .in("truck_id", truckIds)
       .in("event_type", eventTypes)
-      .gte("started_at", timeframe.start_utc)
-      .lt("started_at", timeframe.end_utc)
+      .gte("started_at", timeframe.query_start_utc)
+      .lt("started_at", timeframe.query_end_utc)
       .order("started_at", { ascending: true })
       .limit(5000);
 
@@ -413,8 +469,8 @@ async function fetchIdleEventRows(
       .eq("company_id", companyId)
       .in("truck_id", truckIds)
       .in("event_type", eventTypes)
-      .gte("created_at", timeframe.start_utc)
-      .lt("created_at", timeframe.end_utc)
+      .gte("created_at", timeframe.query_start_utc)
+      .lt("created_at", timeframe.query_end_utc)
       .order("created_at", { ascending: true })
       .limit(5000);
 
@@ -478,8 +534,8 @@ async function fetchJourneys(
       .select("id, truck, driver, client_name, from_location, to_location, status, start_time, end_time, created_at")
       .eq("company_id", companyId)
       .eq("is_demo", false)
-      .gte("created_at", timeframe.start_utc)
-      .lt("created_at", timeframe.end_utc)
+      .gte("created_at", timeframe.query_start_utc)
+      .lt("created_at", timeframe.query_end_utc)
       .limit(3000);
 
     if (error) {
@@ -556,8 +612,8 @@ function summarizeTelemetryRows(
   }
 
   const byTruck = new Map<string, TruckTelemetryStats>();
-  const timeframeStartMs = new Date(timeframe.start_utc).getTime();
-  const timeframeEndMs = Math.min(new Date(timeframe.end_utc).getTime(), Date.now());
+  const timeframeStartMs = new Date(timeframe.query_start_utc).getTime();
+  const timeframeEndMs = new Date(timeframe.query_end_utc).getTime();
   const timeframeMinutes = Math.max(
     1,
     (timeframeEndMs - timeframeStartMs) / 60000
@@ -578,6 +634,7 @@ function summarizeTelemetryRows(
     let largeGapCount = 0;
     let skippedInvalidPoints = 0;
     let skippedUnrealisticSegments = 0;
+    let firstRecordedAt: string | null = null;
     let latestRecordedAt: string | null = null;
     const providerDistanceObservations: Array<{
       value: number;
@@ -593,6 +650,7 @@ function summarizeTelemetryRows(
       }
 
       pointCount += 1;
+      firstRecordedAt = firstRecordedAt || row.recorded_at || null;
       latestRecordedAt = row.recorded_at || latestRecordedAt;
       const providerDistanceValue = providerReportedDistanceValueFromSignalFlags(
         row.provider_signal_flags
@@ -680,6 +738,7 @@ function summarizeTelemetryRows(
       stopped_time_confidence_reason: confidence.reason,
       skipped_invalid_points: skippedInvalidPoints,
       skipped_unrealistic_segments: skippedUnrealisticSegments,
+      first_recorded_at: firstRecordedAt,
       latest_recorded_at: latestRecordedAt,
     });
   }
@@ -756,7 +815,8 @@ function buildTruckMovementSummary(
   providerDistanceByTruck: Map<string, any>,
   telemetryStatsByTruck: Map<string, TruckTelemetryStats>,
   providerDistanceResult: QueryResult<any>,
-  telemetryResult: QueryResult<any>
+  telemetryResult: QueryResult<any>,
+  timeframe: OperationalEfficiencyTimeframe
 ) {
   const truckKeys = new Set([
     ...Array.from(providerDistanceByTruck.keys()),
@@ -842,6 +902,19 @@ function buildTruckMovementSummary(
       observed_minutes: telemetry?.observed_minutes || 0,
       observed_coverage_ratio: telemetry?.observed_coverage_ratio || 0,
       telemetry_points: telemetry?.point_count || 0,
+      first_telemetry_at: telemetry?.first_recorded_at || null,
+      last_telemetry_at: telemetry?.latest_recorded_at || null,
+      distance_audit: {
+        period_start_utc: timeframe.query_start_utc,
+        period_end_utc: timeframe.query_end_utc,
+        first_telemetry_at: telemetry?.first_recorded_at || null,
+        last_telemetry_at: telemetry?.latest_recorded_at || null,
+        points_used: telemetry?.point_count || 0,
+        segments_used: telemetry?.segment_count || 0,
+        excluded_large_gaps: telemetry?.large_gap_count || 0,
+        excluded_impossible_jumps: telemetry?.skipped_unrealistic_segments || 0,
+        skipped_invalid_points: telemetry?.skipped_invalid_points || 0,
+      },
       provider_summary_rows: provider?.rows || 0,
       provider_reported_distance_points:
         telemetry?.provider_reported_distance_points || 0,
@@ -1508,8 +1581,8 @@ function observedIdleWindowBounds(
   rows: any[],
   timeframe: OperationalEfficiencyTimeframe
 ) {
-  const timeframeStartMs = new Date(timeframe.start_utc).getTime();
-  const timeframeEndMs = new Date(timeframe.end_utc).getTime();
+  const timeframeStartMs = new Date(timeframe.query_start_utc).getTime();
+  const timeframeEndMs = new Date(timeframe.query_end_utc).getTime();
   const starts: number[] = [];
   const ends: number[] = [];
 
@@ -1617,8 +1690,8 @@ function eventEndMs(row: any, fallbackStartMs: number) {
 }
 
 function timeframeDurationMinutes(timeframe: OperationalEfficiencyTimeframe) {
-  const startMs = new Date(timeframe.start_utc).getTime();
-  const endMs = new Date(timeframe.end_utc).getTime();
+  const startMs = new Date(timeframe.query_start_utc).getTime();
+  const endMs = new Date(timeframe.query_end_utc).getTime();
   if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return 24 * 60;
   return Math.max(1, Math.round((endMs - startMs) / 60000));
 }
@@ -1691,6 +1764,20 @@ function formatLocalDayLabel(localDay: string | null) {
     year: "numeric",
     timeZone: "UTC",
   }).format(date);
+}
+
+function formatLocalBoundary(value: string, timeZone: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return `${new Intl.DateTimeFormat("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone,
+  }).format(date)} ${shortTimeZoneLabel(timeZone)}`;
 }
 
 function shortTimeZoneLabel(timeZone: string) {

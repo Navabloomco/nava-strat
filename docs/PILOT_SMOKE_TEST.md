@@ -328,6 +328,7 @@ Confirm workflow behavior:
 - [ ] Confirm ops/management/owner/admin/platform-owner can view operational efficiency summaries and unauthorized roles receive a role boundary.
 - [ ] Open `/ops/efficiency` and confirm the page fetches operational efficiency and Trip Intelligence through the authenticated app session pattern instead of requiring direct unauthenticated API browsing.
 - [ ] Confirm `/ops/efficiency` range selector works for today, yesterday, and 7 days.
+- [ ] Confirm Today defaults to the current company/operator date, the selected period/data window are shown in local time, Yesterday shows the previous local date, and stale async responses cannot repaint Yesterday data after switching to Today.
 - [ ] Confirm `/ops/efficiency` shows trucks moved most, stopped most, stale locations, low productive-time trucks, idle marker windows, evidence labels, Trip Intelligence counts, missing-data summary, and not-enough-linked-data panels.
 - [ ] Confirm `/ops/efficiency` shows a friendly in-page access message instead of raw JSON when the user lacks access.
 - [ ] Call `GET /api/ops/trip-intelligence?range=yesterday` with an ops-visible role and confirm the JSON returns Trip records projected from `journeys`.

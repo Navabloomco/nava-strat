@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { supabase } from "../../../lib/supabase";
 import {
@@ -27,6 +27,7 @@ const rangeOptions: Array<{ value: RangeValue; label: string }> = [
 
 export default function OpsEfficiencyPage() {
   const [range, setRange] = useState<RangeValue>(() => initialRangeFromUrl());
+  const requestSequence = useRef(0);
   const [data, setData] = useState<EfficiencyState>({
     efficiency: null,
     tripIntelligence: null,
@@ -35,11 +36,13 @@ export default function OpsEfficiencyPage() {
   const [errorDetail, setErrorDetail] = useState("");
 
   useEffect(() => {
-    load();
+    load(range);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [range]);
 
-  async function load() {
+  async function load(selectedRange: RangeValue = range) {
+    const requestId = requestSequence.current + 1;
+    requestSequence.current = requestId;
     setLoading(true);
     setErrorDetail("");
 
@@ -52,7 +55,7 @@ export default function OpsEfficiencyPage() {
       return;
     }
 
-    const query = new URLSearchParams({ range });
+    const query = new URLSearchParams({ range: selectedRange });
     const companyId =
       typeof window === "undefined"
         ? null
@@ -80,17 +83,20 @@ export default function OpsEfficiencyPage() {
     ]);
 
     if (!efficiencyRes.ok || !efficiencyJson.success) {
+      if (requestId !== requestSequence.current) return;
       setErrorDetail(friendlyError(efficiencyRes.status, efficiencyJson.error));
       setLoading(false);
       return;
     }
 
     if (!tripsRes.ok || !tripsJson.success) {
+      if (requestId !== requestSequence.current) return;
       setErrorDetail(friendlyError(tripsRes.status, tripsJson.error));
       setLoading(false);
       return;
     }
 
+    if (requestId !== requestSequence.current) return;
     setData({
       efficiency: efficiencyJson,
       tripIntelligence: tripsJson,
@@ -99,6 +105,7 @@ export default function OpsEfficiencyPage() {
   }
 
   const summaries = data.efficiency?.summaries || {};
+  const timeframe = data.efficiency?.timeframe || {};
   const movement = summaries.movement || {};
   const idle = summaries.idle || {};
   const stale = summaries.stale_locations || {};
@@ -128,6 +135,19 @@ export default function OpsEfficiencyPage() {
     return counts;
   }, [trips]);
 
+  function changeRange(nextRange: RangeValue) {
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.set("range", nextRange);
+      window.history.replaceState({}, "", url.toString());
+    }
+    if (nextRange === range) {
+      load(nextRange);
+      return;
+    }
+    setRange(nextRange);
+  }
+
   if (loading) {
     return (
       <main className="min-h-screen bg-slate-950 px-4 py-6 text-white sm:px-8 sm:py-10">
@@ -152,7 +172,7 @@ export default function OpsEfficiencyPage() {
                 <button
                   key={option.value}
                   type="button"
-                  onClick={() => setRange(option.value)}
+                  onClick={() => changeRange(option.value)}
                   className={`rounded-md border px-4 py-3 text-sm font-semibold ${
                     range === option.value
                       ? "border-cyan-200 bg-cyan-300 text-slate-950"
@@ -173,7 +193,7 @@ export default function OpsEfficiencyPage() {
               title="Operational efficiency unavailable"
               body={errorDetail}
               action={
-                <PrimaryButton type="button" onClick={load}>
+                <PrimaryButton type="button" onClick={() => load(range)}>
                   Try again
                 </PrimaryButton>
               }
@@ -185,11 +205,23 @@ export default function OpsEfficiencyPage() {
               <div className="flex flex-wrap items-center gap-3 text-sm text-cyan-50">
                 <span>{data.efficiency?.company?.name || "Company"} efficiency view</span>
                 <StatusPill tone="info">
-                  {data.efficiency?.timeframe?.display_label || range}
+                  {timeframe.display_label || range}
                 </StatusPill>
                 <span className="text-cyan-100">
                   Times and dates follow the company operational timezone.
                 </span>
+                {timeframe.period_start_local && timeframe.period_end_local && (
+                  <span className="text-cyan-100">
+                    Selected period: {timeframe.period_start_local} to{" "}
+                    {timeframe.period_end_local}
+                  </span>
+                )}
+                {timeframe.data_window_start_local && timeframe.data_window_end_local && (
+                  <span className="text-cyan-100">
+                    Data window: {timeframe.data_window_start_local} to{" "}
+                    {timeframe.data_window_end_local}
+                  </span>
+                )}
               </div>
             </Panel>
 
@@ -229,7 +261,7 @@ export default function OpsEfficiencyPage() {
                     key={truck.truck_key || truck.truck_id}
                     title={truck.truck_id || "Unknown truck"}
                     metric={`${formatKm(truck.distance_km)} km`}
-                    detail={formatDistanceEvidenceDetail(truck)}
+                    detail={formatDistanceEvidenceDetail(truck, timeframe.time_zone)}
                   />
                 )}
               />
@@ -727,7 +759,7 @@ function formatPercent(value: any) {
   return `${Math.round(percent)}%`;
 }
 
-function formatDistanceEvidenceDetail(row: any) {
+function formatDistanceEvidenceDetail(row: any, timeZone?: string) {
   const source = String(row?.distance_source || "").trim();
   const detail = String(row?.distance_evidence_detail || "").trim();
   if (!source || source === "unavailable") return "unavailable";
@@ -747,13 +779,47 @@ function formatDistanceEvidenceDetail(row: any) {
 
   const confidence = String(row?.distance_confidence || "").trim();
   const note = String(row?.distance_reliability_note || "").trim();
+  const audit = formatDistanceAudit(row?.distance_audit, timeZone);
   const parts = [
     sourceLabel,
     detail && detail !== "unavailable" ? detail : "",
     confidence && confidence !== "unavailable" ? `${humanize(confidence)} confidence` : "",
+    audit,
     note,
   ].filter(Boolean);
   return parts.join(" · ");
+}
+
+function formatDistanceAudit(audit: any, timeZone?: string) {
+  if (!audit || typeof audit !== "object") return "";
+  const points = Number(audit.points_used || 0);
+  const segments = Number(audit.segments_used || 0);
+  if (!points && !segments) return "";
+  const first = formatAuditTime(audit.first_telemetry_at, timeZone);
+  const last = formatAuditTime(audit.last_telemetry_at, timeZone);
+  const pointPart = `${formatCount(points)} point(s), ${formatCount(segments)} segment(s)`;
+  const windowPart = first && last ? `${first} to ${last}` : "";
+  const gapPart = Number(audit.excluded_large_gaps || 0)
+    ? `${formatCount(audit.excluded_large_gaps)} long gap(s) excluded`
+    : "";
+  const jumpPart = Number(audit.excluded_impossible_jumps || 0)
+    ? `${formatCount(audit.excluded_impossible_jumps)} impossible jump(s) filtered`
+    : "";
+  return [windowPart, pointPart, gapPart, jumpPart].filter(Boolean).join("; ");
+}
+
+function formatAuditTime(value: any, timeZone?: string) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone: timeZone || "Africa/Nairobi",
+  }).format(date);
 }
 
 function formatStoppedConfidence(row: any) {
@@ -828,9 +894,9 @@ function humanize(value: any) {
 }
 
 function initialRangeFromUrl(): RangeValue {
-  if (typeof window === "undefined") return "yesterday";
+  if (typeof window === "undefined") return "today";
   const value = new URLSearchParams(window.location.search).get("range");
   return value === "today" || value === "7d" || value === "yesterday"
     ? value
-    : "yesterday";
+    : "today";
 }
