@@ -7,6 +7,7 @@ import {
   normalizeRole,
   rolesForCompany,
 } from "../../../../lib/api/roleAccess";
+import { isRevenueRuleSchemaMissing } from "../../../../lib/finance/revenueRules";
 
 export const dynamic = "force-dynamic";
 
@@ -24,6 +25,7 @@ type ResolveCompanyResult =
       company: ResolvedCompany;
       isPlatformOwner: boolean;
       roles: string[];
+      userId: string;
       error?: never;
     }
   | {
@@ -31,6 +33,7 @@ type ResolveCompanyResult =
       company?: never;
       isPlatformOwner?: never;
       roles?: never;
+      userId?: never;
     };
 
 async function resolveCompany(
@@ -89,6 +92,7 @@ async function resolveCompany(
       company: company as ResolvedCompany,
       isPlatformOwner,
       roles: rolesForCompany(activeMemberships, company.id, true),
+      userId: user.id,
     };
   }
 
@@ -128,6 +132,7 @@ async function resolveCompany(
     company: company as ResolvedCompany,
     isPlatformOwner,
     roles: rolesForCompany(activeMemberships, company.id),
+    userId: user.id,
   };
 }
 
@@ -248,6 +253,7 @@ export async function PATCH(req: Request) {
     }
 
     const updatedJourneys = [];
+    const revenueEntryWarnings = [];
 
     for (const journey of journeys) {
       const loadedQuantity =
@@ -292,12 +298,49 @@ export async function PATCH(req: Request) {
 
       if (updateError) throw updateError;
       updatedJourneys.push(updated);
+
+      const revenueSource = body.override_reason ? "overridden" : "manual_finance_entry";
+      const { error: entryError } = await supabaseAdmin
+        .from("journey_revenue_entries")
+        .insert({
+          company_id: resolved.company.id,
+          journey_id: journey.id,
+          rate_rule_id: null,
+          revenue_source: revenueSource,
+          billing_quantity: revenue.billing_quantity,
+          billing_unit: revenue.billing_unit,
+          rate_amount: rateAmount,
+          currency: rateCurrency,
+          fx_rate_to_kes: fxRate,
+          revenue_original: revenue.revenue_original,
+          revenue_kes: revenue.revenue_kes,
+          override_reason:
+            typeof body.override_reason === "string" && body.override_reason.trim()
+              ? body.override_reason.trim()
+              : null,
+          applied_by: resolved.userId,
+          notes:
+            typeof body.revenue_notes === "string" && body.revenue_notes.trim()
+              ? body.revenue_notes.trim()
+              : null,
+        });
+
+      if (entryError) {
+        if (isRevenueRuleSchemaMissing(entryError)) {
+          revenueEntryWarnings.push(
+            "Revenue was saved on the Trip snapshot, but auditable revenue entries are not available until the journey_revenue_entries migration is applied."
+          );
+        } else {
+          throw entryError;
+        }
+      }
     }
 
     return NextResponse.json({
       success: true,
       company: resolved.company,
       journeys: updatedJourneys,
+      warnings: Array.from(new Set(revenueEntryWarnings)),
     });
   } catch (err: any) {
     console.error("Revenue PATCH error:", err);

@@ -13,6 +13,7 @@ When this playbook discovers a bug, batch fixes into one Codex prompt. Do not pa
 - [ ] Confirm existing domains such as `https://www.navabloomco.com` and `https://nava-strat.vercel.app` still work during transition.
 - [ ] Confirm platform-owner login works.
 - [ ] Confirm the additive `billing_invoices` SQL has been applied.
+- [ ] Confirm the `client_rate_rules` and `journey_revenue_entries` migrations have been applied before testing Client Rates / Revenue Rules.
 - [ ] Confirm a test tenant/company exists.
 - [ ] Confirm at least one tracking provider is configured for the test tenant.
 - [ ] Confirm at least one current provider asset or asset-reviewable record exists.
@@ -231,7 +232,7 @@ Confirm workflow behavior:
 - [ ] Create Trip persists typed manual driver text in `journeys.driver` when no driver-directory ID is selected.
 - [ ] Create Trip with an enabled provider asset such as `KBJ132C` succeeds even if the live `journeys.asset_id` FK cannot accept `fleet_assets.id`; in that case the Trip preserves the vehicle text and safely leaves `asset_id` null.
 - [ ] Create Trip accepts partial trips: client, vehicle, origin, destination, status, and start time are enough; revenue, fuel, expenses, and end time can be added later.
-- [ ] Optional commercial fields can store tonnage/rate when known, but Trip Intelligence still marks contribution unsafe until linked cost evidence exists.
+- [ ] Finance-visible commercial fields can store quantity/rate when known, but Trip Intelligence still marks contribution unsafe until linked cost evidence exists.
 - [ ] After creating a Trip, open `/ops/journey/[id]` from the Trip list or the create flow and confirm the detail page shows trip reference, status, truck/provider asset, client, route, start/end time, driver, Trip Intelligence readiness, missing-data notes, and management flags.
 - [ ] On Trip Detail, assign or update a driver/timing/status with an ops/admin role and confirm the page refreshes without changing finance values.
 - [ ] On Trip Detail, enter `KARIUKI` as manual driver text, save, and confirm Driver shows `KARIUKI` and Trip Intelligence labels driver evidence as manual driver text instead of missing.
@@ -268,6 +269,14 @@ Confirm workflow behavior:
 - [ ] Confirm revenue/rate/FX entry remains finance-controlled. Clerks should not need confidential rates to enter operational expenses or proof.
 - [ ] As an ops/clerk-style user, open `/ops/journey/new` and confirm only operational Trip fields are visible; rate, currency, billing quantity, FX, revenue, and contribution fields are not shown or saved.
 - [ ] As a finance/management/elevated user with Trip creation access, confirm commercial Trip creation fields are available where intended and still store through role-gated server logic.
+- [ ] As a finance/elevated user, create a Client Rate Rule through `POST /api/finance/rate-rules` with client, optional route, unit type, billing quantity source, rate, currency, FX policy, effective date, and status.
+- [ ] As a management/finance/elevated user, call `GET /api/finance/rate-rules` and confirm rules are returned only for the selected company.
+- [ ] As an ops/clerk-style user without finance visibility, confirm `GET /api/finance/rate-rules` and `GET /api/finance/revenue-rules/match?journeyId=<id>` return a finance access boundary instead of rates or revenue amounts.
+- [ ] For a same-company Trip with matching client/route and available billing quantity, call `GET /api/finance/revenue-rules/match?journeyId=<id>` and confirm the match status is `unique_match` with a revenue preview.
+- [ ] Confirm the rate-rule matcher returns `no_rule`, `multiple_matches`, `missing_quantity`, or `missing_fx` instead of guessing when a configured rate cannot be applied safely.
+- [ ] Confirm `/api/finance/revenue` still updates existing journey revenue snapshots and, when the migration exists, writes an auditable `journey_revenue_entries` record labeled `manual_finance_entry` or `overridden`.
+- [ ] Confirm Trip Intelligence uses the latest `journey_revenue_entries` record when available and falls back to the journey revenue snapshot when the revenue-entry table is absent or empty.
+- [ ] Confirm no external FX service is called; non-KES revenue requires a manual/company-standard/fixed FX rate before KES revenue can be calculated.
 - [ ] Confirm generic Trip Detail UI does not show hardcoded pilot tenant examples, truck plates, clients, driver names, routes, or contribution amounts; such values should appear only when loaded from the current company data.
 - [ ] Vehicle picker can fill the truck field.
 - [ ] Current standing driver assignment can fill or suggest the driver field.

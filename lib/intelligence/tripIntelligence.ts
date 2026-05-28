@@ -123,6 +123,7 @@ export async function buildTripIntelligenceSummary(input: TripIntelligenceInput)
     distanceRowsResult,
     telemetryResult,
     eventsResult,
+    revenueEntriesResult,
     fuelAllocationsResult,
     fuelResult,
     expensesResult,
@@ -131,6 +132,7 @@ export async function buildTripIntelligenceSummary(input: TripIntelligenceInput)
     fetchProviderDistanceRows(input.companyId, timeframe, truckIds),
     fetchTelemetryRows(input.companyId, timeframe, truckIds),
     fetchTelemetryEventRows(input.companyId, timeframe, truckIds),
+    includeFinance ? fetchJourneyRevenueEntries(input.companyId, journeyIds) : emptyResult<any>(),
     includeFinance ? fetchFuelAllocations(input.companyId, journeyIds) : emptyResult<any>(),
     includeFinance ? fetchFuelLogs(input.companyId, journeyIds) : emptyResult<any>(),
     includeFinance ? fetchExpenses(input.companyId, journeyIds) : emptyResult<any>(),
@@ -139,6 +141,7 @@ export async function buildTripIntelligenceSummary(input: TripIntelligenceInput)
   const distanceByTruck = groupByTruckKey(distanceRowsResult.rows, "truck_id");
   const telemetryByTruck = groupByTruckKey(telemetryResult.rows, "truck_id");
   const eventsByTruck = groupByTruckKey(eventsResult.rows, "truck_id");
+  const revenueEntriesByJourney = groupBy(revenueEntriesResult.rows, "journey_id");
   const fuelAllocationsByJourney = groupBy(fuelAllocationsResult.rows, "journey_id");
   const fuelAllocationIssueSummaries =
     (fuelAllocationsResult as FuelAllocationQueryResult).issue_summaries || {};
@@ -169,6 +172,7 @@ export async function buildTripIntelligenceSummary(input: TripIntelligenceInput)
     const linkedFuelLogs = fuelByJourney.get(journey.id) || [];
     const linkedFuelAllocations = fuelAllocationsByJourney.get(journey.id) || [];
     const linkedExpenses = expensesByJourney.get(journey.id) || [];
+    const revenueEntries = revenueEntriesByJourney.get(journey.id) || [];
     const driverEvidence = resolveDriverEvidence(
       journey,
       asset,
@@ -183,6 +187,7 @@ export async function buildTripIntelligenceSummary(input: TripIntelligenceInput)
       linkedFuelAllocations,
       linkedFuelLogs,
       linkedExpenses,
+      revenueEntries,
       includeFinance,
       fuelAllocationIssueSummaries
     );
@@ -236,6 +241,9 @@ export async function buildTripIntelligenceSummary(input: TripIntelligenceInput)
       provider_trip_summaries: sourceStatus(distanceRowsResult),
       telemetry_logs: sourceStatus(telemetryResult),
       telemetry_events: sourceStatus(eventsResult),
+      journey_revenue_entries: includeFinance
+        ? sourceStatus(revenueEntriesResult)
+        : hiddenSourceStatus(),
       fuel_allocations: includeFinance
         ? sourceStatus(fuelAllocationsResult)
         : hiddenSourceStatus(),
@@ -595,6 +603,34 @@ async function fetchExpenses(companyId: string, journeyIds: string[]): Promise<Q
   }
 }
 
+async function fetchJourneyRevenueEntries(
+  companyId: string,
+  journeyIds: string[]
+): Promise<QueryResult<any>> {
+  if (!journeyIds.length) return { rows: [] };
+
+  try {
+    const { data, error } = await supabaseAdmin
+      .from("journey_revenue_entries")
+      .select(
+        "id, company_id, journey_id, rate_rule_id, revenue_source, billing_quantity, billing_unit, rate_amount, currency, fx_rate_to_kes, revenue_original, revenue_kes, override_reason, applied_by, applied_at, notes"
+      )
+      .eq("company_id", companyId)
+      .in("journey_id", journeyIds)
+      .order("applied_at", { ascending: false })
+      .limit(5000);
+
+    if (error) {
+      if (isMissingSchemaError(error)) return { rows: [], missing: true, error: safeError(error) };
+      throw error;
+    }
+    return { rows: data || [] };
+  } catch (err: any) {
+    if (isMissingSchemaError(err)) return { rows: [], missing: true, error: safeError(err) };
+    throw err;
+  }
+}
+
 function buildTripIdentity(journey: any, window: any) {
   const client = cleanText(journey.client_name);
   const from = cleanText(journey.from_location);
@@ -808,6 +844,7 @@ function buildFinanceEvidence(
   fuelAllocations: any[],
   fuelLogs: any[],
   expenses: any[],
+  revenueEntries: any[],
   includeFinance: boolean,
   fuelIssueSummaries: Record<string, FuelIssueAllocationSummary> = {}
 ) {
@@ -822,13 +859,22 @@ function buildFinanceEvidence(
       linked_fuel_log_count: null,
       linked_fuel_allocation_count: null,
       linked_expense_count: null,
+      revenue_source: null,
+      revenue_entry_id: null,
       fuel_cost_source: null,
       fuel_allocation_notes: [],
       evidence_label: "finance hidden by role",
     };
   }
 
-  const revenue = roundMoney(Number(journey.revenue_kes || 0));
+  const latestRevenueEntry = latestJourneyRevenueEntry(revenueEntries);
+  const revenue = roundMoney(
+    Number(
+      latestRevenueEntry?.revenue_kes ??
+        journey.revenue_kes ??
+        0
+    )
+  );
   const activeFuelAllocations = fuelAllocations.filter(isTripFuelAllocation);
   const allocatedFuel = summarizeAllocationsForJourney(activeFuelAllocations);
   const hasFuelAllocations = activeFuelAllocations.length > 0;
@@ -843,7 +889,7 @@ function buildFinanceEvidence(
   const expenseCost = roundMoney(
     expenses.reduce((sum, row) => sum + Number(row.amount || 0), 0)
   );
-  const rateAmount = numericOrNull(journey.rate_amount);
+  const rateAmount = numericOrNull(latestRevenueEntry?.rate_amount ?? journey.rate_amount);
   const fuelLogIds = uniqueStrings(
     (hasFuelAllocations ? activeFuelAllocations : fuelLogs)
       .map((row: any) => String(row.fuel_log_id || row.id || ""))
@@ -883,12 +929,24 @@ function buildFinanceEvidence(
   return {
     visible: true,
     revenue_kes: revenue,
-    revenue_status: cleanText(journey.revenue_status) || (revenue > 0 ? "available" : "missing"),
+    revenue_status:
+      cleanText(journey.revenue_status) ||
+      cleanText(latestRevenueEntry?.revenue_source) ||
+      (revenue > 0 ? "available" : "missing"),
+    revenue_source:
+      cleanText(latestRevenueEntry?.revenue_source) ||
+      (revenue > 0 ? "manual_finance_entry" : "missing"),
+    revenue_entry_id: latestRevenueEntry?.id || null,
+    revenue_rate_rule_id: latestRevenueEntry?.rate_rule_id || null,
+    revenue_applied_at: latestRevenueEntry?.applied_at || null,
     rate_type: cleanText(journey.rate_type),
     rate_amount: rateAmount,
-    rate_currency: cleanText(journey.rate_currency),
-    billing_quantity: numericOrNull(journey.billing_quantity),
-    billing_unit: cleanText(journey.billing_unit),
+    rate_currency: cleanText(latestRevenueEntry?.currency ?? journey.rate_currency),
+    fx_rate_to_kes: numericOrNull(latestRevenueEntry?.fx_rate_to_kes ?? journey.fx_rate),
+    billing_quantity: numericOrNull(
+      latestRevenueEntry?.billing_quantity ?? journey.billing_quantity
+    ),
+    billing_unit: cleanText(latestRevenueEntry?.billing_unit ?? journey.billing_unit),
     linked_fuel_cost_kes: fuelCost,
     linked_fuel_liters: fuelLiters,
     linked_expense_cost_kes: expenseCost,
@@ -899,12 +957,21 @@ function buildFinanceEvidence(
     fuel_cost_source: fuelCostSource,
     fuel_allocation_notes: uniqueStrings(fuelAllocationNotes),
     evidence_label: hasFuelAllocations
-      ? "journey revenue, fuel_allocations assigned to this trip, and linked expenses"
+      ? `${latestRevenueEntry ? "latest revenue entry" : "journey revenue snapshot"}, fuel_allocations assigned to this trip, and linked expenses`
       : fuelLogs.length > 0
-        ? "journey revenue, legacy fuel_logs.journey_id fallback, and linked expenses"
-        : "journey revenue and linked expenses; no fuel allocation evidence",
+        ? `${latestRevenueEntry ? "latest revenue entry" : "journey revenue snapshot"}, legacy fuel_logs.journey_id fallback, and linked expenses`
+        : `${latestRevenueEntry ? "latest revenue entry" : "journey revenue snapshot"} and linked expenses; no fuel allocation evidence`,
     unlinked_costs_used_for_profit: false,
   };
+}
+
+function latestJourneyRevenueEntry(entries: any[]) {
+  if (!entries.length) return null;
+  return [...entries].sort((first, second) => {
+    const firstMs = new Date(first.applied_at || 0).getTime();
+    const secondMs = new Date(second.applied_at || 0).getTime();
+    return secondMs - firstMs;
+  })[0] || null;
 }
 
 function buildProfitabilityReadiness(
