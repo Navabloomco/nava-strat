@@ -410,6 +410,8 @@ Open `/nava-eye` and ask:
 - [ ] Ask the same trip-performance question as an ops-only role and confirm finance amounts are hidden while trip readiness, revenue-present/fuel-linked/expense-linked status, missing distance, and the finance-role boundary remain useful.
 - [ ] Confirm trip-performance answers do not claim final audited profit, actual fuel burn, fuel efficiency, fuel theft, or engine-on idling from GPS-only evidence.
 - [ ] Ask "What should I act on today?" and confirm Nava Eye returns role-appropriate action items from company-scoped fleet health without leaking finance amounts to non-finance roles.
+- [ ] Ask "What should I do today?" with no active truck/Trip context and confirm Nava Eye returns a company-scoped action summary, not a "which truck?" clarification.
+- [ ] After a truck or Trip problem answer, ask "What should I do about it?" and confirm Nava Eye keeps the current subject without exposing internal context wording.
 - [ ] Confirm Nava Eye copilot answers are deterministic/source-grounded in Phase 1 and do not call external LLM APIs.
 - [ ] Ask "Which expenses on this trip are missing proof?" after a Trip performance answer and confirm Nava Eye checks same-company expenses plus private `evidence_attachments`; normal roles must not receive raw storage paths or public URLs, and finance-restricted roles must not see restricted money fields.
 - [ ] After a Trip performance answer, ask "did it make money?" and confirm Nava Eye keeps the active Trip topic; finance roles see allowed contribution amounts, while ops-only roles get a useful restricted summary.

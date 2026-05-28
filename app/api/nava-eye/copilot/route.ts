@@ -1871,7 +1871,7 @@ function buildDistanceMetricFollowupAnswer(
   const sourceText = metricTopicSourceLabel(source);
 
   if (distanceKm <= 0 || source === "unavailable") {
-    return `${label} was the previous mileage scope, but that mileage figure is not available in this thread. Ask the mileage question again and I will recalculate it from current distance evidence.`;
+    return `${label}'s previous mileage answer did not have a usable distance. Ask the mileage question again and I will recalculate it from current distance evidence.`;
   }
 
   if (followupType === "source_check") {

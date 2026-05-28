@@ -1382,7 +1382,6 @@ function isEllipticalTruckQuestion(question: string) {
     /\bwhere\s+did\s+it\s+go\b/.test(lower) ||
     /\bwhere\s+(?:is|are)\s+(?:it|that truck|this truck|the truck)\b/.test(lower) ||
     /\bwhat\s+should\s+i\s+do\s+about\s+(?:it|that|this)\b/.test(lower) ||
-    /\bwhat\s+should\s+i\s+do\b/.test(lower) ||
     /\bis\s+it\s+(?:moving|idling|stopped|stationary)\b/.test(lower) ||
     /\bwas\s+it\s+(?:idling|stopped|stationary|stuck)\b/.test(lower) ||
     /\bidle\s+risk\b/.test(lower) ||
