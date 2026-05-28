@@ -145,7 +145,7 @@ export default function OpsEfficiencyPage() {
           dark
           eyebrow="Operations"
           title="Efficiency Intelligence"
-          body="A pilot view of movement, stopped-time evidence, trip readiness, and missing links. This page explains operational evidence; it does not replace provider maps or invent fuel/profit conclusions."
+          body="A pilot view of movement, GPS-estimated stopped time, provider idle markers, trip readiness, and missing links. This page explains operational evidence; it does not replace provider maps or invent fuel/profit conclusions."
           actions={
             <div className="flex flex-wrap gap-2">
               {rangeOptions.map((option) => (
@@ -202,7 +202,7 @@ export default function OpsEfficiencyPage() {
               <MetricCard
                 label="Stopped-time trucks"
                 value={formatCount(idle.gps_stopped_truck_count)}
-                detail={idle.evidence_label || "Stopped-time evidence unavailable"}
+                detail={idle.evidence_label || "GPS-estimated stopped-time evidence unavailable"}
               />
               <MetricCard
                 label="Stale locations"
@@ -235,16 +235,16 @@ export default function OpsEfficiencyPage() {
               />
 
               <RankedPanel
-                title="Stopped Most"
+                title="GPS-Stopped Most"
                 subtitle={productivity.evidence_label || idle.evidence_label}
-                emptyTitle="No stopped-time evidence"
-                emptyBody="Stopped-time ranking needs enough GPS point intervals in the selected range."
+                emptyTitle="No GPS-stopped evidence"
+                emptyBody="GPS-stopped ranking needs enough GPS point intervals in the selected range."
                 rows={(productivity.stopped_most_of_day || idle.top_stopped_by_gps || []).slice(0, 8)}
                 renderRow={(truck: any) => (
                   <RankRow
                     key={truck.truck_key || truck.truck_id}
                     title={truck.truck_id || "Unknown truck"}
-                    metric={`${formatMinutes(truck.stopped_minutes)} estimated`}
+                    metric={`${formatMinutes(truck.stopped_minutes)} GPS-estimated`}
                     detail={formatStoppedConfidence(truck)}
                   />
                 )}
@@ -261,23 +261,23 @@ export default function OpsEfficiencyPage() {
                     key={truck.truck_key || truck.truck_id}
                     title={truck.truck_id || "Unknown truck"}
                     metric={formatPercent(truck.productive_ratio)}
-                    detail={`${formatKm(truck.distance_km)} km, ${formatMinutes(truck.stopped_minutes)} stopped estimate · ${formatStoppedConfidence(truck)}`}
+                    detail={`${formatKm(truck.distance_km)} km, ${formatMinutes(truck.stopped_minutes)} GPS-stopped estimate · ${formatStoppedConfidence(truck)}`}
                   />
                 )}
               />
 
               <RankedPanel
-                title="Idle Marker Windows"
+                title="Provider Idle Markers"
                 subtitle={idle.evidence_label}
-                emptyTitle="No idle marker windows"
-                emptyBody="No idle/excessive-idle marker windows were found, or event evidence is not available."
+                emptyTitle="No provider idle markers"
+                emptyBody="No provider idle or excessive-idle marker windows were found, or event evidence is not available."
                 rows={(idle.top_idle_alert_windows || []).slice(0, 8)}
                 renderRow={(truck: any) => (
                   <RankRow
                     key={truck.truck_key || truck.truck_id}
                     title={truck.truck_id || "Unknown truck"}
                     metric={formatMinutes(truck.total_alert_span_minutes)}
-                    detail={`${formatCount(truck.alert_window_count)} window(s), ${formatCount(truck.marker_count)} marker(s)`}
+                    detail={`${formatCount(truck.alert_window_count)} provider-derived window(s), ${formatCount(truck.marker_count)} marker(s). Engine-on idle not verified unless ignition/engine data supports it.`}
                   />
                 )}
               />
@@ -358,7 +358,7 @@ export default function OpsEfficiencyPage() {
               <ReadinessPanel
                 title="Client Waiting Ranking"
                 item={clientWaiting}
-                fallback="Client waiting needs stop or idle evidence linked to client sites, geofences, or journey legs."
+                fallback="Client waiting needs GPS-stopped evidence or provider idle markers linked to client sites, geofences, or journey legs."
               />
               <ReadinessPanel
                 title="Trip Profitability"
@@ -387,7 +387,7 @@ export default function OpsEfficiencyPage() {
                 <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                   <EvidenceSource label="Provider reports" source={data.efficiency?.data_sources?.provider_trip_summaries} />
                   <EvidenceSource label="GPS telemetry" source={data.efficiency?.data_sources?.telemetry_logs} />
-                  <EvidenceSource label="Idle events" source={data.efficiency?.data_sources?.telemetry_events} />
+                  <EvidenceSource label="Provider idle markers" source={data.efficiency?.data_sources?.telemetry_events} />
                   <EvidenceSource label="Trip records" source={data.tripIntelligence?.data_sources?.journeys} />
                 </div>
               </Panel>
@@ -736,7 +736,8 @@ function formatStoppedConfidence(row: any) {
   const parts = [
     formatMovementObservation(row),
     points || intervals ? `Estimated from ${formatCount(points)} GPS points across ${formatCount(intervals)} intervals` : null,
-    confidence ? `${humanize(confidence)} confidence${reason ? `: ${reason}` : ""}` : "Estimated from GPS",
+    confidence ? `${humanize(confidence)} confidence${reason ? `: ${reason}` : ""}` : "GPS-estimated",
+    "Engine-on idle not verified",
     row?.capped_estimate || row?.stopped_time_capped_estimate
       ? `${formatCount(gapCount)} long gap(s) excluded`
       : null,

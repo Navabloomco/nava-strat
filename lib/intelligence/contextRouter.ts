@@ -543,7 +543,7 @@ function resolveDashboardReference(
   if (idleRequested && dashboardContext.highest_idle_trucks.length) {
     return {
       source: "highest_idle_trucks",
-      label: "highest idle trucks",
+      label: "highest stopped/provider-idle-marker trucks",
       trucks: dashboardContext.highest_idle_trucks.slice(
         0,
         requestedCount || dashboardContext.highest_idle_trucks.length
@@ -1711,7 +1711,7 @@ function assessDashboardTruckStatus(asset: any, latestTelemetry: any, idleEvents
       status: "moving",
       confidence: "high",
       freshness_minutes: freshnessMinutes,
-      reason: "Fresh telemetry shows movement speed above idle range.",
+      reason: "Fresh telemetry shows movement speed above the stopped threshold.",
     };
   }
 
@@ -1726,7 +1726,7 @@ function assessDashboardTruckStatus(asset: any, latestTelemetry: any, idleEvents
       confidence: "high",
       freshness_minutes: freshnessMinutes,
       reason:
-        "Fresh zero/low-speed telemetry plus a recent idle event strongly suggests it is still idle or stationary.",
+        "Fresh zero/low-speed telemetry plus a recent provider idle marker strongly supports a current stationary/idle-marker read; engine-on idle is not verified without ignition or engine data.",
     };
   }
 
@@ -1736,7 +1736,7 @@ function assessDashboardTruckStatus(asset: any, latestTelemetry: any, idleEvents
       confidence: "medium",
       freshness_minutes: freshnessMinutes,
       reason:
-        "Fresh low-speed telemetry suggests it is stopped or idling, but the latest idle event is not fresh enough for certainty.",
+        "Fresh low-speed telemetry suggests it is GPS-stopped, but recent provider idle-marker evidence is not strong enough for an engine-on idle conclusion.",
     };
   }
 

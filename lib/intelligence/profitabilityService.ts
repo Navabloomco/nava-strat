@@ -149,7 +149,7 @@ function buildTripVelocityRecord(trip: any, generatedAt: string) {
     delay_minutes: numericOrNull(delay.total_delay_minutes ?? delay.stopped_minutes),
     delay_categories: Array.isArray(delay.delay_categories) ? delay.delay_categories : [],
     delay_attribution_note: delay.delay_evidence_present
-      ? "Delay evidence is separated by cause; unknown means no safe attribution."
+      ? "Delay evidence is separated by cause and source; GPS-stopped time is not engine-on idle proof."
       : "No delay evidence linked in this period.",
     caveats: contribution.caveats || readiness.supporting_notes || [],
     management_flags: trip.management_flags || [],
@@ -265,6 +265,7 @@ function buildDelaySummary(trips: any[]) {
           category: key,
           label: category.label || "Unknown",
           attribution: category.attribution || "unknown",
+          evidence_label: category.evidence_label || null,
           trip_count: 0,
           event_count: 0,
           duration_minutes: 0,
@@ -292,7 +293,7 @@ function buildDelaySummary(trips: any[]) {
           Number(b.trip_count || 0) - Number(a.trip_count || 0)
       ),
     caveat:
-      "Unknown, breakdown, road, border, driver, or dispatch delays are operational drag; client attribution requires explicit client/customer waiting evidence.",
+      "GPS-stopped time and provider idle markers are operational drag evidence, not true engine-on idle or fuel-burn proof. Client attribution requires explicit client/customer waiting evidence.",
   };
 }
 

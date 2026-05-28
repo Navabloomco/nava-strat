@@ -442,8 +442,8 @@ export async function POST(req: Request) {
             companyId: company.id,
             memoryType: "idle_pattern",
             severity: "warning",
-            title: `Excessive idle for ${context.detected_truck_id}`,
-            summary: `${idleCount} excessive idle events detected for ${context.detected_truck_id} in recent telemetry.`,
+            title: `Provider idle markers for ${context.detected_truck_id}`,
+            summary: `${idleCount} provider excessive-idle markers detected for ${context.detected_truck_id} in recent telemetry.`,
             entityType: "truck",
             entityId: context.detected_truck_id,
             confidence: 0.7,
@@ -736,7 +736,7 @@ function buildFallbackAnswer(context: any): string {
   if (context.fleet_health) {
     const f = context.fleet_health;
     parts.push(
-      `Fleet health: ${f.online_trucks}/${f.total_trucks} online, ${f.offline_trucks} offline, ${f.critical_events_24h} critical events, ${f.fuel_events_24h} fuel events, and ${f.idle_events_24h} idle events in the last 24 hours.`
+      `Fleet health: ${f.online_trucks}/${f.total_trucks} online, ${f.offline_trucks} offline, ${f.critical_events_24h} critical events, ${f.fuel_events_24h} fuel events, and ${f.idle_events_24h} provider idle markers in the last 24 hours.`
     );
   }
   if (context.offline_trucks?.length) {
@@ -1084,7 +1084,7 @@ function buildPendingFollowup(context: any, answer: string) {
         type: "compare_stop_motion_timeline",
         truck_id: truckLabel,
         timeframe: "yesterday",
-        prompt: `Show yesterday's movement for ${truckLabel}. Summarize the previous operating day's corridor route, stop/rest pattern, and idle marker interpretation without raw coordinates or provider payloads.`,
+        prompt: `Show yesterday's movement for ${truckLabel}. Summarize the previous operating day's corridor route, GPS-stop/rest pattern, and provider idle-marker interpretation without raw coordinates or provider payloads.`,
       }, { requested: "yesterday", dayOffset: -1 });
     }
     return attachActiveTopic({
@@ -1094,14 +1094,14 @@ function buildPendingFollowup(context: any, answer: string) {
       display_date_label: topicTimeframe?.display_date_label || null,
       prompt: `Show the detailed timeline for ${truckLabel}${
         requestedTimeframe === "yesterday" ? " for yesterday" : ""
-      }. Include movement/stationary blocks and idle marker evidence, but do not show raw coordinates or provider payloads.`,
+      }. Include movement/stationary blocks and provider idle-marker evidence, but do not show raw coordinates or provider payloads.`,
     }, topicTimeframe);
   }
 
   if (context.intent === "truck_status" && truckLabel) {
     const prompt = context.live_status_idle_focus
-      ? `Compare today's idle markers against movement for ${truckLabel}. Keep the timeline in EAT/Kenya time and do not infer continuous idling unless movement data supports it.`
-      : `Review today's movement timeline for ${truckLabel}. Summarize the corridor route, stop/rest pattern, and idle marker interpretation without raw coordinates or provider payloads.`;
+      ? `Compare today's provider idle markers against movement for ${truckLabel}. Keep the timeline in EAT/Kenya time and do not infer engine-on idling unless ignition/engine data supports it.`
+      : `Review today's movement timeline for ${truckLabel}. Summarize the corridor route, GPS-stop/rest pattern, and provider idle-marker interpretation without raw coordinates or provider payloads.`;
 
     return attachActiveTopic({
       type: "compare_stop_motion_timeline",
@@ -1350,19 +1350,19 @@ function buildDashboardFollowupAnswer(context: any) {
 
   parts.push(`Using the ${label} currently shown on this dashboard, not unrelated recent events.`);
   parts.push(
-    "Telemetry timestamps are compared internally, then presented in local operational time. Earlier idle events are historical markers, not proof of one continuous idle period if later movement appears."
+    "Telemetry timestamps are compared internally, then presented in local operational time. Earlier provider idle markers are historical markers, not proof of one continuous engine-on idle period if later movement appears."
   );
   if (strongIdleCount) {
     parts.push(
-      `${strongIdleCount} of them have fresh low-speed telemetry and a recent idle event, so the current idle/stationary read is strong. Engine-on idling is not confirmed without ignition or engine-status data.`
+      `${strongIdleCount} of them have fresh low-speed telemetry and a recent provider idle marker, so the current stationary/provider-marker read is strong. Engine-on idling is not confirmed without ignition or engine-status data.`
     );
   } else {
-    parts.push("Latest telemetry and recent idle events were checked for those exact trucks.");
+    parts.push("Latest telemetry and recent provider idle markers were checked for those exact trucks.");
   }
 
   if (suspiciousDurationCount) {
     parts.push(
-      "The current status looks real; at least one accumulated dashboard idle total looks suspicious and may need idle-event closure or provider data-quality review."
+      "The current status looks real; at least one accumulated provider idle-marker total looks suspicious and may need event-closure or provider data-quality review."
     );
   }
   parts.push("");
@@ -2167,7 +2167,7 @@ function buildCompoundTruckAnswer(context: any) {
 
 function formatCompoundTruckSectionTitle(section: any) {
   if (section.type === "current_status") return "Current location";
-  if (section.type === "idle_status") return "Idle status";
+  if (section.type === "idle_status") return "Stopped / idle-marker evidence";
   if (section.type === "movement_timeline") {
     return section.timeframe?.requested === "yesterday"
       ? "Yesterday's movement"
@@ -2245,7 +2245,7 @@ function buildTruckStatusFallbackAnswer(context: any, options: any = {}) {
   if (includeFollowUp) {
     parts.push(
       context.live_status_idle_focus
-        ? "I can compare today's idle markers against movement if you want."
+        ? "I can compare today's provider idle markers against movement if you want."
         : "I can review today's movement timeline if you want."
     );
   }
@@ -2599,11 +2599,11 @@ function formatLiveIdleMarkerRead({
 }) {
   const latestIdle = idleEvents[0] || null;
   if (!latestIdle) {
-    return idleFocus ? "No recent idle marker is attached to this truck's current status." : "";
+    return idleFocus ? "No recent provider idle marker is attached to this truck's current status." : "";
   }
   if (!isRecentOperationalEvent(latestIdle, 24)) {
     return idleFocus
-      ? "Older idle markers exist for this truck, but no recent marker is strong enough to support a live idle read."
+      ? "Older provider idle markers exist for this truck, but no recent marker is strong enough to support a live idle read."
       : "";
   }
 
@@ -2614,7 +2614,7 @@ function formatLiveIdleMarkerRead({
   const base = `${markerText} is present${locationPhrase}.`;
 
   if (ignitionState === "on" && speed !== null && speed <= 5) {
-    return `${base} Ignition is on, so this is an active idle risk.`;
+    return `${base} Ignition is on, so this is an engine-on idle risk.`;
   }
   if (ignitionState === "off" && speed !== null && speed <= 5) {
     return `${base} Ignition is off, so this looks like a parked/stopped state rather than active idling.`;
@@ -2636,9 +2636,9 @@ function capabilityBoundarySentence(telemetryCapability: any) {
 
 function formatIdleMarkerLabel(event: any) {
   const type = String(event?.event_type || "").trim().toLowerCase();
-  if (type === "excessive_idle") return "An excessive-idle marker";
-  if (type === "idle") return "An idle marker";
-  return "A stop/idle marker";
+  if (type === "excessive_idle") return "A provider excessive-idle marker";
+  if (type === "idle") return "A provider idle marker";
+  return "A provider stop/idle marker";
 }
 
 function isRecentOperationalEvent(event: any, hours: number) {
@@ -3058,7 +3058,7 @@ function formatNarrativeCoverageNote(dayStory: any, summary: any, timeZone: stri
     )} to ${formatTimelineClock(dayStory.coverage_end_at, timeZone)}. The route read below is based on that window.`;
   }
   if (summary.data_density === "low") {
-    return `This is a thin ${formatTimeframeLabel(timeframe)} operating read, so the visible movement window is being compared with any idle markers instead of forcing a full-day route story.`;
+    return `This is a thin ${formatTimeframeLabel(timeframe)} operating read, so the visible movement window is being compared with any provider idle markers instead of forcing a full-day route story.`;
   }
   return "";
 }
@@ -3247,7 +3247,7 @@ function formatAndList(items: string[]) {
 
 function buildNarrativeIdleAlerts(idleEvents: any[], continuity: any, summary: any) {
   if (!idleEvents.length) {
-    return "No same-day idle or excessive-idle alerts are present in the event trail for this truck.";
+    return "No same-day provider idle or excessive-idle markers are present in the event trail for this truck.";
   }
 
   const broken = idleEvents.filter(
@@ -3258,22 +3258,22 @@ function buildNarrativeIdleAlerts(idleEvents: any[], continuity: any, summary: a
   ).length;
 
   if (broken > 0 && current > 0) {
-    return "Do not treat the earlier idle alerts as one continuous all-day delay. The timeline shows clear movement between stop periods. The latest idle marker may relate to the current stop.";
+    return "Do not treat the earlier provider idle markers as one continuous engine-on idle period. The timeline shows clear movement between stop periods. The latest marker may relate to the current stop.";
   }
 
   if (broken > 0) {
-    return "Do not treat the earlier idle alerts as one continuous all-day delay. The timeline shows clear movement between stop periods, so those alerts are historical markers rather than one unbroken delay.";
+    return "Do not treat the earlier provider idle markers as one continuous engine-on idle period. The timeline shows clear movement between stop periods, so those markers are historical rather than one unbroken delay.";
   }
 
   if (continuity.continuous_all_day_idle_supported || current > 0) {
-    return "The latest idle marker may relate to the current stop because no later movement appears after that marker.";
+    return "The latest provider idle marker may relate to the current stop because no later movement appears after that marker.";
   }
 
   if (summary.data_density === "low") {
-    return "The idle alert trail is too thin to connect the markers into one continuous delay.";
+    return "The provider idle-marker trail is too thin to connect the markers into one continuous delay.";
   }
 
-  return "Idle alerts exist, but there is not enough continuity evidence to merge them into one continuous delay.";
+  return "Provider idle markers exist, but there is not enough continuity evidence to merge them into one continuous delay.";
 }
 
 function formatHardwareNote(latest: any) {
@@ -3379,7 +3379,7 @@ function buildDetailedTruckTimelineAnswer({
   }
 
   parts.push("");
-  parts.push("Idle marker evidence");
+  parts.push("Provider idle marker evidence");
   if (idleEvents.length) {
     if (rawIdleMarkersRequested) {
       if (countUnresolvedGpsMarkers(idleEvents) > 0) {
@@ -3398,7 +3398,7 @@ function buildDetailedTruckTimelineAnswer({
       parts.push(...idleEvents.map((event: any) => formatIdleComparison(event, timeZone)));
     }
   } else {
-    parts.push("- No idle or excessive-idle events were found for this truck in this operating window.");
+    parts.push("- No provider idle or excessive-idle events were found for this truck in this operating window.");
   }
 
   parts.push("");
@@ -3418,7 +3418,7 @@ function buildExecutiveVerdict(label: string, dayStory: any, summary: any, conti
   const stopSummary = dayStory.stop_summary || {};
   const hasContinuousIdle = Boolean(continuity.continuous_all_day_idle_supported);
   const condition = hasContinuousIdle
-    ? "a current stationary/idle condition"
+    ? "a current stationary condition with provider idle-marker evidence"
     : movingBlocks > 0
       ? "active transit with separate stops"
       : "a mostly stationary or limited telemetry window";
@@ -3523,7 +3523,7 @@ function formatExecutiveMetrics(stopSummary: any, summary: any, timeZone: string
 
 function formatExecutiveIdleVerdict(idleEvents: any[], continuity: any, summary: any) {
   if (!idleEvents.length) {
-    return "No same-day idle or excessive-idle markers are present in the event trail for this truck.";
+    return "No same-day provider idle or excessive-idle markers are present in the event trail for this truck.";
   }
 
   const currentMarkers = idleEvents.filter(
@@ -3535,26 +3535,26 @@ function formatExecutiveIdleVerdict(idleEvents: any[], continuity: any, summary:
       currentMarkers > 0
         ? " The latest marker may relate to the current stop, but engine-on idling is not confirmed without ignition data."
         : " None of this proves engine-on idling without ignition data.";
-    return `The idle alerts should be treated as separate historical markers because later movement was recorded after at least one marker.${suffix}`;
+    return `The provider idle markers should be treated as separate historical markers because later movement was recorded after at least one marker.${suffix}`;
   }
 
   if (continuity.continuous_all_day_idle_supported) {
-    return "The latest stationary state lines up with an idle marker and no later movement is visible after that marker. This supports a current stop/idle interpretation, but engine-on idling is still unconfirmed without ignition data.";
+    return "The latest stationary state lines up with a provider idle marker and no later movement is visible after that marker. This supports a current stopped/provider-marker interpretation, but engine-on idling is still unconfirmed without ignition data.";
   }
 
   if (summary.data_density === "low") {
-    return "There is too little same-day history to prove whether the idle markers are continuous or separate.";
+    return "There is too little same-day history to prove whether the provider idle markers are continuous or separate.";
   }
 
-  return "Idle markers exist, but there is not enough continuity evidence to merge them into one continuous delay.";
+  return "Provider idle markers exist, but there is not enough continuity evidence to merge them into one continuous delay.";
 }
 
 function formatContinuityRead(continuity: any, summary: any) {
   if (continuity.continuous_all_day_idle_supported) {
-    return "The latest stationary state, same-place idle marker, and lack of later movement support a current continuous stop/idle interpretation. Engine-on idling remains unconfirmed without ignition data.";
+    return "The latest stationary state, same-place provider idle marker, and lack of later movement support a current continuous stopped/provider-marker interpretation. Engine-on idling remains unconfirmed without ignition data.";
   }
   if (continuity.historical_idle_markers_broken_by_movement) {
-    return "The idle markers are historical or separate events because later telemetry includes moving points after at least one marker.";
+    return "The provider idle markers are historical or separate events because later telemetry includes moving points after at least one marker.";
   }
   if (summary.data_density === "low") {
     return "The available history is too thin to prove a continuous unbroken delay.";
@@ -3597,7 +3597,7 @@ function buildTruckJourneyNarrative(
   const stationaryBlocks = Number(summary.stationary_blocks || 0);
   const opening =
     continuity.historical_idle_markers_broken_by_movement || movingBlocks > 0
-      ? `${label}'s day looks like a route movement with stops, not one continuous idle event.`
+      ? `${label}'s day looks like a route movement with stops, not one continuous engine-on idle event.`
       : `${label}'s available day history is mostly stationary or limited, so this is a partial operational read.`;
   const sentences = [opening];
 
@@ -3708,8 +3708,8 @@ function formatDashboardTruckLine(truck: any) {
   const location = formatOperationalLocation(truck);
   const locationText = location ? `, ${location}` : "";
   const latestIdle = truck.latest_idle_event
-    ? ` Latest idle/stop event marker: ${formatDashboardIdleEvent(truck.latest_idle_event)}.`
-    : " No recent idle event found in the last 24 hours.";
+    ? ` Latest provider idle/stop marker: ${formatDashboardIdleEvent(truck.latest_idle_event)}.`
+    : " No recent provider idle marker found in the last 24 hours.";
   const dashboardMetric = formatDashboardMetric(truck.dashboard_context);
   const dataQualityNote = formatDashboardDataQualityNote(truck.dashboard_context);
   const timestampNote = formatTimestampQualityNote(truck);
@@ -3725,11 +3725,11 @@ function formatDashboardTruckStatus(truck: any) {
   switch (truck.current_status) {
     case "still_idling":
       if (Number(truck.latest_speed) === 0) {
-        return "fresh speed is 0 and a recent idle event exists, so this strongly suggests it is still idle or stationary.";
+        return "fresh speed is 0 and a recent provider idle marker exists, so this strongly supports a stationary/provider-marker read; engine-on idle is not verified unless ignition data supports it.";
       }
-      return "fresh low-speed telemetry and a recent idle event strongly suggest it is still idle or stationary.";
+      return "fresh low-speed telemetry and a recent provider idle marker strongly support a stationary/provider-marker read; engine-on idle is not verified unless ignition data supports it.";
     case "stopped_or_idle":
-      return "fresh telemetry suggests it is stopped or idle, but the idle event trail is weaker.";
+      return "fresh telemetry suggests it is GPS-stopped, but provider idle-marker evidence is weaker.";
     case "moving":
       return "does not look idle now; fresh telemetry shows movement.";
     case "stale":
@@ -3744,7 +3744,7 @@ function formatDashboardTruckStatus(truck: any) {
 function formatDashboardMetric(dashboardContext: any) {
   if (!dashboardContext) return "";
   if (dashboardContext.idle_hours) {
-    return ` Dashboard idle total: ${dashboardContext.idle_hours} hours.`;
+    return ` Dashboard provider idle-marker total: ${dashboardContext.idle_hours} hours.`;
   }
   if (dashboardContext.event_count !== null && dashboardContext.event_count !== undefined) {
     return ` Dashboard event count: ${dashboardContext.event_count}.`;
@@ -3772,7 +3772,7 @@ function formatDashboardDataQualityNote(dashboardContext: any) {
     return "";
   }
 
-  return " Data-quality note: that accumulated idle total is unusually high, so I would treat the duration as suspect until idle-event closure is reviewed.";
+  return " Data-quality note: that accumulated provider idle-marker total is unusually high, so I would treat the duration as suspect until event closure is reviewed.";
 }
 
 function formatTimestampQualityNote(value: any) {
@@ -3947,14 +3947,14 @@ function buildFuelSuspicionFallbackAnswer(context: any) {
     }
     if (idleEvents.length) {
       parts.push(
-        `Recent idle/stop activity also appears: ${idleEvents
+        `Recent provider idle/stop activity also appears: ${idleEvents
           .slice(0, 3)
           .map(formatEventBrief)
           .join("; ")}.`
       );
     }
   } else {
-    parts.push("No recent fuel-drop or excessive-idle events appear for this vehicle.");
+    parts.push("No recent fuel-drop events or provider excessive-idle markers appear for this vehicle.");
   }
 
   if (journeys.length) {
@@ -4254,7 +4254,7 @@ function buildInvestigationOpening(focus: any) {
     return "Fuel siphoning is not confirmed from one question, so the wider operational trail around this vehicle matters.";
   }
   if (focus?.stops_focus) {
-    return "The recent stop/idle trail matters more than a single location snapshot here.";
+    return "The recent GPS-stop/provider idle-marker trail matters more than a single location snapshot here.";
   }
   if (focus?.profitability_focus) {
     return "Operating context and the permitted finance trail were checked together.";
@@ -4290,7 +4290,7 @@ function formatInvestigationFindings(caseFile: any, focus: any, label: string) {
 
   if (telemetry.telemetry_points > 0) {
     lines.push(
-      `- The last ${telemetry.window_days || 7} days show ${telemetry.telemetry_points} telemetry point(s), with ${telemetry.stationary_points || 0} stationary/near-idle point(s).`
+      `- The last ${telemetry.window_days || 7} days show ${telemetry.telemetry_points} telemetry point(s), with ${telemetry.stationary_points || 0} GPS-stationary point(s).`
     );
   } else {
     lines.push("- No recent telemetry points appear for this vehicle.");
@@ -4310,7 +4310,7 @@ function formatInvestigationFindings(caseFile: any, focus: any, label: string) {
 
   if (events.stop_like_events?.length) {
     lines.push(
-      `- Stop/idle events found: ${events.stop_like_events.length}. Latest: ${formatEventBrief(events.stop_like_events[0])}.`
+      `- Stop/provider idle-marker events found: ${events.stop_like_events.length}. Latest: ${formatEventBrief(events.stop_like_events[0])}.`
     );
   }
   if (events.fuel_events?.length) {
@@ -4368,7 +4368,7 @@ function formatInvestigationMeanings(caseFile: any, focus: any) {
   }
 
   if (events.stop_like_events?.length) {
-    lines.push("- Repeated stops/idle events may point to normal queues, dispatch holds, roadside delays, or behavior that needs supervisor review.");
+    lines.push("- Repeated GPS stops or provider idle markers may point to normal queues, dispatch holds, roadside delays, or behavior that needs supervisor review; they do not prove engine-on idling by themselves.");
   }
 
   if (focus?.profitability_focus && financials.visible) {
@@ -4421,10 +4421,10 @@ function formatInvestigationNextChecks(caseFile: any, focus: any, label: string)
 
   if (focus?.fuel_focus) {
     checks.push("- Compare fuel receipts, tank dips, provider-reported distance or GPS-derived movement, and expected consumption for this vehicle.");
-    checks.push("- Check stops around the latest idle/fuel-event times.");
+    checks.push("- Check GPS stops around the latest provider idle-marker or fuel-event times.");
   }
   if (focus?.stops_focus) {
-    checks.push("- Review the latest stop/idle locations and whether they match yards, queues, borders, ports, or client sites.");
+    checks.push("- Review the latest GPS stop/provider idle-marker locations and whether they match yards, queues, borders, ports, or client sites.");
   }
   if (focus?.profitability_focus && financialsVisible) {
     checks.push("- Compare this vehicle against similar routes and clients before deciding it is expensive.");
@@ -4447,7 +4447,7 @@ function formatInvestigationFollowUps(focus: any, label: string, caseFile: any =
     return `I can next check stops around the suspicious times, show enabled trucks with usable fuel data, or compare ${label} against similar trips.`;
   }
   if (focus?.stops_focus) {
-    return `I can next group the stop locations for ${label}, or compare this vehicle's idle pattern against the rest of the fleet.`;
+    return `I can next group the stop locations for ${label}, or compare this vehicle's GPS-stopped/provider-marker pattern against the rest of the fleet.`;
   }
   if (focus?.profitability_focus && financialsVisible) {
     return `I can next compare ${label} against similar routes, clients, or fuel/expense patterns.`;

@@ -308,8 +308,10 @@ Confirm workflow behavior:
 - [ ] Confirm Live Tracking rows show active Trip context when a same-company non-demo journey is active/open and matched to the truck, for example `Trip: BAMBURI · MOMBASA → ATHI RIVER`, while keeping current location separate.
 - [ ] Complete/offload/end that Trip and confirm Live Tracking no longer shows it as active Trip context.
 - [ ] Call `GET /api/ops/efficiency?range=yesterday` with an ops-visible role and confirm the JSON returns movement, idle/stopped, stale-location, productivity, driver-readiness, and client-waiting readiness sections.
-- [ ] Confirm `/api/ops/efficiency` labels metric evidence as provider-reported, GPS-estimated, event-derived, unavailable, or not enough linked data instead of inventing fuel/profit/driver/client conclusions.
+- [ ] Confirm `/api/ops/efficiency` labels metric evidence as provider-reported, GPS-estimated, provider-derived, unavailable, or not enough linked data instead of inventing fuel/profit/driver/client conclusions.
 - [ ] Confirm stopped-time rows show customer-readable evidence such as "No movement observed in sampled intervals", "Movement observed in X% of sampled intervals", GPS point/interval counts, and low-confidence sparse/capped labels instead of technical observed-interval ratios.
+- [ ] Confirm stopped-time rows are labeled GPS-estimated stopped time and do not claim engine-on idling, fuel burn, driver waste, or fuel misuse.
+- [ ] Confirm idle/excessive-idle event sections are labeled provider idle markers/provider-derived marker windows unless ignition/engine/CAN data verifies true engine-on idle.
 - [ ] Confirm `/api/ops/efficiency` does not return raw coordinate series and does not expose disabled/unreviewed asset telemetry.
 - [ ] Confirm `/api/ops/efficiency` does not let future provider timestamps inflate movement/stopped/productivity metrics or mark an asset fresh when timestamp quality is suspicious.
 - [ ] Confirm ops/management/owner/admin/platform-owner can view operational efficiency summaries and unauthorized roles receive a role boundary.
@@ -342,6 +344,7 @@ Confirm workflow behavior:
 - [ ] Confirm Trip contribution velocity ranks reviewed Trips by contribution/day, shows contribution/trip, duration, estimated trips/week potential, and marks active/open Trips as provisional.
 - [ ] Confirm Client contribution velocity shows total contribution, average contribution/trip, average duration days, average contribution/day, trip count, and estimated trips/week potential for the selected period.
 - [ ] Confirm operational drag categories show client waiting only when explicit client/customer delay evidence exists; breakdown, road, border, driver, dispatch, and unknown delays must not be blamed on the client.
+- [ ] Confirm Management operational drag distinguishes GPS-stopped evidence from provider idle markers and does not present either as true engine-on idle without verified ignition/engine data.
 - [ ] Confirm ops/clerk roles cannot access Management Intelligence finance metrics.
 
 ## 8. Nava Eye Smoke Test
@@ -381,6 +384,7 @@ Open `/nava-eye` and ask:
 - [ ] If multiple KBJ132C Bamburi production Trips exist in the selected range, confirm Nava Eye lists candidate trip IDs/dates/routes/readiness and asks which one to use instead of guessing.
 - [ ] Ask the same trip-performance question as an ops-only role and confirm finance amounts are hidden while trip readiness, revenue-present/fuel-linked/expense-linked status, missing distance, and the finance-role boundary remain useful.
 - [ ] Confirm trip-performance answers do not claim final audited profit, actual fuel burn, fuel efficiency, fuel theft, or engine-on idling from GPS-only evidence.
+- [ ] Ask an idle/stopped question and confirm Nava Eye distinguishes GPS-stationary evidence, provider idle markers, and true engine-on idle; without ignition/engine/CAN support it says engine-on idling and fuel burn are not verified.
 - [ ] "Which trucks moved but have no revenue?" and confirm it requires reliable trip/revenue linking before producing an exception list.
 - [ ] "Can we trust KCW 103Z odometer?" and confirm the answer uses odometer health/distance quality evidence.
 - [ ] As an `ops` user, ask a profit/revenue/contribution question and confirm Nava Eye shows a role boundary without leaking finance values.

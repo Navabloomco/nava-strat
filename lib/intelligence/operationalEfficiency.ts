@@ -713,7 +713,7 @@ function buildIdleTimeSummary(
     status:
       alertRank.length || stoppedRank.length ? "available" : "not_enough_evidence",
     evidence_label:
-      "Idle alerts are event-derived marker windows; stopped time is GPS-estimated and is not engine-on idle proof.",
+      "Provider idle markers are provider-derived event windows; GPS-stopped time is not engine-on idle proof.",
     top_idle_alert_windows: alertRank.slice(0, 15),
     top_stopped_by_gps: stoppedRank.slice(0, 15),
     idle_alert_truck_count: alertRank.length,
@@ -724,7 +724,7 @@ function buildIdleTimeSummary(
         : uniqueStrings([
             eventResult.missing ? "telemetry event rows" : "",
             telemetryResult.missing ? "telemetry logs" : "",
-            "idle markers or enough GPS stopped intervals for the selected window",
+            "provider idle markers or enough GPS-stopped intervals for the selected window",
           ]),
   };
 }
@@ -780,10 +780,10 @@ function buildIdleWindowsByTruck(
         (sum, window) => sum + Number(window.alert_span_minutes || 0),
         0
       ),
-      evidence_label: "event-derived alert marker windows",
+      evidence_label: "provider-derived idle marker windows",
       windows: windows.slice(0, 6),
       interpretation:
-        "This is alert-window evidence, not confirmed engine-on idling unless ignition/engine data is available.",
+        "This is provider marker evidence, not confirmed engine-on idling unless ignition/engine data is available.",
     });
   }
 
@@ -905,7 +905,7 @@ function buildProductivitySummary(
   return {
     status: rows.length ? "available" : "not_enough_evidence",
     evidence_label:
-      "productive time is estimated from moving versus stationary GPS point intervals; it is not revenue or profit.",
+      "productive time is estimated from moving versus stationary GPS point intervals; it is not engine-on idle, fuel burn, revenue, or profit.",
     analyzed_truck_count: rows.length,
     low_productive_time_count: lowProductiveRows.length,
     low_productive_trucks: lowProductiveRows.slice(0, 15),
@@ -1020,11 +1020,11 @@ function buildClientWaitingSummary(journeysResult: QueryResult<any>) {
     evidence_label: "unavailable",
     linked_journey_count: journeysWithClient.length,
     reason:
-      "Client waiting time requires stops or idle events linked to client sites/geofences or journey legs. Current journey records alone are not enough to rank client-caused waiting safely.",
+      "Client waiting time requires GPS-stopped evidence or provider idle markers linked to client sites/geofences or journey legs. Current journey records alone are not enough to rank client-caused waiting safely.",
     missing: uniqueStrings([
       journeysResult.missing ? "journeys table" : "",
       "client-site geofence linkage",
-      "stop/idle event to journey/client linkage",
+      "GPS-stopped or provider idle-marker linkage to journey/client",
     ]),
   };
 }

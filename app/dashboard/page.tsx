@@ -232,16 +232,16 @@ function buildWatchItems(
     items.push({
       id: "idle-duration-quality",
       severity: extremeIdleDurations.length ? "critical" : "warning",
-      title: "Idle duration looks suspicious",
+      title: "Provider idle-marker duration looks suspicious",
       summary:
-        "One or more top idle totals are too large to treat as continuous idling. This may be an unclosed idle event or accumulator issue.",
+        "One or more provider idle-marker totals are too large to treat as continuous engine-on idling. This may be an unclosed provider event or accumulator issue.",
       evidence: trucks.map(
         (truck: any) => `${truck.truck_id}: ${formatWatchNumber(truck.idle_hours)} hours accumulated`
       ),
       suggested_next_check:
-        "Investigate whether idle events are closing correctly before using the total as a continuous-duration fact.",
+        "Investigate whether provider idle-marker events are closing correctly before using the total as a continuous-duration fact.",
       suggested_question:
-        "Check whether the top idle trucks have an idle-event closure or data-quality problem.",
+        "Check whether the top provider idle-marker trucks have an event-closure or data-quality problem.",
       href: "/nava-eye",
     });
   }
@@ -251,19 +251,19 @@ function buildWatchItems(
     items.push({
       id: "current-stationary-idle",
       severity: "warning",
-      title: "Top idle trucks appear stationary",
+      title: "Top provider idle-marker trucks appear stationary",
       summary:
-        "These trucks have fresh low-speed telemetry and recent idle events. Nava can interpret that as current stationary/idle evidence, without claiming engine-on idling.",
+        "These trucks have fresh low-speed telemetry and recent provider idle markers. Nava can interpret that as current stationary/provider-marker evidence, without claiming engine-on idling.",
       evidence: trucks.map(
         (truck: any) =>
           `${truck.truck_id}: speed ${formatWatchNumber(truck.latest_speed)}, ${formatFreshness(
             truck.freshness_minutes
-          )}, latest idle ${formatRelativeTime(truck.latest_idle_event_at)}`
+          )}, latest provider marker ${formatRelativeTime(truck.latest_idle_event_at)}`
       ),
       suggested_next_check:
         "Check active journeys, geofences, driver assignment, and provider freshness for the same trucks.",
       suggested_question:
-        "Are the top idle trucks still idling, and what context explains the stop?",
+        "Are the top provider idle-marker trucks still stopped, and what context explains the stop?",
       href: "/tracking/live",
     });
   }

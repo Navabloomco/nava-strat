@@ -853,16 +853,18 @@ function buildDelayEvidence(eventRows: any[], telemetryRows: any[]) {
   if (gps.stopped_minutes && !categoryMap.size) {
     categoryMap.set("unknown", {
       category: "unknown",
-      label: "Unknown delay / stopped time",
+      label: "Unknown / GPS-stopped time",
       attribution: "unknown",
       event_count: 0,
       duration_minutes: gps.stopped_minutes,
-      evidence_label: "GPS-estimated stopped intervals without a linked delay cause",
+      evidence_label:
+        "GPS-estimated stopped intervals without a linked delay cause; engine-on idle not verified",
     });
   }
 
   return {
-    delay_evidence_present: idleRows.length > 0 || highSeverityRows.length > 0,
+    delay_evidence_present:
+      idleRows.length > 0 || highSeverityRows.length > 0 || Boolean(gps.stopped_minutes),
     idle_marker_count: idleRows.length,
     event_count: eventRows.length,
     high_severity_event_count: highSeverityRows.length,
@@ -877,7 +879,7 @@ function buildDelayEvidence(eventRows: any[], telemetryRows: any[]) {
         category.duration_minutes > 0 ? Math.round(category.duration_minutes) : null,
     })),
     evidence_label:
-      "event-derived alert markers and GPS-estimated stopped intervals; not engine-on idling proof",
+      "provider-derived idle/alert markers and GPS-estimated stopped intervals; not engine-on idling proof",
     engine_on_idling_confirmed: false,
   };
 }

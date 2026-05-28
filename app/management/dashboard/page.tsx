@@ -280,13 +280,13 @@ export default function ManagementDashboard() {
           <Panel dark className="p-5">
             <SectionTitle
               title="Operational drag"
-              subtitle="Delay and waiting evidence by safe attribution"
+              subtitle="GPS-stopped evidence, provider idle markers, and delay evidence by safe attribution"
             />
             {delayCategories.length === 0 ? (
               <EmptyState
                 dark
                 title="No delay evidence in this period"
-                body="Delay categories appear when Trip-linked events or stopped-time evidence is available."
+                body="Delay categories appear when Trip-linked provider markers or GPS-stopped evidence is available."
               />
             ) : (
               <div className="mt-4 grid gap-3">
@@ -313,7 +313,8 @@ export default function ManagementDashboard() {
                     <p className="mt-2 text-xs leading-5 text-slate-400">
                       {category.client_blame_allowed
                         ? "Client waiting is shown only because explicit client/customer delay evidence exists."
-                        : "Operational drag, not client blame."}
+                        : "Operational drag, not client blame or engine-on idle proof."}
+                      {category.evidence_label ? ` ${category.evidence_label}.` : ""}
                     </p>
                   </div>
                 ))}
