@@ -18,6 +18,7 @@ export default function NewFuelPage() {
   const [providers, setProviders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
+  const [canViewFinance, setCanViewFinance] = useState(false);
 
   const [client, setClient] = useState("");
   const [truck, setTruck] = useState("");
@@ -67,6 +68,7 @@ export default function NewFuelPage() {
       )
     );
     setProviders(json.fuel_providers || []);
+    setCanViewFinance(Boolean(json.capabilities?.can_view_finance));
     setLoading(false);
   }
 
@@ -93,7 +95,7 @@ export default function NewFuelPage() {
 
     const cleanTruck = truck.trim().toUpperCase();
     const litersNum = Number(liters);
-    const priceNum = pricePerLiter ? Number(pricePerLiter) : 0;
+    const priceNum = canViewFinance && pricePerLiter ? Number(pricePerLiter) : 0;
 
     if (!cleanTruck || !litersNum) {
       alert("Truck and liters are required.");
@@ -118,7 +120,7 @@ export default function NewFuelPage() {
       body: JSON.stringify({
         truck_text: cleanTruck,
         liters: litersNum,
-        price_per_liter: priceNum,
+        ...(canViewFinance ? { price_per_liter: priceNum } : {}),
         vendor: vendor.trim().toUpperCase(),
         notes,
         journey_id: journeyId || null,
@@ -251,7 +253,7 @@ export default function NewFuelPage() {
                     if (provider) {
                       setVendor(provider.name || "");
 
-                      if (provider.current_price_per_liter) {
+                      if (canViewFinance && provider.current_price_per_liter) {
                         setPricePerLiter(provider.current_price_per_liter.toString());
                       }
                     }
@@ -279,14 +281,25 @@ export default function NewFuelPage() {
                 />
               </FormField>
 
-              <FormField label="Price per liter" dark>
-                <input
-                  placeholder="Price per liter e.g. 197"
-                  value={pricePerLiter}
-                  onChange={(e) => setPricePerLiter(e.target.value)}
-                  className={inputClass}
-                />
-              </FormField>
+              {canViewFinance ? (
+                <FormField label="Price per liter" dark>
+                  <input
+                    placeholder="Price per liter"
+                    value={pricePerLiter}
+                    onChange={(e) => setPricePerLiter(e.target.value)}
+                    className={inputClass}
+                  />
+                </FormField>
+              ) : (
+                <Panel dark className="border-white/10 bg-slate-950/60 p-4">
+                  <div className="text-sm font-semibold text-white">
+                    Fuel cost is restricted.
+                  </div>
+                  <p className="mt-2 text-sm leading-6 text-slate-400">
+                    Save litres, truck, supplier, and operational notes. Finance roles can add or review fuel cost fields.
+                  </p>
+                </Panel>
+              )}
             </div>
 
             <label className="flex items-center gap-3 rounded-md border border-white/10 bg-slate-900 px-3 py-3 text-sm text-slate-200">

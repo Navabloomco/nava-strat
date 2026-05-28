@@ -18,6 +18,12 @@ type CompanyOption = {
   slug: string;
 };
 
+type CompanyMembership = {
+  company_id: string | null;
+  role: string | null;
+  is_active?: boolean;
+};
+
 type NavaEyeConversation = {
   id: string;
   company_id: string;
@@ -39,6 +45,18 @@ type NavaEyeMessage = {
 
 type ConversationStatusTab = "open" | "closed";
 
+const FINANCE_PROMPT_ROLES = new Set([
+  "platform_owner",
+  "owner",
+  "admin",
+  "finance",
+  "management",
+]);
+
+function normalizeRole(role: unknown) {
+  return String(role || "").trim().toLowerCase();
+}
+
 export default function NavaEyeChatPage() {
   const [question, setQuestion] = useState("");
   const [errorDetail, setErrorDetail] = useState("");
@@ -47,6 +65,8 @@ export default function NavaEyeChatPage() {
   const [initializing, setInitializing] = useState(true);
   const [conversationLoading, setConversationLoading] = useState(false);
   const [companies, setCompanies] = useState<CompanyOption[]>([]);
+  const [memberships, setMemberships] = useState<CompanyMembership[]>([]);
+  const [globalRoles, setGlobalRoles] = useState<string[]>([]);
   const [isPlatformOwner, setIsPlatformOwner] = useState(false);
   const [selectedCompanyId, setSelectedCompanyId] = useState("");
   const [openConversations, setOpenConversations] = useState<NavaEyeConversation[]>([]);
@@ -119,6 +139,8 @@ export default function NavaEyeChatPage() {
     );
     pendingConversationIdRef.current = requestedConversationId;
     setCompanies(nextCompanies);
+    setMemberships(json.memberships || []);
+    setGlobalRoles((json.roles || []).map(normalizeRole));
     setIsPlatformOwner(Boolean(json.is_platform_owner));
     setConversationStatusTab(requestedStatus || "open");
     setSelectedCompanyId(
@@ -450,13 +472,29 @@ export default function NavaEyeChatPage() {
     () => allConversations.find((conversation) => conversation.id === selectedConversationId) || null,
     [allConversations, selectedConversationId]
   );
-  const suggestedQuestions = [
-    "Which trucks are live right now?",
-    "Which assets have stale locations?",
-    "Where is KCW 103Z?",
-    "Is KDQ265 siphoning fuel?",
-    "Why is KDQ265 always stopping?",
-  ];
+  const canShowFinancePrompt = useMemo(() => {
+    if (isPlatformOwner) return true;
+    const companyRoles = memberships
+      .filter((membership) => membership.company_id === selectedCompanyId)
+      .map((membership) => normalizeRole(membership.role));
+    const effectiveRoles = companyRoles.length ? companyRoles : globalRoles;
+    return effectiveRoles.some((role) => FINANCE_PROMPT_ROLES.has(role));
+  }, [globalRoles, isPlatformOwner, memberships, selectedCompanyId]);
+
+  const suggestedQuestions = useMemo(() => {
+    const prompts = [
+      "Which trucks are live right now?",
+      "Which assets have stale locations?",
+      "What needs attention today?",
+      "Which trucks moved most today?",
+    ];
+
+    if (canShowFinancePrompt) {
+      prompts.splice(2, 0, "Which trips are ready for contribution review?");
+    }
+
+    return prompts;
+  }, [canShowFinancePrompt]);
   const visibleConversations =
     conversationStatusTab === "open" ? openConversations : closedConversations;
   const selectedConversationHasAssistantMessage = messages.some(

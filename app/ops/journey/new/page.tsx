@@ -49,6 +49,20 @@ type EnabledAsset = {
   } | null;
 };
 
+type CompanyMembership = {
+  company_id: string | null;
+  role: string | null;
+  is_active?: boolean;
+};
+
+const FINANCE_VISIBLE_ROLES = new Set([
+  "platform_owner",
+  "owner",
+  "admin",
+  "finance",
+  "management",
+]);
+
 function routeLabel(route: SavedRoute) {
   return `${route.from_location || "—"} → ${route.to_location || "—"}`;
 }
@@ -59,6 +73,29 @@ function labelize(value: string | null | undefined) {
   return String(value)
     .replace(/_/g, " ")
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function normalizeRole(role: unknown) {
+  return String(role || "").trim().toLowerCase();
+}
+
+function canSeeCommercialDetails(input: {
+  roles?: string[];
+  memberships?: CompanyMembership[];
+  companies?: Array<{ id?: string | null }>;
+  isPlatformOwner?: boolean;
+}) {
+  const defaultCompanyId = input.companies?.[0]?.id || "";
+  const companyRoles = (input.memberships || [])
+    .filter((membership) => !defaultCompanyId || membership.company_id === defaultCompanyId)
+    .map((membership) => normalizeRole(membership.role));
+  const effectiveRoles = input.isPlatformOwner
+    ? [...companyRoles, "platform_owner"]
+    : companyRoles.length
+      ? companyRoles
+      : (input.roles || []).map(normalizeRole);
+
+  return effectiveRoles.some((role) => FINANCE_VISIBLE_ROLES.has(role));
 }
 
 function toDateTimeLocalValue(date = new Date()) {
@@ -91,13 +128,41 @@ export default function NewJourneyPage() {
   const [vehicleSearch, setVehicleSearch] = useState("");
   const [selectedVehicleId, setSelectedVehicleId] = useState("");
   const [vehicleAssignmentHint, setVehicleAssignmentHint] = useState("");
+  const [canManageCommercialDetails, setCanManageCommercialDetails] = useState(false);
   const router = useRouter();
 
   useEffect(() => {
+    loadAccess();
     loadSavedRoutes();
     loadDrivers();
     loadEnabledAssets();
   }, []);
+
+  async function loadAccess() {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData.session?.access_token;
+
+    if (!token) return;
+
+    const res = await fetch("/api/companies", {
+      cache: "no-store",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    const json = await res.json();
+
+    if (!res.ok || !json.success) return;
+
+    setCanManageCommercialDetails(
+      canSeeCommercialDetails({
+        roles: json.roles || [],
+        memberships: json.memberships || [],
+        companies: json.companies || [],
+        isPlatformOwner: Boolean(json.is_platform_owner),
+      })
+    );
+  }
 
   async function loadSavedRoutes() {
     const { data: sessionData } = await supabase.auth.getSession();
@@ -280,35 +345,40 @@ export default function NewJourneyPage() {
       return;
     }
 
+    const payload: Record<string, any> = {
+      internal_trip_id: tripId,
+      asset_id: selectedVehicleId || null,
+      driver_id: selectedDriverId || null,
+      client_name: client.trim().toUpperCase(),
+      truck: cleanTruck,
+      driver: driver.trim().toUpperCase(),
+      manual_driver_text: selectedDriverId ? null : driver.trim().toUpperCase(),
+      from_location: fromLocation.trim().toUpperCase(),
+      to_location: toLocation.trim().toUpperCase(),
+      status: "active",
+      start_time: startTime || null,
+      end_time: endTime || null,
+      expected_fuel_liters: expectedFuel ? Number(expectedFuel) : null,
+    };
+
+    if (canManageCommercialDetails) {
+      payload.loaded_quantity = loadedTonnage ? Number(loadedTonnage) : null;
+      payload.loaded_tonnage = loadedTonnage ? Number(loadedTonnage) : null;
+      payload.billing_quantity = loadedTonnage ? Number(loadedTonnage) : null;
+      payload.billing_unit = rateType === "per_truck" ? "truck" : "tonne";
+      payload.rate_type = rateType;
+      payload.rate_amount = rateAmount ? Number(rateAmount) : null;
+      payload.rate_currency = rateCurrency;
+      payload.fx_rate = rateCurrency === "KES" ? 1 : fxRate ? Number(fxRate) : null;
+    }
+
     const res = await fetch("/api/journeys", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({
-        internal_trip_id: tripId,
-        asset_id: selectedVehicleId || null,
-        driver_id: selectedDriverId || null,
-        client_name: client.trim().toUpperCase(),
-        truck: cleanTruck,
-        driver: driver.trim().toUpperCase(),
-        manual_driver_text: selectedDriverId ? null : driver.trim().toUpperCase(),
-        from_location: fromLocation.trim().toUpperCase(),
-        to_location: toLocation.trim().toUpperCase(),
-        status: "active",
-        start_time: startTime || null,
-        end_time: endTime || null,
-        expected_fuel_liters: expectedFuel ? Number(expectedFuel) : null,
-        loaded_quantity: loadedTonnage ? Number(loadedTonnage) : null,
-        loaded_tonnage: loadedTonnage ? Number(loadedTonnage) : null,
-        billing_quantity: loadedTonnage ? Number(loadedTonnage) : null,
-        billing_unit: rateType === "per_truck" ? "truck" : "tonne",
-        rate_type: rateType,
-        rate_amount: rateAmount ? Number(rateAmount) : null,
-        rate_currency: rateCurrency,
-        fx_rate: rateCurrency === "KES" ? 1 : fxRate ? Number(fxRate) : null,
-      }),
+      body: JSON.stringify(payload),
     });
 
     const json = await res.json();
@@ -700,77 +770,88 @@ export default function NewJourneyPage() {
               </div>
             </section>
 
-            <Panel dark className="border-white/10 bg-slate-950/60 p-4">
-              <details>
-                <summary className="cursor-pointer text-sm font-semibold text-white">
-                  Optional commercial details
-                </summary>
-                <p className="mt-2 text-sm leading-6 text-slate-400">
-                  Add rate and tonnage only when they are already agreed. Trip Intelligence will still show missing-data notes until linked costs are recorded.
-                </p>
-                <div className="mt-5 grid gap-5 md:grid-cols-2">
-                  <FormField label="Loaded tonnage optional" dark>
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      placeholder="e.g. 28"
-                      value={loadedTonnage}
-                      onChange={(e) => setLoadedTonnage(e.target.value)}
-                      className={inputClass}
-                    />
-                  </FormField>
-
-                  <FormField label="Rate amount optional" dark>
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      placeholder="e.g. 4500"
-                      value={rateAmount}
-                      onChange={(e) => setRateAmount(e.target.value)}
-                      className={inputClass}
-                    />
-                  </FormField>
-
-                  <FormField label="Rate currency" dark>
-                    <select
-                      value={rateCurrency}
-                      onChange={(e) => setRateCurrency(e.target.value)}
-                      className={inputClass}
-                    >
-                      <option value="KES">KES</option>
-                      <option value="USD">USD</option>
-                    </select>
-                  </FormField>
-
-                  <FormField label="Rate basis" dark>
-                    <select
-                      value={rateType}
-                      onChange={(e) => setRateType(e.target.value)}
-                      className={inputClass}
-                    >
-                      <option value="per_tonne">Per tonne</option>
-                      <option value="per_truck">Per truck</option>
-                    </select>
-                  </FormField>
-
-                  {rateCurrency !== "KES" && (
-                    <FormField label="FX rate to KES" dark>
+            {canManageCommercialDetails ? (
+              <Panel dark className="border-white/10 bg-slate-950/60 p-4">
+                <details>
+                  <summary className="cursor-pointer text-sm font-semibold text-white">
+                    Optional commercial details
+                  </summary>
+                  <p className="mt-2 text-sm leading-6 text-slate-400">
+                    Add rate, billing quantity, and FX only when they are already agreed. Trip Intelligence will still show missing-data notes until linked costs are recorded.
+                  </p>
+                  <div className="mt-5 grid gap-5 md:grid-cols-2">
+                    <FormField label="Loaded / billing quantity optional" dark>
                       <input
                         type="number"
                         min="0"
-                        step="0.0001"
-                        placeholder="e.g. 130"
-                        value={fxRate}
-                        onChange={(e) => setFxRate(e.target.value)}
+                        step="0.01"
+                        placeholder="Quantity for billing review"
+                        value={loadedTonnage}
+                        onChange={(e) => setLoadedTonnage(e.target.value)}
                         className={inputClass}
                       />
                     </FormField>
-                  )}
+
+                    <FormField label="Rate amount optional" dark>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        placeholder="Rate amount"
+                        value={rateAmount}
+                        onChange={(e) => setRateAmount(e.target.value)}
+                        className={inputClass}
+                      />
+                    </FormField>
+
+                    <FormField label="Rate currency" dark>
+                      <select
+                        value={rateCurrency}
+                        onChange={(e) => setRateCurrency(e.target.value)}
+                        className={inputClass}
+                      >
+                        <option value="KES">KES</option>
+                        <option value="USD">USD</option>
+                      </select>
+                    </FormField>
+
+                    <FormField label="Rate basis" dark>
+                      <select
+                        value={rateType}
+                        onChange={(e) => setRateType(e.target.value)}
+                        className={inputClass}
+                      >
+                        <option value="per_tonne">Per tonne</option>
+                        <option value="per_truck">Per truck</option>
+                      </select>
+                    </FormField>
+
+                    {rateCurrency !== "KES" && (
+                      <FormField label="FX rate to KES" dark>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.0001"
+                          placeholder="Company-approved FX rate"
+                          value={fxRate}
+                          onChange={(e) => setFxRate(e.target.value)}
+                          className={inputClass}
+                        />
+                      </FormField>
+                    )}
+                  </div>
+                </details>
+              </Panel>
+            ) : (
+              <Panel dark className="border-white/10 bg-slate-950/60 p-4">
+                <div className="text-sm font-semibold text-white">
+                  Finance details are managed by finance roles.
                 </div>
-              </details>
-            </Panel>
+                <p className="mt-2 text-sm leading-6 text-slate-400">
+                  You can create the operational Trip now. Revenue, rate, billing quantity, and FX can be added later by finance or management roles.
+                </p>
+              </Panel>
+            )}
 
             <Panel dark className="border-cyan-200/20 bg-cyan-300/10 p-4">
               <div className="text-xs font-bold uppercase tracking-[0.14em] text-cyan-100">

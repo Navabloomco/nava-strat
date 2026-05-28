@@ -10,6 +10,7 @@ const VIEW_ROLES = new Set([
   "admin",
   "platform_owner",
   "finance",
+  "management",
   "ops",
 ]);
 const MANAGE_ROLES = new Set(["owner", "admin", "platform_owner"]);
@@ -30,15 +31,19 @@ function noStoreJson(body: any, init?: ResponseInit) {
   });
 }
 
-function sanitizeProvider(provider: any) {
+function sanitizeProvider(provider: any, includeFinance: boolean) {
   return {
     id: provider.id,
     name: provider.name,
-    default_price_per_liter:
-      provider.current_price_per_liter === null ||
-      provider.current_price_per_liter === undefined
-        ? null
-        : Number(provider.current_price_per_liter),
+    ...(includeFinance
+      ? {
+          default_price_per_liter:
+            provider.current_price_per_liter === null ||
+            provider.current_price_per_liter === undefined
+              ? null
+              : Number(provider.current_price_per_liter),
+        }
+      : {}),
     is_active: provider.is_active !== false,
     created_at: provider.created_at || null,
     updated_at: provider.updated_at || null,
@@ -53,11 +58,17 @@ function buildCapabilities(roles: string[], isPlatformOwner: boolean) {
     normalizedRoles.has("owner") ||
     normalizedRoles.has("admin");
   const canView =
-    canManage || normalizedRoles.has("finance") || normalizedRoles.has("ops");
+    canManage ||
+    normalizedRoles.has("finance") ||
+    normalizedRoles.has("management") ||
+    normalizedRoles.has("ops");
+  const canViewFinance =
+    canManage || normalizedRoles.has("finance") || normalizedRoles.has("management");
 
   return {
     can_view_fuel_providers: canView,
     can_manage_fuel_providers: canManage,
+    can_view_finance: canViewFinance,
   };
 }
 
@@ -271,7 +282,9 @@ export async function GET(req: Request) {
       is_platform_owner: resolved.isPlatformOwner,
       roles: resolved.roles,
       capabilities: resolved.capabilities,
-      fuel_providers: (providers || []).map(sanitizeProvider),
+      fuel_providers: (providers || []).map((provider) =>
+        sanitizeProvider(provider, Boolean(resolved.capabilities.can_view_finance))
+      ),
     });
   } catch (err: any) {
     console.error("Fuel providers GET error:", err);
@@ -307,7 +320,10 @@ export async function POST(req: Request) {
 
     return noStoreJson({
       success: true,
-      fuel_provider: sanitizeProvider(provider),
+      fuel_provider: sanitizeProvider(
+        provider,
+        Boolean(resolved.capabilities.can_view_finance)
+      ),
     });
   } catch (err: any) {
     console.error("Fuel providers POST error:", err);

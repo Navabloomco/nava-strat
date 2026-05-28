@@ -7,6 +7,7 @@ import { getCurrentFleetLocations } from "../../../../lib/intelligence/fleetLoca
 import { supabase } from "../../../../lib/supabase";
 import { supabaseAdmin } from "../../../../lib/supabaseAdmin";
 import {
+  canReviewAssets,
   canViewOps,
   normalizeRole,
   rolesForCompany,
@@ -488,6 +489,10 @@ export async function GET(req: Request) {
         { status: 403 }
       );
     }
+    const includeCoordinates =
+      ["1", "true", "yes"].includes(
+        String(searchParams.get("includeCoordinates") || "").toLowerCase()
+      ) && canReviewAssets(resolved.roles);
 
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
@@ -578,8 +583,12 @@ export async function GET(req: Request) {
       return {
         truck_id: truck.truck_id,
         registration: truck.registration,
-        latitude: truck.latitude,
-        longitude: truck.longitude,
+        ...(includeCoordinates
+          ? {
+              latitude: truck.latitude,
+              longitude: truck.longitude,
+            }
+          : {}),
         last_seen_at: truck.last_seen_at,
         freshness_minutes: truck.freshness_minutes,
         status: truck.status,
@@ -614,8 +623,12 @@ export async function GET(req: Request) {
         return {
           truck_id: asset.truck_id,
           registration: asset.registration || asset.truck_id,
-          latitude: asset.latitude ?? null,
-          longitude: asset.longitude ?? null,
+          ...(includeCoordinates
+            ? {
+                latitude: asset.latitude ?? null,
+                longitude: asset.longitude ?? null,
+              }
+            : {}),
           last_seen_at: asset.last_seen_at || null,
           status: asset.status || null,
           location_label: location.location_label,
@@ -639,6 +652,7 @@ export async function GET(req: Request) {
         telemetry_points_24h: telemetryLogs.length,
         provider_count: providers.length,
         active_provider_count: providers.filter((provider) => provider.is_active).length,
+        coordinates_included: includeCoordinates,
       },
       trucks,
       stale_assets: staleAssets,

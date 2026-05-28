@@ -266,6 +266,8 @@ Confirm workflow behavior:
 - [ ] As an ops/clerk-style user without finance visibility, confirm fuel allocation costs, linked variable costs, and management finance flags are hidden while fuel litres and operational proof remain usable where the role can view fuel.
 - [ ] As a finance/management/elevated user, open the same Trip Detail and confirm Finance / revenue and Management intelligence sections are visible according to role permissions.
 - [ ] Confirm revenue/rate/FX entry remains finance-controlled. Clerks should not need confidential rates to enter operational expenses or proof.
+- [ ] As an ops/clerk-style user, open `/ops/journey/new` and confirm only operational Trip fields are visible; rate, currency, billing quantity, FX, revenue, and contribution fields are not shown or saved.
+- [ ] As a finance/management/elevated user with Trip creation access, confirm commercial Trip creation fields are available where intended and still store through role-gated server logic.
 - [ ] Confirm generic Trip Detail UI does not show hardcoded pilot tenant examples, truck plates, clients, driver names, routes, or contribution amounts; such values should appear only when loaded from the current company data.
 - [ ] Vehicle picker can fill the truck field.
 - [ ] Current standing driver assignment can fill or suggest the driver field.
@@ -273,10 +275,13 @@ Confirm workflow behavior:
 - [ ] Apply the `fuel_allocations` migration before testing allocation workflows.
 - [ ] Create a 700L fuel issue with no exact Trip allocation, then call `POST /api/fuel/allocations` to allocate 450L to Trip A and confirm `GET /api/fuel/allocations?fuelLogId=<id>` shows 250L remaining/unallocated or carry-forward pending.
 - [ ] Confirm the allocation API rejects a second active allocation that would exceed the fuel issue litres/cost, excluding reversed allocations.
+- [ ] As an ops/fuel-entry role without finance visibility, confirm `/fuel`, `/fuel/new`, `/api/fuel`, and `/api/fuel/allocations` show litres, truck, vendor/source, status, and notes but do not return or display `price_per_liter`, `total_cost`, `allocated_cost`, or cost summaries.
+- [ ] As a finance/management/elevated role, confirm fuel issue costs, allocation costs, and cost summaries remain visible.
 - [ ] Expense entry uses JourneyPicker and submits without changing payload names.
 - [ ] Live Tracking only shows enabled intelligence assets.
 - [ ] Geofence labels render when matched.
 - [ ] Live Tracking does not show raw coordinates as the primary location. Dash-like provider labels such as `-` should fall back to readable provider labels, geofences, exact/nearby cached place labels, dispatcher-friendly Kenya urban/landmark/town/corridor wording such as `by The Hub, Karen, Nairobi`, `around JKIA / Embakasi, Nairobi`, `around Industrial Area, Nairobi`, `by Mombasa Port, Mombasa`, `around Maungu, about 2.4 km south of town`, `around Malaba, Kenya border`, `between Voi and Mariakani, around Taru`, or `along the Voi-Mariakani corridor`, then `Readable place name unavailable`.
+- [ ] Confirm `/api/tracking/live` does not return raw `latitude` / `longitude` to normal company users by default; coordinates require an explicit elevated/debug request.
 - [ ] Confirm Live Tracking top cards prioritize operational state (`Enabled assets`, `Live now`, `Stale assets`, `Telemetry 24h`, `Providers`) and do not show raw imported asset counts as a primary card.
 - [ ] Confirm Live Tracking rows show active Trip context when a same-company non-demo journey is active/open and matched to the truck, for example `Trip: BAMBURI · MOMBASA → ATHI RIVER`, while keeping current location separate.
 - [ ] Complete/offload/end that Trip and confirm Live Tracking no longer shows it as active Trip context.
@@ -351,6 +356,7 @@ Open `/nava-eye` and ask:
 - [ ] "Which trucks moved but have no revenue?" and confirm it requires reliable trip/revenue linking before producing an exception list.
 - [ ] "Can we trust KCW 103Z odometer?" and confirm the answer uses odometer health/distance quality evidence.
 - [ ] As an `ops` user, ask a profit/revenue/contribution question and confirm Nava Eye shows a role boundary without leaking finance values.
+- [ ] Confirm Nava Eye suggested prompt chips are generic or generated from current-company data only. They must not hardcode pilot trucks, clients, trip IDs, contribution amounts, or tenant examples.
 - [ ] Close the conversation and confirm the thread becomes read-only.
 - [ ] Refresh `/nava-eye` and confirm the selected company, selected thread, and open/closed tab remain stable.
 - [ ] Close an open conversation from the bottom action after the latest assistant answer.

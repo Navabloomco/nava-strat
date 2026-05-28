@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   canEditFuel,
+  canViewFinance,
   canViewFuel,
   normalizeRole,
   rolesForCompany,
@@ -22,6 +23,32 @@ const SAFE_FUEL_LOG_FIELDS =
   "id, company_id, truck_text, liters, price_per_liter, total_cost, vendor, journey_id, allocation_status, fuel_source, created_at";
 const SAFE_ALLOCATION_FIELDS =
   "id, company_id, fuel_log_id, journey_id, asset_id, truck_text, allocated_liters, allocated_cost, allocation_status, allocation_basis, notes, created_by, created_at";
+
+function stripFuelLogMoney(row: any) {
+  if (!row) return row;
+  const { price_per_liter, total_cost, ...safe } = row;
+  return safe;
+}
+
+function stripAllocationMoney(row: any) {
+  if (!row) return row;
+  const { allocated_cost, ...safe } = row;
+  return safe;
+}
+
+function stripFuelIssueSummaryMoney(summary: any) {
+  if (!summary) return summary;
+  const {
+    issue_cost,
+    allocated_cost,
+    carried_forward_cost,
+    reversed_cost,
+    consumed_cost,
+    remaining_cost,
+    ...safe
+  } = summary;
+  return safe;
+}
 
 type ResolvedCompany = {
   id: string;
@@ -207,6 +234,7 @@ export async function GET(req: Request) {
       );
     }
 
+    const includeFinance = canViewFinance(resolved.roles);
     const fuelLog = await loadFuelLog(resolved.company.id, fuelLogId);
     if (!fuelLog) {
       return NextResponse.json(
@@ -220,9 +248,14 @@ export async function GET(req: Request) {
     return NextResponse.json({
       success: true,
       company: resolved.company,
-      fuel_log: fuelLog,
-      allocations,
-      summary: summarizeFuelIssue(fuelLog, allocations),
+      capabilities: {
+        can_view_finance: includeFinance,
+      },
+      fuel_log: includeFinance ? fuelLog : stripFuelLogMoney(fuelLog),
+      allocations: includeFinance ? allocations : allocations.map(stripAllocationMoney),
+      summary: includeFinance
+        ? summarizeFuelIssue(fuelLog, allocations)
+        : stripFuelIssueSummaryMoney(summarizeFuelIssue(fuelLog, allocations)),
     });
   } catch (err: any) {
     console.error("Fuel allocations GET error:", err);
@@ -254,6 +287,7 @@ export async function POST(req: Request) {
       );
     }
 
+    const includeFinance = canViewFinance(resolved.roles);
     const fuelLog = await loadFuelLog(resolved.company.id, fuelLogId);
     if (!fuelLog) {
       return NextResponse.json(
@@ -308,7 +342,7 @@ export async function POST(req: Request) {
         { status: 400 }
       );
     }
-    const providedCost = numericInput(body.allocated_cost);
+    const providedCost = includeFinance ? numericInput(body.allocated_cost) : null;
     const allocatedCost = estimateAllocatedCost(fuelLog, allocatedLiters, providedCost);
 
     const existingAllocations = await loadAllocations(resolved.company.id, fuelLogId);
@@ -360,8 +394,19 @@ export async function POST(req: Request) {
     return NextResponse.json({
       success: true,
       company: resolved.company,
-      allocation,
-      summary: summarizeFuelIssue(fuelLog, updatedAllocations),
+      capabilities: {
+        can_view_finance: includeFinance,
+      },
+      allocation: includeFinance ? allocation : stripAllocationMoney(allocation),
+      summary: includeFinance
+        ? summarizeFuelIssue(fuelLog, updatedAllocations)
+        : stripFuelIssueSummaryMoney(summarizeFuelIssue(fuelLog, updatedAllocations)),
+      warnings:
+        !includeFinance && body.allocated_cost
+          ? [
+              "Fuel allocation cost was ignored because cost fields are restricted to finance and management roles.",
+            ]
+          : [],
     });
   } catch (err: any) {
     console.error("Fuel allocations POST error:", err);

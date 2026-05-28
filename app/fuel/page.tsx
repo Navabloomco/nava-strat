@@ -16,6 +16,7 @@ export default function FuelControlPage() {
   const [journeys, setJourneys] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [errorDetail, setErrorDetail] = useState("");
+  const [canViewFinance, setCanViewFinance] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -49,6 +50,7 @@ export default function FuelControlPage() {
 
     setFuelLogs(json.fuel_logs || []);
     setJourneys(json.journeys || []);
+    setCanViewFinance(Boolean(json.capabilities?.can_view_finance));
     setLoading(false);
   }
 
@@ -84,10 +86,9 @@ export default function FuelControlPage() {
     (sum, fuel) => sum + Number(fuel.liters || 0),
     0
   );
-  const totalCost = fuelLogs.reduce(
-    (sum, fuel) => sum + Number(fuel.total_cost || 0),
-    0
-  );
+  const totalCost = canViewFinance
+    ? fuelLogs.reduce((sum, fuel) => sum + Number(fuel.total_cost || 0), 0)
+    : 0;
   const unallocatedRecords = fuelLogs.filter((fuel) => !fuel.journey_id).length;
 
   return (
@@ -118,7 +119,10 @@ export default function FuelControlPage() {
             <section className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               <SummaryCard label="Fuel records" value={fuelLogs.length.toLocaleString()} />
               <SummaryCard label="Total liters" value={totalLiters.toLocaleString()} />
-              <SummaryCard label="Total cost" value={totalCost.toLocaleString()} />
+              <SummaryCard
+                label="Total cost"
+                value={canViewFinance ? totalCost.toLocaleString() : "Restricted"}
+              />
               <SummaryCard
                 label="Unallocated"
                 value={unallocatedRecords.toLocaleString()}
@@ -196,9 +200,11 @@ export default function FuelControlPage() {
                             <td className="px-4 py-4">{fuel.liters || "—"}</td>
 
                             <td className="px-4 py-4">
-                              {fuel.total_cost
-                                ? Number(fuel.total_cost).toLocaleString()
-                                : "—"}
+                              {!canViewFinance
+                                ? "Finance restricted"
+                                : fuel.total_cost
+                                  ? Number(fuel.total_cost).toLocaleString()
+                                  : "—"}
                             </td>
 
                             <td className="px-4 py-4">{fuel.vendor || "—"}</td>

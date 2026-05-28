@@ -19,6 +19,18 @@ const SAFE_FUEL_LOG_FIELDS =
 const SAFE_FUEL_PROVIDER_FIELDS =
   "id, name, current_price_per_liter, is_active, created_at";
 
+function stripFuelMoney(row: any) {
+  if (!row) return row;
+  const { price_per_liter, total_cost, ...safe } = row;
+  return safe;
+}
+
+function stripProviderFuelMoney(provider: any) {
+  if (!provider) return provider;
+  const { current_price_per_liter, ...safe } = provider;
+  return safe;
+}
+
 type ResolvedCompany = {
   id: string;
   name: string;
@@ -228,7 +240,8 @@ export async function GET(req: Request) {
       );
     }
 
-    const journeySelect = canViewFinance(resolved.roles)
+    const includeFinance = canViewFinance(resolved.roles);
+    const journeySelect = includeFinance
       ? FINANCE_JOURNEY_FIELDS
       : OPERATIONAL_JOURNEY_FIELDS;
 
@@ -260,9 +273,16 @@ export async function GET(req: Request) {
       success: true,
       company: resolved.company,
       is_platform_owner: resolved.isPlatformOwner,
-      fuel_logs: fuelResult.data || [],
+      capabilities: {
+        can_view_finance: includeFinance,
+      },
+      fuel_logs: includeFinance
+        ? fuelResult.data || []
+        : (fuelResult.data || []).map(stripFuelMoney),
       journeys: journeysResult.data || [],
-      fuel_providers: providersResult.data || [],
+      fuel_providers: includeFinance
+        ? providersResult.data || []
+        : (providersResult.data || []).map(stripProviderFuelMoney),
     });
   } catch (err: any) {
     console.error("Fuel GET error:", err);
@@ -290,7 +310,9 @@ export async function POST(req: Request) {
         ? body.truck_text.trim().toUpperCase()
         : "";
     const litersNum = Number(body.liters || 0);
-    const priceNum = body.price_per_liter ? Number(body.price_per_liter) : 0;
+    const includeFinance = canViewFinance(resolved.roles);
+    const priceNum =
+      includeFinance && body.price_per_liter ? Number(body.price_per_liter) : 0;
     const journeyId = body.journey_id || null;
     const approvedExtraFuel = Boolean(body.approved_extra_fuel);
     const approvalReason =
@@ -380,7 +402,16 @@ export async function POST(req: Request) {
     return NextResponse.json({
       success: true,
       company: resolved.company,
-      fuel_log: fuelLog,
+      capabilities: {
+        can_view_finance: includeFinance,
+      },
+      fuel_log: includeFinance ? fuelLog : stripFuelMoney(fuelLog),
+      warnings:
+        !includeFinance && body.price_per_liter
+          ? [
+              "Fuel cost was ignored because price fields are restricted to finance and management roles.",
+            ]
+          : [],
     });
   } catch (err: any) {
     console.error("Fuel POST error:", err);

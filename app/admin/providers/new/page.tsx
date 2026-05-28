@@ -1979,7 +1979,7 @@ function CustomApiProviderForm({
             value={form.base_url}
             onChange={(value) => updateForm({ base_url: value })}
             onBlur={onBaseUrlBlur}
-            placeholder="https://fleettrack.africa/api"
+            placeholder="https://provider.example.com/api"
             required
           />
           <TextField

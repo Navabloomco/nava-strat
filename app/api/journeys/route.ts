@@ -80,6 +80,31 @@ function calculateRevenueFields(input: {
   };
 }
 
+function commercialPayloadWasSubmitted(body: Record<string, any>) {
+  const commercialKeys = [
+    "loaded_quantity",
+    "loaded_tonnage",
+    "offloaded_quantity",
+    "offloaded_tonnage",
+    "billing_quantity",
+    "billing_unit",
+    "rate_type",
+    "rate_amount",
+    "rate_currency",
+    "fx_rate",
+    "revenue_original",
+    "revenue_kes",
+    "revenue_status",
+    "revenue_notes",
+  ];
+
+  return commercialKeys.some((key) => {
+    if (!(key in body)) return false;
+    const value = body[key];
+    return value !== undefined && value !== null && String(value).trim() !== "";
+  });
+}
+
 function isJourneyAssetForeignKeyError(error: any) {
   const text = String(
     error?.message || error?.details || error?.hint || error || ""
@@ -248,6 +273,7 @@ export async function POST(req: Request) {
         { status: 403 }
       );
     }
+    const canManageCommercialDetails = canViewFinance(resolved.roles);
 
     const assetId = normalizeUuid(body.asset_id);
     const driverId = normalizeUuid(body.driver_id);
@@ -377,53 +403,58 @@ export async function POST(req: Request) {
     if (startTime !== undefined) insertPayload.start_time = startTime;
     if (endTime !== undefined) insertPayload.end_time = endTime;
 
-    const loadedQuantity = normalizeNumber(body.loaded_quantity ?? body.loaded_tonnage);
-    const offloadedQuantity = normalizeNumber(body.offloaded_quantity ?? body.offloaded_tonnage);
-    const billingQuantity = normalizeNumber(
-      body.billing_quantity ?? offloadedQuantity ?? loadedQuantity
-    );
-    const rateAmount = normalizeNumber(body.rate_amount);
-    const rateType =
-      typeof body.rate_type === "string" && body.rate_type.trim()
-        ? body.rate_type.trim()
-        : "per_tonne";
-    const rateCurrency =
-      typeof body.rate_currency === "string" && body.rate_currency.trim()
-        ? body.rate_currency.trim().toUpperCase()
-        : "KES";
-    const providedFxRate = normalizeNumber(body.fx_rate);
-    if (rateAmount !== null && rateCurrency !== "KES" && providedFxRate === null) {
-      return NextResponse.json(
-        { success: false, error: "FX rate is required when rate currency is not KES" },
-        { status: 400 }
-      );
-    }
-    const fxRate = rateCurrency === "KES" ? 1 : providedFxRate || 1;
+    const commercialFieldsIgnored =
+      !canManageCommercialDetails && commercialPayloadWasSubmitted(body);
 
-    if (loadedQuantity !== null) insertPayload.loaded_quantity = loadedQuantity;
-    if (offloadedQuantity !== null) insertPayload.offloaded_quantity = offloadedQuantity;
-    if (body.loaded_tonnage !== undefined) insertPayload.loaded_tonnage = loadedQuantity;
-    if (body.offloaded_tonnage !== undefined) insertPayload.offloaded_tonnage = offloadedQuantity;
-    if (billingQuantity !== null) {
-      insertPayload.billing_quantity = billingQuantity;
-      insertPayload.billing_unit = billingUnitFromRateType(rateType);
+    if (canManageCommercialDetails) {
+      const loadedQuantity = normalizeNumber(body.loaded_quantity ?? body.loaded_tonnage);
+      const offloadedQuantity = normalizeNumber(body.offloaded_quantity ?? body.offloaded_tonnage);
+      const billingQuantity = normalizeNumber(
+        body.billing_quantity ?? offloadedQuantity ?? loadedQuantity
+      );
+      const rateAmount = normalizeNumber(body.rate_amount);
+      const rateType =
+        typeof body.rate_type === "string" && body.rate_type.trim()
+          ? body.rate_type.trim()
+          : "per_tonne";
+      const rateCurrency =
+        typeof body.rate_currency === "string" && body.rate_currency.trim()
+          ? body.rate_currency.trim().toUpperCase()
+          : "KES";
+      const providedFxRate = normalizeNumber(body.fx_rate);
+      if (rateAmount !== null && rateCurrency !== "KES" && providedFxRate === null) {
+        return NextResponse.json(
+          { success: false, error: "FX rate is required when rate currency is not KES" },
+          { status: 400 }
+        );
+      }
+      const fxRate = rateCurrency === "KES" ? 1 : providedFxRate || 1;
+
+      if (loadedQuantity !== null) insertPayload.loaded_quantity = loadedQuantity;
+      if (offloadedQuantity !== null) insertPayload.offloaded_quantity = offloadedQuantity;
+      if (body.loaded_tonnage !== undefined) insertPayload.loaded_tonnage = loadedQuantity;
+      if (body.offloaded_tonnage !== undefined) insertPayload.offloaded_tonnage = offloadedQuantity;
+      if (billingQuantity !== null) {
+        insertPayload.billing_quantity = billingQuantity;
+        insertPayload.billing_unit = billingUnitFromRateType(rateType);
+      }
+      if (rateAmount !== null) {
+        insertPayload.rate_type = rateType;
+        insertPayload.rate_amount = rateAmount;
+        insertPayload.rate_currency = rateCurrency;
+        insertPayload.fx_rate = fxRate;
+        const revenue = calculateRevenueFields({
+          rateType,
+          rateAmount,
+          rateCurrency,
+          fxRate,
+          billingQuantity,
+        });
+        if (revenue) Object.assign(insertPayload, revenue);
+      }
+      const revenueNotes = normalizeOptionalText(body.revenue_notes);
+      if (revenueNotes !== undefined) insertPayload.revenue_notes = revenueNotes;
     }
-    if (rateAmount !== null) {
-      insertPayload.rate_type = rateType;
-      insertPayload.rate_amount = rateAmount;
-      insertPayload.rate_currency = rateCurrency;
-      insertPayload.fx_rate = fxRate;
-      const revenue = calculateRevenueFields({
-        rateType,
-        rateAmount,
-        rateCurrency,
-        fxRate,
-        billingQuantity,
-      });
-      if (revenue) Object.assign(insertPayload, revenue);
-    }
-    const revenueNotes = normalizeOptionalText(body.revenue_notes);
-    if (revenueNotes !== undefined) insertPayload.revenue_notes = revenueNotes;
 
     let assetLinkOmitted = false;
     let { data: journey, error: insertError } = await supabaseAdmin
@@ -450,6 +481,19 @@ export async function POST(req: Request) {
 
     if (insertError) throw insertError;
 
+    const warnings = [
+      ...(assetLinkOmitted
+        ? [
+            "Selected provider asset was preserved as the trip vehicle text, but asset_id was left empty because the current journey schema does not accept fleet_assets IDs.",
+          ]
+        : []),
+      ...(commercialFieldsIgnored
+        ? [
+            "Finance fields were ignored because revenue, rates, FX, and billing quantities are restricted to finance and management roles.",
+          ]
+        : []),
+    ];
+
     return NextResponse.json({
       success: true,
       company,
@@ -464,11 +508,7 @@ export async function POST(req: Request) {
               : null,
           }
         : null,
-      warnings: assetLinkOmitted
-        ? [
-            "Selected provider asset was preserved as the trip vehicle text, but asset_id was left empty because the current journey schema does not accept fleet_assets IDs.",
-          ]
-        : [],
+      warnings,
     });
   } catch (err: any) {
     console.error("Journeys POST error:", err);

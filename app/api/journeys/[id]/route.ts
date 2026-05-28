@@ -339,10 +339,7 @@ function sanitizeFuelBundleForRole(bundle: any, includeFinance: boolean) {
 
 function stripFuelAllocationMoney(row: any) {
   const { allocated_cost, ...safe } = row || {};
-  return {
-    ...safe,
-    allocated_cost: null,
-  };
+  return safe;
 }
 
 function stripFuelLogMoney(row: any) {
@@ -352,15 +349,16 @@ function stripFuelLogMoney(row: any) {
 
 function stripFuelIssueSummaryMoney(summary: any) {
   if (!summary) return summary;
-  return {
-    ...summary,
-    issue_cost: null,
-    allocated_cost: null,
-    carried_forward_cost: null,
-    reversed_cost: null,
-    consumed_cost: null,
-    remaining_cost: null,
-  };
+  const {
+    issue_cost,
+    allocated_cost,
+    carried_forward_cost,
+    reversed_cost,
+    consumed_cost,
+    remaining_cost,
+    ...safe
+  } = summary;
+  return safe;
 }
 
 async function loadAllocationsForFuelLogs(companyId: string, fuelLogIds: string[]) {
