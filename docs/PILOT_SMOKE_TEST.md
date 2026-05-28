@@ -319,6 +319,8 @@ Confirm workflow behavior:
 - [ ] Confirm provider idle markers are present in `telemetry_events` as canonical `provider_idle_marker` rows when the provider feed supplies idle/excessive-idle marker values.
 - [ ] Confirm legacy `excessive_idle` / `long_idle` rows count as provider-derived markers only when metadata does not mark them as GPS-generated/event-engine stopped estimates.
 - [ ] Confirm GPS-only stopped windows and GPS-generated `excessive_idle` rows are not counted as provider-derived idle markers.
+- [ ] Confirm Provider Idle Markers shows marker/window counts and observed marker span, and never displays impossible 100+ hour provider-duration totals for a one-day operating window.
+- [ ] Confirm provider/legacy `duration_minutes` fields are not summed unless duration semantics are verified as per-event.
 - [ ] Ask Nava Eye "which trucks have idle markers?" and confirm it answers with provider idle marker evidence first, while saying engine-on idling and fuel burn are not verified without ignition/engine/CAN support.
 - [ ] Confirm `/api/ops/efficiency` does not return raw coordinate series and does not expose disabled/unreviewed asset telemetry.
 - [ ] Confirm `/api/ops/efficiency` does not let future provider timestamps inflate movement/stopped/productivity metrics or mark an asset fresh when timestamp quality is suspicious.

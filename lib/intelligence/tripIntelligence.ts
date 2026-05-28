@@ -857,8 +857,10 @@ function buildDelayEvidence(eventRows: any[], telemetryRows: any[]) {
   );
   const gps = calculateGpsDistance(telemetryRows);
   const categoryMap = new Map<string, any>();
+  const providerIdleSpanMinutes = observedIdleMarkerSpanMinutes(idleRows);
 
   for (const row of eventRows) {
+    if (isProviderIdleMarkerEvent(row)) continue;
     const category = classifyDelayCategory(row);
     const existing =
       categoryMap.get(category.key) || {
@@ -872,6 +874,22 @@ function buildDelayEvidence(eventRows: any[], telemetryRows: any[]) {
     existing.event_count += 1;
     existing.duration_minutes += positiveNumberOrZero(row.duration_minutes);
     categoryMap.set(category.key, existing);
+  }
+
+  if (idleRows.length > 0) {
+    categoryMap.set("provider_idle_marker", {
+      category: "provider_idle_marker",
+      label: idleRows.some((row) => getIdleEvidenceSource(row) === "legacy-provider-marker")
+        ? "Provider / legacy idle markers"
+        : "Provider idle markers",
+      attribution: "provider-derived",
+      event_count: idleRows.length,
+      duration_minutes: providerIdleSpanMinutes || 0,
+      evidence_label:
+        providerIdleSpanMinutes > 0
+          ? "observed marker span from canonical/qualifying legacy provider idle markers; provider duration fields are not summed unless semantics are verified"
+          : "provider marker count/window evidence; duration field semantics are unclear",
+    });
   }
 
   const eventDurationMinutes = Array.from(categoryMap.values()).reduce(
@@ -911,6 +929,20 @@ function buildDelayEvidence(eventRows: any[], telemetryRows: any[]) {
       "canonical or qualifying legacy provider idle markers plus GPS-estimated stopped intervals; not engine-on idling proof",
     engine_on_idling_confirmed: false,
   };
+}
+
+function observedIdleMarkerSpanMinutes(rows: any[]) {
+  const starts: number[] = [];
+  const ends: number[] = [];
+  for (const row of rows) {
+    const start = timestampMs(row.started_at || row.created_at);
+    const end = timestampMs(row.ended_at) || start;
+    if (start !== null) starts.push(start);
+    if (end !== null) ends.push(Math.max(end, start || end));
+  }
+  if (!starts.length || !ends.length) return 0;
+  const span = Math.max(0, Math.round((Math.max(...ends) - Math.min(...starts)) / 60000));
+  return span > 30 * 24 * 60 ? 0 : span;
 }
 
 function classifyDelayCategory(row: any) {

@@ -154,7 +154,8 @@ export async function buildOperationalEfficiencySummary(
     telemetryStatsByTruck,
     idleEventResult,
     telemetryResult,
-    assetLookups
+    assetLookups,
+    timeframe
   );
   const staleLocations = buildStaleLocationSummary(assets);
   const productivity = buildProductivitySummary(
@@ -816,13 +817,17 @@ function buildIdleTimeSummary(
   telemetryStatsByTruck: Map<string, TruckTelemetryStats>,
   eventResult: QueryResult<any>,
   telemetryResult: QueryResult<any>,
-  assetLookups: ReturnType<typeof buildAssetLookups>
+  assetLookups: ReturnType<typeof buildAssetLookups>,
+  timeframe: OperationalEfficiencyTimeframe
 ) {
-  const idleWindowsByTruck = buildIdleWindowsByTruck(eventRows, assetLookups);
+  const idleWindowsByTruck = buildIdleWindowsByTruck(eventRows, assetLookups, timeframe);
   const alertRank = Array.from(idleWindowsByTruck.values())
     .map((summary: any) => ({
       ...summary,
-      total_alert_span_minutes: Math.round(summary.total_alert_span_minutes),
+      total_alert_span_minutes: Math.round(summary.total_alert_span_minutes || 0),
+      total_observed_marker_span_minutes: Math.round(
+        summary.total_observed_marker_span_minutes || summary.total_alert_span_minutes || 0
+      ),
     }))
     .sort((a: any, b: any) => {
       if (b.total_alert_span_minutes !== a.total_alert_span_minutes) {
@@ -875,7 +880,8 @@ function buildIdleTimeSummary(
 
 function buildIdleWindowsByTruck(
   eventRows: any[],
-  assetLookups: ReturnType<typeof buildAssetLookups>
+  assetLookups: ReturnType<typeof buildAssetLookups>,
+  timeframe: OperationalEfficiencyTimeframe
 ) {
   const grouped = new Map<string, any[]>();
   for (const row of eventRows) {
@@ -907,12 +913,12 @@ function buildIdleWindowsByTruck(
       if (sameType && gapMinutes <= 15) {
         current.push(row);
       } else {
-        windows.push(buildIdleWindow(current));
+        windows.push(buildIdleWindow(current, timeframe));
         current = [row];
       }
     }
 
-    if (current.length) windows.push(buildIdleWindow(current));
+    if (current.length) windows.push(buildIdleWindow(current, timeframe));
 
     const asset = assetLookups.byKey.get(truckKey);
     const sourceCounts = sorted.reduce(
@@ -930,6 +936,17 @@ function buildIdleWindowsByTruck(
         : sourceCounts.legacy_provider_markers > 0
           ? "legacy provider idle marker windows"
           : "provider-derived idle marker windows";
+    const safeProviderDurationMinutes = windows.reduce(
+      (sum, window) => sum + Number(window.safe_provider_duration_minutes || 0),
+      0
+    );
+    const hasProviderDurationReview = windows.some(
+      (window) => window.provider_duration_status === "needs_review"
+    );
+    const totalObservedSpanMinutes = windows.reduce(
+      (sum, window) => sum + Number(window.observed_marker_span_minutes || 0),
+      0
+    );
     summaries.set(truckKey, {
       truck_key: truckKey,
       truck_id: displayTruckLabel(sorted[0]?.truck_id, asset),
@@ -937,14 +954,19 @@ function buildIdleWindowsByTruck(
       canonical_provider_marker_count: sourceCounts.canonical_provider_markers,
       legacy_provider_marker_count: sourceCounts.legacy_provider_markers,
       alert_window_count: windows.length,
-      total_alert_span_minutes: windows.reduce(
-        (sum, window) => sum + Number(window.alert_span_minutes || 0),
-        0
-      ),
-      total_provider_duration_minutes: windows.reduce(
-        (sum, window) => sum + Number(window.provider_duration_minutes || 0),
-        0
-      ),
+      total_alert_span_minutes: totalObservedSpanMinutes,
+      total_observed_marker_span_minutes: totalObservedSpanMinutes,
+      total_provider_duration_minutes: safeProviderDurationMinutes || null,
+      provider_duration_status: safeProviderDurationMinutes
+        ? "safe"
+        : hasProviderDurationReview
+          ? "needs_review"
+          : "unavailable",
+      provider_duration_note: safeProviderDurationMinutes
+        ? "Provider duration was summed only from verified per-event duration fields."
+        : hasProviderDurationReview
+          ? "Provider duration field not summed because semantics are unclear or cumulative."
+          : "Provider duration field unavailable; using observed marker span.",
       evidence_label: evidenceLabel,
       windows: windows.slice(0, 6),
       interpretation:
@@ -955,11 +977,17 @@ function buildIdleWindowsByTruck(
   return summaries;
 }
 
-function buildIdleWindow(rows: any[]) {
+function buildIdleWindow(rows: any[], timeframe: OperationalEfficiencyTimeframe) {
   const first = rows[0];
   const last = rows[rows.length - 1];
   const startMs = eventTimeMs(first);
   const endMs = eventTimeMs(last);
+  const bounds = observedIdleWindowBounds(rows, timeframe);
+  const durationReview = providerDurationFromRows(
+    rows,
+    bounds.observed_marker_span_minutes,
+    timeframeDurationMinutes(timeframe)
+  );
   return {
     event_type: normalizeEventType(first) || "idle",
     first_marker_at: first?.created_at || first?.started_at || null,
@@ -969,7 +997,14 @@ function buildIdleWindow(rows: any[]) {
       Number.isFinite(startMs) && Number.isFinite(endMs)
         ? Math.max(0, Math.round((endMs - startMs) / 60000))
         : 0,
-    provider_duration_minutes: providerDurationFromRows(rows),
+    observed_marker_span_minutes: bounds.observed_marker_span_minutes,
+    observed_marker_start_at: bounds.observed_marker_start_at,
+    observed_marker_end_at: bounds.observed_marker_end_at,
+    provider_duration_minutes: durationReview.safe_provider_duration_minutes,
+    safe_provider_duration_minutes: durationReview.safe_provider_duration_minutes,
+    raw_provider_duration_total_minutes: durationReview.raw_provider_duration_total_minutes,
+    provider_duration_status: durationReview.status,
+    provider_duration_note: durationReview.note,
     evidence_source: getIdleEvidenceSource(first),
     evidence_label: providerIdleMarkerEvidenceLabel(first),
   };
@@ -1364,12 +1399,128 @@ function normalizeEventType(rowOrType: any) {
   return canonicalProviderIdleEventType(rowOrType);
 }
 
-function providerDurationFromRows(rows: any[]) {
+function observedIdleWindowBounds(
+  rows: any[],
+  timeframe: OperationalEfficiencyTimeframe
+) {
+  const timeframeStartMs = new Date(timeframe.start_utc).getTime();
+  const timeframeEndMs = new Date(timeframe.end_utc).getTime();
+  const starts: number[] = [];
+  const ends: number[] = [];
+
+  for (const row of rows) {
+    const startMs = eventStartMs(row);
+    const endMs = eventEndMs(row, startMs);
+    if (Number.isFinite(startMs)) starts.push(clampMs(startMs, timeframeStartMs, timeframeEndMs));
+    if (Number.isFinite(endMs)) ends.push(clampMs(endMs, timeframeStartMs, timeframeEndMs));
+  }
+
+  const startMs = starts.length ? Math.min(...starts) : Number.NaN;
+  const endMs = ends.length ? Math.max(...ends) : startMs;
+  const observed =
+    Number.isFinite(startMs) && Number.isFinite(endMs)
+      ? Math.max(0, Math.round((endMs - startMs) / 60000))
+      : 0;
+
+  return {
+    observed_marker_span_minutes: Math.min(observed, timeframeDurationMinutes(timeframe)),
+    observed_marker_start_at: Number.isFinite(startMs) ? new Date(startMs).toISOString() : null,
+    observed_marker_end_at: Number.isFinite(endMs) ? new Date(endMs).toISOString() : null,
+  };
+}
+
+function providerDurationFromRows(
+  rows: any[],
+  observedMarkerSpanMinutes: number,
+  selectedWindowMinutes: number
+) {
   const values = rows
     .map((row) => Number(row?.duration_minutes))
     .filter((value) => Number.isFinite(value) && value > 0 && value <= 24 * 60);
-  if (!values.length) return null;
-  return Math.round(values.reduce((sum, value) => sum + value, 0));
+  if (!values.length) {
+    return {
+      safe_provider_duration_minutes: null,
+      raw_provider_duration_total_minutes: null,
+      status: "unavailable",
+      note: "Provider duration field unavailable; using observed marker span.",
+    };
+  }
+
+  const rawTotal = Math.round(values.reduce((sum, value) => sum + value, 0));
+  const allPerEvent = rows
+    .filter((row) => Number(row?.duration_minutes) > 0)
+    .every((row) => hasVerifiedPerEventDurationSemantics(row));
+  const repeatedOrCumulative = !allPerEvent && values.length > 1 && (
+    new Set(values).size === 1 ||
+    values.every((value, index) => index === 0 || value >= values[index - 1])
+  );
+  const exceedsSelectedWindow = rawTotal > selectedWindowMinutes;
+  const exceedsObservedSpan =
+    observedMarkerSpanMinutes > 0 && rawTotal > Math.max(30, observedMarkerSpanMinutes * 1.5);
+
+  if (!allPerEvent || repeatedOrCumulative || exceedsSelectedWindow || exceedsObservedSpan) {
+    return {
+      safe_provider_duration_minutes: null,
+      raw_provider_duration_total_minutes: rawTotal,
+      status: "needs_review",
+      note: "Provider duration field not summed because semantics are unclear or cumulative.",
+    };
+  }
+
+  return {
+    safe_provider_duration_minutes: rawTotal,
+    raw_provider_duration_total_minutes: rawTotal,
+    status: "safe",
+    note: "Provider duration was summed only from verified per-event duration fields.",
+  };
+}
+
+function hasVerifiedPerEventDurationSemantics(row: any) {
+  const metadata = row?.metadata && typeof row.metadata === "object" ? row.metadata : {};
+  if (
+    metadata.duration_is_per_event === true ||
+    metadata.provider_duration_is_per_event === true
+  ) {
+    return true;
+  }
+  const text = String(
+    metadata.duration_semantics ||
+      metadata.provider_duration_semantics ||
+      metadata.idle_duration_semantics ||
+      metadata.duration_basis ||
+      ""
+  )
+    .toLowerCase()
+    .replace(/[_\s-]+/g, "_");
+  return ["per_event", "event_duration", "single_event"].includes(text);
+}
+
+function eventStartMs(row: any) {
+  const quality = classifyProviderTimestampQuality(row?.started_at || row?.created_at);
+  if (quality.status === "future_suspicious") return Number.NaN;
+  if (quality.status === "slightly_future_clock_skew") return Date.now();
+  return quality.timestamp_ms ?? new Date(row?.started_at || row?.created_at || 0).getTime();
+}
+
+function eventEndMs(row: any, fallbackStartMs: number) {
+  if (!row?.ended_at) return fallbackStartMs;
+  const quality = classifyProviderTimestampQuality(row.ended_at);
+  if (quality.status === "future_suspicious") return Number.NaN;
+  if (quality.status === "slightly_future_clock_skew") return Date.now();
+  const ms = quality.timestamp_ms ?? new Date(row.ended_at).getTime();
+  return Number.isFinite(ms) && ms >= fallbackStartMs ? ms : fallbackStartMs;
+}
+
+function timeframeDurationMinutes(timeframe: OperationalEfficiencyTimeframe) {
+  const startMs = new Date(timeframe.start_utc).getTime();
+  const endMs = new Date(timeframe.end_utc).getTime();
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return 24 * 60;
+  return Math.max(1, Math.round((endMs - startMs) / 60000));
+}
+
+function clampMs(value: number, min: number, max: number) {
+  if (!Number.isFinite(value)) return Number.NaN;
+  return Math.min(Math.max(value, min), max);
 }
 
 function displayTruckLabel(value: any, asset?: EnabledAsset | null) {

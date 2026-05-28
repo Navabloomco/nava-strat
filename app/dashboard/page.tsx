@@ -234,12 +234,12 @@ function buildWatchItems(
       severity: extremeIdleDurations.length ? "critical" : "warning",
       title: "Provider idle-marker duration looks suspicious",
       summary:
-        "One or more provider idle-marker totals are too large to treat as continuous engine-on idling. This may be an unclosed provider event or accumulator issue.",
+        "One or more provider idle-marker spans need review before treating duration fields as operational time. Provider duration fields may be cumulative or repeated.",
       evidence: trucks.map(
-        (truck: any) => `${truck.truck_id}: ${formatWatchNumber(truck.idle_hours)} hours accumulated`
+        (truck: any) => `${truck.truck_id}: ${formatWatchNumber(truck.idle_hours)} hours observed marker span`
       ),
       suggested_next_check:
-        "Investigate whether provider idle-marker events are closing correctly before using the total as a continuous-duration fact.",
+        "Investigate whether provider idle-marker events are closing correctly before using any provider duration field as a continuous-duration fact.",
       suggested_question:
         "Check whether the top provider idle-marker trucks have an event-closure or data-quality problem.",
       href: "/nava-eye",
@@ -1116,7 +1116,7 @@ export default function DashboardPage() {
                     {fh.highest_idle_trucks.map((t: any) => (
                       <div key={t.truck_id} className="flex justify-between border-b border-slate-800 py-2">
                         <span className="font-mono">{t.truck_id}</span>
-                        <span className="text-yellow-400">{t.idle_hours} hours idle</span>
+                        <span className="text-yellow-400">{t.idle_hours} hr marker span</span>
                       </div>
                     ))}
                   </div>

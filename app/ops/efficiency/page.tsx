@@ -763,17 +763,22 @@ function formatStoppedConfidence(row: any) {
 }
 
 function formatProviderIdleMetric(row: any) {
-  const providerDuration = Number(row?.total_provider_duration_minutes || 0);
-  if (providerDuration > 0) return `${formatMinutes(providerDuration)} provider duration`;
-  return `${formatMinutes(row?.total_alert_span_minutes)} marker span`;
+  const observedSpan = Number(
+    row?.total_observed_marker_span_minutes || row?.total_alert_span_minutes || 0
+  );
+  if (observedSpan > 0) return `Observed marker span: ${formatMinutes(observedSpan)}`;
+  return `${formatCount(row?.marker_count)} marker(s)`;
 }
 
 function formatProviderIdleDurationNote(row: any) {
   const providerDuration = Number(row?.total_provider_duration_minutes || 0);
-  if (providerDuration > 0) {
-    return "Duration comes from provider marker values where available.";
+  if (providerDuration > 0 && row?.provider_duration_status === "safe") {
+    return `Verified per-event provider duration: ${formatMinutes(providerDuration)}.`;
   }
-  return "Window span is estimated from marker timestamps.";
+  if (row?.provider_duration_status === "needs_review") {
+    return "Provider duration field not summed because semantics are unclear.";
+  }
+  return "Observed span is based on marker start/end timestamps.";
 }
 
 function formatProviderIdleSourceSummary(row: any) {

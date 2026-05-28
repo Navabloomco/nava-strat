@@ -1366,7 +1366,7 @@ function buildDashboardFollowupAnswer(context: any) {
 
   if (suspiciousDurationCount) {
     parts.push(
-      "The current status looks real; at least one accumulated provider idle-marker total looks suspicious and may need event-closure or provider data-quality review."
+      "The current status looks real; at least one provider idle-marker span looks suspicious and may need event-closure or provider data-quality review."
     );
   }
   parts.push("");
@@ -3744,7 +3744,7 @@ function formatDashboardTruckStatus(truck: any) {
 function formatDashboardMetric(dashboardContext: any) {
   if (!dashboardContext) return "";
   if (dashboardContext.idle_hours) {
-    return ` Dashboard provider idle-marker total: ${dashboardContext.idle_hours} hours.`;
+    return ` Dashboard provider idle-marker observed span: ${dashboardContext.idle_hours} hours. Provider duration fields are not summed unless semantics are verified.`;
   }
   if (dashboardContext.event_count !== null && dashboardContext.event_count !== undefined) {
     return ` Dashboard event count: ${dashboardContext.event_count}.`;
@@ -3761,7 +3761,7 @@ function formatDashboardIdleEvent(event: any) {
   const duration =
     event.duration_minutes === null || event.duration_minutes === undefined
       ? ""
-      : `, ${Number(event.duration_minutes).toLocaleString()} min`;
+      : `, provider duration field ${Number(event.duration_minutes).toLocaleString()} min (not summed unless verified)`;
   const context = event.context_label ? `, context: ${event.context_label}` : "";
 
   return `${label} at ${at}${duration}${context}`;
@@ -3772,7 +3772,7 @@ function formatDashboardDataQualityNote(dashboardContext: any) {
     return "";
   }
 
-  return " Data-quality note: that accumulated provider idle-marker total is unusually high, so I would treat the duration as suspect until event closure is reviewed.";
+  return " Data-quality note: that provider idle-marker span is unusually high, so I would treat any provider duration field as suspect until event closure is reviewed.";
 }
 
 function formatTimestampQualityNote(value: any) {

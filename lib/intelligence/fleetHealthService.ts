@@ -13,7 +13,7 @@ export async function getFleetHealth(companyId: string) {
       .eq("intelligence_enabled", true),
     supabaseAdmin
       .from("telemetry_events")
-      .select("truck_id, event_type, severity, location_name, created_at, duration_minutes, context_label, context_type, metadata")
+      .select("truck_id, event_type, severity, location_name, created_at, started_at, ended_at, duration_minutes, context_label, context_type, metadata")
       .eq("company_id", companyId)
       .gte("created_at", since.toISOString())
       .order("created_at", { ascending: false }),
@@ -35,26 +35,34 @@ export async function getFleetHealth(companyId: string) {
   const fuelEvents = events.filter((e) => ["fuel_drop_stationary", "low_fuel"].includes(e.event_type));
   const idleEvents = events.filter((e) => isProviderIdleMarkerEvent(e));
 
-  // Idle minutes per truck
-  const idleMinutes: Record<string, number> = {};
-  for (const e of idleEvents) {
-    idleMinutes[e.truck_id] = (idleMinutes[e.truck_id] || 0) + (e.duration_minutes || 0);
+  const idleMarkersByTruck = new Map<string, any[]>();
+  for (const event of idleEvents) {
+    const rows = idleMarkersByTruck.get(event.truck_id) || [];
+    rows.push(event);
+    idleMarkersByTruck.set(event.truck_id, rows);
   }
-  const highestIdle = Object.entries(idleMinutes)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 3)
-    .map(([truck_id, minutes]) => {
-      const latestIdleEvent = idleEvents.find((event) => event.truck_id === truck_id);
+  const highestIdle = Array.from(idleMarkersByTruck.entries())
+    .map(([truck_id, rows]) => {
+      const markerSpanMinutes = observedMarkerSpanMinutes(rows, since, new Date());
+      const latestIdleEvent = rows
+        .slice()
+        .sort((a, b) => eventMs(b) - eventMs(a))[0];
 
       return {
         truck_id,
-        idle_minutes: minutes,
-        idle_hours: (minutes / 60).toFixed(1),
-        latest_idle_event_at: latestIdleEvent?.created_at || null,
+        idle_minutes: markerSpanMinutes,
+        idle_hours: (markerSpanMinutes / 60).toFixed(1),
+        marker_count: rows.length,
+        idle_duration_basis: "observed_marker_span",
+        idle_duration_note:
+          "Observed provider idle-marker span. Provider duration fields are not summed unless semantics are verified.",
+        latest_idle_event_at: latestIdleEvent?.created_at || latestIdleEvent?.started_at || null,
         latest_idle_event_type: latestIdleEvent?.event_type || null,
-        latest_idle_duration_minutes: latestIdleEvent?.duration_minutes ?? null,
+        latest_idle_duration_minutes: null,
       };
-    });
+    })
+    .sort((a, b) => b.idle_minutes - a.idle_minutes || b.marker_count - a.marker_count)
+    .slice(0, 3);
 
   const latestTelemetryByTruck = await fetchLatestTelemetryByTruck(
     companyId,
@@ -113,6 +121,29 @@ export async function getFleetHealth(companyId: string) {
       created_at: e.created_at,
     })),
   };
+}
+
+function observedMarkerSpanMinutes(rows: any[], windowStart: Date, windowEnd: Date) {
+  const startMs = windowStart.getTime();
+  const endMs = windowEnd.getTime();
+  const starts: number[] = [];
+  const ends: number[] = [];
+  for (const row of rows) {
+    const started = eventMs(row);
+    const ended = row.ended_at ? new Date(row.ended_at).getTime() : started;
+    if (Number.isFinite(started)) starts.push(Math.min(Math.max(started, startMs), endMs));
+    if (Number.isFinite(ended)) {
+      const boundedEnd = Number.isFinite(started) ? Math.max(ended, started) : ended;
+      ends.push(Math.min(Math.max(boundedEnd, startMs), endMs));
+    }
+  }
+  if (!starts.length || !ends.length) return 0;
+  return Math.max(0, Math.round((Math.max(...ends) - Math.min(...starts)) / 60000));
+}
+
+function eventMs(row: any) {
+  const ms = new Date(row?.started_at || row?.created_at || 0).getTime();
+  return Number.isFinite(ms) ? ms : Number.NaN;
 }
 
 async function fetchLatestTelemetryByTruck(companyId: string, truckIds: string[]) {
