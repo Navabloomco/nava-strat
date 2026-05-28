@@ -33,6 +33,40 @@ export async function resolveNavaEyeConversationFollowup(
   const prompt = typeof pending.prompt === "string" ? pending.prompt.trim() : "";
   const question = String(input.question || "");
   const normalizedQuestion = normalizeQuestion(question);
+  const pendingClarification = getPendingVehicleClarification(pending, input.companyId);
+  if (pendingClarification) {
+    if (isNegativeClarificationReply(normalizedQuestion)) {
+      return {
+        question,
+        usedPendingFollowup: true,
+        usedActiveTopic: false,
+        usedMetricTopic: false,
+        pendingType: "vehicle_clarification",
+        needsClarification: true,
+        clarificationReason: "vehicle_clarification_rejected",
+        clarification: "Which truck should I check?",
+        nextPendingFollowup: {},
+      };
+    }
+    if (isAffirmativeClarificationReply(normalizedQuestion)) {
+      return {
+        question: buildClarifiedVehicleQuestion(pendingClarification),
+        usedPendingFollowup: true,
+        usedActiveTopic: true,
+        usedMetricTopic: false,
+        pendingType: "vehicle_clarification",
+        acceptedClarification: true,
+        entityResolution: {
+          input: pendingClarification.original_input || null,
+          matched_truck_id: pendingClarification.candidate_truck_id || null,
+          matched_registration: pendingClarification.candidate_registration || null,
+          matched_display_label: pendingClarification.candidate_label || null,
+          match_type: "accepted_close_match",
+        },
+        nextPendingFollowup: {},
+      };
+    }
+  }
   const explicitFleetScope = asksForExplicitFleetScope(question);
   const vehicleResolution = await resolvePromptVehicle(question, input.companyId);
   const explicitVehicleInput = Boolean(vehicleResolution.input);
@@ -69,6 +103,13 @@ export async function resolveNavaEyeConversationFollowup(
         ? "vehicle_close_match"
         : "vehicle_not_found",
       clarification: buildVehicleNotFoundClarification(vehicleResolution),
+      nextPendingFollowup: vehicleResolution.closest
+        ? buildVehicleClarificationPendingFollowup({
+            companyId: input.companyId,
+            originalQuestion: question,
+            resolution: vehicleResolution,
+          })
+        : {},
     };
   }
 
@@ -112,6 +153,22 @@ export async function resolveNavaEyeConversationFollowup(
       usedMetricTopic: Boolean(activeMetricTopic?.metric_intent),
       inheritedIntent: true,
       pendingType: typeof pending.type === "string" ? pending.type : "conversation_resolver",
+    };
+  }
+
+  if (
+    activeMetricTopic &&
+    isMetricPeriodChangeFollowup(normalizedQuestion) &&
+    !explicitVehicleInput &&
+    !explicitFleetScope
+  ) {
+    return {
+      question: buildActiveMetricPeriodQuestion(normalizedQuestion, activeMetricTopic),
+      usedPendingFollowup: false,
+      usedActiveTopic: activeMetricTopic.entity_type === "truck",
+      usedMetricTopic: true,
+      inheritedIntent: true,
+      pendingType: typeof pending.type === "string" ? pending.type : "business_metric_followup",
     };
   }
 
@@ -344,6 +401,114 @@ function buildInheritedFleetQuestion(input: {
   }
 
   return "Which trucks are live?";
+}
+
+function getPendingVehicleClarification(pending: any, companyId?: string | null) {
+  const clarification = pending?.pending_clarification;
+  if (!clarification || typeof clarification !== "object") return null;
+  if (String(clarification.type || "") !== "vehicle_close_match") return null;
+  const clarificationCompanyId = String(clarification.company_id || "").trim();
+  if (companyId && clarificationCompanyId && clarificationCompanyId !== companyId) return null;
+  const candidateLabel = String(clarification.candidate_label || "").trim();
+  const originalQuestion = String(clarification.original_question || "").trim();
+  if (!candidateLabel || !originalQuestion) return null;
+  return {
+    type: "vehicle_close_match",
+    company_id: clarificationCompanyId || companyId || null,
+    original_question: originalQuestion.slice(0, 500),
+    original_input: String(clarification.original_input || "").trim().slice(0, 80),
+    candidate_label: candidateLabel.slice(0, 80),
+    candidate_truck_id: String(clarification.candidate_truck_id || "").trim().slice(0, 80),
+    candidate_registration: String(clarification.candidate_registration || "").trim().slice(0, 80),
+  };
+}
+
+function buildVehicleClarificationPendingFollowup(input: {
+  companyId: string;
+  originalQuestion: string;
+  resolution: VehicleResolution;
+}) {
+  const closest = input.resolution.closest || {};
+  return {
+    type: "vehicle_clarification",
+    pending_clarification: {
+      type: "vehicle_close_match",
+      company_id: input.companyId,
+      original_question: String(input.originalQuestion || "").slice(0, 500),
+      original_input: String(input.resolution.input || "").slice(0, 80),
+      candidate_label: String(closest.display_label || "").slice(0, 80),
+      candidate_truck_id: String(closest.truck_id || "").slice(0, 80),
+      candidate_registration: String(closest.registration || "").slice(0, 80),
+    },
+  };
+}
+
+function buildClarifiedVehicleQuestion(clarification: any) {
+  const originalQuestion = String(clarification.original_question || "").slice(0, 500);
+  const originalInput = String(clarification.original_input || "").trim();
+  const candidateLabel = String(clarification.candidate_label || "").trim();
+  if (!originalQuestion || !candidateLabel) return `Where is ${candidateLabel}?`;
+  if (!originalInput) return `${originalQuestion} ${candidateLabel}`.slice(0, 500);
+
+  const escapedInput = originalInput.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const direct = new RegExp(escapedInput, "i");
+  if (direct.test(originalQuestion)) {
+    return originalQuestion.replace(direct, candidateLabel).slice(0, 500);
+  }
+
+  const compactInput = normalizeVehicleKey(originalInput);
+  const compactPattern = compactInput
+    .split("")
+    .map((char) => char.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join("[\\s\\-/.]*");
+  const compactRegex = new RegExp(compactPattern, "i");
+  if (compactRegex.test(originalQuestion)) {
+    return originalQuestion.replace(compactRegex, candidateLabel).slice(0, 500);
+  }
+
+  return `${originalQuestion} ${candidateLabel}`.slice(0, 500);
+}
+
+function isAffirmativeClarificationReply(normalizedQuestion: string) {
+  return /^(yes|y|yeah|yep|correct|right|that truck|that one|yes that one|yes that truck|please|please do)$/i.test(
+    normalizedQuestion
+  );
+}
+
+function isNegativeClarificationReply(normalizedQuestion: string) {
+  return /^(no|nope|not that one|wrong|incorrect)$/i.test(normalizedQuestion);
+}
+
+function isMetricPeriodChangeFollowup(normalizedQuestion: string) {
+  return /^(what about|how about|and)?\s*(today|yesterday)\??$/.test(
+    normalizedQuestion.replace(/[.!]+$/g, "")
+  );
+}
+
+function buildActiveMetricPeriodQuestion(normalizedQuestion: string, activeMetricTopic: any) {
+  const timeframe = normalizedQuestion.includes("yesterday") ? "yesterday" : "today";
+  const label =
+    activeMetricTopic.entity_type === "fleet"
+      ? "the fleet"
+      : activeMetricTopic.display_label || activeMetricTopic.truck_id || "that truck";
+  const metricIntent = sanitizeMetricIntent(activeMetricTopic.metric_intent);
+
+  if (metricIntent === "distance_covered") {
+    return `How much mileage has ${label} covered ${timeframe}?`;
+  }
+  if (metricIntent === "odometer_reliability" || metricIntent === "distance_status") {
+    return `Can we trust ${label} odometer ${timeframe}?`;
+  }
+  if (metricIntent === "contribution_per_km") {
+    return `What is contribution per km for ${label} ${timeframe}?`;
+  }
+  if (metricIntent === "profit_readiness" || metricIntent === "missing_profit_data") {
+    return `Did ${label} make money ${timeframe}?`;
+  }
+  if (metricIntent === "moved_without_revenue") {
+    return `Did ${label} move without revenue ${timeframe}?`;
+  }
+  return `What about ${label} ${timeframe}?`;
 }
 
 function resolveInheritedTimeframe(question: string, fallback: any) {
@@ -853,6 +1018,10 @@ function buildTruckScopedFollowupQuestion(question: string, activeTopic: any) {
     return `Show today's movement for ${truckId}.`;
   }
 
+  if (/\bwhere\s+(?:is|are)\s+(?:it|that truck|this truck|the truck)\b/.test(normalized)) {
+    return `Where is ${truckId}?`;
+  }
+
   if (isDetailedTimelineRequest(normalized)) {
     return `Show detailed timeline for ${truckId}${timeframeSuffix}.`;
   }
@@ -871,7 +1040,11 @@ function buildTruckScopedFollowupQuestion(question: string, activeTopic: any) {
       : `${scoped} for ${truckId}?`.slice(0, 500);
   }
 
-  if (/\bis\s+it\s+idling\b/.test(normalized) || /\bidle\s+risk\b/.test(normalized)) {
+  if (
+    /\b(?:is|was)\s+it\s+idling\b/.test(normalized) ||
+    /\b(?:is|was)\s+(?:that truck|this truck|the truck)\s+idling\b/.test(normalized) ||
+    /\bidle\s+risk\b/.test(normalized)
+  ) {
     return `Is ${truckId} idling?`;
   }
 
@@ -914,7 +1087,9 @@ function isEllipticalTruckQuestion(question: string) {
     /\bshow\s+(?:today|yesterday)\b/.test(lower) ||
     /\bwhat\s+about\s+(?:today|yesterday)\b/.test(lower) ||
     /\bwhere\s+did\s+it\s+go\b/.test(lower) ||
+    /\bwhere\s+(?:is|are)\s+(?:it|that truck|this truck|the truck)\b/.test(lower) ||
     /\bis\s+it\s+(?:moving|idling|stopped|stationary)\b/.test(lower) ||
+    /\bwas\s+it\s+(?:idling|stopped|stationary)\b/.test(lower) ||
     /\bidle\s+risk\b/.test(lower) ||
     isLocationEvidenceRequest(lower) ||
     isMileageDistanceQuestion(lower) ||

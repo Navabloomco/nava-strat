@@ -137,6 +137,8 @@ export async function routeContext(
     options.roleCapabilities || getRoleCapabilities(options.roles || []);
   const sparesCostVisible = roleCapabilities.canViewFinance;
   const financialsVisible = roleCapabilities.canViewFinance;
+  const rawCoordinateRequested =
+    detectCoordinateRequest(lower) || detectLocationPinRequest(lower);
   const permissionBoundary =
     getPermissionBoundary(lower, roleCapabilities, {
       allowTripPerformanceSummary: intent === "trip_performance",
@@ -159,14 +161,19 @@ export async function routeContext(
       fleetAssetCounts.imported_assets > 0 && fleetAssetCounts.enabled_assets === 0,
     spares_cost_visible: sparesCostVisible,
     financials_visible: financialsVisible,
-    coordinate_request: detectCoordinateRequest(lower) || detectLocationPinRequest(lower),
+    coordinate_request:
+      rawCoordinateRequested && Boolean((roleCapabilities as any).canViewRawCoordinates),
+    raw_coordinate_request_restricted:
+      rawCoordinateRequested && !Boolean((roleCapabilities as any).canViewRawCoordinates),
     location_evidence_requested: locationEvidenceRequest,
-    location_pin_requested: detectLocationPinRequest(lower),
+    location_pin_requested:
+      detectLocationPinRequest(lower) && Boolean((roleCapabilities as any).canViewRawCoordinates),
     live_status_idle_focus: /\b(idle|idling|excessive idle|stopped|stationary)\b/.test(lower),
     timeline_detail_requested: detectDetailedTimelineRequest(lower),
     raw_idle_markers_requested: detectRawIdleMarkerRequest(lower),
     timeline_history_requested: timelineHistoryRequest,
     timeline_timeframe: resolveTruckTimelineTimeframe(lower),
+    management_action_request: detectManagementActionRequest(lower),
     business_metric_intent: businessMetricIntent,
     business_metric_timeframe: businessMetricTimeframe,
     compound_truck_request: compoundTruckRequest,
@@ -477,6 +484,33 @@ function getIntentPermissionBoundary(
   intent: ContextIntent,
   capabilities: ReturnType<typeof getRoleCapabilities>
 ) {
+  const opsIntents: ContextIntent[] = [
+    "fleet_health",
+    "fleet_movement",
+    "offline_trucks",
+    "truck_status",
+    "driver_activity",
+    "journey_context",
+    "country_trucks",
+    "investigation_context",
+    "truck_compound",
+  ];
+  if (opsIntents.includes(intent) && !capabilities.canViewOps) {
+    return {
+      category: "operations",
+      message:
+        "I can help within your role, but live tracking, movement, stopped/idle evidence, and operational telemetry are restricted for this role.",
+    };
+  }
+
+  if (intent === "fuel_risk" && !capabilities.canViewFuel) {
+    return {
+      category: "fuel",
+      message:
+        "I can help within your role, but fuel ledger, allocation, and fuel-risk evidence are restricted for this role.",
+    };
+  }
+
   if (intent === "dashboard_followup" && !capabilities.canViewOps) {
     return {
       category: "operations",
@@ -1003,15 +1037,22 @@ function profitabilityStatusLabel(status: any) {
 
 function sanitizeCapabilities(capabilities: ReturnType<typeof getRoleCapabilities>) {
   return {
+    canViewLiveTracking: Boolean((capabilities as any).canViewLiveTracking),
+    canEditOps: Boolean((capabilities as any).canEditOps),
     canViewFinance: Boolean(capabilities.canViewFinance),
     canEditFinance: Boolean(capabilities.canEditFinance),
+    canViewManagement: Boolean((capabilities as any).canViewManagement),
     canViewExpenses: Boolean(capabilities.canViewExpenses),
     canViewBilling: Boolean(capabilities.canViewBilling),
     canViewPlatformBilling: Boolean(capabilities.canViewPlatformBilling),
     canViewOps: Boolean(capabilities.canViewOps),
     canViewFuel: Boolean(capabilities.canViewFuel),
+    canViewFuelCost: Boolean((capabilities as any).canViewFuelCost),
+    canViewEvidence: Boolean((capabilities as any).canViewEvidence),
+    canViewRawCoordinates: Boolean((capabilities as any).canViewRawCoordinates),
     canViewJourneys: Boolean(capabilities.canViewJourneys),
     canViewSpares: Boolean(capabilities.canViewSpares),
+    isElevated: Boolean((capabilities as any).isElevated),
     isPlatformOwner: Boolean(capabilities.isPlatformOwner),
   };
 }
@@ -1160,6 +1201,9 @@ function detectIntent(
   ) {
     return "fleet_health";
   }
+  if (detectManagementActionRequest(lower)) {
+    return "fleet_health";
+  }
   if (lower.includes("offline") || lower.includes("disconnected")) {
     return "offline_trucks";
   }
@@ -1212,11 +1256,23 @@ function detectTripPerformanceIntent(lower: string) {
   const asksPerKmMetric = /\b(per\s*km|per\s*kilomet(?:er|re)|\/\s*km)\b/.test(text);
   const hasVehicleToken = /[a-z]{2,4}[\s\-/.]*\d{2,4}[\s\-/.]*[a-z]?/i.test(text);
   const hasVehicleDescriptor = hasVehicleTripDescriptor(text);
+  const asksVehicleOutcome =
+    hasVehicleToken && /\bhow\s+did\b.*\b(do|perform|performing)\b/.test(text);
 
   if (asksPerKmMetric && !mentionsTrip) return false;
   return (mentionsTrip && (asksPerformance || asksTripOutcome || asksMakeAmount)) ||
+    asksVehicleOutcome ||
     (hasVehicleToken && asksTripContribution) ||
     (hasVehicleToken && hasVehicleDescriptor && (asksProfitOrMake || asksMakeAmount));
+}
+
+function detectManagementActionRequest(lower: string) {
+  return (
+    /\bwhat\s+should\s+i\s+act\s+on\b/.test(lower) ||
+    /\bwhat\s+needs\s+attention\b/.test(lower) ||
+    /\baction\s+items?\b/.test(lower) ||
+    /\bmanagement\s+actions?\b/.test(lower)
+  );
 }
 
 function hasVehicleTripDescriptor(text: string) {

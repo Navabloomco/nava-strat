@@ -164,7 +164,10 @@ export async function POST(req: Request) {
           companyId: company.id,
           userId: auth.user.id,
           intent: "clarification",
-          pendingFollowup: conversation.pending_followup || {},
+          pendingFollowup:
+            pendingFollowupResolution.nextPendingFollowup ||
+            conversation.pending_followup ||
+            {},
           titleQuestion: question,
         });
       }
@@ -259,18 +262,11 @@ export async function POST(req: Request) {
       `[${m.severity.toUpperCase()}] ${m.title}: ${m.summary}`
     ).join("\n");
 
-    // 4. Fetch AI settings for this tenant (must be scoped to company)
-    const { data: aiSettings, error: aiError } = await supabaseAdmin
-      .from("company_ai_settings")
-      .select("api_key, provider, model")
-      .eq("company_id", company.id)
-      .eq("is_active", true)
-      .single();
-
-    if (aiError) {
-      console.error("AI settings query error:", aiError);
-    }
-    const apiKey = aiSettings?.api_key;
+    // 4. Nava Eye answers are source-grounded deterministic orchestration in Phase 1.
+    // External LLM calls are intentionally disabled so private fleet answers do not
+    // leave the company-scoped data boundary.
+    const aiSettings: any = null;
+    const apiKey: string | null = null;
 
     // 5. Prepare consolidated context for AI (or fallback)
     const enhancedContext = {
@@ -298,7 +294,8 @@ export async function POST(req: Request) {
     let answerQualityWarnings: string[] = [];
     let storePromises = [];
 
-    // 6. Try AI if key exists and we have context
+    // 6. External AI is disabled; keep this block unreachable unless a future
+    // security-reviewed internal/private model path explicitly opts in.
     if (
       apiKey &&
       Object.keys(context).length > 0 &&
@@ -579,6 +576,9 @@ function buildFallbackAnswer(context: any): string {
   }
   if (context.metric_followup) {
     return buildMetricFollowupAnswer(context);
+  }
+  if (context.fleet_health && context.management_action_request) {
+    return buildManagementActionFallbackAnswer(context);
   }
   if (context.financial_access_restricted) {
     return "Operational context is available for this role, but financial values are restricted. Ask an owner, admin, finance, management, or platform owner user to review profitability.";
@@ -1555,6 +1555,47 @@ function buildMetricFollowupAnswer(context: any) {
   return `I still have the previous ${metricIntent || "metric"} context for ${label}, but I need the metric question again to answer safely.`;
 }
 
+function buildManagementActionFallbackAnswer(context: any) {
+  const health = context.fleet_health || {};
+  const parts = ["What needs attention today:"];
+  const actions: string[] = [];
+
+  if (Number(health.offline_trucks || 0) > 0) {
+    actions.push(
+      `${Number(health.offline_trucks).toLocaleString()} enabled asset(s) have stale/offline tracking. Check provider sync and last-seen freshness first.`
+    );
+  }
+  if (Number(health.critical_events_24h || 0) > 0) {
+    actions.push(
+      `${Number(health.critical_events_24h).toLocaleString()} high-severity operational event(s) need review. Treat these as triage evidence, not blame.`
+    );
+  }
+  if (Number(health.idle_events_24h || 0) > 0) {
+    actions.push(
+      `${Number(health.idle_events_24h).toLocaleString()} provider idle marker(s) appeared in the last 24 hours. Review marker windows separately from GPS-stopped time; engine-on idle and fuel burn are not verified unless ignition/engine evidence supports it.`
+    );
+  }
+  if (Number(health.fuel_events_24h || 0) > 0) {
+    actions.push(
+      `${Number(health.fuel_events_24h).toLocaleString()} fuel-related event(s) need evidence review. Use fuel issues, allocations, receipts, and provider fuel fields as separate evidence layers.`
+    );
+  }
+
+  if (!actions.length) {
+    actions.push(
+      "No urgent fleet-health exceptions stand out from the role-safe 24-hour summary. Next useful checks are stale locations, trips needing revenue/distance links, and provider idle marker windows."
+    );
+  }
+
+  parts.push(...actions.map((item) => `- ${item}`));
+  if (!context.capabilities?.canViewFinance) {
+    parts.push(
+      "Finance/contribution actions are restricted for this role; I did not include revenue, rates, margins, or cost amounts."
+    );
+  }
+  return parts.join("\n");
+}
+
 function buildDistanceMetricFollowupAnswer(
   label: string,
   topic: any,
@@ -2222,6 +2263,11 @@ function buildTruckStatusFallbackAnswer(context: any, options: any = {}) {
   if (context.coordinate_request && model.hasGpsPoint) {
     parts.push(
       "Latest GPS/status evidence is available, but raw coordinates are kept as backend evidence."
+    );
+  }
+  if (context.raw_coordinate_request_restricted && model.hasGpsPoint) {
+    parts.push(
+      "Readable operational location is shown by default; raw latitude/longitude are restricted for this role."
     );
   }
 

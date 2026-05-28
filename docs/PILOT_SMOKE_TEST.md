@@ -380,8 +380,12 @@ Open `/nava-eye` and ask:
 - [ ] Confirm Nava Eye never says `near -`, `at -`, or raw coordinates; blank provider labels should become a human-readable fallback such as "Nava does not yet have a readable place name for the latest GPS point" or be omitted when another readable place is available.
 - [ ] Confirm Nava Eye never displays a provider timestamp ahead of the app clock as an exact future `last seen` time; small skew should read as `just now` / very recent with an approximation warning, and materially future timestamps should say the provider time needs review.
 - [ ] Ask "Where is KDQ265?", then ask "How about KDQ266" and confirm Nava Eye answers that truck if it exists, or suggests the closest workspace match instead of returning generic limited context.
+- [ ] Ask "How many km has kbu132c gone today?" when the closest workspace asset is a similar plate, then reply "yes" and confirm Nava Eye reruns the original distance question for the confirmed truck instead of only acknowledging the correction.
 - [ ] Ask "How about KCW103Z" after a truck-status answer and confirm Nava Eye inherits current-status intent for KCW 103Z.
 - [ ] Ask "Where is KDQ265?", then ask "How much mileage has it covered today?" and confirm the answer stays on KDQ 265T instead of switching to fleet-wide.
+- [ ] After a truck mileage answer, ask "what about yesterday?" and confirm Nava Eye keeps the same truck and distance intent while changing only the operating period.
+- [ ] After a truck mileage answer, ask "where is it now?" and confirm Nava Eye switches source to live status/location for the same truck.
+- [ ] After a truck status or mileage answer, ask "was it idling?" and confirm Nava Eye answers with provider idle marker or GPS-stopped evidence for the same truck without claiming true engine-on idle unless supported.
 - [ ] After the KDQ265 mileage answer, ask "What about KCW 103Z?" and confirm Nava Eye inherits the mileage intent for KCW 103Z.
 - [ ] After the KDQ265 mileage answer, say "The 307km was covered today the 25th" and confirm Nava Eye refers to the previous KDQ 265T metric, resolved date, and exact GPS-estimated distance instead of losing context.
 - [ ] Ask "Is that odometer mileage?" and confirm Nava Eye says GPS-estimated route distance is not dashboard odometer mileage when that was the previous source.
@@ -399,6 +403,8 @@ Open `/nava-eye` and ask:
 - [ ] If multiple KBJ132C Bamburi production Trips exist in the selected range, confirm Nava Eye lists candidate trip IDs/dates/routes/readiness and asks which one to use instead of guessing.
 - [ ] Ask the same trip-performance question as an ops-only role and confirm finance amounts are hidden while trip readiness, revenue-present/fuel-linked/expense-linked status, missing distance, and the finance-role boundary remain useful.
 - [ ] Confirm trip-performance answers do not claim final audited profit, actual fuel burn, fuel efficiency, fuel theft, or engine-on idling from GPS-only evidence.
+- [ ] Ask "What should I act on today?" and confirm Nava Eye returns role-appropriate action items from company-scoped fleet health without leaking finance amounts to non-finance roles.
+- [ ] Confirm Nava Eye copilot answers are deterministic/source-grounded in Phase 1 and do not call external LLM APIs.
 - [ ] Ask an idle/stopped question and confirm Nava Eye distinguishes GPS-stationary evidence, provider idle markers, and true engine-on idle; without ignition/engine/CAN support it says engine-on idling and fuel burn are not verified.
 - [ ] "Which trucks moved but have no revenue?" and confirm it requires reliable trip/revenue linking before producing an exception list.
 - [ ] "Can we trust KCW 103Z odometer?" and confirm the answer uses odometer health/distance quality evidence.

@@ -101,20 +101,33 @@ export function canReviewAssets(roles: string[]) {
 
 export function getRoleCapabilities(roles: string[]) {
   const normalizedRoles = normalizeRoles(roles);
+  const elevated = hasAnyRole(normalizedRoles, ELEVATED_ROLES);
+  const platformOwner = hasAnyRole(normalizedRoles, ["platform_owner"]);
+  const financeVisible = canViewFinance(normalizedRoles);
+  const opsVisible = canViewOps(normalizedRoles);
+  const journeyVisible = canViewJourneys(normalizedRoles);
+  const fuelVisible = canViewFuel(normalizedRoles);
 
   return {
-    canViewFinance: canViewFinance(normalizedRoles),
+    canViewFinance: financeVisible,
     canEditFinance: canEditFinance(normalizedRoles),
     canViewExpenses: canViewExpenses(normalizedRoles),
     canViewTripExpenses: canViewTripExpenses(normalizedRoles),
     canEditTripExpenses: canEditTripExpenses(normalizedRoles),
     canViewBilling: canViewBilling(normalizedRoles),
     canViewPlatformBilling: canViewPlatformBilling(normalizedRoles),
-    canViewOps: canViewOps(normalizedRoles),
-    canViewFuel: canViewFuel(normalizedRoles),
-    canViewJourneys: canViewJourneys(normalizedRoles),
+    canViewOps: opsVisible,
+    canEditOps: canEditJourneys(normalizedRoles),
+    canViewLiveTracking: opsVisible,
+    canViewManagement: financeVisible,
+    canViewFuel: fuelVisible,
+    canViewFuelCost: financeVisible,
+    canViewEvidence: journeyVisible || canViewTripExpenses(normalizedRoles),
+    canViewRawCoordinates: platformOwner,
+    canViewJourneys: journeyVisible,
     canViewSpares: canViewSpares(normalizedRoles),
-    isPlatformOwner: hasAnyRole(normalizedRoles, ["platform_owner"]),
+    isElevated: elevated,
+    isPlatformOwner: platformOwner,
     canReviewAssets: canReviewAssets(normalizedRoles),
   };
 }
