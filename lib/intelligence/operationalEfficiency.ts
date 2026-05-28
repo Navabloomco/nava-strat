@@ -44,6 +44,14 @@ type QueryResult<T> = {
   rows: T[];
   missing?: boolean;
   error?: string | null;
+  fetch_status?: "complete" | "partial";
+  pages_fetched?: number;
+  page_size?: number;
+  row_cap?: number;
+  cap_reached?: boolean;
+  partial_reason?: string | null;
+  first_recorded_at?: string | null;
+  latest_recorded_at?: string | null;
 };
 
 type EnabledAsset = {
@@ -79,10 +87,16 @@ type TruckTelemetryStats = {
   skipped_unrealistic_segments: number;
   first_recorded_at: string | null;
   latest_recorded_at: string | null;
+  telemetry_coverage_status: "complete" | "partial" | "thin";
+  telemetry_coverage_reason: string;
+  telemetry_start_gap_minutes: number;
+  telemetry_end_gap_minutes: number;
 };
 
 const MAX_CONTINUOUS_INTERVAL_MINUTES = 90;
 const STALE_LOCATION_THRESHOLD_MINUTES = 60;
+const TELEMETRY_PAGE_SIZE = 1000;
+const TELEMETRY_MAX_ROWS = 150000;
 
 export function resolveOperationalEfficiencyTimeframe(
   input: { range?: string | null; company?: any } = {}
@@ -377,32 +391,22 @@ async function fetchTelemetryRows(
   truckIds: string[],
   timeframe: OperationalEfficiencyTimeframe
 ): Promise<QueryResult<any>> {
-  if (!truckIds.length) return { rows: [] };
+  if (!truckIds.length) return { rows: [], fetch_status: "complete" };
 
   try {
-    const { data, error } = await supabaseAdmin
-      .from("telemetry_logs")
-      .select("truck_id, recorded_at, latitude, longitude, speed, provider_signal_flags")
-      .eq("company_id", companyId)
-      .in("truck_id", truckIds)
-      .gte("recorded_at", timeframe.query_start_utc)
-      .lt("recorded_at", timeframe.query_end_utc)
-      .order("recorded_at", { ascending: true })
-      .limit(30000);
-
-    if (error) {
-      if (
-        isMissingColumnError(error) &&
-        safeErrorMessage(error).toLowerCase().includes("provider_signal_flags")
-      ) {
-        return fetchTelemetryRowsWithoutProviderSignalFlags(companyId, truckIds, timeframe);
-      }
-      if (isMissingSchemaError(error)) return { rows: [], missing: true, error: safeErrorMessage(error) };
-      throw error;
-    }
-
-    return { rows: data || [] };
+    return await fetchTelemetryRowsPaginated({
+      companyId,
+      truckIds,
+      timeframe,
+      selectColumns: "truck_id, recorded_at, latitude, longitude, speed, provider_signal_flags",
+    });
   } catch (err: any) {
+    if (
+      isMissingColumnError(err) &&
+      safeErrorMessage(err).toLowerCase().includes("provider_signal_flags")
+    ) {
+      return fetchTelemetryRowsWithoutProviderSignalFlags(companyId, truckIds, timeframe);
+    }
     if (isMissingSchemaError(err)) {
       return { rows: [], missing: true, error: safeErrorMessage(err) };
     }
@@ -415,22 +419,90 @@ async function fetchTelemetryRowsWithoutProviderSignalFlags(
   truckIds: string[],
   timeframe: OperationalEfficiencyTimeframe
 ): Promise<QueryResult<any>> {
-  const { data, error } = await supabaseAdmin
-    .from("telemetry_logs")
-    .select("truck_id, recorded_at, latitude, longitude, speed")
-    .eq("company_id", companyId)
-    .in("truck_id", truckIds)
-    .gte("recorded_at", timeframe.query_start_utc)
-    .lt("recorded_at", timeframe.query_end_utc)
-    .order("recorded_at", { ascending: true })
-    .limit(30000);
+  return fetchTelemetryRowsPaginated({
+    companyId,
+    truckIds,
+    timeframe,
+    selectColumns: "truck_id, recorded_at, latitude, longitude, speed",
+  });
+}
 
-  if (error) {
-    if (isMissingSchemaError(error)) return { rows: [], missing: true, error: safeErrorMessage(error) };
-    throw error;
+async function fetchTelemetryRowsPaginated(input: {
+  companyId: string;
+  truckIds: string[];
+  timeframe: OperationalEfficiencyTimeframe;
+  selectColumns: string;
+}): Promise<QueryResult<any>> {
+  const rows: any[] = [];
+  let pagesFetched = 0;
+
+  for (let offset = 0; offset < TELEMETRY_MAX_ROWS; offset += TELEMETRY_PAGE_SIZE) {
+    const to = Math.min(offset + TELEMETRY_PAGE_SIZE - 1, TELEMETRY_MAX_ROWS - 1);
+    const { data, error } = await supabaseAdmin
+      .from("telemetry_logs")
+      .select(input.selectColumns)
+      .eq("company_id", input.companyId)
+      .in("truck_id", input.truckIds)
+      .gte("recorded_at", input.timeframe.query_start_utc)
+      .lt("recorded_at", input.timeframe.query_end_utc)
+      .order("recorded_at", { ascending: true })
+      .order("truck_id", { ascending: true })
+      .range(offset, to);
+
+    if (error) {
+      if (isMissingColumnError(error)) {
+        throw error;
+      }
+      if (isMissingSchemaError(error)) {
+        return { rows: [], missing: true, error: safeErrorMessage(error) };
+      }
+      throw error;
+    }
+
+    const pageRows = data || [];
+    pagesFetched += 1;
+    rows.push(...pageRows);
+
+    if (pageRows.length < TELEMETRY_PAGE_SIZE) {
+      return {
+        rows,
+        fetch_status: "complete",
+        pages_fetched: pagesFetched,
+        page_size: TELEMETRY_PAGE_SIZE,
+        row_cap: TELEMETRY_MAX_ROWS,
+        cap_reached: false,
+        first_recorded_at: firstRecordedAtFromRows(rows),
+        latest_recorded_at: latestRecordedAtFromRows(rows),
+      };
+    }
   }
 
-  return { rows: data || [] };
+  return {
+    rows,
+    fetch_status: "partial",
+    pages_fetched: pagesFetched,
+    page_size: TELEMETRY_PAGE_SIZE,
+    row_cap: TELEMETRY_MAX_ROWS,
+    cap_reached: true,
+    partial_reason:
+      "Telemetry row cap reached before the selected period was fully fetched.",
+    first_recorded_at: firstRecordedAtFromRows(rows),
+    latest_recorded_at: latestRecordedAtFromRows(rows),
+  };
+}
+
+function firstRecordedAtFromRows(rows: any[]) {
+  for (const row of rows) {
+    if (row?.recorded_at) return row.recorded_at;
+  }
+  return null;
+}
+
+function latestRecordedAtFromRows(rows: any[]) {
+  for (let index = rows.length - 1; index >= 0; index -= 1) {
+    if (rows[index]?.recorded_at) return rows[index].recorded_at;
+  }
+  return null;
 }
 
 async function fetchIdleEventRows(
@@ -715,6 +787,15 @@ function summarizeTelemetryRows(
     const providerDistance = calculateProviderReportedDistanceDelta(
       providerDistanceObservations
     );
+    const coverage = classifyTelemetryCoverage({
+      pointCount,
+      observedCoverageRatio: observedMinutes / timeframeMinutes,
+      firstRecordedAt,
+      latestRecordedAt,
+      timeframeStartMs,
+      timeframeEndMs,
+      timeframeMinutes,
+    });
 
     byTruck.set(truckKey, {
       truck_key: truckKey,
@@ -740,10 +821,69 @@ function summarizeTelemetryRows(
       skipped_unrealistic_segments: skippedUnrealisticSegments,
       first_recorded_at: firstRecordedAt,
       latest_recorded_at: latestRecordedAt,
+      telemetry_coverage_status: coverage.status,
+      telemetry_coverage_reason: coverage.reason,
+      telemetry_start_gap_minutes: coverage.start_gap_minutes,
+      telemetry_end_gap_minutes: coverage.end_gap_minutes,
     });
   }
 
   return byTruck;
+}
+
+function classifyTelemetryCoverage(input: {
+  pointCount: number;
+  observedCoverageRatio: number;
+  firstRecordedAt: string | null;
+  latestRecordedAt: string | null;
+  timeframeStartMs: number;
+  timeframeEndMs: number;
+  timeframeMinutes: number;
+}) {
+  if (!input.pointCount || !input.firstRecordedAt || !input.latestRecordedAt) {
+    return {
+      status: "thin" as const,
+      reason: "No usable telemetry points were found inside the selected period.",
+      start_gap_minutes: Math.round(input.timeframeMinutes),
+      end_gap_minutes: Math.round(input.timeframeMinutes),
+    };
+  }
+
+  const firstMs = new Date(input.firstRecordedAt).getTime();
+  const latestMs = new Date(input.latestRecordedAt).getTime();
+  const startGapMinutes = Number.isFinite(firstMs)
+    ? Math.max(0, (firstMs - input.timeframeStartMs) / 60000)
+    : input.timeframeMinutes;
+  const endGapMinutes = Number.isFinite(latestMs)
+    ? Math.max(0, (input.timeframeEndMs - latestMs) / 60000)
+    : input.timeframeMinutes;
+  const significantEndGap =
+    endGapMinutes > 60 && endGapMinutes > input.timeframeMinutes * 0.1;
+
+  if (significantEndGap) {
+    return {
+      status: "partial" as const,
+      reason: "The latest telemetry point is well before the selected period end.",
+      start_gap_minutes: Math.round(startGapMinutes),
+      end_gap_minutes: Math.round(endGapMinutes),
+    };
+  }
+
+  if (input.observedCoverageRatio < 0.1) {
+    return {
+      status: "thin" as const,
+      reason: "Only a small share of the selected period has usable GPS intervals.",
+      start_gap_minutes: Math.round(startGapMinutes),
+      end_gap_minutes: Math.round(endGapMinutes),
+    };
+  }
+
+  return {
+    status: "complete" as const,
+    reason: "Telemetry reaches the selected period end closely enough for ranking evidence.",
+    start_gap_minutes: Math.round(startGapMinutes),
+    end_gap_minutes: Math.round(endGapMinutes),
+  };
 }
 
 function calculateProviderReportedDistanceDelta(
@@ -853,6 +993,14 @@ function buildTruckMovementSummary(
       telemetry.provider_reported_distance_status !== "available"
         ? telemetry.provider_reported_distance_note
         : "";
+    const telemetryCoverageStatus =
+      telemetryResult.fetch_status === "partial"
+        ? "partial"
+        : telemetry?.telemetry_coverage_status || "unavailable";
+    const telemetryCoverageNote =
+      telemetryResult.partial_reason ||
+      telemetry?.telemetry_coverage_reason ||
+      null;
     return {
       truck_key: truckKey,
       truck_id: provider?.truck_id || telemetry?.truck_id || truckKey,
@@ -904,6 +1052,11 @@ function buildTruckMovementSummary(
       telemetry_points: telemetry?.point_count || 0,
       first_telemetry_at: telemetry?.first_recorded_at || null,
       last_telemetry_at: telemetry?.latest_recorded_at || null,
+      selected_period_start: timeframe.query_start_utc,
+      selected_period_end: timeframe.query_end_utc,
+      telemetry_coverage_status: telemetryCoverageStatus,
+      telemetry_coverage_ratio: telemetry?.observed_coverage_ratio || 0,
+      telemetry_coverage_note: telemetryCoverageNote,
       distance_audit: {
         period_start_utc: timeframe.query_start_utc,
         period_end_utc: timeframe.query_end_utc,
@@ -911,6 +1064,14 @@ function buildTruckMovementSummary(
         last_telemetry_at: telemetry?.latest_recorded_at || null,
         points_used: telemetry?.point_count || 0,
         segments_used: telemetry?.segment_count || 0,
+        coverage_status: telemetryCoverageStatus,
+        coverage_ratio: telemetry?.observed_coverage_ratio || 0,
+        coverage_reason: telemetryCoverageNote,
+        telemetry_start_gap_minutes: telemetry?.telemetry_start_gap_minutes ?? null,
+        telemetry_end_gap_minutes: telemetry?.telemetry_end_gap_minutes ?? null,
+        telemetry_fetch_status: telemetryResult.fetch_status || "complete",
+        telemetry_fetch_cap_reached: Boolean(telemetryResult.cap_reached),
+        telemetry_fetch_partial_reason: telemetryResult.partial_reason || null,
         excluded_large_gaps: telemetry?.large_gap_count || 0,
         excluded_impossible_jumps: telemetry?.skipped_unrealistic_segments || 0,
         skipped_invalid_points: telemetry?.skipped_invalid_points || 0,
@@ -1488,11 +1649,20 @@ function sourceStatus(result: QueryResult<any>) {
       status: "missing",
       row_count: 0,
       error: result.error || null,
+      coverage_status: "missing",
     };
   }
   return {
     status: result.rows.length ? "available" : "empty",
     row_count: result.rows.length,
+    coverage_status: result.fetch_status || "complete",
+    pages_fetched: result.pages_fetched || null,
+    page_size: result.page_size || null,
+    row_cap: result.row_cap || null,
+    cap_reached: Boolean(result.cap_reached),
+    partial_reason: result.partial_reason || null,
+    first_recorded_at: result.first_recorded_at || null,
+    latest_recorded_at: result.latest_recorded_at || null,
   };
 }
 

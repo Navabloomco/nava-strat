@@ -625,6 +625,15 @@ function SmallStat({ label, value }: { label: string; value: string }) {
 
 function EvidenceSource({ label, source }: { label: string; source: any }) {
   const status = source?.status || "unavailable";
+  const coverageStatus = source?.coverage_status || "complete";
+  const isPartial = coverageStatus === "partial" || source?.cap_reached;
+  const first = formatAuditTime(source?.first_recorded_at);
+  const latest = formatAuditTime(source?.latest_recorded_at);
+  const details = [
+    `${formatCount(source?.row_count)} rows`,
+    source?.pages_fetched ? `${formatCount(source.pages_fetched)} page(s)` : "",
+    first && latest ? `${first} to ${latest}` : "",
+  ].filter(Boolean);
   return (
     <div className="rounded-md border border-white/10 bg-white/[0.04] p-4">
       <div className="text-sm font-semibold text-white">{label}</div>
@@ -632,8 +641,17 @@ function EvidenceSource({ label, source }: { label: string; source: any }) {
         <StatusPill tone={status === "available" ? "success" : status === "missing" ? "danger" : "neutral"}>
           {humanize(status)}
         </StatusPill>
-        <span className="text-xs text-slate-400">{formatCount(source?.row_count)} rows</span>
+        {coverageStatus && coverageStatus !== "complete" && (
+          <StatusPill tone="warning">{humanize(coverageStatus)} fetch</StatusPill>
+        )}
+        <span className="text-xs text-slate-400">{details.join(" · ")}</span>
       </div>
+      {isPartial && (
+        <p className="mt-2 text-xs leading-5 text-amber-200">
+          {source?.partial_reason ||
+            "This source hit a fetch cap, so rankings that depend on it may be incomplete."}
+        </p>
+      )}
     </div>
   );
 }
@@ -799,13 +817,33 @@ function formatDistanceAudit(audit: any, timeZone?: string) {
   const last = formatAuditTime(audit.last_telemetry_at, timeZone);
   const pointPart = `${formatCount(points)} point(s), ${formatCount(segments)} segment(s)`;
   const windowPart = first && last ? `${first} to ${last}` : "";
+  const coveragePart = formatTelemetryCoverageAudit(audit, timeZone);
   const gapPart = Number(audit.excluded_large_gaps || 0)
     ? `${formatCount(audit.excluded_large_gaps)} long gap(s) excluded`
     : "";
   const jumpPart = Number(audit.excluded_impossible_jumps || 0)
     ? `${formatCount(audit.excluded_impossible_jumps)} impossible jump(s) filtered`
     : "";
-  return [windowPart, pointPart, gapPart, jumpPart].filter(Boolean).join("; ");
+  return [windowPart, pointPart, coveragePart, gapPart, jumpPart].filter(Boolean).join("; ");
+}
+
+function formatTelemetryCoverageAudit(audit: any, timeZone?: string) {
+  if (audit.telemetry_fetch_status === "partial") {
+    return audit.telemetry_fetch_partial_reason || "Telemetry fetch was partial";
+  }
+  if (audit.coverage_status === "partial") {
+    const last = formatAuditTime(audit.last_telemetry_at, timeZone);
+    return last
+      ? `Partial telemetry coverage: last point at ${last}`
+      : "Partial telemetry coverage";
+  }
+  if (audit.coverage_status === "thin") {
+    const ratio = Number(audit.coverage_ratio || 0);
+    return Number.isFinite(ratio)
+      ? `Thin telemetry coverage: ${formatPercent(ratio)} observed`
+      : "Thin telemetry coverage";
+  }
+  return "";
 }
 
 function formatAuditTime(value: any, timeZone?: string) {
