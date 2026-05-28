@@ -18,8 +18,8 @@ const financeCards = [
     href: "/finance/rate-rules",
   },
   {
-    title: "Revenue Management",
-    body: "Set trip rates, quantities, and revenue for active journeys.",
+    title: "Revenue Review",
+    body: "Review Trip quantities, match configured rates, and apply revenue entries.",
     href: "/finance/revenue",
   },
   {

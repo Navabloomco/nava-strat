@@ -282,7 +282,12 @@ Confirm workflow behavior:
 - [ ] As an ops/clerk-style user without finance visibility, confirm `GET /api/finance/rate-rules` and `GET /api/finance/revenue-rules/match?journeyId=<id>` return a finance access boundary instead of rates or revenue amounts.
 - [ ] For a same-company Trip with matching client/route and available billing quantity, call `GET /api/finance/revenue-rules/match?journeyId=<id>` and confirm the match status is `unique_match` with a revenue preview.
 - [ ] Confirm the rate-rule matcher returns `no_rule`, `multiple_matches`, `missing_quantity`, or `missing_fx` instead of guessing when a configured rate cannot be applied safely.
-- [ ] Confirm `/api/finance/revenue` still updates existing journey revenue snapshots and, when the migration exists, writes an auditable `journey_revenue_entries` record labeled `manual_finance_entry` or `overridden`.
+- [ ] Open `/finance/revenue` as a finance/admin role and confirm it is titled `Finance Revenue Review`, not `Revenue Engine` or `Rate setup`.
+- [ ] Confirm `/finance/revenue` links to `/finance/rate-rules` for rate setup instead of creating rates on the revenue page.
+- [ ] Confirm each Trip row/card shows trip reference, client, route, truck, quantities, current revenue source, match status, and matched rate-rule summary when one exists.
+- [ ] Apply a unique matched configured rate and confirm `/api/finance/revenue` writes `journey_revenue_entries.revenue_source = configured_rate` while updating the compatibility journey revenue snapshot.
+- [ ] Confirm manual finance entry remains an override/correction path with a reason, not the default rate setup workflow.
+- [ ] Confirm `/api/finance/revenue` still updates existing journey revenue snapshots and, when the migration exists, writes an auditable `journey_revenue_entries` record labeled `configured_rate`, `manual_finance_entry`, or `overridden`.
 - [ ] Confirm Trip Intelligence uses the latest `journey_revenue_entries` record when available and falls back to the journey revenue snapshot when the revenue-entry table is absent or empty.
 - [ ] Confirm no external FX service is called; non-KES revenue requires a manual/company-standard/fixed FX rate before KES revenue can be calculated.
 - [ ] Confirm generic Trip Detail UI does not show hardcoded pilot tenant examples, truck plates, clients, driver names, routes, or contribution amounts; such values should appear only when loaded from the current company data.

@@ -7,12 +7,20 @@ import {
   normalizeRole,
   rolesForCompany,
 } from "../../../../lib/api/roleAccess";
-import { isRevenueRuleSchemaMissing } from "../../../../lib/finance/revenueRules";
+import {
+  evaluateRevenueRuleMatch,
+  isRevenueRuleSchemaMissing,
+  toRevenueNumber,
+} from "../../../../lib/finance/revenueRules";
 
 export const dynamic = "force-dynamic";
 
 const REVENUE_JOURNEY_FIELDS =
   "id, internal_trip_id, client_name, truck, driver, from_location, to_location, status, start_time, end_time, loaded_quantity, offloaded_quantity, billing_quantity, billing_unit, rate_type, rate_amount, rate_currency, fx_rate, revenue_original, revenue_kes, revenue_status, revenue_notes, created_at";
+const REVENUE_ENTRY_FIELDS =
+  "id, company_id, journey_id, rate_rule_id, revenue_source, billing_quantity, billing_unit, rate_amount, currency, fx_rate_to_kes, revenue_original, revenue_kes, override_reason, applied_by, applied_at, notes";
+const RATE_RULE_FIELDS =
+  "id, company_id, client_name, route_from, route_to, unit_type, billing_quantity_source, rate_amount, currency, fx_policy, fx_rate_to_kes, effective_from, effective_to, status, notes, created_at, updated_at";
 
 type ResolvedCompany = {
   id: string;
@@ -140,6 +148,11 @@ function billingUnitFromRateType(rateType: string) {
   return rateType.startsWith("per_") ? rateType.replace("per_", "") : rateType;
 }
 
+function rateTypeFromBillingUnit(unit: string | null | undefined) {
+  const normalized = String(unit || "tonne").trim().toLowerCase();
+  return normalized === "custom" ? "custom" : `per_${normalized}`;
+}
+
 function calculateRevenue(fields: {
   rateType: string;
   rateAmount: number;
@@ -147,9 +160,12 @@ function calculateRevenue(fields: {
   fxRate: number;
   loadedQuantity?: number | null;
   offloadedQuantity?: number | null;
+  billingQuantity?: number | null;
 }) {
   const billingQuantity =
-    fields.rateType === "per_truck" ? 1 : Number(fields.offloadedQuantity || 0);
+    fields.rateType === "per_truck" || fields.rateType === "per_trip"
+      ? 1
+      : Number(fields.billingQuantity || fields.offloadedQuantity || 0);
   const revenueOriginal = Number(fields.rateAmount || 0) * billingQuantity;
   const revenueKes =
     fields.rateCurrency === "KES" ? revenueOriginal : revenueOriginal * Number(fields.fxRate || 1);
@@ -184,11 +200,50 @@ export async function GET(req: Request) {
 
     if (error) throw error;
 
+    const journeyRows = journeys || [];
+    const journeyIds = journeyRows.map((journey) => journey.id).filter(Boolean);
+    const latestEntriesByJourney = new Map<string, any>();
+    const warnings: string[] = [];
+
+    if (journeyIds.length) {
+      const { data: revenueEntries, error: entryError } = await supabaseAdmin
+        .from("journey_revenue_entries")
+        .select(REVENUE_ENTRY_FIELDS)
+        .eq("company_id", resolved.company.id)
+        .in("journey_id", journeyIds)
+        .order("applied_at", { ascending: false })
+        .limit(5000);
+
+      if (entryError) {
+        if (isRevenueRuleSchemaMissing(entryError)) {
+          warnings.push(
+            "Auditable revenue entries are not available until the journey_revenue_entries migration is applied."
+          );
+        } else {
+          throw entryError;
+        }
+      } else {
+        for (const entry of revenueEntries || []) {
+          if (entry.journey_id && !latestEntriesByJourney.has(entry.journey_id)) {
+            latestEntriesByJourney.set(entry.journey_id, entry);
+          }
+        }
+      }
+    }
+
     return NextResponse.json({
       success: true,
       company: resolved.company,
       is_platform_owner: resolved.isPlatformOwner,
-      journeys: journeys || [],
+      capabilities: {
+        can_view_finance: true,
+        can_edit_finance: canEditFinance(resolved.roles),
+      },
+      warnings,
+      journeys: journeyRows.map((journey) => ({
+        ...journey,
+        latest_revenue_entry: latestEntriesByJourney.get(journey.id) || null,
+      })),
     });
   } catch (err: any) {
     console.error("Revenue GET error:", err);
@@ -224,6 +279,138 @@ export async function PATCH(req: Request) {
       );
     }
 
+    if (body.action === "apply_configured_rate" || body.apply_configured_rate) {
+      if (journeyIds.length !== 1) {
+        return NextResponse.json(
+          { success: false, error: "Apply configured rate to one Trip at a time." },
+          { status: 400 }
+        );
+      }
+
+      const { data: journey, error: journeyError } = await supabaseAdmin
+        .from("journeys")
+        .select(
+          "id, company_id, internal_trip_id, client_name, from_location, to_location, start_time, end_time, created_at, loaded_quantity, offloaded_quantity, billing_quantity"
+        )
+        .eq("company_id", resolved.company.id)
+        .eq("is_demo", false)
+        .eq("id", journeyIds[0])
+        .maybeSingle();
+
+      if (journeyError) throw journeyError;
+      if (!journey) {
+        return NextResponse.json(
+          { success: false, error: "Trip not found" },
+          { status: 404 }
+        );
+      }
+
+      const { data: rules, error: rulesError } = await supabaseAdmin
+        .from("client_rate_rules")
+        .select(RATE_RULE_FIELDS)
+        .eq("company_id", resolved.company.id)
+        .eq("status", "active")
+        .limit(500);
+
+      if (rulesError) throw rulesError;
+
+      const match = evaluateRevenueRuleMatch({
+        journey,
+        rules: rules || [],
+        manualQuantity: toRevenueNumber(body.manual_quantity),
+        fxRateToKes: toRevenueNumber(body.fx_rate_to_kes ?? body.fx_rate),
+        date: body.date || null,
+      });
+
+      if (match.status !== "unique_match" || !match.calculation || match.matches.length !== 1) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: `Configured rate cannot be applied yet: ${match.status}`,
+            match_status: match.status,
+            missing: match.missing,
+          },
+          { status: 400 }
+        );
+      }
+
+      const rateRule = match.matches[0];
+      const calculation = match.calculation;
+      const updatePayload: Record<string, any> = {
+        rate_type: rateTypeFromBillingUnit(calculation.billing_unit),
+        rate_amount: calculation.rate_amount,
+        rate_currency: calculation.currency,
+        fx_rate: calculation.fx_rate_to_kes,
+        billing_quantity: calculation.billing_quantity,
+        billing_unit: calculation.billing_unit,
+        revenue_original: calculation.revenue_original,
+        revenue_kes: calculation.revenue_kes,
+        revenue_status: "configured_rate",
+      };
+
+      if (typeof body.revenue_notes === "string") {
+        updatePayload.revenue_notes = body.revenue_notes;
+      }
+
+      const { data: updated, error: updateError } = await supabaseAdmin
+        .from("journeys")
+        .update(updatePayload)
+        .eq("company_id", resolved.company.id)
+        .eq("is_demo", false)
+        .eq("id", journey.id)
+        .select(REVENUE_JOURNEY_FIELDS)
+        .single();
+
+      if (updateError) throw updateError;
+
+      const warnings: string[] = [];
+      const { data: entry, error: entryError } = await supabaseAdmin
+        .from("journey_revenue_entries")
+        .insert({
+          company_id: resolved.company.id,
+          journey_id: journey.id,
+          rate_rule_id: rateRule.id || null,
+          revenue_source: "configured_rate",
+          billing_quantity: calculation.billing_quantity,
+          billing_unit: calculation.billing_unit,
+          rate_amount: calculation.rate_amount,
+          currency: calculation.currency,
+          fx_rate_to_kes: calculation.fx_rate_to_kes,
+          revenue_original: calculation.revenue_original,
+          revenue_kes: calculation.revenue_kes,
+          applied_by: resolved.userId,
+          notes:
+            typeof body.revenue_notes === "string" && body.revenue_notes.trim()
+              ? body.revenue_notes.trim()
+              : null,
+        })
+        .select(REVENUE_ENTRY_FIELDS)
+        .single();
+
+      if (entryError) {
+        if (isRevenueRuleSchemaMissing(entryError)) {
+          warnings.push(
+            "Revenue was saved on the Trip snapshot, but auditable revenue entries are not available until the journey_revenue_entries migration is applied."
+          );
+        } else {
+          throw entryError;
+        }
+      }
+
+      return NextResponse.json({
+        success: true,
+        company: resolved.company,
+        journey: {
+          ...updated,
+          latest_revenue_entry: entry || null,
+        },
+        match_status: match.status,
+        applied_rate_rule: rateRule,
+        calculation,
+        warnings,
+      });
+    }
+
     const rateType = body.rate_type || "per_tonne";
     const rateAmount = Number(body.rate_amount || 0);
     const rateCurrency = body.rate_currency || "KES";
@@ -238,7 +425,7 @@ export async function PATCH(req: Request) {
 
     const { data: journeys, error: fetchError } = await supabaseAdmin
       .from("journeys")
-      .select("id, loaded_quantity, offloaded_quantity")
+      .select("id, loaded_quantity, offloaded_quantity, billing_quantity")
       .eq("company_id", resolved.company.id)
       .eq("is_demo", false)
       .in("id", journeyIds);
@@ -264,6 +451,10 @@ export async function PATCH(req: Request) {
         body.offloaded_quantity === undefined
           ? journey.offloaded_quantity
           : Number(body.offloaded_quantity || 0);
+      const billingQuantity =
+        body.billing_quantity === undefined
+          ? journey.billing_quantity
+          : Number(body.billing_quantity || 0);
       const revenue = calculateRevenue({
         rateType,
         rateAmount,
@@ -271,6 +462,7 @@ export async function PATCH(req: Request) {
         fxRate,
         loadedQuantity,
         offloadedQuantity,
+        billingQuantity,
       });
 
       const updatePayload: Record<string, any> = {
