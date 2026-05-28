@@ -39,6 +39,10 @@ import {
   providerIdleMarkerLabel,
 } from "../../../../lib/providers/providerIdleMarkers";
 import { parseNavaEyeQuery } from "../../../../lib/intelligence/queryUnderstanding";
+import {
+  buildNavaEyeActionPlan,
+  buildNavaEyeActionPlannerContext,
+} from "../../../../lib/intelligence/navaEyeActionPlanner";
 
 export async function POST(req: Request) {
   try {
@@ -230,6 +234,10 @@ export async function POST(req: Request) {
       structured_intent: effectiveQueryUnderstanding,
     };
     context.query_understanding = effectiveQueryUnderstanding;
+    context.action_plan_context = buildNavaEyeActionPlannerContext({
+      pendingFollowup: conversation?.pending_followup,
+      recentMessages: recentConversationMessages,
+    });
 
     await recordAnalyticsEvent({
       companyId: company.id,
@@ -568,6 +576,10 @@ function buildFallbackAnswer(context: any): string {
   }
   if (context.no_enabled_intelligence_assets && !context.spares) {
     return "Fleet data has been imported, but no assets are enabled for Nava intelligence yet. Review assets before I use them in answers.";
+  }
+  const actionPlan = buildNavaEyeActionPlan(context);
+  if (actionPlan) {
+    return actionPlan;
   }
   if (context.evidence_review) {
     return buildEvidenceReviewAnswer(context);
