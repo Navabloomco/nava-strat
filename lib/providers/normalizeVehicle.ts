@@ -17,6 +17,10 @@ import {
   extractProviderIdleMarkersFromRow,
   type ProviderIdleMarkerDetection,
 } from "./providerIdleMarkers";
+import {
+  extractProviderReportedEvidence,
+  type ProviderReportedEvidence,
+} from "./providerReportedFields";
 
 export type CanonicalVehicle = {
   truck_id: string;
@@ -46,6 +50,7 @@ export type CanonicalVehicle = {
   signal_quality: Record<string, any>;
   provider_signal_flags: Record<string, any>;
   provider_idle_markers: ProviderIdleMarkerDetection[];
+  provider_reported_evidence: ProviderReportedEvidence | null;
 
   provider: string;
 
@@ -115,6 +120,7 @@ export function normalizeVehicle(
       : rawFuelLevel;
   const location_label = getLocationLabel(raw, mapping);
   const providerIdleMarkers = extractProviderIdleMarkersFromRow(raw);
+  const providerReportedEvidence = extractProviderReportedEvidence(raw, providerName);
   const recordedAtValue = getValue(raw, mapping.recorded_at);
   if (isAmbiguousProviderTimestampValue(recordedAtValue)) {
     warnings.push(
@@ -234,6 +240,8 @@ export function normalizeVehicle(
       attached_trailer_plate: identity.attached_trailer_plate,
       identity_source: identity.identity_source,
       asset_identity_role: identity.asset_identity_role,
+      provider_reported_evidence_detected: Boolean(providerReportedEvidence),
+      provider_reported_evidence_labels: providerReportedEvidence?.labels || [],
     },
     telemetry_capability_source: capabilityResolution.source,
     signal_quality: {
@@ -249,6 +257,8 @@ export function normalizeVehicle(
       meaningful_signals: Object.keys(observedSignals).filter(
         (signal) => (observedSignals as Record<string, boolean>)[signal]
       ),
+      provider_reported_evidence_detected: Boolean(providerReportedEvidence),
+      provider_reported_evidence_labels: providerReportedEvidence?.labels || [],
     },
     provider_signal_flags: {
       provider_timezone: profile.provider_timezone,
@@ -263,8 +273,12 @@ export function normalizeVehicle(
       identity_source: identity.identity_source,
       asset_identity_role: identity.asset_identity_role,
       provider_idle_markers_detected: providerIdleMarkers.length,
+      provider_reported_evidence_detected: Boolean(providerReportedEvidence),
+      provider_reported_evidence_labels: providerReportedEvidence?.labels || [],
+      provider_reported_evidence: providerReportedEvidence,
     },
     provider_idle_markers: providerIdleMarkers,
+    provider_reported_evidence: providerReportedEvidence,
 
     provider: providerName,
 

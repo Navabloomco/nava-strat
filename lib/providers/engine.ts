@@ -33,6 +33,7 @@ import {
   scanProviderCapabilityRows,
   type ProviderCapabilityDiscoverySummary,
 } from "./capabilityDiscovery";
+import { PROVIDER_REPORTED_FIELD_PATHS } from "./providerReportedFields";
 
 export type ProviderRecord = {
   id: string;
@@ -541,7 +542,7 @@ export async function runProviderSync(
         fieldMapping: currentVehicleFieldMapping,
         configuredFieldNames: supplemental.feeds.flatMap((feed) =>
           Object.keys(feed.config.mapping || {})
-        ),
+        ).concat(PROVIDER_REPORTED_FIELD_PATHS),
         sources: [
           { name: "current vehicle feed", row_count: fleet.vehicles.length },
           ...supplemental.feeds.map((feed) => ({

@@ -229,7 +229,7 @@ export default function OpsEfficiencyPage() {
                     key={truck.truck_key || truck.truck_id}
                     title={truck.truck_id || "Unknown truck"}
                     metric={`${formatKm(truck.distance_km)} km`}
-                    detail={`${truck.distance_source || "unavailable"} distance`}
+                    detail={formatDistanceEvidenceDetail(truck)}
                   />
                 )}
               />
@@ -481,7 +481,7 @@ function TripRow({ trip }: { trip: any }) {
       </div>
       <div className="mt-3 grid gap-2 text-xs text-slate-300 sm:grid-cols-3">
         <span>Distance: {movement.distance_km ? `${formatKm(movement.distance_km)} km` : "Unavailable"}</span>
-        <span>Source: {movement.distance_source || "unavailable"}</span>
+        <span>Source: {formatDistanceEvidenceDetail({ ...movement, compact: true })}</span>
         <span>Flags: {flags.length ? flags.slice(0, 3).map(humanize).join(", ") : "None"}</span>
       </div>
       {showContribution && (
@@ -725,6 +725,23 @@ function formatPercent(value: any) {
   if (!Number.isFinite(number)) return "Unavailable";
   const percent = number <= 1 ? number * 100 : number;
   return `${Math.round(percent)}%`;
+}
+
+function formatDistanceEvidenceDetail(row: any) {
+  const source = String(row?.distance_source || "").trim();
+  const detail = String(row?.distance_evidence_detail || "").trim();
+  if (!source || source === "unavailable") return "unavailable";
+
+  const normalized = source.toLowerCase();
+  const sourceLabel =
+    normalized === "provider-reported"
+      ? "Provider-reported distance"
+      : normalized.includes("gps")
+        ? "GPS-estimated distance"
+        : `${humanize(source)} distance`;
+
+  if (!detail || detail === "unavailable") return sourceLabel;
+  return `${sourceLabel} · ${detail}`;
 }
 
 function formatStoppedConfidence(row: any) {

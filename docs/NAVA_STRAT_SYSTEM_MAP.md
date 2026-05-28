@@ -465,6 +465,7 @@ New provider records must not start active by default, and provider sync must no
    - `telemetry_capability`
    - `signal_quality`
    - `provider_signal_flags`
+   - `provider_reported_evidence`
    - `location_label`
    - `recorded_at`
 5. Skip rows that do not have a safe vehicle identifier after mapped and fallback keys are checked. Provider sync must not create `UNKNOWN`, blank, or null reviewable assets.
@@ -474,7 +475,7 @@ New provider records must not start active by default, and provider sync must no
    Nava Eye must not render blank provider location placeholders such as `near -` or `at -`; if no readable location label is available, say `location label unavailable` or omit the location phrase.
 6. If the same provider has already imported the asset, upsert that provider-owned `fleet_assets` row by `(provider_id, truck_id)`.
 7. If a different provider reports the same normalized registration/truck ID for an existing company asset, treat it as cross-provider telemetry for that asset and do not create a duplicate billable-review asset automatically.
-8. Insert `telemetry_logs` with the incoming `provider_id`, normalized signal quality, timestamp quality, and capability flags preserved. Provider timestamps must be normalized and validated before use: Unix seconds/milliseconds should be interpreted safely when possible, while epoch/default dates, years before 2000, far-future dates, or dates that conflict with asset first-seen evidence must be marked invalid/suspect instead of being displayed as real last-seen telemetry. Asset Review should show `Last seen unavailable` or `Provider timestamp invalid` rather than 1970-style dates.
+8. Insert `telemetry_logs` with the incoming `provider_id`, normalized signal quality, timestamp quality, capability flags, and safe provider-reported evidence preserved. Current-feed provider evidence can include selected fields such as `total_distance`, `mileage`, `engine_hours`, `device_data.engine_hours`, `device_data.traccar.engine_on_at`, provider fuel fields, alarms, icon status, and device timezone. These are stored as labeled provider-reported evidence in JSON metadata such as `provider_signal_flags`, not as raw payload samples or customer-facing claims. Provider timestamps must be normalized and validated before use: Unix seconds/milliseconds should be interpreted safely when possible, while epoch/default dates, years before 2000, far-future dates, or dates that conflict with asset first-seen evidence must be marked invalid/suspect instead of being displayed as real last-seen telemetry. Asset Review should show `Last seen unavailable` or `Provider timestamp invalid` rather than 1970-style dates.
    Provider current-feed rows are also scanned for safe idle/excessive-idle marker values such as `idle`, `idling`, `excessive idle`, `prolonged idle`, and `stop idle` in event/status/alert-style fields. Detected provider markers are written to `telemetry_events` as canonical `provider_idle_marker` rows with company, provider, truck, timestamp, optional duration, safe marker label/source metadata, and explicit `engine_on_idling_confirmed = false` / `fuel_burn_confirmed = false` metadata. Generic GPS stop/stationary values are not promoted to provider idle markers.
 9. Do not overwrite reviewed asset classification, billing, or intelligence enablement fields on sync.
 
@@ -517,6 +518,8 @@ Supported feed capabilities:
 - Sanitized diagnostics.
 
 Currently persisted enrichment is intentionally conservative. `fuel_level` is the main end-to-end stored point enrichment field. Provider trip/report-level distance fields should flow into `provider_trip_summaries` when the additive distance schema exists, not into every `telemetry_logs` row unless a provider truly sends point-level odometer/distance signals.
+
+Provider-reported current-feed fields are evidence, not audited truth. FleetTrack/Oak-style current feeds may expose richer evidence such as `total_distance`, `engine_hours`, nested engine-hour, fuel quantity/price/rate, alarm, and icon status fields; BlueTrax-style current feeds may expose `mileage` and device timezone. Nava maps selected current-feed values into provider-reported evidence metadata so Operational Efficiency can prefer sane provider-reported distance/odometer deltas over GPS-estimated distance. Fuel issued/allocation remains the finance/control source of record; provider fuel fields do not create fuel-burn, theft, efficiency, or driver-misuse claims. Richer historical distance, idle, diagnostics, HOS, or safety evidence may still require provider report/event/history endpoints and permissions.
 
 ### Provider-Agnostic Distance Intelligence
 

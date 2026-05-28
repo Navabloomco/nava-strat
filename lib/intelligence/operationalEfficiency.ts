@@ -10,6 +10,7 @@ import {
   canonicalProviderIdleEventType,
   isProviderIdleMarkerEvent,
 } from "../providers/providerIdleMarkers";
+import { providerReportedDistanceValueFromSignalFlags } from "../providers/providerReportedFields";
 
 export type OperationalEfficiencyRange = "today" | "yesterday" | "7d";
 
@@ -51,6 +52,9 @@ type TruckTelemetryStats = {
   segment_count: number;
   large_gap_count: number;
   distance_km: number;
+  provider_reported_distance_km: number;
+  provider_reported_distance_points: number;
+  provider_reported_distance_source: string | null;
   moving_minutes: number;
   stopped_minutes: number;
   observed_minutes: number;
@@ -316,7 +320,7 @@ async function fetchTelemetryRows(
   try {
     const { data, error } = await supabaseAdmin
       .from("telemetry_logs")
-      .select("truck_id, recorded_at, latitude, longitude, speed")
+      .select("truck_id, recorded_at, latitude, longitude, speed, provider_signal_flags")
       .eq("company_id", companyId)
       .in("truck_id", truckIds)
       .gte("recorded_at", timeframe.start_utc)
@@ -325,6 +329,12 @@ async function fetchTelemetryRows(
       .limit(30000);
 
     if (error) {
+      if (
+        isMissingColumnError(error) &&
+        safeErrorMessage(error).toLowerCase().includes("provider_signal_flags")
+      ) {
+        return fetchTelemetryRowsWithoutProviderSignalFlags(companyId, truckIds, timeframe);
+      }
       if (isMissingSchemaError(error)) return { rows: [], missing: true, error: safeErrorMessage(error) };
       throw error;
     }
@@ -336,6 +346,29 @@ async function fetchTelemetryRows(
     }
     throw err;
   }
+}
+
+async function fetchTelemetryRowsWithoutProviderSignalFlags(
+  companyId: string,
+  truckIds: string[],
+  timeframe: OperationalEfficiencyTimeframe
+): Promise<QueryResult<any>> {
+  const { data, error } = await supabaseAdmin
+    .from("telemetry_logs")
+    .select("truck_id, recorded_at, latitude, longitude, speed")
+    .eq("company_id", companyId)
+    .in("truck_id", truckIds)
+    .gte("recorded_at", timeframe.start_utc)
+    .lt("recorded_at", timeframe.end_utc)
+    .order("recorded_at", { ascending: true })
+    .limit(30000);
+
+  if (error) {
+    if (isMissingSchemaError(error)) return { rows: [], missing: true, error: safeErrorMessage(error) };
+    throw error;
+  }
+
+  return { rows: data || [] };
 }
 
 async function fetchIdleEventRows(
@@ -510,6 +543,11 @@ function summarizeTelemetryRows(
     let skippedInvalidPoints = 0;
     let skippedUnrealisticSegments = 0;
     let latestRecordedAt: string | null = null;
+    const providerDistanceObservations: Array<{
+      value: number;
+      timestampMs: number;
+      field_path: string | null;
+    }> = [];
 
     for (const row of sorted) {
       const point = normalizeGpsPoint(row);
@@ -520,6 +558,18 @@ function summarizeTelemetryRows(
 
       pointCount += 1;
       latestRecordedAt = row.recorded_at || latestRecordedAt;
+      const providerDistanceValue = providerReportedDistanceValueFromSignalFlags(
+        row.provider_signal_flags
+      );
+      if (providerDistanceValue !== null) {
+        providerDistanceObservations.push({
+          value: providerDistanceValue,
+          timestampMs: point.timestampMs,
+          field_path:
+            row.provider_signal_flags?.provider_reported_evidence
+              ?.distance_odometer?.field_path || null,
+        });
+      }
       if (!previous) {
         previous = point;
         continue;
@@ -568,6 +618,9 @@ function summarizeTelemetryRows(
       timeframeMinutes,
       skippedUnrealisticSegments,
     });
+    const providerDistance = calculateProviderReportedDistanceDelta(
+      providerDistanceObservations
+    );
 
     byTruck.set(truckKey, {
       truck_key: truckKey,
@@ -576,6 +629,9 @@ function summarizeTelemetryRows(
       segment_count: segmentCount,
       large_gap_count: largeGapCount,
       distance_km: roundMetric(distanceKm),
+      provider_reported_distance_km: providerDistance.distance_km,
+      provider_reported_distance_points: providerDistance.point_count,
+      provider_reported_distance_source: providerDistance.source,
       moving_minutes: Math.round(movingMinutes),
       stopped_minutes: Math.round(stoppedMinutes),
       observed_minutes: Math.round(observedMinutes),
@@ -593,6 +649,42 @@ function summarizeTelemetryRows(
   return byTruck;
 }
 
+function calculateProviderReportedDistanceDelta(
+  observations: Array<{ value: number; timestampMs: number; field_path: string | null }>
+) {
+  const sorted = observations
+    .filter(
+      (item) =>
+        Number.isFinite(item.value) &&
+        item.value >= 0 &&
+        Number.isFinite(item.timestampMs)
+    )
+    .sort((a, b) => a.timestampMs - b.timestampMs);
+
+  if (sorted.length < 2) {
+    return { distance_km: 0, point_count: sorted.length, source: null };
+  }
+
+  const first = sorted[0];
+  const last = sorted[sorted.length - 1];
+  const delta = last.value - first.value;
+
+  // Current-feed odometer/mileage values are useful only when they form a sane
+  // cumulative delta inside the selected window. Unit ambiguity or resets fall
+  // back to GPS estimates instead of manufacturing precision.
+  if (!Number.isFinite(delta) || delta <= 0 || delta > 5000) {
+    return { distance_km: 0, point_count: sorted.length, source: null };
+  }
+
+  return {
+    distance_km: roundMetric(delta),
+    point_count: sorted.length,
+    source: first.field_path
+      ? `provider current-feed ${first.field_path} delta`
+      : "provider current-feed distance/odometer delta",
+  };
+}
+
 function buildTruckMovementSummary(
   providerDistanceByTruck: Map<string, any>,
   telemetryStatsByTruck: Map<string, TruckTelemetryStats>,
@@ -607,8 +699,12 @@ function buildTruckMovementSummary(
     const provider = providerDistanceByTruck.get(truckKey);
     const telemetry = telemetryStatsByTruck.get(truckKey);
     const useProviderDistance = provider && provider.distance_km > 0;
+    const useCurrentFeedProviderDistance =
+      !useProviderDistance && Number(telemetry?.provider_reported_distance_km || 0) > 0;
     const distanceKm = useProviderDistance
       ? provider.distance_km
+      : useCurrentFeedProviderDistance
+        ? Number(telemetry?.provider_reported_distance_km || 0)
       : Number(telemetry?.distance_km || 0);
     return {
       truck_key: truckKey,
@@ -616,9 +712,18 @@ function buildTruckMovementSummary(
       distance_km: roundMetric(distanceKm),
       distance_source: useProviderDistance
         ? "provider-reported"
+        : useCurrentFeedProviderDistance
+          ? "provider-reported"
         : telemetry && telemetry.distance_km > 0
           ? "GPS-estimated"
           : "unavailable",
+      distance_evidence_detail: useProviderDistance
+        ? "provider trip/report summary"
+        : useCurrentFeedProviderDistance
+          ? telemetry?.provider_reported_distance_source || "provider current-feed distance/odometer delta"
+          : telemetry && telemetry.distance_km > 0
+            ? "GPS point-to-point estimate"
+            : "unavailable",
       movement_minutes:
         provider?.motion_duration_minutes ||
         telemetry?.moving_minutes ||
@@ -642,6 +747,8 @@ function buildTruckMovementSummary(
       observed_coverage_ratio: telemetry?.observed_coverage_ratio || 0,
       telemetry_points: telemetry?.point_count || 0,
       provider_summary_rows: provider?.rows || 0,
+      provider_reported_distance_points:
+        telemetry?.provider_reported_distance_points || 0,
     };
   });
 
@@ -652,7 +759,7 @@ function buildTruckMovementSummary(
   return {
     status: ranked.length ? "available" : "not_enough_evidence",
     evidence_label:
-      "provider-reported distance first, GPS-estimated distance when provider reports are unavailable",
+      "provider-reported trip/current-feed distance first, GPS-estimated distance when provider reports are unavailable",
     total_distance_km: roundMetric(
       ranked.reduce((sum, truck) => sum + Number(truck.distance_km || 0), 0)
     ),
