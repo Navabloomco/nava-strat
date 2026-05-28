@@ -485,11 +485,14 @@ function TripRow({ trip }: { trip: any }) {
         <span>Flags: {flags.length ? flags.slice(0, 3).map(humanize).join(", ") : "None"}</span>
       </div>
       {showContribution && (
-        <div className="mt-3 grid gap-2 rounded-md border border-emerald-300/15 bg-emerald-300/10 p-3 text-xs leading-5 text-emerald-50 sm:grid-cols-4">
+        <div className="mt-3 grid gap-2 rounded-md border border-emerald-300/15 bg-emerald-300/10 p-3 text-xs leading-5 text-emerald-50 sm:grid-cols-2 xl:grid-cols-5">
           <span>Revenue: {formatCurrency(contribution.revenue_amount)}</span>
           <span>Linked cost: {formatCurrency(contribution.linked_variable_cost)}</span>
           <span>Contribution: {formatCurrency(contribution.contribution_amount)}</span>
           <span>Margin: {formatPercentValue(contribution.contribution_margin_percent)}</span>
+          {hasMetricValue(contribution.per_km_contribution) ? (
+            <span>{formatTripPerKmContribution(contribution)}</span>
+          ) : null}
         </div>
       )}
       {Array.isArray(readiness.supporting_notes) && readiness.supporting_notes.length > 0 && (
@@ -691,6 +694,21 @@ function formatPercentValue(value: any) {
   return `${number.toLocaleString(undefined, {
     maximumFractionDigits: number % 1 === 0 ? 0 : 1,
   })}%`;
+}
+
+function formatTripPerKmContribution(contribution: any) {
+  const value = formatCurrency(contribution.per_km_contribution);
+  if (contribution.per_km_distance_source === "gps-estimated") {
+    return `GPS-estimated per km: ${value}`;
+  }
+  if (contribution.per_km_distance_source === "provider-reported") {
+    return `Per km: ${value} provider distance`;
+  }
+  return `Per km: ${value}`;
+}
+
+function hasMetricValue(value: any) {
+  return value !== null && value !== undefined && value !== "" && Number.isFinite(Number(value));
 }
 
 function formatMinutes(value: any) {

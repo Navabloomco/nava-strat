@@ -927,6 +927,9 @@ function buildProfitabilityReadiness(
       linked_variable_cost: null,
       contribution_amount: null,
       contribution_summary: null,
+      per_km_distance_source: "unavailable",
+      per_km_metrics_provisional: false,
+      provider_distance_needed_for_final_per_km: false,
       missing: ["finance visibility for this role"],
       label: "Finance hidden by role",
       customer_label: "Finance hidden by role",
@@ -964,6 +967,9 @@ function buildProfitabilityReadiness(
       contribution_margin_percent: null,
       contribution_per_km: null,
       contribution_per_tonne: null,
+      per_km_distance_source: "unavailable",
+      per_km_metrics_provisional: false,
+      provider_distance_needed_for_final_per_km: false,
       revenue_amount: hasRevenue ? revenue : null,
       linked_fuel_cost: null,
       linked_expense_cost: null,
@@ -976,6 +982,10 @@ function buildProfitabilityReadiness(
 
   const contribution = roundMoney(revenue - variableCosts);
   const billingQuantity = Number(finance.billing_quantity || 0);
+  const perKmDistanceSource = distanceKm > 0
+    ? normalizedDistanceSource(movement.distance_source)
+    : "unavailable";
+  const perKmMetricsProvisional = perKmDistanceSource === "gps-estimated";
 
   return {
     visible: true,
@@ -992,6 +1002,9 @@ function buildProfitabilityReadiness(
       distanceKm > 0 ? roundMoney(contribution / distanceKm) : null,
     contribution_per_tonne:
       billingQuantity > 0 ? roundMoney(contribution / billingQuantity) : null,
+    per_km_distance_source: perKmDistanceSource,
+    per_km_metrics_provisional: perKmMetricsProvisional,
+    provider_distance_needed_for_final_per_km: perKmMetricsProvisional,
     revenue_amount: revenue,
     linked_fuel_cost: roundMoney(Number(finance.linked_fuel_cost_kes || 0)),
     linked_expense_cost: roundMoney(Number(finance.linked_expense_cost_kes || 0)),
@@ -1064,6 +1077,10 @@ function buildContributionSummary(
   const variableCost = Number(finance.linked_variable_costs_kes || 0);
   const distanceKm = Number(movement.distance_km || 0);
   const billingQuantity = Number(finance.billing_quantity || 0);
+  const perKmDistanceSource = ready && distanceKm > 0
+    ? normalizedDistanceSource(movement.distance_source)
+    : "unavailable";
+  const perKmMetricsProvisional = perKmDistanceSource === "gps-estimated";
   const margin =
     ready && revenue > 0 && contribution !== null
       ? roundMetric((contribution / revenue) * 100)
@@ -1084,6 +1101,9 @@ function buildContributionSummary(
       ? roundMoney(contribution / billingQuantity)
       : null,
     distance_based_metrics_available: ready && distanceKm > 0,
+    per_km_distance_source: perKmDistanceSource,
+    per_km_metrics_provisional: perKmMetricsProvisional,
+    provider_distance_needed_for_final_per_km: perKmMetricsProvisional,
     per_tonne_metrics_available: ready && billingQuantity > 0 && contribution !== null,
     billing_quantity: billingQuantity > 0 ? roundMetric(billingQuantity) : null,
     extra_expenses_linked: Number(finance.linked_expense_count || 0) > 0,
@@ -1100,6 +1120,9 @@ function buildContributionCaveats(finance: any, movement: any, ready: boolean) {
   }
   if (Number(movement.distance_km || 0) <= 0) {
     caveats.push("Distance-based metrics pending");
+  } else if (normalizedDistanceSource(movement.distance_source) === "gps-estimated") {
+    caveats.push("GPS-estimated per-km metrics are provisional");
+    caveats.push("Provider distance still needed for final per-km review");
   }
   if (Number(finance.linked_fuel_cost_kes || 0) > 0 && Number(finance.linked_expense_count || 0) === 0) {
     caveats.push("No additional trip expenses linked yet");
@@ -1122,6 +1145,10 @@ function buildProfitabilitySupportingNotes(
   const hasExpenseCostEvidence = expenseCost > 0;
 
   if (distanceKm <= 0) notes.push("Distance-based metrics pending");
+  if (distanceKm > 0 && normalizedDistanceSource(movement.distance_source) === "gps-estimated") {
+    notes.push("GPS-estimated per-km metrics are provisional");
+    notes.push("Provider distance still needed for final per-km review");
+  }
   if (hasFuelCostEvidence && expenseCount === 0) {
     notes.push("No additional trip expenses linked yet");
   }
@@ -1169,6 +1196,14 @@ function buildManagementFlags(input: any) {
   }
 
   return uniqueStrings(flags);
+}
+
+function normalizedDistanceSource(value: any) {
+  const source = String(value || "").trim().toLowerCase().replace(/_/g, "-");
+  if (source.includes("provider")) return "provider-reported";
+  if (source.includes("gps")) return "gps-estimated";
+  if (source.includes("journey")) return "journey-recorded";
+  return "unavailable";
 }
 
 function buildStaleTrackingEvidence(asset: any | null) {

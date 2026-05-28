@@ -278,6 +278,7 @@ Confirm workflow behavior:
 - [ ] Confirm `Contribution per tonne` does not show `Requires billing quantity` when billing/offloaded quantity exists and the per-tonne value is calculated.
 - [ ] On `/ops/efficiency`, confirm contribution-ready trips show a compact contribution line with revenue, linked variable cost, contribution, and margin.
 - [ ] Confirm missing distance appears separately as `Distance evidence missing` / `Distance-based metrics pending` and only blocks per-km metrics, not basic contribution review from linked revenue minus linked costs.
+- [ ] If per-km contribution uses GPS-estimated distance, confirm Trip Detail, `/ops/efficiency`, and Nava Eye label it as provisional/GPS-estimated and say provider distance is still needed for final per-km review.
 - [ ] Confirm trips with linked fuel allocation and no other expenses show `No additional trip expenses linked yet` as a supporting note rather than a blocker.
 - [ ] Confirm contribution wording does not claim final audited profit, fuel burn, fuel efficiency, or fuel theft.
 - [ ] Confirm Trip Intelligence does not require fuel as the only cost source and does not invent profit when linked revenue/cost evidence is missing.

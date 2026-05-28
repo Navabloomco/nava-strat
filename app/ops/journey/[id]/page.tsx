@@ -539,13 +539,9 @@ export default function TripDetailPage() {
                         tone="strong"
                       />
                       <ContributionValue
-                        label="Contribution per km"
+                        label={contributionPerKmLabel(contributionSummary)}
                         value={formatCurrencyOrPending(contributionSummary.per_km_contribution)}
-                        detail={
-                          contributionSummary.distance_based_metrics_available
-                            ? "Distance evidence available"
-                            : "Distance-based metrics pending"
-                        }
+                        detail={contributionPerKmDetail(contributionSummary)}
                       />
                       <ContributionValue
                         label="Contribution per tonne"
@@ -1082,6 +1078,26 @@ function ContributionValue({
       {detail && <div className="mt-2 text-xs leading-5 text-slate-400">{detail}</div>}
     </div>
   );
+}
+
+function contributionPerKmLabel(summary: any) {
+  if (summary?.per_km_distance_source === "gps-estimated") {
+    return "GPS-estimated contribution per km";
+  }
+  return "Contribution per km";
+}
+
+function contributionPerKmDetail(summary: any) {
+  if (!summary?.distance_based_metrics_available) {
+    return "Distance-based metrics pending";
+  }
+  if (summary?.per_km_distance_source === "gps-estimated") {
+    return "Provider distance is still needed for final per-km review";
+  }
+  if (summary?.per_km_distance_source === "provider-reported") {
+    return "Based on provider-reported distance";
+  }
+  return "Distance evidence available";
 }
 
 function EvidenceLine({ label, value }: { label: string; value: string }) {

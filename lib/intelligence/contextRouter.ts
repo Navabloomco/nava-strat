@@ -907,6 +907,11 @@ function sanitizeTripPerformanceRecord(trip: any, financeVisible: boolean) {
     per_tonne_contribution: financeVisible ? contribution.per_tonne_contribution : null,
     per_km_contribution: financeVisible ? contribution.per_km_contribution : null,
     distance_based_metrics_available: Boolean(contribution.distance_based_metrics_available),
+    per_km_distance_source: contribution.per_km_distance_source || movement.distance_source || "unavailable",
+    per_km_metrics_provisional: Boolean(contribution.per_km_metrics_provisional),
+    provider_distance_needed_for_final_per_km: Boolean(
+      contribution.provider_distance_needed_for_final_per_km
+    ),
     distance_source: movement.distance_source || "unavailable",
     missing_data: Array.isArray(trip.missing_data) ? trip.missing_data : [],
     caveats: Array.isArray(contribution.caveats)

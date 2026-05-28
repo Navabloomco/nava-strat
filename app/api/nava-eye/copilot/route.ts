@@ -1729,7 +1729,7 @@ function buildTripPerformanceAnswer(context: any) {
       parts.push(`Contribution per tonne is ${formatKesPrefix(trip.per_tonne_contribution)}.`);
     }
     if (hasNumber(trip.per_km_contribution)) {
-      parts.push(`Contribution per km is ${formatKesPrefix(trip.per_km_contribution)}.`);
+      parts.push(formatTripPerKmContributionSentence(trip));
     } else {
       parts.push(
         "Distance-based metrics are pending because distance evidence is unavailable, so per-km performance cannot be calculated yet."
@@ -1800,6 +1800,23 @@ function formatTripPerformanceFlag(flag: string) {
     delay_evidence_present: "delay evidence present",
   };
   return labels[flag] || humanizeInline(flag);
+}
+
+function formatTripPerKmContributionSentence(trip: any) {
+  const value = formatKesPrefix(trip.per_km_contribution);
+  const source = String(trip.per_km_distance_source || trip.distance_source || "")
+    .toLowerCase()
+    .replace(/_/g, "-");
+
+  if (source === "gps-estimated" || source.includes("gps")) {
+    return `GPS-estimated contribution per km is about ${value}. Provider distance is still missing, so treat per-km performance as provisional.`;
+  }
+
+  if (source === "provider-reported" || source.includes("provider")) {
+    return `Contribution per km is ${value} based on provider-reported distance.`;
+  }
+
+  return `Contribution per km is ${value}; confirm the distance source before treating per-km performance as final.`;
 }
 
 function formatKesPrefix(value: any) {
@@ -1897,11 +1914,7 @@ function buildContributionReadinessAnswer(
   const distanceKm = Number(distance.distance_km || 0);
 
   if (contribution.calculable) {
-    parts.push(
-      `${label} contribution per km is ${formatMoney(
-        contribution.contribution_per_km
-      )}/km for ${timeframe}.`
-    );
+    parts.push(formatMetricContributionPerKmOpening(label, contribution, distance, timeframe));
     parts.push(
       `Revenue is ${formatMoney(contribution.revenue)}, variable costs are ${formatMoney(
         contribution.variable_costs
@@ -1950,6 +1963,29 @@ function buildContributionReadinessAnswer(
   }
 
   return parts.join("\n");
+}
+
+function formatMetricContributionPerKmOpening(
+  label: string,
+  contribution: any,
+  distance: any,
+  timeframe: string
+) {
+  const value = `${formatMoney(contribution.contribution_per_km)}/km`;
+  const source = String(distance.distance_source || contribution.distance_source || "")
+    .trim()
+    .toLowerCase()
+    .replace(/_/g, "-");
+
+  if (source.includes("gps")) {
+    return `${label} GPS-estimated contribution per km is about ${value} for ${timeframe}. Provider distance is still missing, so treat per-km performance as provisional.`;
+  }
+
+  if (source.includes("provider")) {
+    return `${label} contribution per km is ${value} for ${timeframe}, based on provider-reported distance.`;
+  }
+
+  return `${label} contribution per km is ${value} for ${timeframe}; confirm the distance source before treating per-km performance as final.`;
 }
 
 function buildMovedWithoutRevenueAnswer(context: any, metric: any, timeframe: string) {
