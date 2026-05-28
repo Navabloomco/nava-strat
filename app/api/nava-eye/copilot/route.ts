@@ -553,6 +553,15 @@ function buildFallbackAnswer(context: any): string {
   if (context.no_enabled_intelligence_assets && !context.spares) {
     return "Fleet data has been imported, but no assets are enabled for Nava intelligence yet. Review assets before I use them in answers.";
   }
+  if (context.evidence_review) {
+    return buildEvidenceReviewAnswer(context);
+  }
+  if (context.finance_review) {
+    return buildFinanceReviewAnswer(context);
+  }
+  if (context.provider_capability) {
+    return buildProviderCapabilityAnswer(context);
+  }
   if (context.dashboard_followup) {
     return buildDashboardFollowupAnswer(context);
   }
@@ -579,6 +588,9 @@ function buildFallbackAnswer(context: any): string {
   }
   if (context.fleet_health && context.management_action_request) {
     return buildManagementActionFallbackAnswer(context);
+  }
+  if (context.fleet_health && context.provider_idle_marker_request) {
+    return buildProviderIdleMarkerFleetAnswer(context);
   }
   if (context.financial_access_restricted) {
     return "Operational context is available for this role, but financial values are restricted. Ask an owner, admin, finance, management, or platform owner user to review profitability.";
@@ -1068,6 +1080,27 @@ function buildPendingFollowup(context: any, answer: string) {
     };
   }
 
+  if (context.trip_performance?.matched_trip) {
+    const trip = context.trip_performance.matched_trip;
+    return {
+      type: "active_trip_topic",
+      active_trip: {
+        entity_type: "trip",
+        journey_id: trip.trip_id || null,
+        reference: trip.reference || null,
+        truck: trip.truck || null,
+        client_name: trip.client_name || null,
+        route_label: trip.route_label || null,
+        company_id: context.company?.id || null,
+        last_intent: "trip_performance",
+        updated_at: new Date().toISOString(),
+      },
+      active_topic: trip.truck
+        ? buildActiveTruckTopic(context, trip.truck, null)
+        : undefined,
+    };
+  }
+
   if (context.business_metric) {
     return {
       type: "business_metric_followup",
@@ -1226,6 +1259,7 @@ function sanitizeBusinessMetricTopicTimeframe(timeframe: any) {
 function buildMetricResultSummary(metric: any) {
   const distance = metric.distance || {};
   const odometer = metric.odometer || {};
+  const gpsFallback = distance.gps_fallback || {};
   const distanceKm = Number(distance.distance_km || 0);
   const hasDistance = Number.isFinite(distanceKm) && distanceKm > 0;
 
@@ -1236,7 +1270,22 @@ function buildMetricResultSummary(metric: any) {
     date_label: metric.timeframe?.local_day || null,
     display_date_label: metric.timeframe?.display_label || null,
     odometer_status: odometer.status || null,
+    evidence_count: safeNumberOrNull(distance.evidence_count),
+    provider_summary_count: safeNumberOrNull(distance.provider_summary_count),
+    telemetry_point_count: safeNumberOrNull(distance.telemetry_point_count || gpsFallback.point_count),
+    segment_count: safeNumberOrNull(gpsFallback.segment_count),
+    rows_truncated: Boolean(gpsFallback.rows_truncated),
+    skipped_invalid_points: safeNumberOrNull(gpsFallback.skipped_invalid_points),
+    skipped_unrealistic_segments: safeNumberOrNull(gpsFallback.skipped_unrealistic_segments),
+    skipped_stationary_jitter_segments: safeNumberOrNull(
+      gpsFallback.skipped_stationary_jitter_segments
+    ),
   };
+}
+
+function safeNumberOrNull(value: any) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
 }
 
 function metricDistanceSourceForTopic(distance: any) {
@@ -1542,6 +1591,9 @@ function buildMetricFollowupAnswer(context: any) {
       : topic.truck_id || "This truck";
 
   if (metricIntent === "distance_covered") {
+    if (followup.followup_type === "audit_detail") {
+      return buildDistanceMetricAuditAnswer(label, topic, summary);
+    }
     return buildDistanceMetricFollowupAnswer(label, topic, summary, followup.followup_type);
   }
 
@@ -1596,6 +1648,165 @@ function buildManagementActionFallbackAnswer(context: any) {
   return parts.join("\n");
 }
 
+function buildProviderIdleMarkerFleetAnswer(context: any) {
+  const health = context.fleet_health || {};
+  const trucks = Array.isArray(health.top_idle_marker_trucks)
+    ? health.top_idle_marker_trucks
+    : [];
+  const total = Number(health.idle_events_24h || 0);
+
+  if (!total || !trucks.length) {
+    return "No provider idle markers were found in the last 24 hours. GPS-stopped evidence may still exist, but that is separate from provider-derived idle markers and does not prove engine-on idle or fuel burn.";
+  }
+
+  const lines = trucks
+    .slice(0, 6)
+    .map(
+      (truck: any) =>
+        `- ${truck.truck_id}: ${Number(truck.marker_count || 0).toLocaleString()} marker(s)${
+          truck.latest_at ? `, latest ${formatReadableDate(truck.latest_at)}` : ""
+        }`
+    );
+
+  return [
+    `${total.toLocaleString()} provider idle marker(s) were found in the last 24 hours. Source: company-scoped telemetry_events provider idle marker compatibility pipeline.`,
+    ...lines,
+    "Caveat: these are provider-derived markers, not independently verified engine-on idle or fuel-burn proof unless ignition/engine/CAN evidence supports it.",
+  ].join("\n");
+}
+
+function buildEvidenceReviewAnswer(context: any) {
+  const review = context.evidence_review || {};
+  if (review.status !== "available") {
+    return review.message || "Evidence could not be checked safely for this workspace.";
+  }
+
+  const trip = review.matched_trip;
+  const scope = trip?.reference ? ` for ${trip.reference}` : "";
+  const parts = [
+    `${Number(review.expenses_missing_proof || 0).toLocaleString()} of ${Number(
+      review.expense_count || 0
+    ).toLocaleString()} trip expense(s)${scope} are missing proof. Source: expenses matched to private evidence_attachments.`,
+  ];
+
+  if (trip?.client_name || trip?.route_label) {
+    parts.push(
+      [trip.client_name, trip.route_label].filter(Boolean).join(" · ")
+    );
+  }
+
+  const missing = Array.isArray(review.missing_proof_expenses)
+    ? review.missing_proof_expenses
+    : [];
+  if (missing.length) {
+    parts.push(
+      ...missing.slice(0, 6).map((expense: any) => {
+        const amount = expense.amount_visible && hasNumber(expense.amount)
+          ? ` · ${formatKesPrefix(expense.amount)}`
+          : "";
+        const vendor = expense.vendor ? ` · ${expense.vendor}` : "";
+        return `- ${humanizeInline(expense.expense_type)}${vendor}${amount}: no proof attached.`;
+      })
+    );
+  } else if (Number(review.expense_count || 0) > 0) {
+    parts.push("All listed expense records have at least one proof attachment.");
+  }
+
+  parts.push(
+    "Evidence files stay private; Nava Eye does not expose storage paths or public URLs."
+  );
+  if (!review.finance_values_visible) {
+    parts.push("Expense amounts are hidden because finance values are restricted for this role.");
+  }
+  return parts.join("\n");
+}
+
+function buildFinanceReviewAnswer(context: any) {
+  const review = context.finance_review || {};
+  if (review.status !== "available") {
+    return review.message || "Revenue review data could not be checked safely for this workspace.";
+  }
+
+  const parts = [
+    `${Number(review.missing_revenue_count || 0).toLocaleString()} of ${Number(
+      review.trip_count || 0
+    ).toLocaleString()} production trip(s) need revenue review. Source: journeys plus latest journey_revenue_entries.`,
+  ];
+  if (review.revenue_entry_status === "schema_missing") {
+    parts.push(
+      "Auditable revenue entries are not available until the revenue-entry migration is applied; journey snapshots may be incomplete."
+    );
+  }
+
+  const trips = Array.isArray(review.trips_needing_review)
+    ? review.trips_needing_review
+    : [];
+  if (trips.length) {
+    parts.push(
+      ...trips.slice(0, 6).map((trip: any) => {
+        const route = trip.route_label ? ` · ${trip.route_label}` : "";
+        const client = trip.client_name ? ` · ${trip.client_name}` : "";
+        return `- ${trip.reference || "Trip"}${client}${route}: ${humanizeInline(
+          trip.revenue_source
+        )}.`;
+      })
+    );
+  }
+
+  parts.push(
+    "Rate-rule creation stays in Finance Client Rates; this review only identifies trips that need configured-rate matching or finance review."
+  );
+  return parts.join("\n");
+}
+
+function buildProviderCapabilityAnswer(context: any) {
+  const capability = context.provider_capability || {};
+  if (capability.status !== "available") {
+    return capability.message || "Provider capability summaries are unavailable.";
+  }
+
+  const providers = Array.isArray(capability.providers) ? capability.providers : [];
+  if (!providers.length) {
+    return "No provider capability summary is available for this workspace yet. Run a Provider Vault test connection to capture safe detected/mapped capability evidence.";
+  }
+
+  const requestedSignals = capability.requested_signals || {};
+  const askedFuel = Boolean(requestedSignals.fuel);
+  const askedEngine = Boolean(requestedSignals.engine);
+  const askedDistance = Boolean(requestedSignals.distance);
+
+  const lines = providers.slice(0, 4).map((provider: any) => {
+    const status = provider.capability_status || {};
+    const bits = [];
+    if (askedFuel || (!askedEngine && !askedDistance)) {
+      bits.push(`fuel fields ${capabilityDetectedLabel(status.fuel_level_or_fuel_used)}`);
+    }
+    if (askedEngine || (!askedFuel && !askedDistance)) {
+      bits.push(`engine/ignition ${capabilityDetectedLabel(status.ignition_or_engine_state)}`);
+      bits.push(`engine hours ${capabilityDetectedLabel(status.engine_hours)}`);
+    }
+    if (askedDistance || (!askedFuel && !askedEngine)) {
+      bits.push(`odometer/mileage ${capabilityDetectedLabel(status.odometer_or_mileage)}`);
+    }
+    bits.push(`idle markers ${capabilityDetectedLabel(status.provider_idle_markers)}`);
+    return `- ${provider.provider_name}: ${bits.join("; ")}.`;
+  });
+
+  return [
+    `Provider capability scan result from Provider Vault safe test summaries:`,
+    ...lines,
+    capability.safety_note ||
+      "Detected fields are provider-reported evidence, not audited truth.",
+  ].join("\n");
+}
+
+function capabilityDetectedLabel(detail: any) {
+  if (!detail || detail.status !== "detected") return "not detected";
+  if (detail.evidence === "mapped-field") return "detected and mapped";
+  if (detail.evidence === "provider-marker") return "detected as provider marker evidence";
+  return "detected but not fully mapped";
+}
+
 function buildDistanceMetricFollowupAnswer(
   label: string,
   topic: any,
@@ -1633,6 +1844,61 @@ function buildDistanceMetricFollowupAnswer(
     parts.push("It is not dashboard odometer mileage.");
   } else if (source === "provider_reported_mileage") {
     parts.push("It is provider-reported trip/report mileage, not dashboard odometer mileage unless the provider ties it to the physical odometer.");
+  }
+
+  return parts.join("\n");
+}
+
+function buildDistanceMetricAuditAnswer(label: string, topic: any, summary: any) {
+  const distanceKm = Number(summary.distance_km || 0);
+  const source = sanitizeDistanceSource(summary.distance_source);
+  const datePhrase = formatMetricTopicDatePhrase(topic, summary);
+  const parts: string[] = [];
+
+  if (distanceKm <= 0 || source === "unavailable") {
+    return `${label} did not have a stored distance result for ${datePhrase}. Rerun the distance question and I will check provider trip/report distance, provider mileage/odometer deltas, then GPS-estimated movement.`;
+  }
+
+  parts.push(
+    `${label} distance audit for ${datePhrase}: ${formatStoredMetricKm(distanceKm)}.`
+  );
+  parts.push(
+    `Source used: ${metricTopicSourceLabel(source)}. Nava checks provider trip/report distance first, provider current-feed mileage or odometer deltas second, GPS-estimated point-to-point movement third, then marks distance unavailable.`
+  );
+
+  const providerSummaryCount = Number(summary.provider_summary_count || 0);
+  const telemetryPointCount = Number(summary.telemetry_point_count || 0);
+  const segmentCount = Number(summary.segment_count || 0);
+  const skipped = [
+    Number(summary.skipped_invalid_points || 0) > 0
+      ? `${Number(summary.skipped_invalid_points).toLocaleString()} invalid point(s)`
+      : null,
+    Number(summary.skipped_unrealistic_segments || 0) > 0
+      ? `${Number(summary.skipped_unrealistic_segments).toLocaleString()} unrealistic jump(s)`
+      : null,
+    Number(summary.skipped_stationary_jitter_segments || 0) > 0
+      ? `${Number(summary.skipped_stationary_jitter_segments).toLocaleString()} stationary jitter segment(s)`
+      : null,
+  ].filter(Boolean);
+
+  if (providerSummaryCount > 0) {
+    parts.push(`${providerSummaryCount.toLocaleString()} provider trip/report summary row(s) were available in the metric context.`);
+  }
+  if (telemetryPointCount > 0 || segmentCount > 0) {
+    parts.push(
+      `GPS fallback evidence in the stored context: ${telemetryPointCount.toLocaleString()} telemetry point(s), ${segmentCount.toLocaleString()} accepted segment(s).`
+    );
+  }
+  if (skipped.length) {
+    parts.push(`Filtered out: ${skipped.join(", ")}.`);
+  }
+  if (summary.rows_truncated) {
+    parts.push("The telemetry safety cap was reached, so the GPS estimate may be partial.");
+  }
+  if (source === "gps_estimated_distance") {
+    parts.push(
+      "Caveat: this is provisional route-distance evidence, not final provider distance or physical odometer mileage."
+    );
   }
 
   return parts.join("\n");
@@ -1911,7 +2177,7 @@ function buildDistanceCoveredAnswer(context: any, metric: any, timeframe: string
 
   if (source === "provider_mileage") {
     parts.push(
-      `${label} covered ${formatMetricKm(distanceKm)} for ${timeframe} from provider-reported mileage.`
+      `${label} covered ${formatMetricKm(distanceKm)} for ${timeframe}. Source: provider-reported mileage.`
     );
     parts.push(
       "This is provider-reported trip/report mileage, not dashboard odometer mileage unless the provider explicitly ties it to the physical odometer."
@@ -1921,10 +2187,10 @@ function buildDistanceCoveredAnswer(context: any, metric: any, timeframe: string
 
   if (source === "gps_estimated") {
     parts.push(
-      `Provider-reported mileage is not available for ${timeframe}, so I calculated GPS-estimated distance from telemetry pings.`
+      `${label} covered about ${formatMetricKm(distanceKm)} for ${timeframe}. Source: GPS-estimated movement.`
     );
     parts.push(
-      `${label} GPS-estimated movement is ${formatMetricKm(distanceKm)}. Treat this as route-distance evidence, not dashboard odometer mileage.`
+      "Provider mileage did not produce a safe period distance, so treat this as provisional route-distance evidence, not dashboard odometer mileage."
     );
     if (distance.gps_fallback?.rows_truncated) {
       parts.push("The telemetry query hit the safety cap, so this estimate may be partial.");
@@ -1934,7 +2200,7 @@ function buildDistanceCoveredAnswer(context: any, metric: any, timeframe: string
 
   if (source === "physical_odometer") {
     parts.push(
-      `${label} covered ${formatMetricKm(distanceKm)} for ${timeframe} from dashboard odometer movement.`
+      `${label} covered ${formatMetricKm(distanceKm)} for ${timeframe}. Source: dashboard odometer movement.`
     );
     parts.push("Treat this as odometer mileage and cross-check if odometer health is not marked reliable.");
     return parts.join("\n");

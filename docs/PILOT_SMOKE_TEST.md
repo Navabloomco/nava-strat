@@ -383,6 +383,7 @@ Open `/nava-eye` and ask:
 - [ ] Ask "How many km has kbu132c gone today?" when the closest workspace asset is a similar plate, then reply "yes" and confirm Nava Eye reruns the original distance question for the confirmed truck instead of only acknowledging the correction.
 - [ ] Ask "How about KCW103Z" after a truck-status answer and confirm Nava Eye inherits current-status intent for KCW 103Z.
 - [ ] Ask "Where is KDQ265?", then ask "How much mileage has it covered today?" and confirm the answer stays on KDQ 265T instead of switching to fleet-wide.
+- [ ] After a truck mileage answer, ask "how did you calculate that?" and confirm Nava Eye gives audit detail for the same truck and metric: source hierarchy, provider summary count if any, GPS point/segment counts if used, filtered jumps/gaps, and provisional caveats without raw coordinates.
 - [ ] After a truck mileage answer, ask "what about yesterday?" and confirm Nava Eye keeps the same truck and distance intent while changing only the operating period.
 - [ ] After a truck mileage answer, ask "where is it now?" and confirm Nava Eye switches source to live status/location for the same truck.
 - [ ] After a truck status or mileage answer, ask "was it idling?" and confirm Nava Eye answers with provider idle marker or GPS-stopped evidence for the same truck without claiming true engine-on idle unless supported.
@@ -405,6 +406,9 @@ Open `/nava-eye` and ask:
 - [ ] Confirm trip-performance answers do not claim final audited profit, actual fuel burn, fuel efficiency, fuel theft, or engine-on idling from GPS-only evidence.
 - [ ] Ask "What should I act on today?" and confirm Nava Eye returns role-appropriate action items from company-scoped fleet health without leaking finance amounts to non-finance roles.
 - [ ] Confirm Nava Eye copilot answers are deterministic/source-grounded in Phase 1 and do not call external LLM APIs.
+- [ ] Ask "Which expenses on this trip are missing proof?" after a Trip performance answer and confirm Nava Eye checks same-company expenses plus private `evidence_attachments`; normal roles must not receive raw storage paths or public URLs, and finance-restricted roles must not see restricted money fields.
+- [ ] Ask "Which trips need revenue review?" as a finance/management/elevated role and confirm Nava Eye summarizes production Trips using `journeys` plus latest `journey_revenue_entries`; ask as an ops-only role and confirm a finance boundary appears.
+- [ ] Ask "Does my tracking provider expose fuel or engine data?" and confirm Nava Eye answers from Provider Vault safe capability summaries as detected/mapped/not detected evidence, not final truth or a fuel-burn/theft claim.
 - [ ] Ask an idle/stopped question and confirm Nava Eye distinguishes GPS-stationary evidence, provider idle markers, and true engine-on idle; without ignition/engine/CAN support it says engine-on idling and fuel burn are not verified.
 - [ ] "Which trucks moved but have no revenue?" and confirm it requires reliable trip/revenue linking before producing an exception list.
 - [ ] "Can we trust KCW 103Z odometer?" and confirm the answer uses odometer health/distance quality evidence.

@@ -30,6 +30,7 @@ export async function resolveNavaEyeConversationFollowup(
   const pending = sanitizeResolverMetadata(input.pendingFollowup || {});
   const activeTopic = getActiveTruckTopic(pending, input.companyId);
   const activeMetricTopic = getActiveMetricTopic(pending, input.companyId);
+  const activeTripTopic = getActiveTripTopic(pending, input.companyId);
   const prompt = typeof pending.prompt === "string" ? pending.prompt.trim() : "";
   const question = String(input.question || "");
   const normalizedQuestion = normalizeQuestion(question);
@@ -195,6 +196,22 @@ export async function resolveNavaEyeConversationFollowup(
       needsClarification: true,
       clarificationReason: "missing_metric_topic",
       clarification: "Which mileage figure should I check?",
+    };
+  }
+
+  if (
+    activeTripTopic &&
+    isTripEvidenceFollowup(normalizedQuestion) &&
+    !explicitVehicleInput &&
+    !explicitFleetScope
+  ) {
+    return {
+      question: buildActiveTripEvidenceQuestion(normalizedQuestion, activeTripTopic),
+      usedPendingFollowup: true,
+      usedActiveTopic: false,
+      usedMetricTopic: false,
+      inheritedIntent: true,
+      pendingType: typeof pending.type === "string" ? pending.type : "active_trip_topic",
     };
   }
 
@@ -509,6 +526,28 @@ function buildActiveMetricPeriodQuestion(normalizedQuestion: string, activeMetri
     return `Did ${label} move without revenue ${timeframe}?`;
   }
   return `What about ${label} ${timeframe}?`;
+}
+
+function isTripEvidenceFollowup(normalizedQuestion: string) {
+  return (
+    /\b(expenses?|proof|receipt|receipts|evidence|attachments?|documents?)\b/.test(
+      normalizedQuestion
+    ) &&
+    /\b(this trip|that trip|the trip|on this|on that|missing|supported|show)\b/.test(
+      normalizedQuestion
+    )
+  );
+}
+
+function buildActiveTripEvidenceQuestion(normalizedQuestion: string, activeTripTopic: any) {
+  const reference = activeTripTopic.reference || activeTripTopic.journey_id || "that trip";
+  if (/\bmissing\b/.test(normalizedQuestion)) {
+    return `Which expenses on trip ${reference} are missing proof?`;
+  }
+  if (/\b(show|open|list)\b/.test(normalizedQuestion)) {
+    return `Show evidence and expense proof status for trip ${reference}.`;
+  }
+  return `Which expenses on trip ${reference} have proof attached?`;
 }
 
 function resolveInheritedTimeframe(question: string, fallback: any) {
@@ -917,6 +956,26 @@ function getActiveMetricTopic(pending: any, companyId?: string | null) {
   };
 }
 
+function getActiveTripTopic(pending: any, companyId?: string | null) {
+  const topic = pending?.active_trip;
+  if (!topic || typeof topic !== "object") return null;
+  const reference = String(topic.reference || "").trim();
+  const journeyId = String(topic.journey_id || "").trim();
+  if (!reference && !journeyId) return null;
+  const topicCompanyId = String(topic.company_id || "").trim();
+  if (companyId && topicCompanyId && topicCompanyId !== companyId) return null;
+
+  return {
+    entity_type: "trip",
+    journey_id: journeyId.slice(0, 120) || null,
+    reference: reference.slice(0, 160) || null,
+    truck: String(topic.truck || "").trim().slice(0, 80) || null,
+    client_name: String(topic.client_name || "").trim().slice(0, 120) || null,
+    route_label: String(topic.route_label || "").trim().slice(0, 160) || null,
+    company_id: topicCompanyId || companyId || null,
+  };
+}
+
 function sanitizeMetricIntent(value: any) {
   const intent = String(value || "").trim().toLowerCase();
   const allowed = [
@@ -934,6 +993,9 @@ function sanitizeMetricIntent(value: any) {
 function sanitizeMetricResultSummary(value: any) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   const distanceKm = Number(value.distance_km);
+  const gpsFallback = value.gps_fallback && typeof value.gps_fallback === "object"
+    ? value.gps_fallback
+    : {};
   return {
     distance_km: Number.isFinite(distanceKm) ? distanceKm : null,
     distance_source: sanitizeDistanceSource(value.distance_source),
@@ -943,7 +1005,26 @@ function sanitizeMetricResultSummary(value: any) {
     odometer_status:
       typeof value.odometer_status === "string" ? value.odometer_status.slice(0, 80) : null,
     available: value.available === undefined ? null : Boolean(value.available),
+    evidence_count: safeMetricNumber(value.evidence_count),
+    provider_summary_count: safeMetricNumber(value.provider_summary_count),
+    telemetry_point_count: safeMetricNumber(value.telemetry_point_count),
+    segment_count: safeMetricNumber(value.segment_count ?? gpsFallback.segment_count),
+    rows_truncated: Boolean(value.rows_truncated || gpsFallback.rows_truncated),
+    skipped_invalid_points: safeMetricNumber(
+      value.skipped_invalid_points ?? gpsFallback.skipped_invalid_points
+    ),
+    skipped_unrealistic_segments: safeMetricNumber(
+      value.skipped_unrealistic_segments ?? gpsFallback.skipped_unrealistic_segments
+    ),
+    skipped_stationary_jitter_segments: safeMetricNumber(
+      value.skipped_stationary_jitter_segments ?? gpsFallback.skipped_stationary_jitter_segments
+    ),
   };
+}
+
+function safeMetricNumber(value: any) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
 }
 
 function sanitizeDistanceSource(value: any) {
@@ -1022,6 +1103,10 @@ function buildTruckScopedFollowupQuestion(question: string, activeTopic: any) {
     return `Where is ${truckId}?`;
   }
 
+  if (/\bwhat\s+should\s+i\s+do\s+about\s+(?:it|that|this)\b/.test(normalized)) {
+    return `What should I act on for ${truckId}?`;
+  }
+
   if (isDetailedTimelineRequest(normalized)) {
     return `Show detailed timeline for ${truckId}${timeframeSuffix}.`;
   }
@@ -1088,6 +1173,7 @@ function isEllipticalTruckQuestion(question: string) {
     /\bwhat\s+about\s+(?:today|yesterday)\b/.test(lower) ||
     /\bwhere\s+did\s+it\s+go\b/.test(lower) ||
     /\bwhere\s+(?:is|are)\s+(?:it|that truck|this truck|the truck)\b/.test(lower) ||
+    /\bwhat\s+should\s+i\s+do\s+about\s+(?:it|that|this)\b/.test(lower) ||
     /\bis\s+it\s+(?:moving|idling|stopped|stationary)\b/.test(lower) ||
     /\bwas\s+it\s+(?:idling|stopped|stationary)\b/.test(lower) ||
     /\bidle\s+risk\b/.test(lower) ||
@@ -1135,6 +1221,14 @@ function isMileageDistanceQuestion(question: string) {
 function detectMetricFollowupType(question: string) {
   const lower = normalizeQuestion(question);
   if (!lower) return null;
+
+  if (
+    /\b(how\s+did\s+you\s+calculate|how\s+was\s+.*calculated|show\s+evidence|show\s+the\s+evidence|what\s+data\s+did\s+you\s+use|data\s+used|source\s+hierarchy|why\s+should\s+i\s+trust|why\s+is\s+it\s+different|why\s+different|audit|details?|explain\s+the\s+source)\b/.test(
+      lower
+    )
+  ) {
+    return "audit_detail";
+  }
 
   if (
     /\b(?:is|was)\s+(?:that|it)\s+(?:dashboard\s+)?odometer\s+mileage\b/.test(lower) ||

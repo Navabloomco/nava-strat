@@ -34,6 +34,7 @@ import {
   IDLE_COMPATIBILITY_EVENT_TYPES,
   isProviderIdleMarkerEvent,
 } from "../providers/providerIdleMarkers";
+import { buildSafeProviderTestSummary } from "../providers/testSummary";
 
 export type ContextIntent =
   | "fleet_health"
@@ -47,6 +48,9 @@ export type ContextIntent =
   | "profit_simulation"
   | "profitability"
   | "trip_performance"
+  | "evidence_review"
+  | "finance_review"
+  | "provider_capability"
   | "business_metrics"
   | "investigation_context"
   | "spares_context"
@@ -96,6 +100,8 @@ export async function routeContext(
     tripPerformanceRequest
   );
   const locationEvidenceRequest = detectLocationEvidenceRequest(lower);
+  const answerDetailRequest = detectAnswerDetailRequest(lower);
+  const providerIdleMarkerRequest = detectProviderIdleMarkerRequest(lower);
   const dashboardReference = resolveDashboardReference(
     lower,
     options.dashboardContext,
@@ -171,6 +177,8 @@ export async function routeContext(
     live_status_idle_focus: /\b(idle|idling|excessive idle|stopped|stationary)\b/.test(lower),
     timeline_detail_requested: detectDetailedTimelineRequest(lower),
     raw_idle_markers_requested: detectRawIdleMarkerRequest(lower),
+    answer_detail_requested: answerDetailRequest,
+    provider_idle_marker_request: providerIdleMarkerRequest,
     timeline_history_requested: timelineHistoryRequest,
     timeline_timeframe: resolveTruckTimelineTimeframe(lower),
     management_action_request: detectManagementActionRequest(lower),
@@ -199,6 +207,22 @@ export async function routeContext(
 
   if (intent === "fleet_health") {
     context.fleet_health = await fetchFleetHealth(companyId);
+  }
+  if (intent === "evidence_review") {
+    context.evidence_review = await fetchEvidenceReviewContext(
+      companyId,
+      question,
+      financialsVisible
+    );
+    return context;
+  }
+  if (intent === "finance_review") {
+    context.finance_review = await fetchFinanceReviewContext(companyId);
+    return context;
+  }
+  if (intent === "provider_capability") {
+    context.provider_capability = await fetchProviderCapabilityContext(companyId, question);
+    return context;
   }
   if (intent === "fleet_movement") {
     context.fleet_movement_summary = await fetchFleetMovementSummary(
@@ -508,6 +532,35 @@ function getIntentPermissionBoundary(
       category: "fuel",
       message:
         "I can help within your role, but fuel ledger, allocation, and fuel-risk evidence are restricted for this role.",
+    };
+  }
+
+  if (intent === "evidence_review" && !(capabilities as any).canViewEvidence) {
+    return {
+      category: "evidence",
+      message:
+        "I can help within your role, but evidence, receipts, and proof attachments are restricted for this role.",
+    };
+  }
+
+  if (intent === "finance_review" && !capabilities.canViewFinance) {
+    return {
+      category: "finance",
+      message:
+        "I can help with operational context, but revenue review, rate rules, and finance amounts are restricted for your role.",
+    };
+  }
+
+  if (
+    intent === "provider_capability" &&
+    !capabilities.canViewOps &&
+    !capabilities.canViewFinance &&
+    !(capabilities as any).canReviewAssets
+  ) {
+    return {
+      category: "provider_capability",
+      message:
+        "I can help within your role, but provider capability diagnostics are restricted to operations, finance/management, and elevated support roles.",
     };
   }
 
@@ -1054,6 +1107,7 @@ function sanitizeCapabilities(capabilities: ReturnType<typeof getRoleCapabilitie
     canViewSpares: Boolean(capabilities.canViewSpares),
     isElevated: Boolean((capabilities as any).isElevated),
     isPlatformOwner: Boolean(capabilities.isPlatformOwner),
+    canReviewAssets: Boolean((capabilities as any).canReviewAssets),
   };
 }
 
@@ -1089,6 +1143,8 @@ function getPermissionBoundary(
   if (
     asksForExpenses(lower) &&
     !capabilities.canViewExpenses &&
+    !capabilities.canViewTripExpenses &&
+    !(capabilities as any).canViewEvidence &&
     !options.allowTripPerformanceSummary
   ) {
     return {
@@ -1161,6 +1217,18 @@ function detectIntent(
   }
   if (businessMetricIntent && !detectHypotheticalProfitSimulation(lower)) {
     return "business_metrics";
+  }
+  if (detectEvidenceReviewRequest(lower)) {
+    return "evidence_review";
+  }
+  if (detectFinanceReviewRequest(lower)) {
+    return "finance_review";
+  }
+  if (detectProviderCapabilityRequest(lower)) {
+    return "provider_capability";
+  }
+  if (detectProviderIdleMarkerRequest(lower)) {
+    return "fleet_health";
   }
   if (detectProfitSimulation(lower)) {
     return "profit_simulation";
@@ -1272,6 +1340,53 @@ function detectManagementActionRequest(lower: string) {
     /\bwhat\s+needs\s+attention\b/.test(lower) ||
     /\baction\s+items?\b/.test(lower) ||
     /\bmanagement\s+actions?\b/.test(lower)
+  );
+}
+
+function detectEvidenceReviewRequest(lower: string) {
+  const mentionsEvidence =
+    /\b(evidence|proof|receipt|receipts|attachment|attachments|document|documents|screenshot|screenshots|m[-\s]?pesa|mpesa)\b/.test(
+      lower
+    );
+  if (!mentionsEvidence) return false;
+  return /\b(expense|expenses|trip|journey|per\s+diem|allowance|supported|missing|show|attached)\b/.test(
+    lower
+  );
+}
+
+function detectFinanceReviewRequest(lower: string) {
+  return (
+    /\b(revenue\s+review|trips?\s+need(?:ing)?\s+revenue|missing\s+revenue|no\s+rate\s+rule|rate\s+rule|matched\s+rate|apply\s+rate|configured\s+rate)\b/.test(
+      lower
+    ) ||
+    /\bwhat\s+rate\s+applies\b/.test(lower)
+  );
+}
+
+function detectProviderCapabilityRequest(lower: string) {
+  const mentionsProvider =
+    /\b(provider|tracking|feed|sync|capability|capabilities|fleettrack|bluetrax)\b/.test(
+      lower
+    );
+  const mentionsSignal =
+    /\b(expose|exposes|provide|provides|detected|mapped|fuel|engine|ignition|odometer|mileage|distance|idle|diagnostic|fault|driver|geofence)\b/.test(
+      lower
+    );
+  return (
+    (mentionsProvider && mentionsSignal) ||
+    /\bwhy\s+is\b.*\b(distance|mileage)\b.*\bgps[-\s]?estimated\b/.test(lower)
+  );
+}
+
+function detectProviderIdleMarkerRequest(lower: string) {
+  return /\b(provider\s+idle\s+markers?|idle\s+markers?|idle\s+alerts?|which\s+trucks\s+.*\bidl(?:e|ing))\b/.test(
+    lower
+  );
+}
+
+function detectAnswerDetailRequest(lower: string) {
+  return /\b(how\s+did\s+you\s+calculate|how\s+was\s+.*calculated|why\s+is\s+it\s+different|why\s+different|show\s+evidence|show\s+the\s+evidence|what\s+data\s+did\s+you\s+use|data\s+used|source\s+hierarchy|why\s+should\s+i\s+trust|audit|details?|explain\s+the\s+source)\b/.test(
+    lower
   );
 }
 
@@ -2012,7 +2127,7 @@ async function fetchFleetHealth(companyId: string) {
       .eq("intelligence_enabled", true),
     supabaseAdmin
       .from("telemetry_events")
-      .select("truck_id, event_type, severity, location_name, created_at, context_label, context_type, metadata")
+      .select("truck_id, event_type, severity, location_name, created_at, started_at, context_label, context_type, metadata")
       .eq("company_id", companyId)
       .gte("created_at", since.toISOString()),
   ]);
@@ -2035,6 +2150,25 @@ async function fetchFleetHealth(companyId: string) {
     ["fuel_drop_stationary", "low_fuel"].includes(e.event_type)
   );
   const idleEvents = events.filter((e) => isProviderIdleMarkerEvent(e));
+  const idleByTruck = new Map<string, { truck_id: string; marker_count: number; latest_at: string | null }>();
+  for (const event of idleEvents) {
+    const truckId = String(event.truck_id || "").trim();
+    if (!truckId) continue;
+    const current = idleByTruck.get(truckId) || {
+      truck_id: truckId,
+      marker_count: 0,
+      latest_at: null,
+    };
+    current.marker_count += 1;
+    const eventAt = event.created_at || event.started_at || null;
+    if (
+      eventAt &&
+      (!current.latest_at || new Date(eventAt).getTime() > new Date(current.latest_at).getTime())
+    ) {
+      current.latest_at = eventAt;
+    }
+    idleByTruck.set(truckId, current);
+  }
 
   return {
     total_trucks: assets.length,
@@ -2044,7 +2178,340 @@ async function fetchFleetHealth(companyId: string) {
     fuel_events_24h: fuelEvents.length,
     idle_events_24h: idleEvents.length,
     offline_truck_ids: offline.map((t) => t.truck_id),
+    top_idle_marker_trucks: Array.from(idleByTruck.values())
+      .sort((a, b) => b.marker_count - a.marker_count)
+      .slice(0, 8),
   };
+}
+
+async function fetchEvidenceReviewContext(
+  companyId: string,
+  question: string,
+  financeVisible: boolean
+) {
+  const journeysResult = await supabaseAdmin
+    .from("journeys")
+    .select("id, internal_trip_id, client_name, truck, from_location, to_location, status, created_at, start_time")
+    .eq("company_id", companyId)
+    .eq("is_demo", false)
+    .order("created_at", { ascending: false })
+    .limit(100);
+
+  if (journeysResult.error) {
+    return {
+      source: "expenses + evidence_attachments",
+      status: "unavailable",
+      message: "Trip records are unavailable, so expense proof cannot be checked safely.",
+    };
+  }
+
+  const journeys = journeysResult.data || [];
+  const matchedJourney = matchJourneyFromQuestion(journeys, question);
+  let expenseQuery = supabaseAdmin
+    .from("expenses")
+    .select("id, journey_id, truck, expense_type, amount, vendor, payment_method, reference_number, trip_reference, notes, created_at")
+    .eq("company_id", companyId)
+    .order("created_at", { ascending: false })
+    .limit(matchedJourney ? 200 : 100);
+
+  if (matchedJourney?.id) {
+    expenseQuery = expenseQuery.eq("journey_id", matchedJourney.id);
+  }
+
+  const expensesResult = await expenseQuery;
+  if (expensesResult.error) {
+    return {
+      source: "expenses + evidence_attachments",
+      status: "unavailable",
+      message: "Expense records are unavailable, so proof cannot be checked safely.",
+      matched_trip: sanitizeEvidenceJourney(matchedJourney),
+    };
+  }
+
+  const expenses = expensesResult.data || [];
+  const expenseIds = expenses.map((expense: any) => expense.id).filter(Boolean);
+  const proofCounts = new Map<string, number>();
+  if (expenseIds.length) {
+    const evidenceResult = await supabaseAdmin
+      .from("evidence_attachments")
+      .select("id, related_id, evidence_type, verification_status")
+      .eq("company_id", companyId)
+      .eq("related_type", "expense")
+      .in("related_id", expenseIds)
+      .limit(1000);
+
+    if (!evidenceResult.error) {
+      for (const row of evidenceResult.data || []) {
+        const key = String(row.related_id || "");
+        proofCounts.set(key, (proofCounts.get(key) || 0) + 1);
+      }
+    }
+  }
+
+  let tripEvidenceCount = 0;
+  if (matchedJourney?.id) {
+    const tripEvidenceResult = await supabaseAdmin
+      .from("evidence_attachments")
+      .select("id")
+      .eq("company_id", companyId)
+      .eq("related_type", "trip")
+      .eq("related_id", matchedJourney.id)
+      .limit(1000);
+    if (!tripEvidenceResult.error) {
+      tripEvidenceCount = (tripEvidenceResult.data || []).length;
+    }
+  }
+
+  const rows = expenses.map((expense: any) => ({
+    id: expense.id,
+    journey_id: expense.journey_id || null,
+    truck: expense.truck || null,
+    expense_type: expense.expense_type || "expense",
+    vendor: expense.vendor || null,
+    payment_method: expense.payment_method || null,
+    reference_number: expense.reference_number || null,
+    amount: financeVisible ? Number(expense.amount || 0) : null,
+    amount_visible: financeVisible,
+    created_at: expense.created_at || null,
+    proof_count: proofCounts.get(String(expense.id)) || 0,
+  }));
+  const missingProof = rows.filter((row) => row.proof_count === 0);
+
+  return {
+    source: "expenses + evidence_attachments",
+    status: "available",
+    matched_trip: sanitizeEvidenceJourney(matchedJourney),
+    expense_count: rows.length,
+    expenses_with_proof: rows.length - missingProof.length,
+    expenses_missing_proof: missingProof.length,
+    trip_evidence_count: tripEvidenceCount,
+    finance_values_visible: financeVisible,
+    missing_proof_expenses: missingProof.slice(0, 8),
+    sample_expenses: rows.slice(0, 8),
+  };
+}
+
+async function fetchFinanceReviewContext(companyId: string) {
+  const journeysResult = await supabaseAdmin
+    .from("journeys")
+    .select("id, internal_trip_id, client_name, truck, from_location, to_location, status, billing_quantity, billing_unit, revenue_kes, revenue_status, created_at")
+    .eq("company_id", companyId)
+    .eq("is_demo", false)
+    .order("created_at", { ascending: false })
+    .limit(200);
+
+  if (journeysResult.error) {
+    return {
+      source: "journeys + journey_revenue_entries + client_rate_rules",
+      status: "unavailable",
+      message: "Trip revenue records are unavailable.",
+    };
+  }
+
+  const journeys = journeysResult.data || [];
+  const journeyIds = journeys.map((journey: any) => journey.id).filter(Boolean);
+  const latestEntryByJourney = new Map<string, any>();
+  let revenueEntryStatus = "available";
+
+  if (journeyIds.length) {
+    const entriesResult = await supabaseAdmin
+      .from("journey_revenue_entries")
+      .select("id, journey_id, revenue_source, revenue_kes, applied_at")
+      .eq("company_id", companyId)
+      .in("journey_id", journeyIds)
+      .order("applied_at", { ascending: false })
+      .limit(1000);
+
+    if (entriesResult.error) {
+      revenueEntryStatus = isMissingSchemaLikeError(entriesResult.error) ? "schema_missing" : "unavailable";
+    } else {
+      for (const entry of entriesResult.data || []) {
+        if (entry.journey_id && !latestEntryByJourney.has(entry.journey_id)) {
+          latestEntryByJourney.set(entry.journey_id, entry);
+        }
+      }
+    }
+  }
+
+  const rows = journeys.map((journey: any) => {
+    const entry = latestEntryByJourney.get(journey.id) || null;
+    const snapshotRevenue = Number(journey.revenue_kes || 0);
+    const source = entry?.revenue_source || (snapshotRevenue > 0 ? "journey_snapshot" : "missing");
+    return {
+      id: journey.id,
+      reference: journey.internal_trip_id || "Trip",
+      client_name: journey.client_name || null,
+      truck: journey.truck || null,
+      route_label: [journey.from_location, journey.to_location].filter(Boolean).join(" → ") || null,
+      status: journey.status || null,
+      billing_quantity: journey.billing_quantity ?? null,
+      billing_unit: journey.billing_unit || null,
+      revenue_source: source,
+      needs_revenue_review: source === "missing" || source === "manual_finance_entry",
+      latest_entry_applied_at: entry?.applied_at || null,
+      created_at: journey.created_at || null,
+    };
+  });
+
+  const missingRevenue = rows.filter((row) => row.revenue_source === "missing");
+  const manualRevenue = rows.filter((row) => row.revenue_source === "manual_finance_entry");
+  const configuredRevenue = rows.filter((row) => row.revenue_source === "configured_rate");
+
+  return {
+    source: "journeys + journey_revenue_entries + client_rate_rules",
+    status: "available",
+    revenue_entry_status: revenueEntryStatus,
+    trip_count: rows.length,
+    missing_revenue_count: missingRevenue.length,
+    manual_revenue_count: manualRevenue.length,
+    configured_revenue_count: configuredRevenue.length,
+    trips_needing_review: rows.filter((row) => row.needs_revenue_review).slice(0, 8),
+    sample_trips: rows.slice(0, 8),
+  };
+}
+
+async function fetchProviderCapabilityContext(companyId: string, question: string) {
+  const { data, error } = await supabaseAdmin
+    .from("tracking_providers")
+    .select("id, provider_name, provider_slug, is_active, last_test_status, last_test_message, fleet_config")
+    .eq("company_id", companyId)
+    .order("created_at", { ascending: false })
+    .limit(50);
+
+  if (error) {
+    return {
+      source: "Provider Vault test summaries",
+      status: "unavailable",
+      message: "Provider capability summaries are unavailable.",
+    };
+  }
+
+  const lower = String(question || "").toLowerCase();
+  const requestedSignals = {
+    fuel: /\bfuel\b/.test(lower),
+    engine: /\b(engine|ignition|idle)\b/.test(lower),
+    distance: /\b(distance|mileage|odometer)\b/.test(lower),
+  };
+  const providers = (data || []).map((provider: any) => {
+    const summary = buildSafeProviderTestSummary(provider);
+    const discovery = summary?.capability_discovery || null;
+    return {
+      id: provider.id,
+      provider_name: provider.provider_name || provider.provider_slug || "Provider",
+      provider_slug: provider.provider_slug || null,
+      is_active: Boolean(provider.is_active),
+      test_status: summary?.status || provider.last_test_status || null,
+      tested_at: summary?.tested_at || null,
+      capability_discovery: discovery,
+      capability_status: summarizeProviderCapabilities(discovery),
+      mapped_fields_observed: discovery?.mapped_fields_observed || [],
+      useful_unmapped_fields: discovery?.useful_unmapped_fields || [],
+    };
+  });
+
+  const matchedProviders = providers.filter((provider: any) => {
+    const name = String(provider.provider_name || "").toLowerCase();
+    const slug = String(provider.provider_slug || "").toLowerCase();
+    return (name && lower.includes(name)) || (slug && lower.includes(slug));
+  });
+
+  return {
+    source: "Provider Vault capability discovery summaries",
+    status: "available",
+    provider_count: providers.length,
+    providers: (matchedProviders.length ? matchedProviders : providers).slice(0, 8),
+    matched_provider_count: matchedProviders.length,
+    requested_signals: requestedSignals,
+    safety_note:
+      "Provider capability fields are provider-reported evidence, not audited truth. Nava does not infer fuel burn, theft, diagnostics, or true engine-on idle from detection alone.",
+  };
+}
+
+function matchJourneyFromQuestion(journeys: any[], question: string) {
+  const text = normalizeTripText(question);
+  if (!text) return null;
+
+  const exact = journeys.find((journey: any) => {
+    const reference = normalizeTripText(journey.internal_trip_id);
+    return reference && text.includes(reference);
+  });
+  if (exact) return exact;
+
+  const scored = journeys
+    .map((journey: any) => {
+      const parts = [
+        journey.internal_trip_id,
+        journey.client_name,
+        journey.truck,
+        journey.from_location,
+        journey.to_location,
+      ]
+        .map(normalizeTripText)
+        .filter(Boolean);
+      const score = parts.reduce(
+        (sum: number, part: string) => sum + (text.includes(part) ? 1 : 0),
+        0
+      );
+      return { journey, score };
+    })
+    .filter((item) => item.score >= 2)
+    .sort((a, b) => b.score - a.score);
+
+  return scored[0]?.journey || null;
+}
+
+function sanitizeEvidenceJourney(journey: any) {
+  if (!journey) return null;
+  return {
+    id: journey.id || null,
+    reference: journey.internal_trip_id || "Trip",
+    client_name: journey.client_name || null,
+    truck: journey.truck || null,
+    route_label: [journey.from_location, journey.to_location].filter(Boolean).join(" → ") || null,
+    status: journey.status || null,
+  };
+}
+
+function summarizeProviderCapabilities(discovery: any) {
+  const details = Array.isArray(discovery?.capability_details)
+    ? discovery.capability_details
+    : [];
+  const byKey = new Map(details.map((detail: any) => [detail.key, detail]));
+  const statusFor = (key: string) => {
+    const detail: any = byKey.get(key);
+    if (!detail) return { status: "not_detected", evidence: "not-detected", label: key };
+    return {
+      status: detail.status || "not_detected",
+      evidence: detail.evidence || "not-detected",
+      label: detail.label || key,
+      row_count: detail.row_count || 0,
+    };
+  };
+
+  return {
+    gps: statusFor("has_gps"),
+    speed: statusFor("has_speed"),
+    provider_idle_markers: statusFor("has_provider_idle_markers"),
+    odometer_or_mileage: statusFor("has_odometer"),
+    engine_hours: statusFor("has_engine_hours"),
+    ignition_or_engine_state: statusFor("has_ignition_or_engine_state"),
+    fuel_level_or_fuel_used: statusFor("has_fuel_level_or_fuel_used"),
+    driver: statusFor("has_driver"),
+    geofence_or_site: statusFor("has_geofence_or_site"),
+    diagnostics_or_faults: statusFor("has_diagnostics_or_faults"),
+  };
+}
+
+function isMissingSchemaLikeError(error: any) {
+  const code = String(error?.code || "").toUpperCase();
+  const message = String(error?.message || error?.details || error?.hint || "").toLowerCase();
+  return (
+    code === "PGRST204" ||
+    message.includes("schema cache") ||
+    message.includes("could not find") ||
+    message.includes("does not exist") ||
+    message.includes("column")
+  );
 }
 
 async function fetchFleetMovementSummary(
