@@ -151,12 +151,20 @@ export async function GET(req: Request) {
       );
     }
 
-    const profitability = await getCompanyProfitability(resolved.company.id);
+    const range = searchParams.get("range") || searchParams.get("period") || "7d";
+    const profitability = await getCompanyProfitability(resolved.company.id, {
+      range,
+      company: resolved.company,
+      roles: resolved.roles,
+    });
 
     return noStoreJson({
       success: true,
       company: resolved.company,
       is_platform_owner: resolved.isPlatformOwner,
+      capabilities: {
+        can_view_finance: true,
+      },
       ...profitability,
     });
   } catch (err: any) {

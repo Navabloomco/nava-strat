@@ -337,6 +337,12 @@ Confirm workflow behavior:
 - [ ] Confirm trips with linked fuel allocation and no other expenses show `No additional trip expenses linked yet` as a supporting note rather than a blocker.
 - [ ] Confirm contribution wording does not claim final audited profit, fuel burn, fuel efficiency, or fuel theft.
 - [ ] Confirm Trip Intelligence does not require fuel as the only cost source and does not invent profit when linked revenue/cost evidence is missing.
+- [ ] As a finance/management/elevated role, open `/management/dashboard` and confirm the period selector supports Today, Yesterday, 7 days, and 30 days.
+- [ ] Confirm Management Intelligence uses `Review-ready contribution`, `Contribution per active day`, `Trips reviewed`, and `Trips needing review` instead of `Net Margin`, `Top clients by profit`, or `Journey ranking`.
+- [ ] Confirm Trip contribution velocity ranks reviewed Trips by contribution/day, shows contribution/trip, duration, estimated trips/week potential, and marks active/open Trips as provisional.
+- [ ] Confirm Client contribution velocity shows total contribution, average contribution/trip, average duration days, average contribution/day, trip count, and estimated trips/week potential for the selected period.
+- [ ] Confirm operational drag categories show client waiting only when explicit client/customer delay evidence exists; breakdown, road, border, driver, dispatch, and unknown delays must not be blamed on the client.
+- [ ] Confirm ops/clerk roles cannot access Management Intelligence finance metrics.
 
 ## 8. Nava Eye Smoke Test
 

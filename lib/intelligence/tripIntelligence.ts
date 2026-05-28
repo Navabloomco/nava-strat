@@ -16,7 +16,7 @@ import {
 } from "./fuelAllocation";
 import { normalizeVehicleKey } from "./entityResolver";
 
-export type TripIntelligenceRange = "today" | "yesterday" | "7d";
+export type TripIntelligenceRange = "today" | "yesterday" | "7d" | "30d";
 export type ProfitabilityReadiness =
   | "calculable"
   | "partially_linked"
@@ -69,8 +69,8 @@ export function resolveTripIntelligenceTimeframe(input: {
   const timeZone = resolveOperationalTimeZone(input.company);
   const endDay = resolveOperationalDayRange(timeZone, 0);
 
-  if (requested === "7d") {
-    const startDay = resolveOperationalDayRange(timeZone, -6);
+  if (requested === "7d" || requested === "30d") {
+    const startDay = resolveOperationalDayRange(timeZone, requested === "30d" ? -29 : -6);
     return {
       requested,
       time_zone: timeZone,
@@ -269,6 +269,9 @@ export async function buildTripIntelligenceSummary(input: TripIntelligenceInput)
 function normalizeRange(value: any): TripIntelligenceRange {
   const text = String(value || "").trim().toLowerCase();
   if (["today", "same_day", "same-day"].includes(text)) return "today";
+  if (["30d", "30day", "30days", "month", "last_30_days", "last-30-days"].includes(text)) {
+    return "30d";
+  }
   if (["7d", "7day", "7days", "week", "last_7_days", "last-7-days"].includes(text)) {
     return "7d";
   }
@@ -474,7 +477,7 @@ async function fetchTelemetryEventRows(
   try {
     const { data, error } = await supabaseAdmin
       .from("telemetry_events")
-      .select("id, truck_id, event_type, severity, created_at, started_at, context_label")
+      .select("id, truck_id, event_type, severity, created_at, started_at, duration_minutes, context_label, context_type")
       .eq("company_id", companyId)
       .in("truck_id", truckIds)
       .gte("created_at", timeframe.start_utc)
@@ -824,6 +827,39 @@ function buildDelayEvidence(eventRows: any[], telemetryRows: any[]) {
     (row) => String(row.severity || "").toLowerCase() === "high"
   );
   const gps = calculateGpsDistance(telemetryRows);
+  const categoryMap = new Map<string, any>();
+
+  for (const row of eventRows) {
+    const category = classifyDelayCategory(row);
+    const existing =
+      categoryMap.get(category.key) || {
+        category: category.key,
+        label: category.label,
+        attribution: category.attribution,
+        event_count: 0,
+        duration_minutes: 0,
+        evidence_label: category.evidence_label,
+      };
+    existing.event_count += 1;
+    existing.duration_minutes += positiveNumberOrZero(row.duration_minutes);
+    categoryMap.set(category.key, existing);
+  }
+
+  const eventDurationMinutes = Array.from(categoryMap.values()).reduce(
+    (sum, category) => sum + Number(category.duration_minutes || 0),
+    0
+  );
+
+  if (gps.stopped_minutes && !categoryMap.size) {
+    categoryMap.set("unknown", {
+      category: "unknown",
+      label: "Unknown delay / stopped time",
+      attribution: "unknown",
+      event_count: 0,
+      duration_minutes: gps.stopped_minutes,
+      evidence_label: "GPS-estimated stopped intervals without a linked delay cause",
+    });
+  }
 
   return {
     delay_evidence_present: idleRows.length > 0 || highSeverityRows.length > 0,
@@ -833,10 +869,87 @@ function buildDelayEvidence(eventRows: any[], telemetryRows: any[]) {
     first_idle_marker_at: firstTimestamp(idleRows),
     last_idle_marker_at: lastTimestamp(idleRows),
     stopped_minutes: gps.stopped_minutes || null,
+    total_delay_minutes:
+      eventDurationMinutes > 0 ? Math.round(eventDurationMinutes) : gps.stopped_minutes || null,
+    delay_categories: Array.from(categoryMap.values()).map((category) => ({
+      ...category,
+      duration_minutes:
+        category.duration_minutes > 0 ? Math.round(category.duration_minutes) : null,
+    })),
     evidence_label:
       "event-derived alert markers and GPS-estimated stopped intervals; not engine-on idling proof",
     engine_on_idling_confirmed: false,
   };
+}
+
+function classifyDelayCategory(row: any) {
+  const text = [row.event_type, row.context_type, row.context_label]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  if (
+    /\b(client_waiting|customer_waiting|client delay|customer delay)\b/.test(text) ||
+    (/\b(client|customer)\b/.test(text) && /\b(wait|waiting|delay|detention)\b/.test(text))
+  ) {
+    return {
+      key: "client_waiting",
+      label: "Client waiting",
+      attribution: "client-linked evidence",
+      evidence_label: "delay text explicitly links waiting/delay to client/customer context",
+    };
+  }
+  if (/\b(breakdown|mechanical|repair|garage|service|maintenance)\b/.test(text)) {
+    return {
+      key: "breakdown_mechanical",
+      label: "Breakdown / mechanical",
+      attribution: "operational evidence",
+      evidence_label: "delay text indicates breakdown, repair, or mechanical context",
+    };
+  }
+  if (/\b(traffic|road|accident|roadblock|police|weighbridge)\b/.test(text)) {
+    return {
+      key: "traffic_road",
+      label: "Traffic / road",
+      attribution: "operational evidence",
+      evidence_label: "delay text indicates road, traffic, accident, police, or weighbridge context",
+    };
+  }
+  if (/\b(border|customs|custom|port clearance|clearance)\b/.test(text)) {
+    return {
+      key: "border_customs",
+      label: "Border / customs",
+      attribution: "operational evidence",
+      evidence_label: "delay text indicates border, customs, or clearance context",
+    };
+  }
+  if (/\b(driver|crew|operator)\b/.test(text)) {
+    return {
+      key: "driver",
+      label: "Driver",
+      attribution: "operational evidence",
+      evidence_label: "delay text indicates driver context",
+    };
+  }
+  if (/\b(dispatch|company|yard|depot|office|loading plan)\b/.test(text)) {
+    return {
+      key: "dispatch_company",
+      label: "Dispatch / company",
+      attribution: "operational evidence",
+      evidence_label: "delay text indicates dispatch, company, yard, or depot context",
+    };
+  }
+  return {
+    key: "unknown",
+    label: "Unknown",
+    attribution: "unknown",
+    evidence_label: "delay/stopped evidence is present but no cause is safely attributable",
+  };
+}
+
+function positiveNumberOrZero(value: any) {
+  const number = Number(value || 0);
+  return Number.isFinite(number) && number > 0 ? number : 0;
 }
 
 function buildFinanceEvidence(
