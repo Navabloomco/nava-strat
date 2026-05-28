@@ -249,6 +249,9 @@ Confirm workflow behavior:
 - [ ] If an older pre-hash attachment already exists with the same filename, MIME type, and file size, upload the same proof again and confirm Nava blocks it with the same duplicate-proof message.
 - [ ] If both a legacy null-hash proof row and a newer hashed proof row exist for the same expense, confirm Trip Detail shows one proof item, prefers the hashed/newer row, and may show the subtle note `Duplicate-looking pre-hash evidence hidden.`
 - [ ] Confirm old pre-hash duplicate rows are not deleted automatically; any permanent cleanup remains a company-scoped manual/admin task.
+- [ ] Try uploading an unsupported file type and confirm the inline form error says `This file type is not supported.`
+- [ ] Try uploading a file larger than 4MB and confirm the inline form error says `File is too large. Maximum size is 4MB.`
+- [ ] If evidence schema/hash migration or storage bucket setup is missing, confirm Trip Detail shows a safe setup-required message instead of failing silently or exposing raw storage details.
 - [ ] If proof upload fails after expense creation, confirm the expense remains saved and the page says proof can be attached from the expense card.
 - [ ] Attach a receipt, invoice, payment proof, or M-Pesa proof later from an existing expense row's Attach proof flow.
 - [ ] Confirm the proof appears under that exact expense row, not only in the general Trip evidence list.
@@ -260,6 +263,7 @@ Confirm workflow behavior:
 - [ ] Confirm evidence opens only through a short-lived secure link, does not expose a public file URL or raw storage path, and remains inaccessible to users outside the related record's company.
 - [ ] Confirm M-Pesa proof is stored as evidence only; no M-Pesa text parsing, fuel-burn, theft, or expense inference is claimed yet.
 - [ ] As an ops/clerk-style user with journey edit access but without finance visibility, open Trip Detail and confirm operational entry, expense creation, expense proof, and general trip evidence work without showing revenue, rates, contribution, margin, or management flags.
+- [ ] As an ops/clerk-style user without finance visibility, confirm fuel allocation costs, linked variable costs, and management finance flags are hidden while fuel litres and operational proof remain usable where the role can view fuel.
 - [ ] As a finance/management/elevated user, open the same Trip Detail and confirm Finance / revenue and Management intelligence sections are visible according to role permissions.
 - [ ] Confirm revenue/rate/FX entry remains finance-controlled. Clerks should not need confidential rates to enter operational expenses or proof.
 - [ ] Confirm generic Trip Detail UI does not show hardcoded pilot tenant examples, truck plates, clients, driver names, routes, or contribution amounts; such values should appear only when loaded from the current company data.

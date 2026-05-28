@@ -102,8 +102,10 @@ export default function TripDetailPage() {
   const [tripEvidenceFile, setTripEvidenceFile] = useState<File | null>(null);
   const [tripEvidenceNotes, setTripEvidenceNotes] = useState("");
   const [tripEvidenceUploading, setTripEvidenceUploading] = useState(false);
+  const [tripEvidenceError, setTripEvidenceError] = useState("");
   const [expenseEvidenceForms, setExpenseEvidenceForms] = useState<Record<string, any>>({});
   const [expenseEvidenceUploadingId, setExpenseEvidenceUploadingId] = useState("");
+  const [expenseEvidenceErrors, setExpenseEvidenceErrors] = useState<Record<string, string>>({});
 
   useEffect(() => {
     loadDetail();
@@ -329,7 +331,7 @@ export default function TripDetailPage() {
         journey_id: tripId,
         truck_text: data?.journey?.truck || "",
         allocated_liters: Number(allocatedLiters || 0),
-        allocated_cost: allocatedCost ? Number(allocatedCost) : undefined,
+        allocated_cost: canViewFinance && allocatedCost ? Number(allocatedCost) : undefined,
         allocation_status: "allocated",
         allocation_basis: "manual",
         notes: allocationNotes,
@@ -383,6 +385,7 @@ export default function TripDetailPage() {
 
     const createdExpense = json.expense || {};
     let nextMessage = "Expense linked to trip.";
+    let nextExpenseProofError = "";
     if (createdExpense.id && (newExpenseEvidenceFile || newExpenseProofText.trim())) {
       const proofResult = await uploadExpenseProof(createdExpense.id, token, {
         evidenceType: newExpenseEvidenceType,
@@ -390,6 +393,7 @@ export default function TripDetailPage() {
         textContent: newExpenseProofText,
         notes: newExpenseEvidenceNotes,
       });
+      nextExpenseProofError = proofResult.success ? "" : proofResult.error || "";
       nextMessage = proofResult.success
         ? "Expense linked to trip with proof attached."
         : `Expense saved, but proof upload failed. You can attach proof from the expense card.\n${proofResult.error}`;
@@ -408,12 +412,21 @@ export default function TripDetailPage() {
     const proofFileInput = document.getElementById("new-expense-proof-file") as HTMLInputElement | null;
     if (proofFileInput) proofFileInput.value = "";
     await loadDetail(nextMessage);
+    if (createdExpense.id && nextExpenseProofError) {
+      setExpenseEvidenceErrors((current) => ({
+        ...current,
+        [createdExpense.id]: nextExpenseProofError,
+      }));
+    }
   }
 
   async function uploadTripEvidence(e: any) {
     e.preventDefault();
+    setTripEvidenceError("");
     if (!tripEvidenceFile) {
-      setMessage("Choose a delivery note, weighbridge ticket, PDF, or trip document first.");
+      const nextError = "Choose a delivery note, weighbridge ticket, PDF, or trip document first.";
+      setTripEvidenceError(nextError);
+      setMessage(nextError);
       return;
     }
 
@@ -435,20 +448,16 @@ export default function TripDetailPage() {
     formData.append("notes", tripEvidenceNotes);
     formData.append("file", tripEvidenceFile);
 
-    const res = await fetch("/api/evidence", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-      body: formData,
-    });
-    const json = await res.json();
+    const { res, json } = await postEvidenceForm(formData, token);
     setTripEvidenceUploading(false);
     if (!res.ok || !json.success) {
-      setMessage(json.error || "Failed to upload trip evidence.");
+      const nextError = apiErrorMessage(json, "Failed to upload trip evidence.");
+      setTripEvidenceError(nextError);
+      setMessage(nextError);
       return;
     }
 
+    setTripEvidenceError("");
     setTripEvidenceFile(null);
     setTripEvidenceType("delivery_note");
     setTripEvidenceNotes("");
@@ -459,9 +468,12 @@ export default function TripDetailPage() {
 
   async function uploadExpenseEvidence(e: any, expenseId: string) {
     e.preventDefault();
+    setExpenseEvidenceErrors((current) => ({ ...current, [expenseId]: "" }));
     const form = expenseEvidenceForm(expenseId);
     if (!form.file && !String(form.textContent || "").trim()) {
-      setMessage("Choose a proof document or paste proof text first.");
+      const nextError = "Choose a proof document or paste proof text first.";
+      setExpenseEvidenceErrors((current) => ({ ...current, [expenseId]: nextError }));
+      setMessage(nextError);
       return;
     }
 
@@ -482,10 +494,13 @@ export default function TripDetailPage() {
     });
     setExpenseEvidenceUploadingId("");
     if (!proofResult.success) {
-      setMessage(proofResult.error || "Failed to upload expense proof.");
+      const nextError = proofResult.error || "Failed to upload expense proof.";
+      setExpenseEvidenceErrors((current) => ({ ...current, [expenseId]: nextError }));
+      setMessage(nextError);
       return;
     }
 
+    setExpenseEvidenceErrors((current) => ({ ...current, [expenseId]: "" }));
     setExpenseEvidenceForms((current) => ({
       ...current,
       [expenseId]: emptyExpenseEvidenceForm(),
@@ -520,22 +535,55 @@ export default function TripDetailPage() {
     if (textContent) formData.append("textContent", textContent);
     if (proof.file) formData.append("file", proof.file);
 
-    const res = await fetch("/api/evidence", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-      body: formData,
-    });
-    const json = await res.json();
+    const { res, json } = await postEvidenceForm(formData, token);
     if (!res.ok || !json.success) {
       return {
         success: false,
-        error: json.error || "Failed to attach proof to expense.",
+        error: apiErrorMessage(json, "Failed to attach proof to expense."),
       };
     }
 
     return { success: true, attachment: json.attachment };
+  }
+
+  async function postEvidenceForm(formData: FormData, token: string) {
+    try {
+      const res = await fetch("/api/evidence", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        body: formData,
+      });
+      return { res, json: await safeReadJson(res) };
+    } catch (err: any) {
+      return {
+        res: { ok: false, status: 0 } as Response,
+        json: {
+          success: false,
+          code: "network_error",
+          message: err?.message || "Evidence upload could not reach the server.",
+          error: err?.message || "Evidence upload could not reach the server.",
+        },
+      };
+    }
+  }
+
+  async function safeReadJson(res: Response) {
+    try {
+      return await res.json();
+    } catch {
+      return {
+        success: false,
+        code: "invalid_response",
+        message: "Evidence upload failed and did not return a readable error.",
+        error: "Evidence upload failed and did not return a readable error.",
+      };
+    }
+  }
+
+  function apiErrorMessage(json: any, fallback: string) {
+    return String(json?.message || json?.error || fallback);
   }
 
   function expenseEvidenceForm(expenseId: string) {
@@ -1050,13 +1098,27 @@ export default function TripDetailPage() {
                   )}
                 </Panel>
               )}
+
+              {!canViewFinance && (
+                <Panel dark className="p-5">
+                  <SectionTitle
+                    title="Finance details"
+                    subtitle="Revenue, rates, FX, contribution, margin, and management intelligence are restricted."
+                  />
+                  <ReadOnlyNotice text="Finance details are restricted to finance and management roles. You can still complete trip operations, expenses, and proof." />
+                </Panel>
+              )}
             </section>
 
             <section className="mt-8 grid gap-6 xl:grid-cols-2">
               <Panel dark className="p-5">
                 <SectionTitle
                   title="Fuel allocation"
-                  subtitle="Allocated fuel is trip cost evidence. It is not actual burn, theft, or tank balance proof."
+                  subtitle={
+                    canViewFinance
+                      ? "Allocated fuel is trip cost evidence. It is not actual burn, theft, or tank balance proof."
+                      : "Fuel allocation shows operational litres for this role. Fuel costs remain finance-restricted."
+                  }
                 />
 
                 {!capabilities.can_view_fuel ? (
@@ -1080,7 +1142,10 @@ export default function TripDetailPage() {
                               <div className="flex flex-wrap items-start justify-between gap-3">
                                 <div>
                                   <div className="text-sm font-semibold text-white">
-                                    {formatNumber(allocation.allocated_liters)} L · KES {formatMoney(allocation.allocated_cost)}
+                                    {formatNumber(allocation.allocated_liters)} L
+                                    {canViewFinance
+                                      ? ` · KES ${formatMoney(allocation.allocated_cost)}`
+                                      : ""}
                                   </div>
                                   <div className="mt-1 text-xs leading-5 text-slate-400">
                                     Source issue {fuelLog?.truck_text || allocation.truck_text || journey.truck || "truck"} · {fuelLog?.vendor || "vendor unavailable"}
@@ -1138,15 +1203,21 @@ export default function TripDetailPage() {
                               />
                             </FormField>
                             <FormField label="Allocated cost optional" dark>
-                              <input
-                                type="number"
-                                min="0"
-                                step="0.01"
-                                value={allocatedCost}
-                                onChange={(event) => setAllocatedCost(event.target.value)}
-                                placeholder="Auto-estimated if blank"
-                                className={inputClass}
-                              />
+                              {canViewFinance ? (
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  value={allocatedCost}
+                                  onChange={(event) => setAllocatedCost(event.target.value)}
+                                  placeholder="Auto-estimated if blank"
+                                  className={inputClass}
+                                />
+                              ) : (
+                                <div className="rounded-md border border-white/10 bg-slate-950/50 px-3 py-3 text-sm text-slate-300">
+                                  Cost is finance-restricted. Save litres only.
+                                </div>
+                              )}
                             </FormField>
                           </div>
                           <FormField label="Allocation notes optional" dark>
@@ -1186,7 +1257,9 @@ export default function TripDetailPage() {
                             Expense totals by category
                           </div>
                           <div className="mt-1 text-xs leading-5 text-slate-400">
-                            Each expense keeps its own proof; these totals roll up linked trip expenses for contribution review.
+                            {canViewFinance
+                              ? "Each expense keeps its own proof; these totals roll up linked trip expenses for contribution review."
+                              : "Each expense keeps its own proof; these totals help check operational expense entry."}
                           </div>
                         </div>
                         <StatusPill tone="info">
@@ -1294,6 +1367,10 @@ export default function TripDetailPage() {
                                   <ReadOnlyNotice text={expenseEvidence.error || "Evidence storage is not set up yet."} />
                                 ) : expenseEvidence?.error ? (
                                   <ReadOnlyNotice text={expenseEvidence.error} />
+                                ) : null}
+
+                                {expenseEvidenceErrors[expense.id] ? (
+                                  <ReadOnlyNotice text={expenseEvidenceErrors[expense.id]} />
                                 ) : null}
 
                                 {canEditTripExpenses ? (
@@ -1549,6 +1626,8 @@ export default function TripDetailPage() {
                 ) : tripEvidence?.error ? (
                   <ReadOnlyNotice text={tripEvidence.error} />
                 ) : null}
+
+                {tripEvidenceError ? <ReadOnlyNotice text={tripEvidenceError} /> : null}
 
                 <EvidenceAttachmentList
                   attachments={tripEvidenceAttachments}

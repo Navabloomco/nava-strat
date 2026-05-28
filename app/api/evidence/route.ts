@@ -91,13 +91,38 @@ function noStoreJson(body: any, init?: ResponseInit) {
   });
 }
 
+function evidenceErrorResponse(
+  code: string,
+  message: string,
+  status: number,
+  extra: Record<string, any> = {}
+) {
+  return noStoreJson(
+    {
+      success: false,
+      status,
+      code,
+      error: message,
+      message,
+      ...extra,
+    },
+    { status }
+  );
+}
+
 async function resolveCompany(
   req: Request,
   requestedCompanyId?: string | null
 ): Promise<ResolveCompanyResult> {
   const authHeader = req.headers.get("authorization");
   if (!authHeader?.startsWith("Bearer ")) {
-    return { error: noStoreJson({ success: false, error: "Unauthorized" }, { status: 401 }) };
+    return {
+      error: evidenceErrorResponse(
+        "unauthorized",
+        "Please log in before working with evidence.",
+        401
+      ),
+    };
   }
 
   const token = authHeader.replace("Bearer ", "");
@@ -107,7 +132,13 @@ async function resolveCompany(
   } = await supabase.auth.getUser(token);
 
   if (userError || !user) {
-    return { error: noStoreJson({ success: false, error: "Unauthorized" }, { status: 401 }) };
+    return {
+      error: evidenceErrorResponse(
+        "unauthorized",
+        "Please log in before working with evidence.",
+        401
+      ),
+    };
   }
 
   const { data: memberships, error: membershipError } = await supabaseAdmin
@@ -133,10 +164,7 @@ async function resolveCompany(
     if (companyError) throw companyError;
     if (!company) {
       return {
-        error: noStoreJson(
-          { success: false, error: "Company not found" },
-          { status: 404 }
-        ),
+        error: evidenceErrorResponse("company_not_found", "Company not found.", 404),
       };
     }
 
@@ -157,9 +185,10 @@ async function resolveCompany(
     !activeMemberships.some((membership) => membership.company_id === companyId)
   ) {
     return {
-      error: noStoreJson(
-        { success: false, error: "Unable to resolve company access" },
-        { status: 403 }
+      error: evidenceErrorResponse(
+        "company_access_denied",
+        "You do not have access to this company.",
+        403
       ),
     };
   }
@@ -173,9 +202,10 @@ async function resolveCompany(
   if (companyError) throw companyError;
   if (!company) {
     return {
-      error: noStoreJson(
-        { success: false, error: "Unable to resolve company access" },
-        { status: 403 }
+      error: evidenceErrorResponse(
+        "company_access_denied",
+        "You do not have access to this company.",
+        403
       ),
     };
   }
@@ -194,29 +224,29 @@ export async function GET(req: Request) {
     const resolved = await resolveCompany(req, searchParams.get("companyId"));
     if (resolved.error) return resolved.error;
     if (!canViewJourneys(resolved.roles)) {
-      return noStoreJson(
-        { success: false, error: "Evidence access required" },
-        { status: 403 }
+      return evidenceErrorResponse(
+        "evidence_access_denied",
+        "You do not have permission to view evidence for this record.",
+        403
       );
     }
 
     const relatedType = normalizeRelatedType(searchParams.get("relatedType"));
     const relatedId = cleanUuid(searchParams.get("relatedId"));
     if (!ALLOWED_RELATED_TYPES.has(relatedType) || !relatedId) {
-      return noStoreJson(
-        {
-          success: false,
-          error: "relatedType must be trip, expense, fuel_log, or fuel_allocation and relatedId is required",
-        },
-        { status: 400 }
+      return evidenceErrorResponse(
+        "invalid_related_record",
+        "Choose a valid trip, expense, fuel issue, or fuel allocation before loading evidence.",
+        400
       );
     }
 
     const related = await loadRelatedRecord(resolved.company.id, relatedType, relatedId);
     if (!related) {
-      return noStoreJson(
-        { success: false, error: `${relatedTypeLabel(relatedType)} not found` },
-        { status: 404 }
+      return evidenceErrorResponse(
+        "related_record_not_found",
+        `${relatedTypeLabel(relatedType)} not found.`,
+        404
       );
     }
 
@@ -258,9 +288,10 @@ export async function GET(req: Request) {
   } catch (err: any) {
     console.error("Evidence GET error:", err);
     if (isEvidenceSchemaMissing(err)) return evidenceSetupRequiredResponse();
-    return noStoreJson(
-      { success: false, error: err.message || "Failed to load evidence" },
-      { status: 500 }
+    return evidenceErrorResponse(
+      "evidence_load_failed",
+      "Evidence could not be loaded right now. Please try again or contact an admin.",
+      500
     );
   }
 }
@@ -274,9 +305,10 @@ export async function POST(req: Request) {
     const resolved = await resolveCompany(req, stringFormValue(form.get("companyId")));
     if (resolved.error) return resolved.error;
     if (!canViewJourneys(resolved.roles)) {
-      return noStoreJson(
-        { success: false, error: "Evidence upload access required" },
-        { status: 403 }
+      return evidenceErrorResponse(
+        "evidence_upload_denied",
+        "You do not have permission to upload evidence for this record.",
+        403
       );
     }
 
@@ -284,28 +316,28 @@ export async function POST(req: Request) {
     duplicateRelatedType = relatedType;
     const relatedId = cleanUuid(form.get("relatedId"));
     if (!ALLOWED_RELATED_TYPES.has(relatedType) || !relatedId) {
-      return noStoreJson(
-        {
-          success: false,
-          error: "relatedType must be trip, expense, fuel_log, or fuel_allocation and relatedId is required",
-        },
-        { status: 400 }
+      return evidenceErrorResponse(
+        "invalid_related_record",
+        "Choose a valid trip, expense, fuel issue, or fuel allocation before uploading evidence.",
+        400
       );
     }
 
     const related = await loadRelatedRecord(resolved.company.id, relatedType, relatedId);
     if (!related) {
-      return noStoreJson(
-        { success: false, error: `${relatedTypeLabel(relatedType)} not found` },
-        { status: 404 }
+      return evidenceErrorResponse(
+        "related_record_not_found",
+        `${relatedTypeLabel(relatedType)} not found.`,
+        404
       );
     }
 
     const evidenceType = normalizeEvidenceType(form.get("evidenceType"));
     if (!isAllowedEvidenceTypeForRelatedType(relatedType, evidenceType)) {
-      return noStoreJson(
-        { success: false, error: unsupportedEvidenceMessage(relatedType) },
-        { status: 400 }
+      return evidenceErrorResponse(
+        "evidence_type_not_supported",
+        unsupportedEvidenceMessage(relatedType),
+        400
       );
     }
 
@@ -313,9 +345,10 @@ export async function POST(req: Request) {
     const hasFile = isUploadFile(file);
     const textContent = normalizeTextContent(form.get("textContent"));
     if (!hasFile && !textContent) {
-      return noStoreJson(
-        { success: false, error: "Evidence file or pasted proof text is required" },
-        { status: 400 }
+      return evidenceErrorResponse(
+        "evidence_required",
+        "Evidence file or pasted proof text is required.",
+        400
       );
     }
 
@@ -330,7 +363,7 @@ export async function POST(req: Request) {
     if (hasFile) {
       const validation = validateEvidenceFile(file);
       if (!validation.valid) {
-        return noStoreJson({ success: false, error: validation.error }, { status: 400 });
+        return evidenceErrorResponse(validation.code, validation.error, 400);
       }
 
       originalFilename = sanitizeOriginalFilename(file.name || "trip-evidence");
@@ -346,13 +379,11 @@ export async function POST(req: Request) {
     }
 
     if (!evidenceHash) {
-      return noStoreJson(
-        {
-          success: false,
-          error:
-            "Evidence hashing is required before upload. Apply the evidence_hash migration and try again.",
-        },
-        { status: 424 }
+      return evidenceErrorResponse(
+        "evidence_hash_required",
+        "Evidence hashing is required before upload. Apply the evidence_hash migration and try again.",
+        424,
+        { setup_required: true }
       );
     }
 
@@ -363,13 +394,11 @@ export async function POST(req: Request) {
       evidenceHash,
     });
     if (duplicate) {
-      return noStoreJson(
-        {
-          success: false,
-          duplicate: true,
-          error: duplicateEvidenceMessage(relatedType),
-        },
-        { status: 409 }
+      return evidenceErrorResponse(
+        "duplicate_evidence",
+        duplicateEvidenceMessage(relatedType),
+        409,
+        { duplicate: true }
       );
     }
 
@@ -383,14 +412,11 @@ export async function POST(req: Request) {
       textContent,
     });
     if (legacyDuplicate) {
-      return noStoreJson(
-        {
-          success: false,
-          duplicate: true,
-          legacy_duplicate: true,
-          error: duplicateEvidenceMessage(relatedType),
-        },
-        { status: 409 }
+      return evidenceErrorResponse(
+        "duplicate_evidence",
+        duplicateEvidenceMessage(relatedType),
+        409,
+        { duplicate: true, legacy_duplicate: true }
       );
     }
 
@@ -404,7 +430,12 @@ export async function POST(req: Request) {
 
       if (uploadResult.error) {
         if (isEvidenceStorageMissing(uploadResult.error)) return storageSetupRequiredResponse();
-        throw uploadResult.error;
+        console.error("Evidence storage upload failed:", uploadResult.error);
+        return evidenceErrorResponse(
+          "evidence_storage_upload_failed",
+          "Evidence storage refused the upload. Ask an admin to check the private storage bucket policy.",
+          502
+        );
       }
       uploadedPath = storagePath;
     }
@@ -455,20 +486,19 @@ export async function POST(req: Request) {
       await supabaseAdmin.storage.from(EVIDENCE_BUCKET).remove([uploadedPath]);
     }
     if (isDuplicateEvidenceError(err)) {
-      return noStoreJson(
-        {
-          success: false,
-          duplicate: true,
-          error: duplicateEvidenceMessage(duplicateRelatedType),
-        },
-        { status: 409 }
+      return evidenceErrorResponse(
+        "duplicate_evidence",
+        duplicateEvidenceMessage(duplicateRelatedType),
+        409,
+        { duplicate: true }
       );
     }
     if (isEvidenceSchemaMissing(err)) return evidenceSetupRequiredResponse();
     if (isEvidenceStorageMissing(err)) return storageSetupRequiredResponse();
-    return noStoreJson(
-      { success: false, error: err.message || "Failed to upload evidence" },
-      { status: 500 }
+    return evidenceErrorResponse(
+      "evidence_upload_failed",
+      "Evidence upload failed. Please try again or contact an admin.",
+      500
     );
   }
 }
@@ -872,11 +902,21 @@ function isUploadFile(value: FormDataEntryValue | null): value is File {
 
 function validateEvidenceFile(file: File):
   | { valid: true; contentType: string }
-  | { valid: false; error: string } {
+  | { valid: false; code: string; error: string } {
   const size = Number(file.size || 0);
-  if (!size) return { valid: false, error: "Evidence file is empty" };
+  if (!size) {
+    return {
+      valid: false,
+      code: "empty_file",
+      error: "Evidence file is empty.",
+    };
+  }
   if (size > MAX_FILE_SIZE_BYTES) {
-    return { valid: false, error: "Evidence file must be 4MB or smaller" };
+    return {
+      valid: false,
+      code: "file_too_large",
+      error: "File is too large. Maximum size is 4MB.",
+    };
   }
 
   const extension = fileExtension(file.name);
@@ -889,7 +929,8 @@ function validateEvidenceFile(file: File):
   if (!supportedByMime && !supportedByExtension) {
     return {
       valid: false,
-      error: "Unsupported file type. Upload a proof image or PDF.",
+      code: "unsupported_file_type",
+      error: "This file type is not supported.",
     };
   }
 
@@ -928,26 +969,20 @@ function mimeTypeFromExtension(extension: string) {
 }
 
 function evidenceSetupRequiredResponse() {
-  return noStoreJson(
-    {
-      success: false,
-      setup_required: true,
-      error:
-        "Evidence attachment hashing is not available yet. Apply the evidence_attachments and evidence_hash migrations first.",
-    },
-    { status: 424 }
+  return evidenceErrorResponse(
+    "evidence_schema_missing",
+    "Evidence attachment hashing is not available yet. Apply the evidence_attachments and evidence_hash migrations first.",
+    424,
+    { setup_required: true }
   );
 }
 
 function storageSetupRequiredResponse() {
-  return noStoreJson(
-    {
-      success: false,
-      setup_required: true,
-      error:
-        "Evidence storage bucket is not available yet. Create a private trip-evidence bucket or apply the storage migration.",
-    },
-    { status: 424 }
+  return evidenceErrorResponse(
+    "evidence_storage_missing",
+    "Evidence storage bucket is not available yet. Create a private trip-evidence bucket or apply the storage migration.",
+    424,
+    { setup_required: true }
   );
 }
 

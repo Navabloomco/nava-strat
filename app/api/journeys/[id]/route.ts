@@ -242,7 +242,7 @@ async function loadExpenses(companyId: string, journeyId: string): Promise<any[]
   return (data as any[]) || [];
 }
 
-async function loadFuelBundle(companyId: string, journey: any) {
+async function loadFuelBundle(companyId: string, journey: any, includeFinance: boolean) {
   try {
     const truckKey = normalizeVehicleKey(journey.truck || "");
     const [allocationResult, fuelResult] = await Promise.all([
@@ -292,15 +292,18 @@ async function loadFuelBundle(companyId: string, journey: any) {
       );
     }
 
-    return {
-      setup_required: false,
-      trip_allocations: tripAllocations,
-      legacy_fuel_logs: allFuelLogs.filter((fuel: any) => fuel.journey_id === journey.id),
-      available_fuel_logs: relevantFuelLogs,
-      fuel_issue_summaries: issueSummaries,
-      note:
-        "Fuel allocations are allocation evidence only. They do not prove actual burn, fuel theft, or tank balance.",
-    };
+    return sanitizeFuelBundleForRole(
+      {
+        setup_required: false,
+        trip_allocations: tripAllocations,
+        legacy_fuel_logs: allFuelLogs.filter((fuel: any) => fuel.journey_id === journey.id),
+        available_fuel_logs: relevantFuelLogs,
+        fuel_issue_summaries: issueSummaries,
+        note:
+          "Fuel allocations are allocation evidence only. They do not prove actual burn, fuel theft, or tank balance.",
+      },
+      includeFinance
+    );
   } catch (err: any) {
     if (isFuelAllocationSchemaMissing(err)) {
       return {
@@ -314,6 +317,50 @@ async function loadFuelBundle(companyId: string, journey: any) {
     }
     throw err;
   }
+}
+
+function sanitizeFuelBundleForRole(bundle: any, includeFinance: boolean) {
+  if (includeFinance) return bundle;
+
+  return {
+    ...bundle,
+    trip_allocations: (bundle.trip_allocations || []).map(stripFuelAllocationMoney),
+    legacy_fuel_logs: (bundle.legacy_fuel_logs || []).map(stripFuelLogMoney),
+    available_fuel_logs: (bundle.available_fuel_logs || []).map(stripFuelLogMoney),
+    fuel_issue_summaries: Object.fromEntries(
+      Object.entries(bundle.fuel_issue_summaries || {}).map(([key, value]) => [
+        key,
+        stripFuelIssueSummaryMoney(value as any),
+      ])
+    ),
+    finance_values_hidden: true,
+  };
+}
+
+function stripFuelAllocationMoney(row: any) {
+  const { allocated_cost, ...safe } = row || {};
+  return {
+    ...safe,
+    allocated_cost: null,
+  };
+}
+
+function stripFuelLogMoney(row: any) {
+  const { price_per_liter, total_cost, ...safe } = row || {};
+  return safe;
+}
+
+function stripFuelIssueSummaryMoney(summary: any) {
+  if (!summary) return summary;
+  return {
+    ...summary,
+    issue_cost: null,
+    allocated_cost: null,
+    carried_forward_cost: null,
+    reversed_cost: null,
+    consumed_cost: null,
+    remaining_cost: null,
+  };
 }
 
 async function loadAllocationsForFuelLogs(companyId: string, fuelLogIds: string[]) {
@@ -425,7 +472,7 @@ export async function GET(
         ? loadExpenses(resolved.company.id, journey.id)
         : Promise.resolve([]),
       canViewFuel(resolved.roles)
-        ? loadFuelBundle(resolved.company.id, journey)
+        ? loadFuelBundle(resolved.company.id, journey, canViewFinance(resolved.roles))
         : Promise.resolve(null),
       loadTripIntelligence(resolved.company.id, resolved.company, journey, resolved.roles),
     ]);
