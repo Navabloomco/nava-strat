@@ -34,6 +34,15 @@ const expenseTypes = [
   "other",
 ];
 
+const evidenceTypes = [
+  { value: "receipt", label: "Receipt" },
+  { value: "mpesa_screenshot", label: "M-Pesa screenshot" },
+  { value: "delivery_note", label: "Delivery note" },
+  { value: "weighbridge", label: "Weighbridge ticket" },
+  { value: "invoice", label: "Invoice" },
+  { value: "other", label: "Other trip document" },
+];
+
 export default function TripDetailPage() {
   const params = useParams<{ id: string }>();
   const tripId = params?.id;
@@ -68,6 +77,11 @@ export default function TripDetailPage() {
   const [expensePaymentMethod, setExpensePaymentMethod] = useState("");
   const [expenseReference, setExpenseReference] = useState("");
   const [expenseNotes, setExpenseNotes] = useState("");
+
+  const [evidenceType, setEvidenceType] = useState("receipt");
+  const [evidenceFile, setEvidenceFile] = useState<File | null>(null);
+  const [evidenceNotes, setEvidenceNotes] = useState("");
+  const [evidenceUploading, setEvidenceUploading] = useState(false);
 
   useEffect(() => {
     loadDetail();
@@ -108,9 +122,44 @@ export default function TripDetailPage() {
       return;
     }
 
-    setData(json);
+    const evidence = await loadEvidence(session.access_token, companyId);
+    setData({ ...json, evidence });
     primeForms(json.journey || {});
     setLoading(false);
+  }
+
+  async function loadEvidence(token: string, companyId: string | null) {
+    if (!tripId) return { attachments: [] };
+
+    const query = new URLSearchParams({
+      relatedType: "trip",
+      relatedId: tripId,
+    });
+    if (companyId) query.set("companyId", companyId);
+
+    try {
+      const res = await fetch(`/api/evidence?${query.toString()}`, {
+        cache: "no-store",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        return {
+          attachments: [],
+          setup_required: Boolean(json.setup_required),
+          error: json.error || "Evidence is not available yet.",
+        };
+      }
+      return {
+        attachments: json.attachments || [],
+        guardrails: json.guardrails || {},
+      };
+    } catch (err: any) {
+      return {
+        attachments: [],
+        error: err.message || "Evidence is not available yet.",
+      };
+    }
   }
 
   function primeForms(journey: any) {
@@ -287,6 +336,53 @@ export default function TripDetailPage() {
     await loadDetail("Expense linked to trip.");
   }
 
+  async function uploadEvidence(e: any) {
+    e.preventDefault();
+    if (!evidenceFile) {
+      setMessage("Choose a receipt, screenshot, PDF, or trip document first.");
+      return;
+    }
+
+    setEvidenceUploading(true);
+    setMessage("Uploading trip evidence...");
+    const token = await getToken();
+    if (!token) {
+      setMessage("Session expired. Please log in again.");
+      setEvidenceUploading(false);
+      return;
+    }
+
+    const formData = new FormData();
+    const companyId = currentCompanyId();
+    if (companyId) formData.append("companyId", companyId);
+    formData.append("relatedType", "trip");
+    formData.append("relatedId", tripId || "");
+    formData.append("evidenceType", evidenceType);
+    formData.append("notes", evidenceNotes);
+    formData.append("file", evidenceFile);
+
+    const res = await fetch("/api/evidence", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      body: formData,
+    });
+    const json = await res.json();
+    setEvidenceUploading(false);
+    if (!res.ok || !json.success) {
+      setMessage(json.error || "Failed to upload trip evidence.");
+      return;
+    }
+
+    setEvidenceFile(null);
+    setEvidenceType("receipt");
+    setEvidenceNotes("");
+    const fileInput = document.getElementById("trip-evidence-file") as HTMLInputElement | null;
+    if (fileInput) fileInput.value = "";
+    await loadDetail("Evidence uploaded and attached to this trip.");
+  }
+
   const journey = data?.journey || {};
   const capabilities = data?.capabilities || {};
   const trip = data?.trip_intelligence?.trip || null;
@@ -301,6 +397,8 @@ export default function TripDetailPage() {
   const tripAllocations = fuel?.trip_allocations || [];
   const expenses = data?.expenses || [];
   const fuelIssueSummaries = fuel?.fuel_issue_summaries || {};
+  const evidence = data?.evidence || {};
+  const evidenceAttachments = evidence?.attachments || [];
   const fuelTotals = useMemo(() => summarizeTripAllocations(tripAllocations), [tripAllocations]);
   const expenseTotal = expenses.reduce(
     (sum: number, expense: any) => sum + Number(expense.amount || 0),
@@ -1004,6 +1102,126 @@ export default function TripDetailPage() {
                 )}
               </Panel>
             </section>
+
+            <section className="mt-8">
+              <Panel dark className="p-5">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <SectionTitle
+                    title="Evidence / receipts"
+                    subtitle="Attach receipts, M-Pesa screenshots, delivery notes, weighbridge tickets, invoices, and other trip documents. Files stay private; M-Pesa text parsing comes later."
+                  />
+                  <StatusPill tone="info">Private trip files</StatusPill>
+                </div>
+
+                {evidence?.setup_required ? (
+                  <ReadOnlyNotice text={evidence.error || "Trip evidence storage is not set up yet. Apply the evidence migration and create the private storage bucket."} />
+                ) : evidence?.error ? (
+                  <ReadOnlyNotice text={evidence.error} />
+                ) : null}
+
+                <div className="mt-5 grid gap-3">
+                  {evidenceAttachments.length === 0 ? (
+                    <InlineEmpty
+                      title="No evidence attached yet"
+                      body="Upload the trip receipt, M-Pesa screenshot, delivery note, weighbridge ticket, invoice, or other supporting document."
+                    />
+                  ) : (
+                    evidenceAttachments.map((attachment: any) => (
+                      <EvidenceCard key={attachment.id}>
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                          <div className="min-w-0">
+                            <div className="break-words text-sm font-semibold text-white">
+                              {attachment.original_filename || evidenceTypeLabel(attachment.evidence_type)}
+                            </div>
+                            <div className="mt-1 flex flex-wrap gap-2">
+                              <StatusPill tone="neutral">
+                                {evidenceTypeLabel(attachment.evidence_type)}
+                              </StatusPill>
+                              <StatusPill tone="info">
+                                {humanize(attachment.verification_status || "uploaded")}
+                              </StatusPill>
+                            </div>
+                            <div className="mt-2 text-xs leading-5 text-slate-400">
+                              Uploaded {formatDateTime(attachment.uploaded_at)} · {attachment.mime_type || "file"} · {formatFileSize(attachment.file_size_bytes)}
+                            </div>
+                            {attachment.notes && (
+                              <div className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-300">
+                                {attachment.notes}
+                              </div>
+                            )}
+                          </div>
+                          <div className="shrink-0">
+                            {attachment.signed_url ? (
+                              <a
+                                href={attachment.signed_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex rounded-md border border-white/15 px-3 py-2 text-sm font-semibold text-slate-100 hover:bg-white/10"
+                              >
+                                Open secure file
+                              </a>
+                            ) : (
+                              <span className="text-xs text-slate-400">
+                                {attachment.download_error || "Secure file link unavailable"}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </EvidenceCard>
+                    ))
+                  )}
+                </div>
+
+                <form onSubmit={uploadEvidence} className="mt-6 grid gap-5">
+                  <div className="grid gap-5 md:grid-cols-2">
+                    <FormField label="Evidence type" dark>
+                      <select
+                        value={evidenceType}
+                        onChange={(event) => setEvidenceType(event.target.value)}
+                        className={inputClass}
+                      >
+                        {evidenceTypes.map((type) => (
+                          <option key={type.value} value={type.value}>
+                            {type.label}
+                          </option>
+                        ))}
+                      </select>
+                    </FormField>
+                    <FormField label="File" dark>
+                      <input
+                        id="trip-evidence-file"
+                        type="file"
+                        accept="image/*,.pdf"
+                        onChange={(event) => setEvidenceFile(event.target.files?.[0] || null)}
+                        className={inputClass}
+                        required
+                      />
+                    </FormField>
+                  </div>
+                  <FormField label="Notes optional" dark>
+                    <textarea
+                      value={evidenceNotes}
+                      onChange={(event) => setEvidenceNotes(event.target.value)}
+                      rows={3}
+                      placeholder="Example: M-Pesa fuel receipt, delivery note, or weighbridge ticket reference."
+                      className={inputClass}
+                    />
+                  </FormField>
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                    <PrimaryButton
+                      type="submit"
+                      disabled={evidenceUploading || Boolean(evidence?.setup_required)}
+                      className="w-full sm:w-auto"
+                    >
+                      {evidenceUploading ? "Uploading..." : "Upload evidence"}
+                    </PrimaryButton>
+                    <div className="text-xs leading-5 text-slate-400">
+                      Accepted: PDF, JPG, PNG, WebP, HEIC up to 4MB. Files are opened through short-lived private links.
+                    </div>
+                  </div>
+                </form>
+              </Panel>
+            </section>
           </>
         )}
       </div>
@@ -1195,6 +1413,14 @@ function formatDate(value?: string | null) {
   return date.toLocaleDateString();
 }
 
+function formatFileSize(value: any) {
+  const bytes = Number(value || 0);
+  if (!Number.isFinite(bytes) || bytes <= 0) return "Size unavailable";
+  if (bytes >= 1024 * 1024) return `${formatNumber(bytes / (1024 * 1024))} MB`;
+  if (bytes >= 1024) return `${formatNumber(bytes / 1024)} KB`;
+  return `${formatNumber(bytes)} B`;
+}
+
 function formatNumber(value: any) {
   const number = Number(value || 0);
   if (!Number.isFinite(number)) return "0";
@@ -1244,6 +1470,11 @@ function humanize(value: any) {
     .trim();
   if (!text) return "Unavailable";
   return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+function evidenceTypeLabel(value: any) {
+  const found = evidenceTypes.find((type) => type.value === String(value || "").toLowerCase());
+  return found?.label || humanize(value || "Evidence");
 }
 
 function readinessTone(status: string): "neutral" | "success" | "warning" | "danger" {
