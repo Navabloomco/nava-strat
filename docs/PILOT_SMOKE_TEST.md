@@ -313,6 +313,7 @@ Confirm workflow behavior:
 - [ ] Complete/offload/end that Trip and confirm Live Tracking no longer shows it as active Trip context.
 - [ ] Call `GET /api/ops/efficiency?range=yesterday` with an ops-visible role and confirm the JSON returns movement, idle/stopped, stale-location, productivity, driver-readiness, and client-waiting readiness sections.
 - [ ] Confirm `/api/ops/efficiency` labels metric evidence as provider-reported, GPS-estimated, provider-derived, unavailable, or not enough linked data instead of inventing fuel/profit/driver/client conclusions.
+- [ ] Confirm Trucks Moved Most separates provider trip/report distance, provider current-feed odometer/mileage delta, and GPS-estimated fallback. If provider mileage is detected but cannot form a safe period delta, the row should say that instead of presenting GPS fallback as final provider distance.
 - [ ] Confirm stopped-time rows show customer-readable evidence such as "No movement observed in sampled intervals", "Movement observed in X% of sampled intervals", GPS point/interval counts, and low-confidence sparse/capped labels instead of technical observed-interval ratios.
 - [ ] Confirm stopped-time rows are labeled GPS-estimated stopped time and do not claim engine-on idling, fuel burn, driver waste, or fuel misuse.
 - [ ] Confirm idle/excessive-idle event sections are labeled provider idle markers/provider-derived marker windows unless ignition/engine/CAN data verifies true engine-on idle.

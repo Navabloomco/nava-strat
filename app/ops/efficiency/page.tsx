@@ -732,16 +732,28 @@ function formatDistanceEvidenceDetail(row: any) {
   const detail = String(row?.distance_evidence_detail || "").trim();
   if (!source || source === "unavailable") return "unavailable";
 
+  const evidenceType = String(row?.distance_evidence_type || "").trim();
   const normalized = source.toLowerCase();
   const sourceLabel =
-    normalized === "provider-reported"
-      ? "Provider-reported distance"
-      : normalized.includes("gps")
-        ? "GPS-estimated distance"
-        : `${humanize(source)} distance`;
+    evidenceType === "provider_trip_report"
+      ? "Provider trip/report distance"
+      : evidenceType === "provider_current_feed_delta"
+        ? "Provider current-feed odometer/mileage delta"
+        : evidenceType === "gps_estimated" || normalized.includes("gps")
+          ? "GPS-estimated distance"
+          : normalized === "provider-reported"
+            ? "Provider-reported distance"
+            : `${humanize(source)} distance`;
 
-  if (!detail || detail === "unavailable") return sourceLabel;
-  return `${sourceLabel} · ${detail}`;
+  const confidence = String(row?.distance_confidence || "").trim();
+  const note = String(row?.distance_reliability_note || "").trim();
+  const parts = [
+    sourceLabel,
+    detail && detail !== "unavailable" ? detail : "",
+    confidence && confidence !== "unavailable" ? `${humanize(confidence)} confidence` : "",
+    note,
+  ].filter(Boolean);
+  return parts.join(" · ");
 }
 
 function formatStoppedConfidence(row: any) {

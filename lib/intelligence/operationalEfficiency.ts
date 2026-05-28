@@ -58,6 +58,8 @@ type TruckTelemetryStats = {
   provider_reported_distance_km: number;
   provider_reported_distance_points: number;
   provider_reported_distance_source: string | null;
+  provider_reported_distance_status: string;
+  provider_reported_distance_note: string;
   moving_minutes: number;
   stopped_minutes: number;
   observed_minutes: number;
@@ -666,6 +668,8 @@ function summarizeTelemetryRows(
       provider_reported_distance_km: providerDistance.distance_km,
       provider_reported_distance_points: providerDistance.point_count,
       provider_reported_distance_source: providerDistance.source,
+      provider_reported_distance_status: providerDistance.status,
+      provider_reported_distance_note: providerDistance.note,
       moving_minutes: Math.round(movingMinutes),
       stopped_minutes: Math.round(stoppedMinutes),
       observed_minutes: Math.round(observedMinutes),
@@ -696,7 +700,15 @@ function calculateProviderReportedDistanceDelta(
     .sort((a, b) => a.timestampMs - b.timestampMs);
 
   if (sorted.length < 2) {
-    return { distance_km: 0, point_count: sorted.length, source: null };
+    return {
+      distance_km: 0,
+      point_count: sorted.length,
+      source: null,
+      status: sorted.length ? "insufficient_period_delta" : "not_detected",
+      note: sorted.length
+        ? "Provider mileage/odometer was detected, but at least two sane points inside the selected period are needed before Nava can calculate a period delta."
+        : "No provider mileage/odometer values were detected in the selected period.",
+    };
   }
 
   const first = sorted[0];
@@ -706,8 +718,26 @@ function calculateProviderReportedDistanceDelta(
   // Current-feed odometer/mileage values are useful only when they form a sane
   // cumulative delta inside the selected window. Unit ambiguity or resets fall
   // back to GPS estimates instead of manufacturing precision.
-  if (!Number.isFinite(delta) || delta <= 0 || delta > 5000) {
-    return { distance_km: 0, point_count: sorted.length, source: null };
+  if (!Number.isFinite(delta) || delta <= 0) {
+    return {
+      distance_km: 0,
+      point_count: sorted.length,
+      source: null,
+      status: "no_positive_delta",
+      note:
+        "Provider mileage/odometer was detected, but it did not increase inside the selected period.",
+    };
+  }
+
+  if (delta > 5000) {
+    return {
+      distance_km: 0,
+      point_count: sorted.length,
+      source: null,
+      status: "impossible_jump",
+      note:
+        "Provider mileage/odometer delta exceeded the safe period threshold, so Nava used GPS-estimated fallback where available.",
+    };
   }
 
   return {
@@ -716,6 +746,9 @@ function calculateProviderReportedDistanceDelta(
     source: first.field_path
       ? `provider current-feed ${first.field_path} delta`
       : "provider current-feed distance/odometer delta",
+    status: "available",
+    note:
+      "Provider current-feed mileage/odometer had at least two sane points inside the selected period.",
   };
 }
 
@@ -740,10 +773,31 @@ function buildTruckMovementSummary(
       : useCurrentFeedProviderDistance
         ? Number(telemetry?.provider_reported_distance_km || 0)
       : Number(telemetry?.distance_km || 0);
+    const distanceEvidenceType = useProviderDistance
+      ? "provider_trip_report"
+      : useCurrentFeedProviderDistance
+        ? "provider_current_feed_delta"
+        : telemetry && telemetry.distance_km > 0
+          ? "gps_estimated"
+          : "unavailable";
+    const distanceConfidence = useProviderDistance
+      ? "high"
+      : useCurrentFeedProviderDistance
+        ? "medium"
+        : telemetry && telemetry.distance_km > 0
+          ? gpsDistanceConfidence(telemetry)
+          : "unavailable";
+    const providerDeltaNote =
+      telemetry?.provider_reported_distance_status &&
+      telemetry.provider_reported_distance_status !== "not_detected" &&
+      telemetry.provider_reported_distance_status !== "available"
+        ? telemetry.provider_reported_distance_note
+        : "";
     return {
       truck_key: truckKey,
       truck_id: provider?.truck_id || telemetry?.truck_id || truckKey,
       distance_km: roundMetric(distanceKm),
+      distance_evidence_type: distanceEvidenceType,
       distance_source: useProviderDistance
         ? "provider-reported"
         : useCurrentFeedProviderDistance
@@ -756,8 +810,16 @@ function buildTruckMovementSummary(
         : useCurrentFeedProviderDistance
           ? telemetry?.provider_reported_distance_source || "provider current-feed distance/odometer delta"
           : telemetry && telemetry.distance_km > 0
-            ? "GPS point-to-point estimate"
+            ? providerDeltaNote
+              ? `GPS point-to-point estimate; ${providerDeltaNote}`
+              : "GPS point-to-point estimate"
             : "unavailable",
+      distance_confidence: distanceConfidence,
+      distance_reliability_note: distanceReliabilityNote({
+        evidenceType: distanceEvidenceType,
+        telemetry,
+        providerDeltaNote,
+      }),
       movement_minutes:
         provider?.motion_duration_minutes ||
         telemetry?.moving_minutes ||
@@ -783,6 +845,10 @@ function buildTruckMovementSummary(
       provider_summary_rows: provider?.rows || 0,
       provider_reported_distance_points:
         telemetry?.provider_reported_distance_points || 0,
+      provider_current_feed_delta_status:
+        telemetry?.provider_reported_distance_status || "not_detected",
+      provider_current_feed_delta_note:
+        telemetry?.provider_reported_distance_note || null,
     };
   });
 
@@ -810,6 +876,45 @@ function buildTruckMovementSummary(
           ])
         : [],
   };
+}
+
+function gpsDistanceConfidence(stats?: TruckTelemetryStats | null) {
+  if (!stats || stats.point_count < 4 || stats.segment_count < 3) return "low";
+  if (
+    stats.large_gap_count > 0 ||
+    stats.skipped_unrealistic_segments > 0 ||
+    stats.observed_coverage_ratio < 0.35
+  ) {
+    return "medium";
+  }
+  return "medium";
+}
+
+function distanceReliabilityNote(input: {
+  evidenceType: string;
+  telemetry?: TruckTelemetryStats | null;
+  providerDeltaNote?: string | null;
+}) {
+  if (input.evidenceType === "provider_trip_report") {
+    return "Provider trip/report distance is the strongest distance evidence for this period.";
+  }
+  if (input.evidenceType === "provider_current_feed_delta") {
+    return "Provider current-feed odometer/mileage delta is used only after two sane points exist in the selected period.";
+  }
+  if (input.evidenceType === "gps_estimated") {
+    const parts = [
+      "GPS point-to-point distance is a provisional fallback, not final provider distance.",
+      input.providerDeltaNote || "",
+      input.telemetry?.large_gap_count
+        ? `${input.telemetry.large_gap_count} long telemetry gap(s) were excluded.`
+        : "",
+      input.telemetry?.skipped_unrealistic_segments
+        ? `${input.telemetry.skipped_unrealistic_segments} impossible GPS jump(s) were filtered.`
+        : "",
+    ];
+    return uniqueStrings(parts).join(" ");
+  }
+  return "Distance is unavailable for the selected period.";
 }
 
 function buildIdleTimeSummary(
