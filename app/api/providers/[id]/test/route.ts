@@ -8,6 +8,7 @@ import {
 } from "../../../../../lib/providers/engine";
 import { recordAnalyticsEvent } from "../../../../../lib/api/analyticsEvents";
 import { telemetryCapabilityLabel } from "../../../../../lib/telemetry/capabilities";
+import { sanitizeProviderCapabilityDiscoverySummary } from "../../../../../lib/providers/capabilityDiscovery";
 import {
   createProviderTestSummary,
   mergeProviderTestSummaryIntoFleetConfig,
@@ -673,12 +674,15 @@ export async function POST(
     const sanitizedDistanceDiagnostics = sanitizeDistanceDiagnostics(
       result.distance_diagnostics
     );
+    const sanitizedCapabilityDiscovery =
+      sanitizeProviderCapabilityDiscoverySummary(result.capability_discovery);
     const testedAt = new Date().toISOString();
     const testSummary = createProviderTestSummary({
       status: result.success ? "success" : "failure",
       vehicleCount: result.vehicleCount,
       matchedExistingTrucks: result.matched_vehicle_rows ?? null,
       capabilitySummary: sanitizedCapabilitySummary,
+      capabilityDiscovery: sanitizedCapabilityDiscovery,
       distanceDiagnostics: sanitizedDistanceDiagnostics,
       vehicleMatchReview: result.vehicle_match_review,
       testedAt,
@@ -723,6 +727,7 @@ export async function POST(
       telemetry_count: telemetryCount || 0,
       latest_telemetry_at: latestTelemetryAt,
       capability_summary: sanitizedCapabilitySummary,
+      capability_discovery: sanitizedCapabilityDiscovery,
       distance_diagnostics: sanitizedDistanceDiagnostics,
     };
 
@@ -751,6 +756,12 @@ export async function POST(
         assets_count: assetsCount || 0,
         telemetry_count: telemetryCount || 0,
         default_capability: result.capability_summary?.default_capability || null,
+        discovered_capabilities: Object.entries(
+          sanitizedCapabilityDiscovery?.capabilities || {}
+        )
+          .filter(([, detected]) => Boolean(detected))
+          .map(([capability]) => capability)
+          .slice(0, 20),
         placeholder_zero_signal_count: Object.values(
           result.capability_summary?.placeholder_zero_signal_counts || {}
         ).reduce((sum: number, count: any) => sum + Number(count || 0), 0),

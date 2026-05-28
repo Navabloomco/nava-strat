@@ -29,6 +29,10 @@ import {
   CANONICAL_PROVIDER_IDLE_EVENT_TYPE,
   type ProviderIdleMarkerDetection,
 } from "./providerIdleMarkers";
+import {
+  scanProviderCapabilityRows,
+  type ProviderCapabilityDiscoverySummary,
+} from "./capabilityDiscovery";
 
 export type ProviderRecord = {
   id: string;
@@ -72,6 +76,7 @@ export type SyncResult = {
   sample_normalized?: any;
   supplemental_diagnostics?: SupplementalDiagnostics;
   capability_summary?: any;
+  capability_discovery?: ProviderCapabilityDiscoverySummary;
   distance_diagnostics?: DistanceDiagnostics;
   debug?: any;
 };
@@ -527,6 +532,25 @@ export async function runProviderSync(
       auth.token || null,
       authMetadata
     );
+    const capabilityDiscovery = scanProviderCapabilityRows(
+      [
+        ...fleet.vehicles,
+        ...supplemental.feeds.flatMap((feed) => feed.rows.slice(0, 50)),
+      ],
+      {
+        fieldMapping: currentVehicleFieldMapping,
+        configuredFieldNames: supplemental.feeds.flatMap((feed) =>
+          Object.keys(feed.config.mapping || {})
+        ),
+        sources: [
+          { name: "current vehicle feed", row_count: fleet.vehicles.length },
+          ...supplemental.feeds.map((feed) => ({
+            name: feed.config.name || "provider supplemental feed",
+            row_count: feed.rows.length,
+          })),
+        ],
+      }
+    );
     let sample_normalized = null;
     let syncedCount = 0;
     let skippedMissingIdentifier = 0;
@@ -801,6 +825,7 @@ export async function runProviderSync(
         meaningful_signal_counts: meaningfulSignalCounts,
         providerProfile: providerCapabilityProfile,
       }),
+      capability_discovery: capabilityDiscovery,
       distance_diagnostics: distanceDiagnostics,
       debug: {
         errors,
@@ -814,6 +839,7 @@ export async function runProviderSync(
           meaningful_signal_counts: meaningfulSignalCounts,
           providerProfile: providerCapabilityProfile,
         }),
+        capability_discovery: capabilityDiscovery,
         distance_diagnostics: distanceDiagnostics,
       },
     };

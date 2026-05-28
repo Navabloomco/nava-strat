@@ -122,6 +122,8 @@ Open `/admin/providers?companyId=<id>`.
 - [ ] Confirm observed BlueTrax/JLCL rows show `GPS Intelligence` unless ignition/CAN/tank signals have been explicitly verified.
 - [ ] Confirm supported engine/tank signals show `none declared` for GPS-only providers.
 - [ ] Confirm placeholder zero signals are shown as safe counts only and do not upgrade capability.
+- [ ] Confirm Advanced diagnostics shows a safe Provider API capability scan after Test Connection, with field-name evidence such as GPS, speed, provider idle markers, odometer/mileage, ignition/engine state, fuel, driver, geofence/site, diagnostics/faults, event/status, PTO/auxiliary, safety, and HOS/duty status where detected.
+- [ ] Confirm provider capability discovery never shows raw payload values, tokens, passwords, cookies, full coordinates, or secrets, and that field names alone do not mark engine-on idle, fuel burn, diagnostics, or driver behavior as verified.
 - [ ] Confirm distance diagnostics, if provider report rows exist, separate provider-reported mileage from physical odometer values.
 - [ ] Confirm automated distance report feed status is clear: active feed rows/matches when configured, or "No automated distance report feed is active yet" when not configured.
 - [ ] For FleetTrack/Oak and Gold-style setup, confirm `/get_devices` is treated as the current vehicle feed and `/get_reports` is listed as a report-feed placeholder, not active until date range/report type/device parameters, row path, and distance mappings are configured.

@@ -1,3 +1,5 @@
+import { sanitizeProviderCapabilityDiscoverySummary } from "./capabilityDiscovery";
+
 export type ProviderTestSummary = {
   summary_version?: number;
   status?: string | null;
@@ -8,6 +10,7 @@ export type ProviderTestSummary = {
   engine_fuel_verified?: boolean | null;
   report_feed_configured?: boolean | null;
   vehicle_match_review?: ProviderVehicleMatchReview | null;
+  capability_discovery?: any;
   tested_at?: string | null;
   source?: string | null;
 };
@@ -132,6 +135,9 @@ export function sanitizeProviderTestSummary(summary: any): ProviderTestSummary |
   const vehicleMatchReview = sanitizeVehicleMatchReview(
     summary.vehicle_match_review
   );
+  const capabilityDiscovery = sanitizeProviderCapabilityDiscoverySummary(
+    summary.capability_discovery
+  );
 
   if (summaryVersion !== null) safeSummary.summary_version = summaryVersion;
   if (typeof summary.status === "string") safeSummary.status = summary.status;
@@ -150,6 +156,7 @@ export function sanitizeProviderTestSummary(summary: any): ProviderTestSummary |
     safeSummary.report_feed_configured = reportFeedConfigured;
   }
   if (vehicleMatchReview) safeSummary.vehicle_match_review = vehicleMatchReview;
+  if (capabilityDiscovery) safeSummary.capability_discovery = capabilityDiscovery;
   if (typeof summary.tested_at === "string") safeSummary.tested_at = summary.tested_at;
   if (typeof summary.source === "string") safeSummary.source = summary.source;
 
@@ -178,6 +185,7 @@ export function createProviderTestSummary({
   vehicleCount,
   matchedExistingTrucks,
   capabilitySummary,
+  capabilityDiscovery,
   distanceDiagnostics,
   vehicleMatchReview,
   testedAt,
@@ -187,6 +195,7 @@ export function createProviderTestSummary({
   vehicleCount: any;
   matchedExistingTrucks: any;
   capabilitySummary?: any;
+  capabilityDiscovery?: any;
   distanceDiagnostics?: any;
   vehicleMatchReview?: any;
   testedAt: string;
@@ -208,6 +217,7 @@ export function createProviderTestSummary({
     engine_fuel_verified: hasVerifiedEngineFuelSignals(capabilitySummary),
     report_feed_configured: hasVerifiedDistanceReportFeed(distanceDiagnostics),
     vehicle_match_review: sanitizeVehicleMatchReview(vehicleMatchReview),
+    capability_discovery: sanitizeProviderCapabilityDiscoverySummary(capabilityDiscovery),
     tested_at: testedAt,
     source,
   };

@@ -491,6 +491,14 @@ function ProviderCard({
           <ProviderTestOutcome result={testResult} />
           <ProviderFeedContractSummary summary={form.feed_summary || provider.feed_summary} />
           <ProviderCapabilityDiagnostics summary={testResult?.capability_summary} />
+          <ProviderApiCapabilityDiscovery
+            summary={
+              testResult?.capability_discovery ||
+              form?.test_summary?.capability_discovery ||
+              provider?.test_summary?.capability_discovery ||
+              form?.fleet_config?.test_summary?.capability_discovery
+            }
+          />
           <ProviderSecondSourceDiagnostics result={testResult} />
           <ProviderDistanceDiagnostics diagnostics={testResult?.distance_diagnostics} />
           <ProviderDataDiscoveryDiagnostics
@@ -1012,6 +1020,115 @@ function ProviderCapabilityDiagnostics({ summary }: { summary: any }) {
       />
     </section>
   );
+}
+
+function ProviderApiCapabilityDiscovery({ summary }: { summary: any }) {
+  if (!summary) return null;
+  const details = Array.isArray(summary.capability_details)
+    ? summary.capability_details
+    : [];
+  const detected = details.filter((detail: any) => detail.status === "detected");
+  const notDetected = details.filter((detail: any) => detail.status !== "detected");
+
+  return (
+    <section style={diagnosticsStyle}>
+      <div style={diagnosticsHeaderStyle}>
+        <div>
+          <div style={diagnosticsEyebrowStyle}>Provider API discovery</div>
+          <h4 style={diagnosticsTitleStyle}>Safe Capability Scan</h4>
+          <div style={diagnosticsSmallTextStyle}>
+            Field names only. Nava does not show raw provider values, coordinates,
+            credentials, or payload samples here.
+          </div>
+        </div>
+        <div style={diagnosticsMetaStyle}>
+          {Number(summary.scanned_rows || 0).toLocaleString()} sampled row
+          {Number(summary.scanned_rows || 0) === 1 ? "" : "s"}
+        </div>
+      </div>
+
+      <div style={diagnosticsSummaryGridStyle}>
+        <DiagnosticMetric label="Detected" value={detected.length} />
+        <DiagnosticMetric label="Not detected" value={notDetected.length} />
+        <DiagnosticMetric
+          label="Useful unmapped"
+          value={(summary.useful_unmapped_fields || []).length}
+        />
+        <DiagnosticMetric
+          label="Sources"
+          value={(summary.scanned_sources || []).length || 1}
+        />
+      </div>
+
+      <DiagnosticFieldBlock
+        title="Detected provider capabilities"
+        value={detected.map(providerCapabilityDiscoveryLine)}
+        mutedEmpty="No additional provider capability fields detected in sampled rows."
+      />
+      <DiagnosticFieldBlock
+        title="Not detected in sampled rows"
+        value={notDetected.map(providerCapabilityDiscoveryLine)}
+        mutedEmpty="All tracked capability categories were detected."
+      />
+      <DiagnosticFieldBlock
+        title="Useful fields Nava does not currently map"
+        value={(summary.useful_unmapped_fields || []).map(
+          (entry: any) =>
+            `${entry.label}: ${(entry.keys || []).join(", ")}`
+        )}
+        mutedEmpty="No useful unmapped field names detected."
+      />
+      <DiagnosticFieldBlock
+        title="Next provider questions"
+        value={summary.next_actions || []}
+        mutedEmpty="No provider capability follow-up needed from this scan."
+      />
+    </section>
+  );
+}
+
+function providerCapabilityDiscoveryLine(detail: any) {
+  const key = String(detail?.key || "");
+  const label =
+    key === "has_gps"
+      ? detail.status === "detected" ? "GPS available" : "GPS not detected"
+      : key === "has_speed"
+        ? detail.status === "detected" ? "Speed available" : "Speed not detected"
+        : key === "has_provider_idle_markers"
+          ? detail.status === "detected" ? "Provider idle marker fields detected" : "Provider idle marker fields not detected"
+          : key === "has_odometer"
+            ? detail.status === "detected" ? "Odometer/mileage fields detected" : "Odometer not detected"
+            : key === "has_engine_hours"
+              ? detail.status === "detected" ? "Engine hours detected" : "Engine hours not detected"
+              : key === "has_ignition_or_engine_state"
+                ? detail.status === "detected" ? "Ignition/engine-state fields detected" : "Engine-on evidence not detected"
+                : key === "has_fuel_level_or_fuel_used"
+                  ? detail.status === "detected" ? "Fuel fields detected" : "Fuel data not detected"
+                  : key === "has_driver"
+                    ? detail.status === "detected" ? "Driver fields detected" : "Driver fields not detected"
+                    : key === "has_geofence_or_site"
+                      ? detail.status === "detected" ? "Geofence/site fields detected" : "Geofence/site fields not detected"
+                      : key === "has_diagnostics_or_faults"
+                        ? detail.status === "detected" ? "Diagnostics/fault fields detected" : "Diagnostics/faults not detected"
+                        : key === "has_raw_event_status_fields"
+                          ? detail.status === "detected" ? "Event/status fields detected" : "Event/status fields not detected"
+                          : key === "has_pto_or_auxiliary"
+                            ? detail.status === "detected" ? "PTO/auxiliary fields detected" : "PTO/auxiliary fields not detected"
+                            : key === "has_safety_events"
+                              ? detail.status === "detected" ? "Safety event fields detected" : "Safety events not detected"
+                              : key === "has_hos_or_duty_status"
+                                ? detail.status === "detected" ? "HOS/duty status detected" : "HOS/duty status not detected"
+                                : detail.label || "Capability";
+  const evidence =
+    detail.evidence === "mapped-field"
+      ? "mapped by Nava"
+      : detail.evidence === "provider-marker"
+        ? "provider-derived"
+        : detail.evidence === "raw-field"
+          ? "field found, not mapped"
+          : "not found";
+  const rowCount = Number(detail.row_count || 0);
+  return `${label} (${evidence}${rowCount ? `, ${rowCount.toLocaleString()} row${rowCount === 1 ? "" : "s"}` : ""})`;
 }
 
 function ProviderActivationPanel({
