@@ -239,8 +239,10 @@ Confirm workflow behavior:
 - [ ] On Trip Detail, confirm allocated fuel appears as litres/cost allocation evidence and does not claim actual fuel burn, theft, tank balance, or fuel efficiency.
 - [ ] On Trip Detail, allocate part of an existing fuel issue to the Trip only when the role can edit fuel; confirm the fuel issue remaining/carry-forward balance is still shown safely.
 - [ ] On Trip Detail, add a linked expense with a finance/elevated role and confirm it appears as a separate trip expense, not merged into fuel.
+- [ ] Confirm linked expense cards clearly show supplier/vendor/payee, payment method, reference number, amount, and date before attached evidence files.
 - [ ] Apply the `evidence_attachments` migration and confirm the private `trip-evidence` Supabase Storage bucket exists before testing Trip evidence uploads.
 - [ ] On Trip Detail, upload a receipt, M-Pesa screenshot, delivery note, weighbridge ticket, invoice, or other trip document and confirm it appears in the Evidence / receipts section.
+- [ ] Confirm an expense receipt supports the specific expense/vendor/payment record, while general trip evidence supports delivery, movement, cargo, or tonnage and is not treated as supplier-payment proof by itself.
 - [ ] Confirm Trip evidence opens only through a short-lived secure link, does not expose a public file URL or raw storage path, and remains inaccessible to users outside the Trip's company.
 - [ ] Confirm M-Pesa screenshots are stored as evidence only; no M-Pesa text parsing, fuel-burn, theft, or expense inference is claimed yet.
 - [ ] Vehicle picker can fill the truck field.

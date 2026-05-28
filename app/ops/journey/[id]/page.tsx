@@ -981,7 +981,7 @@ export default function TripDetailPage() {
               <Panel dark className="p-5">
                 <SectionTitle
                   title="Trip expenses"
-                  subtitle="Expenses stay separate from fuel and only count when linked to this trip."
+                  subtitle="Structured supplier, payment, reference, amount, and date details live on the expense record. Receipts support that record; they do not replace it."
                 />
 
                 {!capabilities.can_view_expenses ? (
@@ -1003,13 +1003,36 @@ export default function TripDetailPage() {
                                   KES {formatMoney(expense.amount)} · {humanize(expense.expense_type)}
                                 </div>
                                 <div className="mt-1 text-xs leading-5 text-slate-400">
-                                  {expense.vendor || "Vendor unavailable"} · {expense.reference_number || "No reference"}
+                                  Supplier/payee: {expense.vendor || "Not captured"}
                                 </div>
                               </div>
                               <StatusPill tone="neutral">
                                 {formatDate(expense.created_at)}
                               </StatusPill>
                             </div>
+                            <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                              <ExpenseFact
+                                label="Supplier / payee"
+                                value={expense.vendor || "Not captured"}
+                              />
+                              <ExpenseFact
+                                label="Payment method"
+                                value={humanize(expense.payment_method || "not captured")}
+                              />
+                              <ExpenseFact
+                                label="Reference"
+                                value={expense.reference_number || "Not captured"}
+                              />
+                              <ExpenseFact
+                                label="Expense date"
+                                value={formatDate(expense.created_at)}
+                              />
+                            </div>
+                            {expense.notes && (
+                              <div className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-300">
+                                {expense.notes}
+                              </div>
+                            )}
                           </EvidenceCard>
                         ))
                       )}
@@ -1075,10 +1098,11 @@ export default function TripDetailPage() {
                               />
                             </FormField>
                           </div>
-                          <FormField label="Vendor optional" dark>
+                          <FormField label="Supplier / payee optional" dark>
                             <input
                               value={expenseVendor}
                               onChange={(event) => setExpenseVendor(event.target.value.toUpperCase())}
+                              placeholder="Vendor, supplier, or payee"
                               className={inputClass}
                             />
                           </FormField>
@@ -1108,7 +1132,7 @@ export default function TripDetailPage() {
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <SectionTitle
                     title="Evidence / receipts"
-                    subtitle="Attach receipts, M-Pesa screenshots, delivery notes, weighbridge tickets, invoices, and other trip documents. Files stay private; M-Pesa text parsing comes later."
+                    subtitle="Attach receipts, M-Pesa screenshots, delivery notes, weighbridge tickets, invoices, and other trip documents. Expense receipts support the structured expense record above; general trip evidence supports delivery, movement, or tonnage. Files stay private."
                   />
                   <StatusPill tone="info">Private trip files</StatusPill>
                 </div>
@@ -1333,6 +1357,17 @@ function EvidenceCard({ children }: { children: ReactNode }) {
   return (
     <div className="rounded-md border border-white/10 bg-white/[0.04] p-4">
       {children}
+    </div>
+  );
+}
+
+function ExpenseFact({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md border border-white/10 bg-slate-950/40 px-3 py-3">
+      <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-slate-500">
+        {label}
+      </div>
+      <div className="mt-1 break-words text-sm font-semibold text-slate-100">{value}</div>
     </div>
   );
 }
