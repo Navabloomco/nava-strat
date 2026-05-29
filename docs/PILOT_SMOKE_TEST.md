@@ -74,6 +74,7 @@ Open `/dashboard` as an admin/finance user for a customer tenant.
 - [ ] Confirm `Needs attention today` appears above the compact fleet-state tiles.
 - [ ] Confirm action cards route to the right specialist page and include safe `Ask Nava Eye` shortcuts where available.
 - [ ] Confirm the top Nava Eye block says `Ask Nava Eye about this brief` and shows two or three tenant-safe prompt chips.
+- [ ] Click a dashboard Nava Eye prompt and confirm it asks about the current brief without hardcoded tenant examples or restricted finance leakage.
 - [ ] Confirm the compact fleet-state strip appears below the action cards.
 - [ ] Confirm review queues are role-aware and do not expose restricted finance amounts to roles without finance/management access.
 - [ ] Confirm quick links are secondary under `Command routes`, visible before grouped event review but not dominant at the top.
@@ -118,6 +119,8 @@ Open `/admin/providers?companyId=<id>`.
 - [ ] Confirm Test Connection displays sanitized diagnostics.
 - [ ] Confirm Provider Vault shows Current vehicle feed and Report/distance feed as separate connection channels.
 - [ ] Confirm Provider Vault cards lead with a clean customer-ready summary: connection status badge, last test badge, vehicles found, matched/unmatched trucks, live location tracking, engine/fuel signal verification, report/distance feed status, and next action.
+- [ ] Click Provider Vault `Ask setup priorities` and confirm Nava Eye opens a company-scoped provider setup question without raw payloads or secrets.
+- [ ] On a provider card, click `Ask what this provider exposes` and confirm Nava Eye answers from sanitized capability/setup summaries only.
 - [ ] Confirm provider summary metrics use latest successful test/sync counts when available, such as 36 FleetTrack vehicles or 21 BlueTrax vehicles, and otherwise show plain placeholders such as `Not refreshed yet` / `Review needed`.
 - [ ] Confirm matched existing trucks never exceeds vehicles found; if legacy or uncertain counts are impossible, the card shows `Review needed`.
 - [ ] For an inactive second provider with successful test results, confirm Provider Vault shows a Vehicle match review with provider vehicle label, matched canonical truck, match source/confidence, and status.
@@ -315,13 +318,17 @@ Confirm workflow behavior:
 - [ ] Confirm the rate-rule matcher returns `no_rule`, `multiple_matches`, `missing_quantity`, or `missing_fx` instead of guessing when a configured rate cannot be applied safely.
 - [ ] Open `/finance/revenue` as a finance/admin role and confirm it is titled `Finance Revenue Review`, not `Revenue Engine` or `Rate setup`.
 - [ ] Confirm `/finance/revenue` links to `/finance/rate-rules` for rate setup instead of creating rates on the revenue page.
+- [ ] Confirm `/finance/revenue` shows finance-scoped Nava Eye prompts such as Trips needing review and Finance priorities, and that these prompts are not exposed to ops-only roles.
 - [ ] Confirm each Trip row/card shows trip reference, client, route, truck, quantities, current revenue source, match status, and matched rate-rule summary when one exists.
+- [ ] On a Trip with no matching rate, click `Ask why no rate matched` and confirm Nava Eye stays in finance/revenue review context.
 - [ ] Apply a unique matched configured rate and confirm `/api/finance/revenue` writes `journey_revenue_entries.revenue_source = configured_rate` while updating the compatibility journey revenue snapshot.
 - [ ] Confirm manual finance entry remains an override/correction path with a reason, not the default rate setup workflow.
 - [ ] Confirm `/api/finance/revenue` still updates existing journey revenue snapshots and, when the migration exists, writes an auditable `journey_revenue_entries` record labeled `configured_rate`, `manual_finance_entry`, or `overridden`.
 - [ ] Confirm Trip Intelligence uses the latest `journey_revenue_entries` record when available and falls back to the journey revenue snapshot when the revenue-entry table is absent or empty.
 - [ ] Confirm no external FX service is called; non-KES revenue requires a manual/company-standard/fixed FX rate before KES revenue can be calculated.
 - [ ] Confirm generic Trip Detail UI does not show hardcoded pilot tenant examples, truck plates, clients, driver names, routes, or contribution amounts; such values should appear only when loaded from the current company data.
+- [ ] On Trip Detail, confirm the Nava Eye context strip offers Trip summary, missing links, expenses/proof, and finance/contribution prompts only where the role allows them.
+- [ ] Click `What is missing?` from Trip Detail and confirm Nava Eye opens a fresh Trip-scoped investigation and follow-ups stay on that Trip.
 - [ ] Vehicle picker can fill the truck field.
 - [ ] Current standing driver assignment can fill or suggest the driver field.
 - [ ] Fuel entry creates a fuel issue ledger record. A fuel issue linked with legacy `journey_id` remains a fallback only; exact Trip fuel cost should come from `fuel_allocations`.
@@ -342,6 +349,9 @@ Confirm workflow behavior:
 - [ ] Search a truck with and without spaces or hyphens and confirm the same row appears without clearing on auto-refresh.
 - [ ] Search by provider name, safe provider asset label, attached trailer label when present, active Trip client/route, geofence, and readable location; confirm raw coordinates are not exposed.
 - [ ] Search an exact stale truck and confirm the matching stale asset appears before Provider status; clear search and confirm the normal Live trucks / Provider status / Stale assets layout returns.
+- [ ] With a Live Tracking search/filter active, click `Ask Nava Eye about these results` and confirm Nava Eye opens a scoped result-set question.
+- [ ] On a live truck row, click `Ask about this truck` and confirm follow-ups such as `what should I do about it?` stay on that truck.
+- [ ] On a stale truck row, click `Ask about this truck` and confirm Nava Eye explains stale/freshness checks without raw coordinates.
 - [ ] Confirm quick filters preserve grouping: Live, Stale, Moving, Stopped, Has active trip, and Needs readable location. If no rows match, the page shows `No matching assets found.`
 - [ ] With only search text active, confirm the reset button says `Clear search` and clears search without changing the selected filter.
 - [ ] With only a quick filter active, confirm the reset button says `Reset filter` and returns to `All`.
@@ -357,6 +367,8 @@ Confirm workflow behavior:
 - [ ] Confirm each distance row shows first/last telemetry point, points/segments used, and a partial-coverage warning when the last point is much earlier than the selected period end.
 - [ ] Confirm stopped-time rows show customer-readable evidence such as "No movement observed in sampled intervals", "Movement observed in X% of sampled intervals", GPS point/interval counts, and low-confidence sparse/capped labels instead of technical observed-interval ratios.
 - [ ] Confirm stopped-time rows are labeled GPS-estimated stopped time and do not claim engine-on idling, fuel burn, driver waste, or fuel misuse.
+- [ ] On Ops Intelligence movement, stopped, low-productive-time, known unavailable, and tracker idle-marker rows, click the compact Nava Eye action and confirm the prompt stays scoped to that truck/evidence type.
+- [ ] On an Ops Intelligence Trip row, click `Ask what is blocking this Trip` and confirm Nava Eye opens a Trip-scoped review question.
 - [ ] If a provider current-feed stop duration is present, confirm `/ops/efficiency` shows it separately from Nava GPS-stopped time and explains that provider current stop is the current continuous episode while Nava GPS-stopped is the selected-period stationary total.
 - [ ] Confirm stopped rows show cautious context labels such as Provider current stop episode, Provider status indicates stopped/parked, At/near known place, or Unknown stopped time, without turning site dwell into client delay or blame.
 - [ ] Confirm trucks with active availability statuses such as Grounded, Under repair, Breakdown reported, or Out of service are labelled as known unavailable context in Ops Intelligence and are not treated as ordinary low-productivity candidates.
@@ -411,6 +423,8 @@ Run the detailed Nava Eye regression pack in `docs/NAVA_EYE_REGRESSION_TESTS.md`
 Open `/nava-eye` and ask:
 
 - [ ] Create a new Nava Eye conversation.
+- [ ] Open Nava Eye from a contextual page prompt and confirm it creates a fresh investigation thread, sends the scoped prompt, and clears the prompt from the URL.
+- [ ] After opening from a truck, Trip, provider, or revenue-review prompt, ask `what should I do about it?` and confirm Nava Eye keeps the scoped subject without exposing internal context wording.
 - [ ] "Which trucks are live?"
 - [ ] "Which assets have stale location?"
 - [ ] "Is KDQ265 siphoning fuel?"

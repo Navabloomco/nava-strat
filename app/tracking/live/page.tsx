@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { supabase } from "../../../lib/supabase";
+import NavaEyePromptLink from "../../components/NavaEyePromptLink";
 
 type LiveTrackingData = {
   company: { id: string; name: string; slug: string } | null;
@@ -385,6 +386,25 @@ export default function LiveTrackingPage() {
               }}
             />
 
+            {hasActiveFilters && visibleAssetCount > 0 && (
+              <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-slate-400">
+                <span>Need a quick read on the filtered set?</span>
+                <NavaEyePromptLink
+                  label="Ask Nava Eye about these results"
+                  prompt={buildLiveTrackingResultsPrompt({
+                    searchQuery,
+                    activeFilter,
+                    resultText: resultCountText,
+                    liveCount: filteredRows.live.length,
+                    staleCount: filteredRows.stale.length,
+                  })}
+                  companyId={data.company?.id}
+                  contextType="live_tracking_results"
+                  variant="chip"
+                />
+              </div>
+            )}
+
             {hasActiveFilters && visibleAssetCount === 0 && (
               <section className="mt-4 rounded-lg border border-white/10 bg-white/[0.04] p-4 text-sm text-slate-300">
                 <div className="font-medium text-slate-100">
@@ -407,6 +427,7 @@ export default function LiveTrackingPage() {
                       hasActiveFilters={hasActiveFilters}
                       showEmptyState={false}
                       canEditAvailability={canEditAvailability}
+                      companyId={data.company?.id}
                       onRefresh={loadData}
                       onSaveAvailability={saveAvailability}
                     />
@@ -420,6 +441,7 @@ export default function LiveTrackingPage() {
                       hasActiveFilters={hasActiveFilters}
                       showEmptyState={false}
                       canEditAvailability={canEditAvailability}
+                      companyId={data.company?.id}
                       onSaveAvailability={saveAvailability}
                     />
                   </div>
@@ -438,6 +460,7 @@ export default function LiveTrackingPage() {
                   hasActiveFilters={hasActiveFilters}
                   showEmptyState
                   canEditAvailability={canEditAvailability}
+                  companyId={data.company?.id}
                   onRefresh={loadData}
                   onSaveAvailability={saveAvailability}
                 />
@@ -449,6 +472,7 @@ export default function LiveTrackingPage() {
                     hasActiveFilters={hasActiveFilters}
                     showEmptyState
                     canEditAvailability={canEditAvailability}
+                    companyId={data.company?.id}
                     onSaveAvailability={saveAvailability}
                   />
                 </aside>
@@ -489,6 +513,7 @@ function LiveTrucksSection({
   hasActiveFilters,
   showEmptyState,
   canEditAvailability,
+  companyId,
   onRefresh,
   onSaveAvailability,
 }: {
@@ -498,6 +523,7 @@ function LiveTrucksSection({
   hasActiveFilters: boolean;
   showEmptyState: boolean;
   canEditAvailability: boolean;
+  companyId?: string | null;
   onRefresh: () => void;
   onSaveAvailability: (row: any, status: string, note: string) => Promise<void>;
 }) {
@@ -535,6 +561,7 @@ function LiveTrucksSection({
               key={truck.truck_id}
               truck={truck}
               canEditAvailability={canEditAvailability}
+              companyId={companyId}
               onSaveAvailability={onSaveAvailability}
             />
           ))}
@@ -580,12 +607,14 @@ function StaleAssetsSection({
   hasActiveFilters,
   showEmptyState,
   canEditAvailability,
+  companyId,
   onSaveAvailability,
 }: {
   rows: any[];
   hasActiveFilters: boolean;
   showEmptyState: boolean;
   canEditAvailability: boolean;
+  companyId?: string | null;
   onSaveAvailability: (row: any, status: string, note: string) => Promise<void>;
 }) {
   return (
@@ -634,6 +663,16 @@ function StaleAssetsSection({
                   onSave={onSaveAvailability}
                 />
               )}
+              <div className="mt-3">
+                <NavaEyePromptLink
+                  label="Ask about this truck"
+                  prompt={buildLiveTruckPrompt(asset, "stale")}
+                  companyId={companyId}
+                  contextType="truck"
+                  contextId={asset.asset_id || asset.truck_id || asset.registration}
+                  variant="rowAction"
+                />
+              </div>
             </div>
           ))}
         </div>
@@ -759,10 +798,12 @@ function LiveTrackingCommandBar({
 function TruckRow({
   truck,
   canEditAvailability,
+  companyId,
   onSaveAvailability,
 }: {
   truck: any;
   canEditAvailability: boolean;
+  companyId?: string | null;
   onSaveAvailability: (row: any, status: string, note: string) => Promise<void>;
 }) {
   return (
@@ -806,6 +847,16 @@ function TruckRow({
         <StatusPill value={truck.status || "active"} />
         <div className="mt-2 text-xs text-slate-400">
           {truck.freshness_minutes ?? "—"} min old · {formatDateTime(truck.last_seen_at)}
+        </div>
+        <div className="mt-3">
+          <NavaEyePromptLink
+            label="Ask about this truck"
+            prompt={buildLiveTruckPrompt(truck, "live")}
+            companyId={companyId}
+            contextType="truck"
+            contextId={truck.asset_id || truck.truck_id || truck.registration}
+            variant="rowAction"
+          />
         </div>
       </div>
     </article>
@@ -1013,6 +1064,57 @@ function StatusPill({ value }: { value: string }) {
       {value || "unknown"}
     </span>
   );
+}
+
+function buildLiveTrackingResultsPrompt({
+  searchQuery,
+  activeFilter,
+  resultText,
+  liveCount,
+  staleCount,
+}: {
+  searchQuery: string;
+  activeFilter: LiveTrackingFilter;
+  resultText: string;
+  liveCount: number;
+  staleCount: number;
+}) {
+  const filterLabel =
+    LIVE_TRACKING_FILTERS.find((filter) => filter.key === activeFilter)?.label || "All";
+  const searchText = searchQuery.trim()
+    ? `Search: "${searchQuery.trim()}".`
+    : "No search text.";
+  return [
+    "Review these Live Tracking results and tell me what to check first.",
+    searchText,
+    `Filter: ${filterLabel}.`,
+    `Result summary: ${resultText}.`,
+    `${liveCount.toLocaleString()} live match(es), ${staleCount.toLocaleString()} stale match(es).`,
+  ].join(" ");
+}
+
+function buildLiveTruckPrompt(row: any, statusText: "live" | "stale") {
+  const truck = row?.registration || row?.truck_id || "this truck";
+  const availabilityStatus = String(row?.availability?.status || "").trim();
+  const availabilityText = availabilityStatus ? availabilityLabel(availabilityStatus) : "";
+
+  if (availabilityStatus && availabilityStatus !== "available") {
+    return `Why is ${truck} marked ${availabilityText}, and what should I check next?`;
+  }
+
+  if (row?.active_trip_id || row?.active_trip_conflict) {
+    return `How is ${truck} doing on its active Trip?`;
+  }
+
+  if (statusText === "stale") {
+    return `Why is ${truck} stale and what should I check?`;
+  }
+
+  if (Number(row?.speed || 0) > 0) {
+    return `What should I know about ${truck} right now?`;
+  }
+
+  return `Why is ${truck} stopped and what should I check?`;
 }
 
 function filterLiveTrackingRows({

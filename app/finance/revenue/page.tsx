@@ -7,6 +7,7 @@ import {
   type ClientRateRuleLike,
 } from "../../../lib/finance/revenueRules";
 import { supabase } from "../../../lib/supabase";
+import NavaEyePromptLink from "../../components/NavaEyePromptLink";
 import {
   EmptyState,
   FormField,
@@ -167,6 +168,7 @@ export default function RevenuePage() {
     }
     return true;
   });
+  const companyIdParam = currentCompanyId();
 
   async function applyConfiguredRate(journeyId: string) {
     setError("");
@@ -350,6 +352,35 @@ export default function RevenuePage() {
           <MetricCard label="Configured revenue" value={counts.configured} />
         </section>
 
+        <Panel dark className="mt-6 border-cyan-200/15 bg-cyan-300/10 p-4">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <div className="text-sm font-semibold text-cyan-50">
+                Ask Nava Eye about revenue review
+              </div>
+              <p className="mt-1 text-xs leading-5 text-cyan-100/80">
+                Finance-scoped questions stay inside the current company and role boundary.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <NavaEyePromptLink
+                label="Trips needing review"
+                prompt="Which Trips need revenue review?"
+                companyId={companyIdParam}
+                contextType="finance_revenue_review"
+                variant="chip"
+              />
+              <NavaEyePromptLink
+                label="Finance priorities"
+                prompt="What revenue items should finance handle first?"
+                companyId={companyIdParam}
+                contextType="finance_revenue_review"
+                variant="chip"
+              />
+            </div>
+          </div>
+        </Panel>
+
         {message && (
           <Panel dark className="mt-6 border-cyan-200/20 bg-cyan-300/10 p-4">
             <div className="whitespace-pre-wrap text-sm text-cyan-50">{message}</div>
@@ -492,6 +523,23 @@ export default function RevenuePage() {
                           {manualForm?.open ? "Close manual entry" : "Manual finance entry"}
                         </SecondaryButton>
                       )}
+                      <NavaEyePromptLink
+                        label={
+                          match.status === "no_rule"
+                            ? "Ask why no rate matched"
+                            : "Ask about this review"
+                        }
+                        prompt={
+                          match.status === "no_rule"
+                            ? `Why does this Trip have no matching rate: ${revenueTripPromptLabel(journey)}?`
+                            : `What should finance review for this Trip: ${revenueTripPromptLabel(journey)}?`
+                        }
+                        companyId={companyIdParam}
+                        contextType="trip"
+                        contextId={journey.id}
+                        variant="rowAction"
+                        className="w-full"
+                      />
                     </div>
                   </div>
 
@@ -726,6 +774,22 @@ function routeLabel(journey: any) {
   const from = journey.from_location || "Origin missing";
   const to = journey.to_location || "Destination missing";
   return `${from} → ${to}`;
+}
+
+function revenueTripPromptLabel(journey: any) {
+  return [
+    journey.internal_trip_id || journey.id || "current Trip",
+    journey.truck ? `truck ${journey.truck}` : "",
+    journey.client_name ? `client ${journey.client_name}` : "",
+    journey.from_location || journey.to_location ? `route ${routeLabel(journey)}` : "",
+  ]
+    .filter(Boolean)
+    .join(", ");
+}
+
+function currentCompanyId() {
+  if (typeof window === "undefined") return "";
+  return new URLSearchParams(window.location.search).get("companyId") || "";
 }
 
 function quantitySummary(journey: any) {

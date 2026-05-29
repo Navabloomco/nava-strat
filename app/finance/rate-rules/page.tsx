@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { supabase } from "../../../lib/supabase";
+import NavaEyePromptLink from "../../components/NavaEyePromptLink";
 import JourneyPicker from "../../components/JourneyPicker";
 import {
   EmptyState,
@@ -114,11 +115,17 @@ export default function FinanceRateRulesPage() {
     () => rateRules.filter((rule) => String(rule.status || "") === "active").length,
     [rateRules]
   );
+  const companyIdParam = currentCompanyId();
 
   function companyQuery() {
     if (typeof window === "undefined") return "";
     const companyId = new URLSearchParams(window.location.search).get("companyId");
     return companyId ? `?companyId=${encodeURIComponent(companyId)}` : "";
+  }
+
+  function currentCompanyId() {
+    if (typeof window === "undefined") return "";
+    return new URLSearchParams(window.location.search).get("companyId") || "";
   }
 
   async function getSessionToken() {
@@ -393,6 +400,35 @@ export default function FinanceRateRulesPage() {
             <p className="mt-2 text-lg font-semibold text-white">{rateRules.length}</p>
           </Panel>
         </section>
+
+        <Panel dark className="mt-6 border-cyan-200/15 bg-cyan-300/10 p-4">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <div className="text-sm font-semibold text-cyan-50">
+                Ask Nava Eye about client rates
+              </div>
+              <p className="mt-1 text-xs leading-5 text-cyan-100/80">
+                Use current company rate rules and Trip review data.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <NavaEyePromptLink
+                label="Rate setup review"
+                prompt="What rate setup should finance review first?"
+                companyId={companyIdParam}
+                contextType="client_rate_rules"
+                variant="chip"
+              />
+              <NavaEyePromptLink
+                label="Trips without rates"
+                prompt="Which Trips have no matching rate rule?"
+                companyId={companyIdParam}
+                contextType="client_rate_rules"
+                variant="chip"
+              />
+            </div>
+          </div>
+        </Panel>
 
         {message && (
           <Panel dark className="mt-6 border-emerald-300/20 bg-emerald-300/10 p-4">

@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { supabase } from "../../../lib/supabase";
+import NavaEyePromptLink from "../../components/NavaEyePromptLink";
 import {
   normalizeFieldMappingsRelativeToRow,
   normalizeRowPath,
@@ -176,14 +177,23 @@ export default function ProviderVault() {
             secure fleet view.
           </p>
         </div>
-        {capabilities.can_add_provider && (
-          <Link
-            href={`/admin/providers/new${companyQuery(selectedCompanyId)}`}
-            style={primaryLinkStyle}
-          >
-            Add Provider
-          </Link>
-        )}
+        <div style={providerHeaderActionsStyle}>
+          <NavaEyePromptLink
+            label="Ask setup priorities"
+            prompt="What provider setup should I fix first?"
+            companyId={selectedCompanyId}
+            contextType="provider_vault"
+            variant="rowAction"
+          />
+          {capabilities.can_add_provider && (
+            <Link
+              href={`/admin/providers/new${companyQuery(selectedCompanyId)}`}
+              style={primaryLinkStyle}
+            >
+              Add Provider
+            </Link>
+          )}
+        </div>
       </div>
 
       {selectedCompanyId && isPlatformOwner && company && (
@@ -424,6 +434,25 @@ function ProviderCard({
         isTesting={isTesting}
         selectedCompanyId={selectedCompanyId}
       />
+
+      <div style={providerPromptRowStyle}>
+        <NavaEyePromptLink
+          label="Ask what this provider exposes"
+          prompt={`What does ${provider.provider_name || "this provider"} expose, and what setup should I fix first?`}
+          companyId={selectedCompanyId}
+          contextType="provider"
+          contextId={provider.id}
+          variant="rowAction"
+        />
+        <NavaEyePromptLink
+          label="Ask why distance is GPS-derived"
+          prompt={`Why is distance still GPS-derived for ${provider.provider_name || "this provider"}?`}
+          companyId={selectedCompanyId}
+          contextType="provider"
+          contextId={provider.id}
+          variant="rowAction"
+        />
+      </div>
 
       <ProviderVehicleMatchReview
         review={vehicleMatchReview}
@@ -3038,6 +3067,7 @@ const feedStatusStyle = (success: boolean) => ({
 
 const cardStyle = { backgroundColor: "#fff", borderRadius: "12px", padding: "24px", border: "1px solid #e2e8f0", marginBottom: "20px", boxShadow: "0 1px 3px rgba(0,0,0,0.1)" };
 const pageHeaderStyle = { display: "flex", justifyContent: "space-between", gap: 24, alignItems: "flex-start", marginBottom: 28 };
+const providerHeaderActionsStyle = { display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 10, flexWrap: "wrap" as const };
 const eyebrowStyle = { fontSize: 12, fontWeight: 800, color: "#0891b2", textTransform: "uppercase" as const, letterSpacing: "0.14em", marginBottom: 8 };
 const pageTitleStyle = { margin: 0, fontSize: 34, fontWeight: 850, color: "#0f172a", letterSpacing: 0 };
 const pageSubtitleStyle = { margin: "10px 0 0 0", maxWidth: 620, color: "#64748b", fontSize: 14, lineHeight: 1.7 };
@@ -3064,6 +3094,7 @@ const stepNumberStyle = { width: 30, height: 30, borderRadius: 999, background: 
 const stepTextStyle = { color: "#e2e8f0", fontSize: 13, lineHeight: 1.5 };
 const headerStyle = { display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #f1f5f9", paddingBottom: "16px", marginBottom: "20px" };
 const providerHeaderBadgeRowStyle = { display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" as const };
+const providerPromptRowStyle = { display: "flex", flexWrap: "wrap" as const, gap: 8, marginBottom: 18 };
 const labelStyle = { display: "block", fontSize: "11px", fontWeight: "bold", color: "#475569", marginBottom: "4px", textTransform: "uppercase" as "uppercase" };
 const inputStyle = { width: "100%", padding: "10px", borderRadius: "6px", border: "1px solid #cbd5e1", marginBottom: "10px", fontSize: "14px" };
 const textareaStyle = { width: "100%", minHeight: "120px", padding: "12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontFamily: "monospace", fontSize: "12px", backgroundColor: "#f8fafc" };

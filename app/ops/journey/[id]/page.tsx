@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { supabase } from "../../../../lib/supabase";
+import NavaEyePromptLink from "../../../components/NavaEyePromptLink";
 import {
   FormField,
   PageHeader,
@@ -748,6 +749,57 @@ export default function TripDetailPage() {
                 <div className="whitespace-pre-wrap text-sm text-cyan-50">{message}</div>
               </Panel>
             )}
+
+            <Panel dark className="mt-8 border-cyan-200/15 bg-cyan-300/10 p-4">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <div className="text-sm font-semibold text-cyan-50">
+                    Ask Nava Eye about this Trip
+                  </div>
+                  <p className="mt-1 text-xs leading-5 text-cyan-100/80">
+                    Nava Eye will use this Trip context and keep finance boundaries by role.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <NavaEyePromptLink
+                    label="Summarize this Trip"
+                    prompt={`Summarize this Trip: ${tripPromptLabel(journey)}.`}
+                    companyId={companyIdParam}
+                    contextType="trip"
+                    contextId={tripId}
+                    variant="chip"
+                  />
+                  <NavaEyePromptLink
+                    label="What is missing?"
+                    prompt={`What is blocking this Trip review for ${tripPromptLabel(journey)}?`}
+                    companyId={companyIdParam}
+                    contextType="trip"
+                    contextId={tripId}
+                    variant="chip"
+                  />
+                  {canViewTripExpenses && (
+                    <NavaEyePromptLink
+                      label="Expenses / proof"
+                      prompt={`Which expenses on this Trip need proof for ${tripPromptLabel(journey)}?`}
+                      companyId={companyIdParam}
+                      contextType="trip"
+                      contextId={tripId}
+                      variant="chip"
+                    />
+                  )}
+                  {canViewFinance && (
+                    <NavaEyePromptLink
+                      label="Contribution review"
+                      prompt={`What should finance review on this Trip: ${tripPromptLabel(journey)}?`}
+                      companyId={companyIdParam}
+                      contextType="trip"
+                      contextId={tripId}
+                      variant="chip"
+                    />
+                  )}
+                </div>
+              </div>
+            </Panel>
 
             <section className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               <MetricCard label="Status" value={humanize(journey.status || "unknown")} />
@@ -2161,6 +2213,17 @@ function routeLabel(journey: any) {
   const from = journey.from_location || "Unknown origin";
   const to = journey.to_location || "Unknown destination";
   return `${from} → ${to}`;
+}
+
+function tripPromptLabel(journey: any) {
+  return [
+    journey.internal_trip_id || journey.id || "current Trip",
+    journey.truck ? `truck ${journey.truck}` : "",
+    journey.client_name ? `client ${journey.client_name}` : "",
+    journey.from_location || journey.to_location ? `route ${routeLabel(journey)}` : "",
+  ]
+    .filter(Boolean)
+    .join(", ");
 }
 
 function valueOrEmpty(value: any) {

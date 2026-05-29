@@ -69,6 +69,7 @@ export default function NavaEyeChatPage() {
   const [globalRoles, setGlobalRoles] = useState<string[]>([]);
   const [isPlatformOwner, setIsPlatformOwner] = useState(false);
   const [selectedCompanyId, setSelectedCompanyId] = useState("");
+  const [queuedPrompt, setQueuedPrompt] = useState("");
   const [openConversations, setOpenConversations] = useState<NavaEyeConversation[]>([]);
   const [closedConversations, setClosedConversations] = useState<NavaEyeConversation[]>([]);
   const [selectedConversationId, setSelectedConversationId] = useState("");
@@ -80,6 +81,7 @@ export default function NavaEyeChatPage() {
     useState<NavaEyeConversation | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const pendingConversationIdRef = useRef("");
+  const queuedPromptConsumedRef = useRef("");
 
   useEffect(() => {
     initialize();
@@ -98,6 +100,18 @@ export default function NavaEyeChatPage() {
     if (initializing) return;
     syncUrlState();
   }, [initializing, selectedCompanyId, selectedConversationId, conversationStatusTab]);
+
+  useEffect(() => {
+    if (initializing || !selectedCompanyId || !queuedPrompt.trim()) return;
+    const prompt = queuedPrompt.trim();
+    const promptKey = `${selectedCompanyId}:${prompt}`;
+    if (queuedPromptConsumedRef.current === promptKey) return;
+    queuedPromptConsumedRef.current = promptKey;
+    setQueuedPrompt("");
+    clearPromptQueryState();
+    void submitNavaEyeQuestion(prompt, { forceNewConversation: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initializing, selectedCompanyId, queuedPrompt]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({
@@ -136,6 +150,7 @@ export default function NavaEyeChatPage() {
         : new URLSearchParams();
     const requestedCompanyId = params.get("companyId") || "";
     const requestedConversationId = params.get("conversationId") || "";
+    const requestedPrompt = params.get("prompt") || "";
     const requestedStatus = normalizeConversationStatus(
       params.get("status")
     );
@@ -144,6 +159,7 @@ export default function NavaEyeChatPage() {
     setMemberships(json.memberships || []);
     setGlobalRoles((json.roles || []).map(normalizeRole));
     setIsPlatformOwner(Boolean(json.is_platform_owner));
+    setQueuedPrompt(requestedPrompt);
     setConversationStatusTab(requestedStatus || "open");
     setSelectedCompanyId(
       nextCompanies.some((company: CompanyOption) => company.id === requestedCompanyId)
@@ -332,7 +348,15 @@ export default function NavaEyeChatPage() {
   async function askNavaEye(e: FormEvent) {
     e.preventDefault();
     const nextQuestion = question.trim();
-    if (!nextQuestion || !selectedCompanyId || selectedConversation?.status === "closed") return;
+    await submitNavaEyeQuestion(nextQuestion);
+  }
+
+  async function submitNavaEyeQuestion(
+    nextQuestion: string,
+    options: { forceNewConversation?: boolean } = {}
+  ) {
+    if (!nextQuestion || !selectedCompanyId) return;
+    if (!options.forceNewConversation && selectedConversation?.status === "closed") return;
 
     setLoading(true);
     setErrorDetail("");
@@ -345,7 +369,13 @@ export default function NavaEyeChatPage() {
       return;
     }
 
-    let conversationId = selectedConversationId;
+    if (options.forceNewConversation) {
+      setSelectedConversationId("");
+      setMessages([]);
+      setConversationStatusTab("open");
+    }
+
+    let conversationId = options.forceNewConversation ? "" : selectedConversationId;
     if (!conversationId) {
       const conversation = await createConversation(nextQuestion);
       conversationId = conversation?.id || "";
@@ -497,8 +527,21 @@ export default function NavaEyeChatPage() {
     if (selectedConversationId) params.set("conversationId", selectedConversationId);
     else params.delete("conversationId");
     params.set("status", conversationStatusTab);
+    params.delete("prompt");
+    params.delete("contextType");
+    params.delete("contextId");
     const nextUrl = `${window.location.pathname}?${params.toString()}`;
     window.history.replaceState(null, "", nextUrl);
+  }
+
+  function clearPromptQueryState() {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    params.delete("prompt");
+    params.delete("contextType");
+    params.delete("contextId");
+    const query = params.toString();
+    window.history.replaceState(null, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
   }
 
   const showCompanySelector = isPlatformOwner || companies.length > 1;

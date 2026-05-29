@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { supabase } from "../../../lib/supabase";
+import NavaEyePromptLink from "../../components/NavaEyePromptLink";
 import {
   EmptyState,
   PageHeader,
@@ -124,6 +125,7 @@ export default function OpsEfficiencyPage() {
   );
   const incompleteTripCount = Number(tripSummary.partially_linked_count || 0) +
     Number(tripSummary.not_enough_linked_data_count || 0);
+  const companyIdParam = currentCompanyIdFromUrl();
 
   const tripFlagCounts = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -262,6 +264,16 @@ export default function OpsEfficiencyPage() {
                     title={truck.truck_id || "Unknown truck"}
                     metric={`${formatKm(truck.distance_km)} km`}
                     detail={formatDistanceEvidenceDetail(truck, timeframe.time_zone)}
+                    action={
+                      <NavaEyePromptLink
+                        label="Ask about distance"
+                        prompt={`Why is ${truck.truck_id || "this truck"} distance provisional for ${timeframe.display_label || range}?`}
+                        companyId={companyIdParam}
+                        contextType="truck"
+                        contextId={truck.truck_key || truck.truck_id}
+                        variant="rowAction"
+                      />
+                    }
                   />
                 )}
               />
@@ -278,6 +290,16 @@ export default function OpsEfficiencyPage() {
                     title={truck.truck_id || "Unknown truck"}
                     metric={`${formatMinutes(truck.stopped_minutes)} estimate`}
                     detail={formatStoppedRowDetail(truck, timeframe)}
+                    action={
+                      <NavaEyePromptLink
+                        label="Ask why stopped"
+                        prompt={`Why is ${truck.truck_id || "this truck"} stopped in ${timeframe.display_label || range}?`}
+                        companyId={companyIdParam}
+                        contextType="truck"
+                        contextId={truck.truck_key || truck.truck_id}
+                        variant="rowAction"
+                      />
+                    }
                   />
                 )}
               />
@@ -294,6 +316,16 @@ export default function OpsEfficiencyPage() {
                     title={truck.truck_id || "Unknown truck"}
                     metric={formatPercent(truck.productive_ratio)}
                     detail={`${formatKm(truck.distance_km)} km, ${formatMinutes(truck.stopped_minutes)} stopped-time estimate · ${formatStoppedRowDetail(truck, timeframe)}`}
+                    action={
+                      <NavaEyePromptLink
+                        label="Ask what to do"
+                        prompt={`What should I do about ${truck.truck_id || "this truck"} based on its low productive-time evidence for ${timeframe.display_label || range}?`}
+                        companyId={companyIdParam}
+                        contextType="truck"
+                        contextId={truck.truck_key || truck.truck_id}
+                        variant="rowAction"
+                      />
+                    }
                   />
                 )}
               />
@@ -310,6 +342,16 @@ export default function OpsEfficiencyPage() {
                     title={truck.truck_id || "Unknown truck"}
                     metric={availabilityLabel(truck.asset_availability?.status)}
                     detail={`${formatMinutes(truck.stopped_minutes)} stopped-time evidence · ${formatStoppedRowDetail(truck, timeframe)}`}
+                    action={
+                      <NavaEyePromptLink
+                        label="Ask about status"
+                        prompt={`Why is ${truck.truck_id || "this truck"} marked ${availabilityLabel(truck.asset_availability?.status)}, and what should I check next?`}
+                        companyId={companyIdParam}
+                        contextType="truck"
+                        contextId={truck.truck_key || truck.truck_id}
+                        variant="rowAction"
+                      />
+                    }
                   />
                 )}
               />
@@ -326,6 +368,16 @@ export default function OpsEfficiencyPage() {
                     title={truck.truck_id || "Unknown truck"}
                     metric={formatProviderIdleMetric(truck)}
                     detail={`${formatProviderIdleSourceSummary(truck)} ${formatProviderIdleDurationNote(truck)} Engine-on idle not verified unless ignition/engine data supports it.`}
+                    action={
+                      <NavaEyePromptLink
+                        label="Ask about markers"
+                        prompt={`Is ${truck.truck_id || "this truck"} showing tracker idle evidence or GPS-stopped evidence for ${timeframe.display_label || range}?`}
+                        companyId={companyIdParam}
+                        contextType="truck"
+                        contextId={truck.truck_key || truck.truck_id}
+                        variant="rowAction"
+                      />
+                    }
                   />
                 )}
               />
@@ -363,7 +415,11 @@ export default function OpsEfficiencyPage() {
                 ) : (
                   <div className="mt-5 grid gap-3">
                     {trips.slice(0, 8).map((trip: any) => (
-                      <TripRow key={trip.trip_identity?.journey_id} trip={trip} />
+                      <TripRow
+                        key={trip.trip_identity?.journey_id}
+                        trip={trip}
+                        companyId={companyIdParam}
+                      />
                     ))}
                   </div>
                 )}
@@ -487,23 +543,26 @@ function RankRow({
   title,
   metric,
   detail,
+  action,
 }: {
   title: string;
   metric: string;
   detail: string;
+  action?: ReactNode;
 }) {
   return (
     <div className="grid gap-3 rounded-md border border-white/10 bg-white/[0.04] px-4 py-3 sm:grid-cols-[1fr_auto] sm:items-center">
       <div className="min-w-0">
         <div className="break-words text-sm font-semibold text-white">{title}</div>
         <div className="mt-1 text-xs leading-5 text-slate-400">{detail}</div>
+        {action && <div className="mt-3">{action}</div>}
       </div>
       <div className="text-sm font-bold text-cyan-100 sm:text-right">{metric}</div>
     </div>
   );
 }
 
-function TripRow({ trip }: { trip: any }) {
+function TripRow({ trip, companyId }: { trip: any; companyId?: string | null }) {
   const identity = trip.trip_identity || {};
   const movement = trip.movement_evidence || {};
   const readiness = trip.profitability_readiness || {};
@@ -555,16 +614,34 @@ function TripRow({ trip }: { trip: any }) {
     </div>
   );
 
-  const companyId =
+  const currentCompanyId =
     typeof window === "undefined"
       ? null
       : new URLSearchParams(window.location.search).get("companyId");
-  const companyQuery = companyId ? `?companyId=${encodeURIComponent(companyId)}` : "";
+  const companyQuery = currentCompanyId ? `?companyId=${encodeURIComponent(currentCompanyId)}` : "";
 
-  return identity.journey_id ? (
-    <Link href={`/ops/journey/${identity.journey_id}${companyQuery}`}>{content}</Link>
-  ) : (
-    content
+  const prompt = `What is blocking this Trip review for ${
+    identity.reference || identity.truck || "this Trip"
+  }?`;
+
+  return (
+    <div className="grid gap-2">
+      {identity.journey_id ? (
+        <Link href={`/ops/journey/${identity.journey_id}${companyQuery}`}>{content}</Link>
+      ) : (
+        content
+      )}
+      <div>
+        <NavaEyePromptLink
+          label="Ask what is blocking this Trip"
+          prompt={prompt}
+          companyId={companyId}
+          contextType="trip"
+          contextId={identity.journey_id}
+          variant="rowAction"
+        />
+      </div>
+    </div>
   );
 }
 
@@ -1015,4 +1092,9 @@ function initialRangeFromUrl(): RangeValue {
   return value === "today" || value === "7d" || value === "yesterday"
     ? value
     : "today";
+}
+
+function currentCompanyIdFromUrl() {
+  if (typeof window === "undefined") return "";
+  return new URLSearchParams(window.location.search).get("companyId") || "";
 }
