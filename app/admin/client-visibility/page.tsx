@@ -23,7 +23,11 @@ const expiryOptions = [
 ];
 
 export default function ClientVisibilityPage() {
+  const [requestedCompanyId, setRequestedCompanyId] = useState<string | null>(
+    null
+  );
   const [links, setLinks] = useState<any[]>([]);
+  const [company, setCompany] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [actionId, setActionId] = useState("");
@@ -38,8 +42,14 @@ export default function ClientVisibilityPage() {
   });
 
   useEffect(() => {
-    loadLinks();
+    const params = new URLSearchParams(window.location.search);
+    setRequestedCompanyId(params.get("companyId") || "");
   }, []);
+
+  useEffect(() => {
+    if (requestedCompanyId === null) return;
+    loadLinks();
+  }, [requestedCompanyId]);
 
   async function getAccessToken() {
     const {
@@ -62,7 +72,10 @@ export default function ClientVisibilityPage() {
     if (!token) return;
 
     try {
-      const res = await fetch("/api/client-visibility-links", {
+      const query = requestedCompanyId
+        ? `?companyId=${encodeURIComponent(requestedCompanyId)}`
+        : "";
+      const res = await fetch(`/api/client-visibility-links${query}`, {
         cache: "no-store",
         headers: {
           Authorization: `Bearer ${token}`,
@@ -75,6 +88,7 @@ export default function ClientVisibilityPage() {
       }
 
       setLinks(json.links || []);
+      setCompany(json.company || null);
     } catch (err: any) {
       setError(err.message || "Failed to load client visibility links.");
     } finally {
@@ -108,6 +122,7 @@ export default function ClientVisibilityPage() {
             form.expiry_mode === "custom_date"
               ? form.custom_expires_at
               : null,
+          companyId: requestedCompanyId || undefined,
         }),
       });
       const json = await res.json();
@@ -133,6 +148,19 @@ export default function ClientVisibilityPage() {
   }
 
   async function patchLink(id: string, body: Record<string, any>) {
+    if (
+      body.action === "revoke" &&
+      !window.confirm("Revoke this client visibility link? The current public link will stop working.")
+    ) {
+      return;
+    }
+    if (
+      body.action === "regenerate" &&
+      !window.confirm("Regenerate this client visibility link? The current public link will be revoked and a new link will be shown once.")
+    ) {
+      return;
+    }
+
     setActionId(id);
     setError("");
     setMessage("");
@@ -149,7 +177,10 @@ export default function ClientVisibilityPage() {
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(body),
+        body: JSON.stringify({
+          ...body,
+          companyId: requestedCompanyId || undefined,
+        }),
       });
       const json = await res.json();
 
@@ -209,8 +240,17 @@ export default function ClientVisibilityPage() {
           dark
           eyebrow="Client visibility"
           title="Client visibility links"
-          body="Create secure client-facing portal links for selected customers. Clients can view only the deliveries assigned to them."
+          body="Create secure client-facing portal links for selected customers. Raw tokens are shown only once, and clients can view only active deliveries assigned to them."
         />
+
+        {company?.name && (
+          <Panel dark className="mt-6 border-cyan-200/20 bg-cyan-300/10 p-4">
+            <div className="text-sm text-cyan-50">
+              Managing client visibility for{" "}
+              <span className="font-semibold">{company.name}</span>.
+            </div>
+          </Panel>
+        )}
 
         {error && (
           <Panel dark className="mt-6 border-rose-300/30 bg-rose-500/10 p-4">
@@ -228,6 +268,10 @@ export default function ClientVisibilityPage() {
           <Panel dark className="mt-6 p-5">
             <p className="text-xs font-bold uppercase tracking-[0.18em] text-cyan-200">
               One-time link
+            </p>
+            <p className="mt-2 text-sm leading-6 text-slate-300">
+              Copy this secure URL now. Nava stores only the token hash, so the
+              same public URL cannot be shown again.
             </p>
             <div className="mt-3 break-all rounded-md border border-white/10 bg-slate-900 p-3 text-sm text-slate-100">
               {oneTimeUrl}
@@ -320,7 +364,8 @@ export default function ClientVisibilityPage() {
                 <h2 className="text-xl font-semibold">Existing links</h2>
                 <p className="mt-1 text-sm text-slate-400">
                   Metadata only. Raw public URLs are shown only after create or
-                  regenerate.
+                  regenerate. Existing links must be regenerated to copy a new
+                  secure URL.
                 </p>
               </div>
               <SecondaryButton type="button" onClick={loadLinks}>
@@ -354,6 +399,11 @@ export default function ClientVisibilityPage() {
                         <p className="mt-2 text-sm text-slate-400">
                           Created {formatDate(link.created_at)}
                         </p>
+                        {!link.revoked_at && (
+                          <p className="mt-2 text-xs leading-5 text-slate-500">
+                            Public URL hidden. Regenerate to copy a new secure link.
+                          </p>
+                        )}
                       </div>
                       <StatusPill tone={getStatusTone(link)}>
                         {getStatusLabel(link)}
@@ -375,7 +425,7 @@ export default function ClientVisibilityPage() {
                             onClick={() => patchLink(link.id, { action: "revoke" })}
                             disabled={actionId === link.id}
                           >
-                            Revoke
+                            Revoke link
                           </SecondaryButton>
                           <PrimaryButton
                             type="button"
@@ -384,7 +434,7 @@ export default function ClientVisibilityPage() {
                             }
                             disabled={actionId === link.id}
                           >
-                            Regenerate
+                            Regenerate link
                           </PrimaryButton>
                         </>
                       )}

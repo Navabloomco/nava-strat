@@ -6,7 +6,18 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 const UNAVAILABLE_MESSAGE = "This tracking link is unavailable or has expired.";
-const HIDDEN_STATUSES = new Set(["cancelled", "archived", "draft"]);
+const HIDDEN_STATUSES = new Set([
+  "archived",
+  "cancelled",
+  "closed",
+  "complete",
+  "completed",
+  "delivered",
+  "draft",
+  "ended",
+  "offloaded",
+  "void",
+]);
 
 function noStoreJson(body: any, init?: ResponseInit) {
   return NextResponse.json(body, {
@@ -250,6 +261,11 @@ export async function GET(
       const offloaded = toNumberOrNull(journey.offloaded_quantity);
       const latitude = toNumberOrNull(asset?.latitude);
       const longitude = toNumberOrNull(asset?.longitude);
+      const hasLocationUpdate = Boolean(
+        locationLabel ||
+          asset?.last_seen_at ||
+          (latitude !== null && longitude !== null)
+      );
       const remaining =
         loaded === null || offloaded === null ? null : Math.max(loaded - offloaded, 0);
 
@@ -273,13 +289,7 @@ export async function GET(
         },
         location: {
           label: locationLabel,
-          coordinates:
-            !locationLabel && latitude !== null && longitude !== null
-              ? {
-                  latitude,
-                  longitude,
-                }
-              : null,
+          has_location_update: hasLocationUpdate,
           last_seen_at: asset?.last_seen_at || null,
         },
         updated_at: journey.created_at || null,

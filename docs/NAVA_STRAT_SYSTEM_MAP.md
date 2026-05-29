@@ -59,6 +59,7 @@ Nava Strat should sound like a mature enterprise SaaS: operational, concise, sou
 | `/privacy` | Privacy policy. |
 | `/terms` | Terms page. |
 | `/onboarding` | Company creation, operating context capture, and initial provider setup request flow. |
+| `/client` | Public-safe Client Visibility landing page. It does not list tenants, trips, trucks, or tracking data; customers need a valid tokenized link from their transport partner. |
 | `/client/track/[token]` | Public client tracking portal for tokenized client visibility links. |
 
 ### Core App Routes
@@ -123,7 +124,7 @@ Nava Strat should sound like a mature enterprise SaaS: operational, concise, sou
 | `/admin/tenants` | Platform-owner tenant billing/readiness preview across companies. |
 | `/admin/tenants/[companyId]` | Platform-owner tenant detail view with provider, member, telemetry, and strict billable asset summaries. |
 | `/admin/tenants/[companyId]/invoice-preview` | Platform-owner manual invoice preview for one tenant and billing period. Preview only; no invoice is created. |
-| `/admin/client-visibility` | Client visibility link management. |
+| `/admin/client-visibility` | Client visibility link management for owner/admin/platform-owner roles. Admins can list same-company links, generate a new link, regenerate/revoke existing links, and copy the raw public URL only immediately after generation/regeneration. Existing links show metadata only; `token_hash` is never displayed. |
 | `/admin/company` | Company operating context settings. Supports platform-owner `?companyId=` tenant context. |
 | `/admin/health` | Platform-owner readiness health check. |
 
@@ -251,9 +252,9 @@ Nava Strat should sound like a mature enterprise SaaS: operational, concise, sou
 
 | API Route | Purpose |
 | --- | --- |
-| `GET/POST /api/client-visibility-links` | Admin-managed tokenized customer tracking links. |
-| `PATCH /api/client-visibility-links/[id]` | Update/archive client visibility link. |
-| `GET /api/client/track/[token]` | Public token-scoped client tracking response. Must remain privacy-limited. |
+| `GET/POST /api/client-visibility-links` | Admin-managed tokenized customer tracking links. Owner/admin/platform-owner roles can list and create same-company links. Responses return sanitized metadata and a raw public URL only on creation; `token_hash` is never returned. |
+| `PATCH /api/client-visibility-links/[id]` | Company-scoped client visibility link update/revoke/regenerate. Regeneration revokes the old link, creates a new hashed token row, and returns the raw public URL once. |
+| `GET /api/client/track/[token]` | Public token-scoped client tracking response. Validates SHA-256 token hash, expiry, and revocation before returning privacy-limited active delivery data for the link's company/client. It updates access count/last accessed where the RPC is available and must not return token hashes, raw coordinates, unreviewed assets, internal dashboards, provider diagnostics, or private driver data. |
 
 ## 4. Database Tables and Usage
 
@@ -321,7 +322,7 @@ Nava Strat should sound like a mature enterprise SaaS: operational, concise, sou
 
 | Table | Used For |
 | --- | --- |
-| `client_visibility_links` | Tokenized public portal links for selected journeys/customers. |
+| `client_visibility_links` | Tokenized public portal links for selected Trips/customers. The table stores `token_hash`, expiry/revocation fields, creator/regenerator metadata, access count, and last accessed timestamp; raw tokens are not recoverable after creation/regeneration. |
 
 ### Legacy or Caution Tables Still Referenced
 

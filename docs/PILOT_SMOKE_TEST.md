@@ -520,11 +520,20 @@ Expected result:
 
 Open `/admin/client-visibility`.
 
-- [ ] Generate or inspect a client visibility token link if the workflow already exists for the tenant.
+- [ ] Confirm only owner/admin/platform-owner style roles can open the Client Visibility management page and APIs.
+- [ ] Confirm the page lists same-company links with client name, display name, active/expired/revoked status, expiry mode/date, access count, last accessed, and created/updated timestamps.
+- [ ] Generate a new client visibility token link.
+- [ ] Confirm the public URL appears only immediately after generation and can be copied from the one-time panel.
+- [ ] Confirm existing links do not show the public URL or `token_hash`; they say to regenerate for a new secure link.
+- [ ] Regenerate an existing link and confirm the previous link is revoked while the new public URL is shown once.
+- [ ] Revoke a link and confirm the public URL stops working.
 - [ ] Confirm links generated from `https://navastrat.co` use the product domain.
+- [ ] Open `/client` and confirm it is a safe landing page with no tenant list, trip data, truck data, login requirement, or tracking data.
 - [ ] Open the public client portal link.
 - [ ] Confirm the portal is token-scoped.
-- [ ] Confirm it does not expose internal dashboards, provider diagnostics, provider raw payloads, auth config, private driver data, or unreviewed assets.
+- [ ] Confirm valid links show only privacy-limited active delivery visibility for the configured client relationship.
+- [ ] Confirm expired, revoked, invalid, and malformed links fail with the safe unavailable message.
+- [ ] Confirm the portal does not expose internal dashboards, provider diagnostics, provider raw payloads, auth config, private driver data, unreviewed assets, raw coordinates, or token hashes.
 - [ ] Confirm `record_client_visibility_link_access` behavior is either working or documented by Platform Health/manual verification.
 
 ## 11. Failure-State Checks

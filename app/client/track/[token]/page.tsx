@@ -26,7 +26,7 @@ type ClientJourney = {
   };
   location: {
     label: string | null;
-    coordinates: { latitude: number | null; longitude: number | null } | null;
+    has_location_update: boolean;
     last_seen_at: string | null;
   };
   updated_at: string | null;
@@ -128,7 +128,7 @@ export default function ClientTrackingPortalPage() {
                 value={
                   data?.journeys.filter(
                     (journey) =>
-                      journey.location.label || journey.location.coordinates
+                      journey.location.label || journey.location.has_location_update
                   ).length || 0
                 }
               />
@@ -170,7 +170,7 @@ function Metric({ label, value }: { label: string; value: number }) {
 function JourneyCard({ journey }: { journey: ClientJourney }) {
   const locationText =
     journey.location.label ||
-    (journey.location.coordinates
+    (journey.location.has_location_update
       ? "Location update available; readable place pending."
       : "Location not currently available.");
 
