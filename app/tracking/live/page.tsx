@@ -396,125 +396,64 @@ export default function LiveTrackingPage() {
               </section>
             )}
 
-            <section className="mt-8 grid gap-6 xl:grid-cols-[1fr_360px]">
-              <div className="rounded-lg border border-white/10 bg-white/[0.06]">
-                <div className="flex flex-col gap-3 border-b border-white/10 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <h2 className="text-lg font-semibold">Live trucks</h2>
-                    <p className="mt-1 text-xs text-slate-400">
-                      Fresh locations within {data.freshness_minutes} minutes.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={loadData}
-                    disabled={refreshing}
-                    className="self-start rounded-md border border-cyan-200/30 px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-cyan-100 hover:bg-cyan-300/10 disabled:cursor-not-allowed disabled:opacity-60 sm:self-auto"
-                  >
-                    Refresh
-                  </button>
-                </div>
-
-                {filteredRows.live.length === 0 ? (
-                  <div className="p-6 text-sm text-slate-300">
-                    {hasActiveFilters
-                      ? "No matching live trucks."
-                      : `No fresh live locations in the last ${data.freshness_minutes} minutes.`}
-                  </div>
-                ) : (
-                  <div className="divide-y divide-white/10">
-                    {filteredRows.live.map((truck) => (
-                      <TruckRow
-                        key={truck.truck_id}
-                        truck={truck}
-                        canEditAvailability={canEditAvailability}
-                        onSaveAvailability={saveAvailability}
-                      />
-                    ))}
+            {hasActiveFilters ? (
+              <>
+                {filteredRows.live.length > 0 && (
+                  <div className="mt-8">
+                    <LiveTrucksSection
+                      rows={filteredRows.live}
+                      freshnessMinutes={data.freshness_minutes}
+                      refreshing={refreshing}
+                      hasActiveFilters={hasActiveFilters}
+                      showEmptyState={false}
+                      canEditAvailability={canEditAvailability}
+                      onRefresh={loadData}
+                      onSaveAvailability={saveAvailability}
+                    />
                   </div>
                 )}
-              </div>
 
-              <aside className="space-y-6">
-                <section className="rounded-lg border border-white/10 bg-white/[0.06]">
-                  <div className="border-b border-white/10 px-5 py-4">
-                    <h2 className="text-lg font-semibold">Provider status</h2>
+                {filteredRows.stale.length > 0 && (
+                  <div className="mt-6">
+                    <StaleAssetsSection
+                      rows={filteredRows.stale}
+                      hasActiveFilters={hasActiveFilters}
+                      showEmptyState={false}
+                      canEditAvailability={canEditAvailability}
+                      onSaveAvailability={saveAvailability}
+                    />
                   </div>
-                  {data.providers.length === 0 ? (
-                    <div className="p-5 text-sm text-slate-300">
-                      No tracking provider connected yet.
-                    </div>
-                  ) : (
-                    <div className="divide-y divide-white/10">
-                      {data.providers.map((provider) => (
-                        <div key={provider.id} className="px-5 py-4">
-                          <div className="flex flex-wrap items-center justify-between gap-3">
-                            <div className="min-w-0 break-words font-semibold text-slate-100">
-                              {provider.provider_name || "Provider"}
-                            </div>
-                            <StatusPill value={provider.status} />
-                          </div>
-                          <div className="mt-2 text-xs text-slate-400">
-                            Last sync: {formatDateTime(provider.last_sync_at)}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </section>
+                )}
 
-                <section className="rounded-lg border border-white/10 bg-white/[0.06]">
-                  <div className="border-b border-white/10 px-5 py-4">
-                    <h2 className="text-lg font-semibold">Stale assets</h2>
-                    <p className="mt-1 text-xs text-slate-400">
-                      Active assets without fresh location updates.
-                    </p>
-                  </div>
-                  {filteredRows.stale.length === 0 ? (
-                    <div className="p-5 text-sm text-slate-300">
-                      {hasActiveFilters
-                        ? "No matching stale assets."
-                        : "No stale active assets right now."}
-                    </div>
-                  ) : (
-                    <div className="divide-y divide-white/10">
-                      {filteredRows.stale.map((asset) => (
-                        <div key={asset.truck_id} className="px-5 py-4">
-                          <div className="font-semibold text-slate-100">
-                            {asset.registration || asset.truck_id}
-                          </div>
-                          <div className="mt-1 text-xs text-slate-400">
-                            {asset.provider_name || "Provider not specified"}
-                          </div>
-                          <IdentityHints item={asset} />
-                          <AvailabilityChip availability={asset.availability} />
-                          <TripContext item={asset} compact />
-                          <GeofenceBadge match={asset.geofence_match} />
-                          <div className="mt-1 text-sm text-slate-300">
-                            {asset.location_label || "Location not labeled yet"}
-                          </div>
-                          {asset.location_note && (
-                            <div className="mt-1 text-xs leading-5 text-amber-100">
-                              {asset.location_note}
-                            </div>
-                          )}
-                          <div className="mt-1 text-xs text-slate-400">
-                            Last seen: {formatDateTime(asset.last_seen_at)}
-                          </div>
-                          {canEditAvailability && (
-                            <AvailabilityEditor
-                              item={asset}
-                              compact
-                              onSave={saveAvailability}
-                            />
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                <section className="mt-8 grid gap-6 xl:grid-cols-[360px]">
+                  <ProviderStatusSection providers={data.providers} />
                 </section>
-              </aside>
-            </section>
+              </>
+            ) : (
+              <section className="mt-8 grid gap-6 xl:grid-cols-[1fr_360px]">
+                <LiveTrucksSection
+                  rows={filteredRows.live}
+                  freshnessMinutes={data.freshness_minutes}
+                  refreshing={refreshing}
+                  hasActiveFilters={hasActiveFilters}
+                  showEmptyState
+                  canEditAvailability={canEditAvailability}
+                  onRefresh={loadData}
+                  onSaveAvailability={saveAvailability}
+                />
+
+                <aside className="space-y-6">
+                  <ProviderStatusSection providers={data.providers} />
+                  <StaleAssetsSection
+                    rows={filteredRows.stale}
+                    hasActiveFilters={hasActiveFilters}
+                    showEmptyState
+                    canEditAvailability={canEditAvailability}
+                    onSaveAvailability={saveAvailability}
+                  />
+                </aside>
+              </section>
+            )}
           </>
         )}
       </div>
@@ -540,6 +479,166 @@ function Metric({
         {value}
       </div>
     </div>
+  );
+}
+
+function LiveTrucksSection({
+  rows,
+  freshnessMinutes,
+  refreshing,
+  hasActiveFilters,
+  showEmptyState,
+  canEditAvailability,
+  onRefresh,
+  onSaveAvailability,
+}: {
+  rows: any[];
+  freshnessMinutes: number;
+  refreshing: boolean;
+  hasActiveFilters: boolean;
+  showEmptyState: boolean;
+  canEditAvailability: boolean;
+  onRefresh: () => void;
+  onSaveAvailability: (row: any, status: string, note: string) => Promise<void>;
+}) {
+  return (
+    <section className="rounded-lg border border-white/10 bg-white/[0.06]">
+      <div className="flex flex-col gap-3 border-b border-white/10 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="text-lg font-semibold">Live trucks</h2>
+          <p className="mt-1 text-xs text-slate-400">
+            Fresh locations within {freshnessMinutes} minutes.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={refreshing}
+          className="self-start rounded-md border border-cyan-200/30 px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-cyan-100 hover:bg-cyan-300/10 disabled:cursor-not-allowed disabled:opacity-60 sm:self-auto"
+        >
+          Refresh
+        </button>
+      </div>
+
+      {rows.length === 0 ? (
+        showEmptyState ? (
+          <div className="p-6 text-sm text-slate-300">
+            {hasActiveFilters
+              ? "No matching live trucks."
+              : `No fresh live locations in the last ${freshnessMinutes} minutes.`}
+          </div>
+        ) : null
+      ) : (
+        <div className="divide-y divide-white/10">
+          {rows.map((truck) => (
+            <TruckRow
+              key={truck.truck_id}
+              truck={truck}
+              canEditAvailability={canEditAvailability}
+              onSaveAvailability={onSaveAvailability}
+            />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ProviderStatusSection({ providers }: { providers: any[] }) {
+  return (
+    <section className="rounded-lg border border-white/10 bg-white/[0.06]">
+      <div className="border-b border-white/10 px-5 py-4">
+        <h2 className="text-lg font-semibold">Provider status</h2>
+      </div>
+      {providers.length === 0 ? (
+        <div className="p-5 text-sm text-slate-300">
+          No tracking provider connected yet.
+        </div>
+      ) : (
+        <div className="divide-y divide-white/10">
+          {providers.map((provider) => (
+            <div key={provider.id} className="px-5 py-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="min-w-0 break-words font-semibold text-slate-100">
+                  {provider.provider_name || "Provider"}
+                </div>
+                <StatusPill value={provider.status} />
+              </div>
+              <div className="mt-2 text-xs text-slate-400">
+                Last sync: {formatDateTime(provider.last_sync_at)}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function StaleAssetsSection({
+  rows,
+  hasActiveFilters,
+  showEmptyState,
+  canEditAvailability,
+  onSaveAvailability,
+}: {
+  rows: any[];
+  hasActiveFilters: boolean;
+  showEmptyState: boolean;
+  canEditAvailability: boolean;
+  onSaveAvailability: (row: any, status: string, note: string) => Promise<void>;
+}) {
+  return (
+    <section className="rounded-lg border border-white/10 bg-white/[0.06]">
+      <div className="border-b border-white/10 px-5 py-4">
+        <h2 className="text-lg font-semibold">Stale assets</h2>
+        <p className="mt-1 text-xs text-slate-400">
+          Active assets without fresh location updates.
+        </p>
+      </div>
+      {rows.length === 0 ? (
+        showEmptyState ? (
+          <div className="p-5 text-sm text-slate-300">
+            {hasActiveFilters ? "No matching stale assets." : "No stale active assets right now."}
+          </div>
+        ) : null
+      ) : (
+        <div className="divide-y divide-white/10">
+          {rows.map((asset) => (
+            <div key={asset.truck_id} className="px-5 py-4">
+              <div className="font-semibold text-slate-100">
+                {asset.registration || asset.truck_id}
+              </div>
+              <div className="mt-1 text-xs text-slate-400">
+                {asset.provider_name || "Provider not specified"}
+              </div>
+              <IdentityHints item={asset} />
+              <AvailabilityChip availability={asset.availability} />
+              <TripContext item={asset} compact />
+              <GeofenceBadge match={asset.geofence_match} />
+              <div className="mt-1 text-sm text-slate-300">
+                {asset.location_label || "Location not labeled yet"}
+              </div>
+              {asset.location_note && (
+                <div className="mt-1 text-xs leading-5 text-amber-100">
+                  {asset.location_note}
+                </div>
+              )}
+              <div className="mt-1 text-xs text-slate-400">
+                Last seen: {formatDateTime(asset.last_seen_at)}
+              </div>
+              {canEditAvailability && (
+                <AvailabilityEditor
+                  item={asset}
+                  compact
+                  onSave={onSaveAvailability}
+                />
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 

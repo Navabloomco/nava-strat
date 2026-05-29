@@ -341,6 +341,7 @@ Confirm workflow behavior:
 - [ ] Confirm the Live Tracking command bar appears below setup/review notices and above the Live trucks / Provider status / Stale assets grid.
 - [ ] Search a truck with and without spaces or hyphens and confirm the same row appears without clearing on auto-refresh.
 - [ ] Search by provider name, safe provider asset label, attached trailer label when present, active Trip client/route, geofence, and readable location; confirm raw coordinates are not exposed.
+- [ ] Search an exact stale truck and confirm the matching stale asset appears before Provider status; clear search and confirm the normal Live trucks / Provider status / Stale assets layout returns.
 - [ ] Confirm quick filters preserve grouping: Live, Stale, Moving, Stopped, Has active trip, and Needs readable location. If no rows match, the page shows `No matching assets found.`
 - [ ] With only search text active, confirm the reset button says `Clear search` and clears search without changing the selected filter.
 - [ ] With only a quick filter active, confirm the reset button says `Reset filter` and returns to `All`.
