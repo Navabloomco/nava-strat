@@ -320,7 +320,9 @@ export default function LiveTrackingPage() {
               resultText={resultCountText}
               onSearchChange={setSearchQuery}
               onFilterChange={setActiveFilter}
-              onClear={() => {
+              onClearSearch={() => setSearchQuery("")}
+              onResetFilter={() => setActiveFilter("all")}
+              onResetAll={() => {
                 setSearchQuery("");
                 setActiveFilter("all");
               }}
@@ -328,7 +330,12 @@ export default function LiveTrackingPage() {
 
             {hasActiveFilters && visibleAssetCount === 0 && (
               <section className="mt-4 rounded-lg border border-white/10 bg-white/[0.04] p-4 text-sm text-slate-300">
-                No matching assets found.
+                <div className="font-medium text-slate-100">
+                  No matching assets found.
+                </div>
+                <div className="mt-1 text-xs text-slate-400">
+                  Clear search or reset filters to view all assets.
+                </div>
               </section>
             )}
 
@@ -472,16 +479,44 @@ function LiveTrackingCommandBar({
   resultText,
   onSearchChange,
   onFilterChange,
-  onClear,
+  onClearSearch,
+  onResetFilter,
+  onResetAll,
 }: {
   searchQuery: string;
   activeFilter: LiveTrackingFilter;
   resultText: string;
   onSearchChange: (value: string) => void;
   onFilterChange: (value: LiveTrackingFilter) => void;
-  onClear: () => void;
+  onClearSearch: () => void;
+  onResetFilter: () => void;
+  onResetAll: () => void;
 }) {
-  const hasActiveInput = searchQuery.trim().length > 0 || activeFilter !== "all";
+  const trimmedSearch = searchQuery.trim();
+  const hasActiveSearch = trimmedSearch.length > 0;
+  const hasActiveFilter = activeFilter !== "all";
+  const hasActiveInput = hasActiveSearch || hasActiveFilter;
+  const activeFilterLabel =
+    LIVE_TRACKING_FILTERS.find((filter) => filter.key === activeFilter)?.label || "";
+  const resetLabel =
+    hasActiveSearch && hasActiveFilter
+      ? "Reset search & filter"
+      : hasActiveSearch
+        ? "Clear search"
+        : "Reset filter";
+  const handleReset = () => {
+    if (hasActiveSearch && hasActiveFilter) {
+      onResetAll();
+      return;
+    }
+
+    if (hasActiveSearch) {
+      onClearSearch();
+      return;
+    }
+
+    onResetFilter();
+  };
 
   return (
     <section className="mt-6 rounded-lg border border-white/10 bg-slate-900/60 p-3">
@@ -501,16 +536,33 @@ function LiveTrackingCommandBar({
           {hasActiveInput && (
             <button
               type="button"
-              onClick={onClear}
+              onClick={handleReset}
               className="rounded-md border border-white/10 px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-slate-200 hover:border-cyan-200/40 hover:bg-cyan-300/10"
             >
-              Clear
+              {resetLabel}
             </button>
           )}
           <div className="text-xs leading-5 text-slate-400 lg:min-w-[240px] lg:text-right">
             {resultText}
           </div>
         </div>
+        {hasActiveInput && (
+          <div className="text-xs leading-5 text-slate-400">
+            {hasActiveSearch && (
+              <span>
+                Search: <span className="text-slate-200">"{trimmedSearch}"</span>
+              </span>
+            )}
+            {hasActiveSearch && hasActiveFilter && (
+              <span className="px-2 text-slate-600">·</span>
+            )}
+            {hasActiveFilter && activeFilterLabel && (
+              <span>
+                Filter: <span className="text-cyan-100">{activeFilterLabel}</span>
+              </span>
+            )}
+          </div>
+        )}
         <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1 sm:flex-wrap sm:overflow-visible sm:pb-0">
           {LIVE_TRACKING_FILTERS.map((filter) => {
             const active = activeFilter === filter.key;

@@ -315,6 +315,10 @@ Confirm workflow behavior:
 - [ ] Search a truck with and without spaces or hyphens and confirm the same row appears without clearing on auto-refresh.
 - [ ] Search by provider name, safe provider asset label, attached trailer label when present, active Trip client/route, geofence, and readable location; confirm raw coordinates are not exposed.
 - [ ] Confirm quick filters preserve grouping: Live, Stale, Moving, Stopped, Has active trip, and Needs readable location. If no rows match, the page shows `No matching assets found.`
+- [ ] With only search text active, confirm the reset button says `Clear search` and clears search without changing the selected filter.
+- [ ] With only a quick filter active, confirm the reset button says `Reset filter` and returns to `All`.
+- [ ] With search text and a quick filter active, confirm the reset button says `Reset search & filter` and clears both.
+- [ ] With search text active, click the `All` chip and confirm the search text remains.
 - [ ] Call `GET /api/ops/efficiency?range=yesterday` with an ops-visible role and confirm the JSON returns movement, idle/stopped, stale-location, productivity, driver-readiness, and client-waiting readiness sections.
 - [ ] Confirm `/api/ops/efficiency` labels metric evidence as provider-reported, GPS-estimated, provider-derived, unavailable, or not enough linked data instead of inventing fuel/profit/driver/client conclusions.
 - [ ] Confirm Trucks Moved Most separates provider trip/report distance, provider current-feed odometer/mileage delta, and GPS-estimated fallback. If provider mileage is detected but cannot form a safe period delta, the row should say that instead of presenting GPS fallback as final provider distance.
