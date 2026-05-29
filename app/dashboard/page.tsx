@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { supabase } from "../../lib/supabase";
 import { useRouter } from "next/navigation";
@@ -828,6 +828,7 @@ export default function DashboardPage() {
   const [copilotAnswer, setCopilotAnswer] = useState("");
   const [copilotLoading, setCopilotLoading] = useState(false);
   const [sensitiveMetricsHidden, setSensitiveMetricsHidden] = useState(false);
+  const copilotResponseRef = useRef<HTMLDivElement | null>(null);
   const router = useRouter();
 
   function buildDashboardCopilotContext() {
@@ -973,6 +974,7 @@ export default function DashboardPage() {
     setCopilotQuery(question);
     setCopilotLoading(true);
     setCopilotAnswer("");
+    focusCopilotResponsePanel();
     try {
       const { data: sessionData } = await supabase.auth.getSession();
       const token = sessionData.session?.access_token;
@@ -997,12 +999,24 @@ export default function DashboardPage() {
       });
       const json = await res.json();
       setCopilotAnswer(json.answer || "No answer");
+      focusCopilotResponsePanel();
     } catch {
       setCopilotAnswer("Nava Eye could not answer right now.");
+      focusCopilotResponsePanel();
     } finally {
       setCopilotLoading(false);
     }
   };
+
+  function focusCopilotResponsePanel() {
+    window.setTimeout(() => {
+      copilotResponseRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "nearest",
+      });
+      copilotResponseRef.current?.focus({ preventScroll: true });
+    }, 60);
+  }
 
   if (loading) return <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center">Loading dashboard...</div>;
   if (errorDetail) {
@@ -1482,6 +1496,26 @@ export default function DashboardPage() {
                         ))}
                       </div>
                     )}
+                    {(copilotLoading || copilotAnswer) && (
+                      <div
+                        ref={copilotResponseRef}
+                        tabIndex={-1}
+                        className="mt-4 rounded-lg border border-cyan-200/20 bg-slate-950/70 p-4 outline-none focus:ring-2 focus:ring-cyan-300/40"
+                      >
+                        <div className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-200">
+                          Nava Eye answer
+                        </div>
+                        {copilotLoading ? (
+                          <div className="mt-2 text-sm leading-6 text-cyan-100">
+                            Nava Eye is checking this brief...
+                          </div>
+                        ) : (
+                          <div className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-300">
+                            {copilotAnswer}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
               </section>
@@ -1731,17 +1765,6 @@ export default function DashboardPage() {
                     ) : (
                       <div className="mt-4 rounded-lg border border-slate-800 bg-slate-950/40 p-4 text-sm text-slate-400">
                         No urgent watch items from the current role-safe summary.
-                      </div>
-                    )}
-
-                    {copilotAnswer && (
-                      <div className="mt-4 rounded-lg border border-slate-700 bg-slate-950/60 p-4">
-                        <div className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-200">
-                          Nava Eye answer
-                        </div>
-                        <div className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-300">
-                          {copilotAnswer}
-                        </div>
                       </div>
                     )}
                   </div>

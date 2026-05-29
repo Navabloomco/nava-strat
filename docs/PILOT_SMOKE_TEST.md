@@ -74,7 +74,9 @@ Open `/dashboard` as an admin/finance user for a customer tenant.
 - [ ] Confirm `Needs attention today` appears above the compact fleet-state tiles.
 - [ ] Confirm action cards route to the right specialist page and include safe `Ask Nava Eye` shortcuts where available.
 - [ ] Confirm the top Nava Eye block says `Ask Nava Eye about this brief` and shows two or three tenant-safe prompt chips.
-- [ ] Click a dashboard Nava Eye prompt and confirm it asks about the current brief without hardcoded tenant examples or restricted finance leakage.
+- [ ] Click a dashboard Nava Eye prompt and confirm the answer appears directly under the top prompt area, not far down in Nava Eye Watch.
+- [ ] Click `Ask Nava Eye` from a lower dashboard action/watch item and confirm the page scrolls/focuses the top answer panel.
+- [ ] Confirm dashboard Nava Eye answers ask about the current brief without hardcoded tenant examples or restricted finance leakage.
 - [ ] Confirm the compact fleet-state strip appears below the action cards.
 - [ ] Confirm review queues are role-aware and do not expose restricted finance amounts to roles without finance/management access.
 - [ ] Confirm quick links are secondary under `Command routes`, visible before grouped event review but not dominant at the top.
@@ -424,6 +426,7 @@ Open `/nava-eye` and ask:
 
 - [ ] Create a new Nava Eye conversation.
 - [ ] Open Nava Eye from a contextual page prompt and confirm it creates a fresh investigation thread, sends the scoped prompt, and clears the prompt from the URL.
+- [ ] Confirm contextual links from Live Tracking, Ops Intelligence, Trip Detail, Finance Revenue Review, Client Rates, and Provider Vault open `/nava-eye` with the scoped prompt visible in the active conversation instead of rendering an answer on the source page.
 - [ ] After opening from a truck, Trip, provider, or revenue-review prompt, ask `what should I do about it?` and confirm Nava Eye keeps the scoped subject without exposing internal context wording.
 - [ ] "Which trucks are live?"
 - [ ] "Which assets have stale location?"
