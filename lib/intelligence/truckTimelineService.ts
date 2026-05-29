@@ -19,6 +19,10 @@ import {
   IDLE_COMPATIBILITY_EVENT_TYPES,
   isProviderIdleMarkerEvent,
 } from "../providers/providerIdleMarkers";
+import {
+  extractProviderReportedEvidence,
+  providerCurrentStopEvidenceFromSignalFlags,
+} from "../providers/providerReportedFields";
 
 type TimelineInput = {
   companyId: string;
@@ -82,7 +86,7 @@ export async function buildTruckTimelineIntelligence(input: TimelineInput) {
   const targetKey = normalizeVehicleKey(input.truckId);
 
   const assetCapabilitySelect =
-    "id, truck_id, registration, latitude, longitude, last_seen_at, provider_location_label, status, asset_category, telemetry_capability, telemetry_capabilities, telemetry_capability_source, canbus_enabled, fuel_rod_installed, fuel_rod_calibration_status";
+    "id, truck_id, registration, latitude, longitude, last_seen_at, provider_location_label, status, asset_category, raw_payload, provider_name, telemetry_capability, telemetry_capabilities, telemetry_capability_source, canbus_enabled, fuel_rod_installed, fuel_rod_calibration_status";
   const assetBaseSelect =
     "id, truck_id, registration, latitude, longitude, last_seen_at, provider_location_label, status, asset_category";
   let { data: assetRows, error: assetError } = await supabaseAdmin
@@ -346,6 +350,10 @@ export async function buildTruckTimelineIntelligence(input: TimelineInput) {
   const hasBrokenIdleMarkers = idleEventComparisons.some(
     (comparison) => comparison.classification === "historical_broken_by_movement"
   );
+  const latestProviderSignalFlags = mergeProviderCurrentStopEvidence(
+    latestTelemetry?.provider_signal_flags,
+    extractProviderReportedEvidence(asset.raw_payload, asset.provider_name)
+  );
 
   return {
     type: "truck_stop_motion_timeline",
@@ -377,7 +385,7 @@ export async function buildTruckTimelineIntelligence(input: TimelineInput) {
           telemetry_capability:
             latestTelemetry?.telemetry_capability || asset.telemetry_capability || null,
           signal_quality: latestTelemetry?.signal_quality || null,
-          provider_signal_flags: latestTelemetry?.provider_signal_flags || null,
+          provider_signal_flags: latestProviderSignalFlags,
           engine_rpm: latestTelemetry?.engine_rpm ?? null,
           engine_on: latestTelemetry?.engine_on ?? null,
           ignition_on: latestTelemetry?.ignition_on ?? null,
@@ -996,6 +1004,29 @@ function eventIsInTimelineWindow(event: any, startMs: number, endMs: number) {
   const eventMs = eventTimestampMillis(event);
   if (!Number.isFinite(eventMs)) return false;
   return eventMs >= startMs && eventMs < endMs;
+}
+
+function mergeProviderCurrentStopEvidence(
+  telemetrySignalFlags: any,
+  assetProviderEvidence: any
+) {
+  const telemetryCurrentStop =
+    providerCurrentStopEvidenceFromSignalFlags(telemetrySignalFlags);
+  const assetCurrentStop =
+    providerCurrentStopEvidenceFromSignalFlags({
+      provider_reported_evidence: assetProviderEvidence,
+    });
+  if (!assetCurrentStop || telemetryCurrentStop) {
+    return telemetrySignalFlags || null;
+  }
+
+  return {
+    ...(telemetrySignalFlags || {}),
+    provider_reported_evidence: {
+      ...(telemetrySignalFlags?.provider_reported_evidence || {}),
+      current_stop: assetCurrentStop,
+    },
+  };
 }
 
 function shiftIsoTime(value: string, minutes: number) {

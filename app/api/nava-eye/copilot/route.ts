@@ -38,6 +38,7 @@ import {
   isProviderIdleMarkerEvent,
   providerIdleMarkerLabel,
 } from "../../../../lib/providers/providerIdleMarkers";
+import { providerCurrentStopEvidenceFromSignalFlags } from "../../../../lib/providers/providerReportedFields";
 import { parseNavaEyeQuery } from "../../../../lib/intelligence/queryUnderstanding";
 import {
   buildNavaEyeActionPlan,
@@ -3342,6 +3343,17 @@ function buildTruckTimelineComparisonAnswer(context: any) {
   parts.push("The corridor route");
   parts.push(buildCorridorRouteNarrative(label, dayStory, summary, timeZone, timeframe));
 
+  const providerStopReconciliation = formatProviderCurrentStopReconciliation(
+    latest,
+    dayStory.stop_summary || {},
+    timeframe
+  );
+  if (providerStopReconciliation) {
+    parts.push("");
+    parts.push("Stopped context");
+    parts.push(providerStopReconciliation);
+  }
+
   parts.push("");
   parts.push("Idle alerts");
   parts.push(buildNarrativeIdleAlerts(idleEvents, continuity, summary));
@@ -3686,6 +3698,53 @@ function buildHumanTimelineMetrics(stopSummary: any) {
   if (stopPhrase) sentences.push(stopPhrase);
 
   return sentences.join(" ");
+}
+
+function formatProviderCurrentStopReconciliation(
+  latest: any,
+  stopSummary: any,
+  timeframe: any
+) {
+  const evidence = providerCurrentStopEvidenceFromSignalFlags(
+    latest?.provider_signal_flags
+  );
+  if (!evidence) return "";
+
+  const providerMinutes = finiteNumberOrNull(
+    evidence.provider_current_stop_duration_minutes
+  );
+  const providerLabel = cleanProviderStopLabel(evidence.provider_current_stop_label);
+  const gpsStopped = finiteNumberOrNull(stopSummary.total_stopped_minutes);
+  const periodLabel =
+    timeframe?.requested === "yesterday"
+      ? "yesterday"
+      : timeframe?.requested === "custom"
+        ? "the selected window"
+        : "today";
+  const providerPart = providerMinutes !== null
+    ? `Provider current stop is about ${formatDurationWords(providerMinutes)}.`
+    : providerLabel
+      ? `Provider current stop: ${providerLabel}.`
+      : "";
+  const navaPart = gpsStopped !== null
+    ? `GPS-stopped total for ${periodLabel} is about ${formatDurationWords(gpsStopped)}.`
+    : "";
+
+  return [
+    providerPart,
+    navaPart,
+    "Those are different metrics: provider current stop is the current continuous stop episode; GPS-stopped total is the selected-period stationary total.",
+    "This does not prove engine-on idling, fuel burn, or client/driver blame without stronger evidence.",
+  ].filter(Boolean).join(" ");
+}
+
+function cleanProviderStopLabel(value: any) {
+  const text = String(value || "")
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!text || text === "-" || text.toLowerCase() === "null") return "";
+  return text.slice(0, 120);
 }
 
 function buildHumanStopMix(stopSummary: any) {

@@ -13,7 +13,11 @@ import {
   isProviderIdleMarkerEvent,
   providerIdleMarkerEvidenceLabel,
 } from "../providers/providerIdleMarkers";
-import { providerReportedDistanceValueFromSignalFlags } from "../providers/providerReportedFields";
+import {
+  extractProviderReportedEvidence,
+  providerCurrentStopEvidenceFromSignalFlags,
+  providerReportedDistanceValueFromSignalFlags,
+} from "../providers/providerReportedFields";
 
 export type OperationalEfficiencyRange = "today" | "yesterday" | "7d";
 
@@ -59,8 +63,10 @@ type EnabledAsset = {
   truck_id: string | null;
   registration: string | null;
   provider_name: string | null;
+  provider_location_label?: string | null;
   last_seen_at: string | null;
   asset_category: string | null;
+  raw_payload?: any;
 };
 
 type TruckTelemetryStats = {
@@ -91,7 +97,23 @@ type TruckTelemetryStats = {
   telemetry_coverage_reason: string;
   telemetry_start_gap_minutes: number;
   telemetry_end_gap_minutes: number;
+  latest_provider_location_label: string | null;
+  provider_current_stop_duration_minutes: number | null;
+  provider_current_stop_label: string | null;
+  provider_current_status_label: string | null;
+  provider_stop_source_path: string | null;
+  provider_status_source_path: string | null;
+  stop_context: StopContextType;
+  stop_context_label: string;
+  stop_context_note: string;
 };
+
+type StopContextType =
+  | "provider_current_stop"
+  | "provider_status_stopped"
+  | "site_or_known_place"
+  | "active_trip_site_context"
+  | "unknown_stopped_time";
 
 const MAX_CONTINUOUS_INTERVAL_MINUTES = 90;
 const STALE_LOCATION_THRESHOLD_MINUTES = 60;
@@ -310,7 +332,7 @@ async function fetchEnabledAssets(companyId: string): Promise<QueryResult<Enable
   try {
     const { data, error } = await supabaseAdmin
       .from("fleet_assets")
-      .select("id, truck_id, registration, provider_name, last_seen_at, asset_category")
+      .select("id, truck_id, registration, provider_name, provider_location_label, last_seen_at, asset_category, raw_payload")
       .eq("company_id", companyId)
       .eq("status", "active")
       .eq("intelligence_enabled", true)
@@ -318,6 +340,9 @@ async function fetchEnabledAssets(companyId: string): Promise<QueryResult<Enable
       .limit(2000);
 
     if (error) {
+      if (isMissingColumnError(error) && safeErrorMessage(error).includes("raw_payload")) {
+        return fetchEnabledAssetsWithoutRawPayload(companyId);
+      }
       if (isMissingSchemaError(error)) return { rows: [], missing: true, error: safeErrorMessage(error) };
       throw error;
     }
@@ -329,6 +354,26 @@ async function fetchEnabledAssets(companyId: string): Promise<QueryResult<Enable
     }
     throw err;
   }
+}
+
+async function fetchEnabledAssetsWithoutRawPayload(
+  companyId: string
+): Promise<QueryResult<EnabledAsset>> {
+  const { data, error } = await supabaseAdmin
+    .from("fleet_assets")
+    .select("id, truck_id, registration, provider_name, provider_location_label, last_seen_at, asset_category")
+    .eq("company_id", companyId)
+    .eq("status", "active")
+    .eq("intelligence_enabled", true)
+    .order("last_seen_at", { ascending: false })
+    .limit(2000);
+
+  if (error) {
+    if (isMissingSchemaError(error)) return { rows: [], missing: true, error: safeErrorMessage(error) };
+    throw error;
+  }
+
+  return { rows: data || [] };
 }
 
 async function fetchProviderDistanceRows(
@@ -398,7 +443,7 @@ async function fetchTelemetryRows(
       companyId,
       truckIds,
       timeframe,
-      selectColumns: "truck_id, recorded_at, latitude, longitude, speed, provider_signal_flags",
+      selectColumns: "truck_id, recorded_at, latitude, longitude, speed, provider_location_label, provider_signal_flags",
     });
   } catch (err: any) {
     if (
@@ -406,6 +451,12 @@ async function fetchTelemetryRows(
       safeErrorMessage(err).toLowerCase().includes("provider_signal_flags")
     ) {
       return fetchTelemetryRowsWithoutProviderSignalFlags(companyId, truckIds, timeframe);
+    }
+    if (
+      isMissingColumnError(err) &&
+      safeErrorMessage(err).toLowerCase().includes("provider_location_label")
+    ) {
+      return fetchTelemetryRowsWithoutProviderLocationLabel(companyId, truckIds, timeframe);
     }
     if (isMissingSchemaError(err)) {
       return { rows: [], missing: true, error: safeErrorMessage(err) };
@@ -424,6 +475,19 @@ async function fetchTelemetryRowsWithoutProviderSignalFlags(
     truckIds,
     timeframe,
     selectColumns: "truck_id, recorded_at, latitude, longitude, speed",
+  });
+}
+
+async function fetchTelemetryRowsWithoutProviderLocationLabel(
+  companyId: string,
+  truckIds: string[],
+  timeframe: OperationalEfficiencyTimeframe
+): Promise<QueryResult<any>> {
+  return fetchTelemetryRowsPaginated({
+    companyId,
+    truckIds,
+    timeframe,
+    selectColumns: "truck_id, recorded_at, latitude, longitude, speed, provider_signal_flags",
   });
 }
 
@@ -708,6 +772,12 @@ function summarizeTelemetryRows(
     let skippedUnrealisticSegments = 0;
     let firstRecordedAt: string | null = null;
     let latestRecordedAt: string | null = null;
+    let latestProviderLocationLabel =
+      cleanText(asset?.provider_location_label) || null;
+    let latestProviderCurrentStop =
+      providerCurrentStopEvidenceFromProviderEvidence(
+        extractProviderReportedEvidence(asset?.raw_payload, asset?.provider_name)
+      );
     const providerDistanceObservations: Array<{
       value: number;
       timestampMs: number;
@@ -724,6 +794,14 @@ function summarizeTelemetryRows(
       pointCount += 1;
       firstRecordedAt = firstRecordedAt || row.recorded_at || null;
       latestRecordedAt = row.recorded_at || latestRecordedAt;
+      latestProviderLocationLabel =
+        cleanText(row.provider_location_label) || latestProviderLocationLabel;
+      const rowProviderCurrentStop = providerCurrentStopEvidenceFromSignalFlags(
+        row.provider_signal_flags
+      );
+      if (rowProviderCurrentStop) {
+        latestProviderCurrentStop = rowProviderCurrentStop;
+      }
       const providerDistanceValue = providerReportedDistanceValueFromSignalFlags(
         row.provider_signal_flags
       );
@@ -796,6 +874,10 @@ function summarizeTelemetryRows(
       timeframeEndMs,
       timeframeMinutes,
     });
+    const stopContext = classifyStopContext({
+      providerCurrentStop: latestProviderCurrentStop,
+      providerLocationLabel: latestProviderLocationLabel,
+    });
 
     byTruck.set(truckKey, {
       truck_key: truckKey,
@@ -825,10 +907,97 @@ function summarizeTelemetryRows(
       telemetry_coverage_reason: coverage.reason,
       telemetry_start_gap_minutes: coverage.start_gap_minutes,
       telemetry_end_gap_minutes: coverage.end_gap_minutes,
+      latest_provider_location_label: latestProviderLocationLabel,
+      provider_current_stop_duration_minutes:
+        latestProviderCurrentStop?.provider_current_stop_duration_minutes ?? null,
+      provider_current_stop_label:
+        latestProviderCurrentStop?.provider_current_stop_label ?? null,
+      provider_current_status_label:
+        latestProviderCurrentStop?.provider_current_status_label ?? null,
+      provider_stop_source_path:
+        latestProviderCurrentStop?.provider_stop_source_path ?? null,
+      provider_status_source_path:
+        latestProviderCurrentStop?.provider_status_source_path ?? null,
+      stop_context: stopContext.context,
+      stop_context_label: stopContext.label,
+      stop_context_note: stopContext.note,
     });
   }
 
   return byTruck;
+}
+
+function providerCurrentStopEvidenceFromProviderEvidence(evidence: any) {
+  if (!evidence?.current_stop) return null;
+  return providerCurrentStopEvidenceFromSignalFlags({
+    provider_reported_evidence: evidence,
+  });
+}
+
+function classifyStopContext(input: {
+  providerCurrentStop: any;
+  providerLocationLabel: string | null;
+}): { context: StopContextType; label: string; note: string } {
+  if (
+    input.providerCurrentStop?.provider_current_stop_duration_minutes ||
+    input.providerCurrentStop?.provider_current_stop_label
+  ) {
+    return {
+      context: "provider_current_stop",
+      label: "Context: Provider current stop episode",
+      note:
+        "Provider current stop is a current continuous episode; Nava GPS-stopped is the selected-period stationary total.",
+    };
+  }
+
+  if (providerStatusIndicatesStopped(input.providerCurrentStop?.provider_current_status_label)) {
+    return {
+      context: "provider_status_stopped",
+      label: "Context: Provider status indicates stopped/parked",
+      note:
+        "Provider status gives operational context, but it is not true engine-on idle or fuel-burn proof.",
+    };
+  }
+
+  if (looksLikeKnownOperationalPlace(input.providerLocationLabel)) {
+    return {
+      context: "site_or_known_place",
+      label: "Context: At/near known place",
+      note:
+        "Known operational context lowers blame confidence; unknown stopped time needs review.",
+    };
+  }
+
+  return {
+    context: "unknown_stopped_time",
+    label: "Context: Unknown stopped time",
+    note:
+      "Unknown stopped time needs review; no provider current-stop or site context is linked yet.",
+  };
+}
+
+function providerStatusIndicatesStopped(value: any) {
+  const text = cleanText(value).toLowerCase();
+  return /\b(stopped|stop|stationary|parked|parking|idle|idling|grounded|repair|maintenance)\b/.test(
+    text
+  );
+}
+
+function looksLikeKnownOperationalPlace(value: any) {
+  const text = cleanText(value);
+  if (!text) return false;
+  const lower = text.toLowerCase();
+  if (
+    lower.includes("readable place name unavailable") ||
+    lower.includes("location unavailable") ||
+    lower.includes("unknown") ||
+    lower === "near -" ||
+    lower === "at -"
+  ) {
+    return false;
+  }
+  if (/^-?\d+(?:\.\d+)?\s*,\s*-?\d+(?:\.\d+)?$/.test(text)) return false;
+  return /[a-z]/i.test(text);
 }
 
 function classifyTelemetryCoverage(input: {
@@ -1047,6 +1216,30 @@ function buildTruckMovementSummary(
       stopped_time_capped_estimate: Boolean(telemetry?.capped_estimate),
       stopped_interval_count: telemetry?.segment_count || 0,
       stopped_large_gap_count: telemetry?.large_gap_count || 0,
+      provider_current_stop_duration_minutes:
+        telemetry?.provider_current_stop_duration_minutes ?? null,
+      provider_current_stop_label: telemetry?.provider_current_stop_label || null,
+      provider_current_status_label: telemetry?.provider_current_status_label || null,
+      provider_stop_source_path: telemetry?.provider_stop_source_path || null,
+      provider_status_source_path: telemetry?.provider_status_source_path || null,
+      stop_context: telemetry?.stop_context || "unknown_stopped_time",
+      stop_context_label: telemetry?.stop_context_label || "Context: Unknown stopped time",
+      stop_context_note:
+        telemetry?.stop_context_note ||
+        "Unknown stopped time needs review; no provider current-stop or site context is linked yet.",
+      stopped_reconciliation:
+        telemetry?.provider_current_stop_duration_minutes ||
+        telemetry?.provider_current_stop_label
+          ? {
+              nava_gps_stopped_minutes: telemetry?.stopped_minutes ?? null,
+              provider_current_stop_minutes:
+                telemetry?.provider_current_stop_duration_minutes ?? null,
+              provider_current_stop_label:
+                telemetry?.provider_current_stop_label || null,
+              explanation:
+                "Provider current stop is the current continuous episode; Nava GPS-stopped is the selected-period stationary total.",
+            }
+          : null,
       observed_minutes: telemetry?.observed_minutes || 0,
       observed_coverage_ratio: telemetry?.observed_coverage_ratio || 0,
       telemetry_points: telemetry?.point_count || 0,
@@ -1195,6 +1388,27 @@ function buildIdleTimeSummary(
       large_gap_count: stats.large_gap_count,
       gap_minutes: stats.gap_minutes,
       observed_coverage_ratio: stats.observed_coverage_ratio,
+      provider_current_stop_duration_minutes:
+        stats.provider_current_stop_duration_minutes,
+      provider_current_stop_label: stats.provider_current_stop_label,
+      provider_current_status_label: stats.provider_current_status_label,
+      provider_stop_source_path: stats.provider_stop_source_path,
+      provider_status_source_path: stats.provider_status_source_path,
+      stop_context: stats.stop_context,
+      stop_context_label: stats.stop_context_label,
+      stop_context_note: stats.stop_context_note,
+      stopped_reconciliation:
+        stats.provider_current_stop_duration_minutes ||
+        stats.provider_current_stop_label
+          ? {
+              nava_gps_stopped_minutes: stats.stopped_minutes,
+              provider_current_stop_minutes:
+                stats.provider_current_stop_duration_minutes,
+              provider_current_stop_label: stats.provider_current_stop_label,
+              explanation:
+                "Provider current stop is the current continuous episode; Nava GPS-stopped is the selected-period stationary total.",
+            }
+          : null,
     }));
 
   return {
@@ -1426,6 +1640,33 @@ function buildProductivitySummary(
         capped_estimate: stats.capped_estimate,
         large_gap_count: stats.large_gap_count,
         observed_coverage_ratio: stats.observed_coverage_ratio,
+        provider_current_stop_duration_minutes:
+          truck.provider_current_stop_duration_minutes ??
+          stats.provider_current_stop_duration_minutes,
+        provider_current_stop_label:
+          truck.provider_current_stop_label || stats.provider_current_stop_label,
+        provider_current_status_label:
+          truck.provider_current_status_label || stats.provider_current_status_label,
+        provider_stop_source_path:
+          truck.provider_stop_source_path || stats.provider_stop_source_path,
+        provider_status_source_path:
+          truck.provider_status_source_path || stats.provider_status_source_path,
+        stop_context: truck.stop_context || stats.stop_context,
+        stop_context_label: truck.stop_context_label || stats.stop_context_label,
+        stop_context_note: truck.stop_context_note || stats.stop_context_note,
+        stopped_reconciliation: truck.stopped_reconciliation || (
+          stats.provider_current_stop_duration_minutes ||
+          stats.provider_current_stop_label
+            ? {
+                nava_gps_stopped_minutes: stats.stopped_minutes,
+                provider_current_stop_minutes:
+                  stats.provider_current_stop_duration_minutes,
+                provider_current_stop_label: stats.provider_current_stop_label,
+                explanation:
+                  "Provider current stop is the current continuous episode; Nava GPS-stopped is the selected-period stationary total.",
+              }
+            : null
+        ),
         productive_ratio: productiveRatio,
         evidence_label: stoppedTimeEvidenceLabel(stats),
       };

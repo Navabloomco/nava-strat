@@ -277,7 +277,7 @@ export default function OpsEfficiencyPage() {
                     key={truck.truck_key || truck.truck_id}
                     title={truck.truck_id || "Unknown truck"}
                     metric={`${formatMinutes(truck.stopped_minutes)} GPS-estimated`}
-                    detail={formatStoppedConfidence(truck)}
+                    detail={formatStoppedRowDetail(truck, timeframe)}
                   />
                 )}
               />
@@ -293,7 +293,7 @@ export default function OpsEfficiencyPage() {
                     key={truck.truck_key || truck.truck_id}
                     title={truck.truck_id || "Unknown truck"}
                     metric={formatPercent(truck.productive_ratio)}
-                    detail={`${formatKm(truck.distance_km)} km, ${formatMinutes(truck.stopped_minutes)} GPS-stopped estimate · ${formatStoppedConfidence(truck)}`}
+                    detail={`${formatKm(truck.distance_km)} km, ${formatMinutes(truck.stopped_minutes)} GPS-stopped estimate · ${formatStoppedRowDetail(truck, timeframe)}`}
                   />
                 )}
               />
@@ -876,6 +876,52 @@ function formatStoppedConfidence(row: any) {
       : null,
   ].filter(Boolean);
   return parts.join(" · ");
+}
+
+function formatStoppedRowDetail(row: any, timeframe: any) {
+  return [
+    formatStoppedConfidence(row),
+    formatStopContext(row),
+    formatStoppedReconciliation(row, timeframe),
+  ].filter(Boolean).join(" · ");
+}
+
+function formatStopContext(row: any) {
+  const label = String(row?.stop_context_label || "").trim();
+  const note = String(row?.stop_context_note || "").trim();
+  if (!label && !note) return "";
+  return [label, note].filter(Boolean).join(": ");
+}
+
+function formatStoppedReconciliation(row: any, timeframe: any) {
+  const reconciliation = row?.stopped_reconciliation;
+  const providerMinutes = Number(
+    reconciliation?.provider_current_stop_minutes ??
+      row?.provider_current_stop_duration_minutes ??
+      0
+  );
+  const providerLabel = String(
+    reconciliation?.provider_current_stop_label ||
+      row?.provider_current_stop_label ||
+      ""
+  ).trim();
+  if (!providerMinutes && !providerLabel) return "";
+
+  const navaMinutes = Number(
+    reconciliation?.nava_gps_stopped_minutes ?? row?.stopped_minutes ?? 0
+  );
+  const rangeLabel = String(timeframe?.selected_range_label || "selected period").toLowerCase();
+  const providerText = providerMinutes
+    ? `Provider current stop: ${formatMinutes(providerMinutes)}`
+    : `Provider current stop: ${providerLabel}`;
+  const navaText = navaMinutes
+    ? `Nava GPS-stopped ${rangeLabel}: ${formatMinutes(navaMinutes)}`
+    : "";
+  return [
+    navaText,
+    providerText,
+    "Different metrics: provider current stop is the current episode; Nava GPS-stopped is selected-period stationary total.",
+  ].filter(Boolean).join(" · ");
 }
 
 function formatProviderIdleMetric(row: any) {

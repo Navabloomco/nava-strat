@@ -327,6 +327,8 @@ Confirm workflow behavior:
 - [ ] Confirm each distance row shows first/last telemetry point, points/segments used, and a partial-coverage warning when the last point is much earlier than the selected period end.
 - [ ] Confirm stopped-time rows show customer-readable evidence such as "No movement observed in sampled intervals", "Movement observed in X% of sampled intervals", GPS point/interval counts, and low-confidence sparse/capped labels instead of technical observed-interval ratios.
 - [ ] Confirm stopped-time rows are labeled GPS-estimated stopped time and do not claim engine-on idling, fuel burn, driver waste, or fuel misuse.
+- [ ] If a provider current-feed stop duration is present, confirm `/ops/efficiency` shows it separately from Nava GPS-stopped time and explains that provider current stop is the current continuous episode while Nava GPS-stopped is the selected-period stationary total.
+- [ ] Confirm stopped rows show cautious context labels such as Provider current stop episode, Provider status indicates stopped/parked, At/near known place, or Unknown stopped time, without turning site dwell into client delay or blame.
 - [ ] Confirm idle/excessive-idle event sections are labeled provider idle markers/provider-derived marker windows unless ignition/engine/CAN data verifies true engine-on idle.
 - [ ] Confirm provider idle markers are present in `telemetry_events` as canonical `provider_idle_marker` rows when the provider feed supplies idle/excessive-idle marker values.
 - [ ] Confirm legacy `excessive_idle` / `long_idle` rows count as provider-derived markers only when metadata does not mark them as GPS-generated/event-engine stopped estimates.
@@ -334,6 +336,7 @@ Confirm workflow behavior:
 - [ ] Confirm Provider Idle Markers shows marker/window counts and observed marker span, and never displays impossible 100+ hour provider-duration totals for a one-day operating window.
 - [ ] Confirm provider/legacy `duration_minutes` fields are not summed unless duration semantics are verified as per-event.
 - [ ] Ask Nava Eye "which trucks have idle markers?" and confirm it answers with provider idle marker evidence first, while saying engine-on idling and fuel burn are not verified without ignition/engine/CAN support.
+- [ ] Ask Nava Eye why a provider stop duration differs from Nava stopped time and confirm it explains provider current stop versus selected-period GPS-stopped total without claiming engine-on idle, fuel burn, client blame, or driver blame.
 - [ ] Confirm `/api/ops/efficiency` does not return raw coordinate series and does not expose disabled/unreviewed asset telemetry.
 - [ ] Confirm `/api/ops/efficiency` does not let future provider timestamps inflate movement/stopped/productivity metrics or mark an asset fresh when timestamp quality is suspicious.
 - [ ] Confirm ops/management/owner/admin/platform-owner can view operational efficiency summaries and unauthorized roles receive a role boundary.

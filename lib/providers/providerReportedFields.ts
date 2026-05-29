@@ -16,6 +16,7 @@ export type ProviderReportedEvidence = {
     alarm?: ProviderReportedTextEvidence;
     icon_status?: ProviderReportedTextEvidence;
   };
+  current_stop?: ProviderCurrentStopEvidence;
   device_timezone?: ProviderReportedTextEvidence;
   caveat: string;
 };
@@ -31,6 +32,16 @@ export type ProviderReportedNumericEvidence = {
 export type ProviderReportedTextEvidence = {
   value: string;
   field_path: string;
+  evidence_label: string;
+  source: "provider_reported";
+};
+
+export type ProviderCurrentStopEvidence = {
+  provider_current_stop_duration_minutes: number | null;
+  provider_current_stop_label: string | null;
+  provider_current_status_label: string | null;
+  provider_stop_source_path: string | null;
+  provider_status_source_path: string | null;
   evidence_label: string;
   source: "provider_reported";
 };
@@ -61,6 +72,15 @@ export const PROVIDER_REPORTED_FIELD_PATHS = [
   "alarm",
   "icon.by_status",
   "device_data.icon.by_status",
+  "stop_duration",
+  "stopDuration",
+  "stop_duration_minutes",
+  "stop_duration_seconds",
+  "stopped_since",
+  "stoppedSince",
+  "parking_time",
+  "stop_time",
+  "status",
   "device_timezone",
 ];
 
@@ -131,6 +151,26 @@ const DEVICE_TIMEZONE_CANDIDATE: TextFieldCandidate = {
   evidenceLabel: "Provider device timezone",
 };
 
+const CURRENT_STOP_DURATION_PATHS = [
+  "stop_duration",
+  "stopDuration",
+  "stop_duration_minutes",
+  "stop_duration_seconds",
+  "parking_time",
+  "stop_time",
+];
+
+const CURRENT_STOP_SINCE_PATHS = ["stopped_since", "stoppedSince"];
+
+const CURRENT_STOP_STATUS_PATHS = [
+  "status",
+  "alarm",
+  "icon.by_status",
+  "device_data.icon.by_status",
+];
+
+const CURRENT_STOP_EVIDENCE_LABEL = "Provider current stop/status evidence";
+
 export function extractProviderReportedEvidence(
   raw: any,
   providerName?: string | null
@@ -155,6 +195,7 @@ export function extractProviderReportedEvidence(
     observed,
     labels
   );
+  const currentStop = extractCurrentStopEvidence(raw, observed, labels);
   const fuel = Object.fromEntries(
     Object.entries(FUEL_CANDIDATES)
       .map(([key, candidate]) => [
@@ -170,6 +211,7 @@ export function extractProviderReportedEvidence(
     !ignitionEngineState &&
     !alarm &&
     !iconStatus &&
+    !currentStop &&
     !deviceTimezone &&
     (!fuel || Object.keys(fuel).length === 0)
   ) {
@@ -188,6 +230,7 @@ export function extractProviderReportedEvidence(
     ...(alarm || iconStatus
       ? { status: { ...(alarm ? { alarm } : {}), ...(iconStatus ? { icon_status: iconStatus } : {}) } }
       : {}),
+    ...(currentStop ? { current_stop: currentStop } : {}),
     ...(deviceTimezone ? { device_timezone: deviceTimezone } : {}),
     caveat:
       "Provider-reported field evidence is not audited truth. It must not be used for fuel burn, theft, engine-on idle, or diagnostics claims unless the provider capability and signal quality support that conclusion.",
@@ -199,6 +242,160 @@ export function providerReportedDistanceValueFromSignalFlags(
 ): number | null {
   const value = signalFlags?.provider_reported_evidence?.distance_odometer?.value;
   return saneNumber(value, 0, 10000000);
+}
+
+export function providerCurrentStopEvidenceFromSignalFlags(signalFlags: any) {
+  const evidence = signalFlags?.provider_reported_evidence?.current_stop;
+  if (!evidence || typeof evidence !== "object") return null;
+
+  const duration = saneNumber(
+    evidence.provider_current_stop_duration_minutes,
+    0,
+    60 * 24 * 14
+  );
+  const label = safeShortText(evidence.provider_current_stop_label);
+  const statusLabel = safeOperationalStatusText(
+    evidence.provider_current_status_label
+  );
+  const stopSourcePath = safeShortText(evidence.provider_stop_source_path);
+  const statusSourcePath = safeShortText(evidence.provider_status_source_path);
+
+  if (
+    duration === null &&
+    !label &&
+    !statusLabel &&
+    !stopSourcePath &&
+    !statusSourcePath
+  ) {
+    return null;
+  }
+
+  return {
+    provider_current_stop_duration_minutes: duration,
+    provider_current_stop_label: label || null,
+    provider_current_status_label: statusLabel || null,
+    provider_stop_source_path: stopSourcePath || null,
+    provider_status_source_path: statusSourcePath || null,
+    evidence_label: CURRENT_STOP_EVIDENCE_LABEL,
+    source: "provider_reported" as const,
+  };
+}
+
+function extractCurrentStopEvidence(
+  raw: any,
+  observed: Set<string>,
+  labels: Set<string>
+): ProviderCurrentStopEvidence | null {
+  const durationEvidence = extractCurrentStopDuration(raw);
+  const sinceEvidence = durationEvidence ? null : extractCurrentStopSince(raw);
+  const statusEvidence = extractCurrentStopStatus(raw);
+
+  if (!durationEvidence && !sinceEvidence && !statusEvidence) return null;
+
+  if (durationEvidence?.path) observed.add(durationEvidence.path);
+  if (sinceEvidence?.path) observed.add(sinceEvidence.path);
+  if (statusEvidence?.path) observed.add(statusEvidence.path);
+  labels.add(CURRENT_STOP_EVIDENCE_LABEL);
+
+  return {
+    provider_current_stop_duration_minutes:
+      durationEvidence?.minutes ?? sinceEvidence?.minutes ?? null,
+    provider_current_stop_label:
+      durationEvidence?.label || sinceEvidence?.label || null,
+    provider_current_status_label: statusEvidence?.label || null,
+    provider_stop_source_path:
+      durationEvidence?.path || sinceEvidence?.path || null,
+    provider_status_source_path: statusEvidence?.path || null,
+    evidence_label: CURRENT_STOP_EVIDENCE_LABEL,
+    source: "provider_reported",
+  };
+}
+
+function extractCurrentStopDuration(raw: any) {
+  for (const path of CURRENT_STOP_DURATION_PATHS) {
+    const value = getValueByCaseInsensitivePath(raw, path);
+    const label = safeShortText(value);
+    const minutes = parseDurationMinutes(value, path);
+    if (!label && minutes === null) continue;
+    return {
+      path,
+      label: label || (minutes !== null ? `${minutes} minutes` : null),
+      minutes,
+    };
+  }
+  return null;
+}
+
+function extractCurrentStopSince(raw: any) {
+  for (const path of CURRENT_STOP_SINCE_PATHS) {
+    const value = getValueByCaseInsensitivePath(raw, path);
+    const label = safeShortText(value);
+    if (!label) continue;
+    const timestamp = new Date(label).getTime();
+    const minutes = Number.isFinite(timestamp)
+      ? Math.max(0, Math.round((Date.now() - timestamp) / 60000))
+      : null;
+    return {
+      path,
+      label: `Stopped since ${label}`,
+      minutes,
+    };
+  }
+  return null;
+}
+
+function extractCurrentStopStatus(raw: any) {
+  for (const path of CURRENT_STOP_STATUS_PATHS) {
+    const value = getValueByCaseInsensitivePath(raw, path);
+    const label = safeOperationalStatusText(value);
+    if (!label) continue;
+    return { path, label };
+  }
+  return null;
+}
+
+function parseDurationMinutes(value: any, path: string) {
+  if (value === null || value === undefined || value === "") return null;
+  const pathLower = String(path || "").toLowerCase();
+
+  if (typeof value === "number" && Number.isFinite(value)) {
+    if (pathLower.includes("seconds")) return Math.round(value / 60);
+    if (pathLower.includes("minutes")) return Math.round(value);
+  }
+
+  const text = safeShortText(value).toLowerCase();
+  if (!text) return null;
+
+  if (/^\d+(?:\.\d+)?$/.test(text)) {
+    const numeric = Number(text);
+    if (!Number.isFinite(numeric)) return null;
+    if (pathLower.includes("seconds")) return Math.round(numeric / 60);
+    if (pathLower.includes("minutes")) return Math.round(numeric);
+    return null;
+  }
+
+  let total = 0;
+  let matched = false;
+  const units = [
+    { pattern: /(\d+(?:\.\d+)?)\s*(?:d|day|days)\b/g, multiplier: 24 * 60 },
+    { pattern: /(\d+(?:\.\d+)?)\s*(?:h|hr|hrs|hour|hours)\b/g, multiplier: 60 },
+    { pattern: /(\d+(?:\.\d+)?)\s*(?:m|min|mins|minute|minutes)\b/g, multiplier: 1 },
+    { pattern: /(\d+(?:\.\d+)?)\s*(?:s|sec|secs|second|seconds)\b/g, multiplier: 1 / 60 },
+  ];
+
+  for (const unit of units) {
+    unit.pattern.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = unit.pattern.exec(text))) {
+      const numeric = Number(match[1]);
+      if (!Number.isFinite(numeric)) continue;
+      total += numeric * unit.multiplier;
+      matched = true;
+    }
+  }
+
+  if (!matched) return null;
+  return Math.max(0, Math.round(total));
 }
 
 function extractNumericEvidence(
@@ -266,6 +463,18 @@ function safeShortText(value: any) {
     .trim();
   if (!text || text === "-" || text === "--" || /^n\/?a$/i.test(text)) return "";
   return text.slice(0, 120);
+}
+
+function safeOperationalStatusText(value: any) {
+  const text = safeShortText(value);
+  if (!text) return "";
+  const normalized = text.toLowerCase();
+  if (
+    ["0", "false", "none", "normal", "ok", "okay", "n/a", "na", "[object object]"].includes(normalized)
+  ) {
+    return "";
+  }
+  return text;
 }
 
 function getValueByCaseInsensitivePath(raw: any, path: string): any {
