@@ -13,39 +13,34 @@ import {
 
 const financeCards = [
   {
-    title: "Client Rates",
-    body: "Configure client and route revenue rules controlled by finance.",
-    href: "/finance/rate-rules",
-  },
-  {
     title: "Revenue Review",
     body: "Review Trip quantities, match configured rates, and apply revenue entries.",
     href: "/finance/revenue",
   },
   {
-    title: "Fuel Ledger",
-    body: "Review fuel records, allocation, and trip-level fuel totals.",
+    title: "Client Rates",
+    body: "Configure client and route revenue rules controlled by finance.",
+    href: "/finance/rate-rules",
+  },
+  {
+    title: "Expense Review",
+    body: "Review operating expenses, supplier/payee details, and attached proof.",
+    href: "/expenses",
+  },
+  {
+    title: "Fuel Cost Review",
+    body: "Review fuel issue records, allocations, litres, and finance-visible costs.",
     href: "/fuel",
   },
   {
-    title: "Add Fuel",
-    body: "Capture a fuel entry and link it to an open trip when available.",
-    href: "/fuel/new",
+    title: "Fuel Providers",
+    body: "Manage fuel provider settings and company default price references.",
+    href: "/fuel/providers",
   },
   {
-    title: "Add Expense",
-    body: "Record trip costs, transaction fees, advances, and operating expenses.",
-    href: "/expenses/new",
-  },
-  {
-    title: "Management Dashboard",
-    body: "Review contribution, revenue, costs, and client performance.",
+    title: "Contribution Review",
+    body: "Review contribution readiness, blocked Trip reviews, and management-ready finance signals.",
     href: "/management/dashboard",
-  },
-  {
-    title: "Create Trip",
-    body: "Start a new trip so finance can review quantities and revenue later.",
-    href: "/ops/journey/new",
   },
 ];
 
@@ -165,7 +160,7 @@ export default function FinanceDashboard() {
           dark
           eyebrow="Finance workspace"
           title="Finance Hub"
-          body="Manage trip revenue, fuel, expenses, and contribution review from one place."
+          body="Review revenue, client rates, expenses, fuel costs, and contribution readiness from one finance workspace."
           actions={
             <Link href="/finance/revenue">
               <PrimaryButton type="button" className="w-full sm:w-auto">

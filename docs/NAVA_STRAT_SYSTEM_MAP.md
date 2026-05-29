@@ -89,7 +89,7 @@ Nava Strat should sound like a mature enterprise SaaS: operational, concise, sou
 
 | Route | Purpose |
 | --- | --- |
-| `/finance/dashboard` | Role-aware Finance Hub linking to safe finance workflows. |
+| `/finance/dashboard` | Role-aware Finance Hub linking to finance-owned workflows: Revenue Review, Client Rates, Expense Review, Fuel Cost Review, Fuel Providers, and Contribution Review. It should not present Trip creation as a finance action; Trip creation remains in the operations Trip routes for roles allowed to create Trips. |
 | `/finance/revenue` | Finance Revenue Review. Finance/management/elevated roles review production Trips, see current revenue source, match trips against configured client rate rules, and finance editors can apply a unique matched rule into `journey_revenue_entries` plus the compatibility journey revenue snapshot. This page does not create client rates; `/finance/rate-rules` owns rate setup. Ops/clerk users should not see rates or revenue. Finance-scoped Nava Eye entry points can ask which Trips need revenue review, why a Trip has no matching rate, and what finance should handle first. |
 | `/finance/rate-rules` | Client Rates / Revenue Rules Phase 1 UI. Finance/management/elevated roles can view company-scoped rate rules; finance/elevated roles can create them. Ops/clerk users should not see the route or rates. Route entry uses separate `route_from` and `route_to` fields because direction matters; leaving both blank means a client-wide/default rate. This is a setup/review surface only, not invoicing or a supplier-payment workflow. |
 | `/fuel` | Fuel ledger. |

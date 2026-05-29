@@ -258,6 +258,8 @@ Confirm role gates:
 - [ ] `finance` can view/edit finance workflows where allowed.
 - [ ] `management` is view-only where applicable.
 - [ ] `owner`, `admin`, and `platform_owner` retain elevated access.
+- [ ] Open `/finance/dashboard` as a finance/management role and confirm the Finance Hub routes to finance-owned work: Revenue Review, Client Rates, Expense Review, Fuel Cost Review, Fuel Providers, and Contribution Review.
+- [ ] Confirm `/finance/dashboard` does not show `Create Trip` as a finance action; Trip creation remains available from `/ops/journey` or `/ops/journey/new` only for roles allowed to create Trips.
 
 Confirm workflow behavior:
 
