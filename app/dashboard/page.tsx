@@ -490,14 +490,14 @@ function buildCommandActions(
     actions.push({
       id: "critical-events",
       severity: "critical",
-      title: "Operational events",
-      count: `${criticalCount.toLocaleString()} high-severity`,
+      title: "Tracker event triage",
+      count: `${criticalCount.toLocaleString()} tracker event records`,
       implication:
-        "Review the affected trucks and add operational context before escalating.",
+        "Grouped for triage. Review affected trucks and operational context before escalating.",
       href: "/ops/dashboard",
-      actionLabel: "Review events",
+      actionLabel: "Review affected trucks",
       suggestedQuestion:
-        "Explain today's high-severity tracker events and what context matters.",
+        "Which tracker event records need review first today?",
     });
   }
 
@@ -611,8 +611,8 @@ function buildReviewQueues(
     {
       id: "ops",
       title: "Trip operations",
-      value: `${criticalCount.toLocaleString()} event(s)`,
-      body: "Review high-severity tracker events and add operational context.",
+      value: `${criticalCount.toLocaleString()} tracker record(s)`,
+      body: "Review grouped tracker records and add operational context before escalation.",
       href: "/ops/dashboard",
       show: capabilities.canViewOps,
     },
@@ -1044,6 +1044,13 @@ export default function DashboardPage() {
   const commandLinks = isPlatformWorkspace
     ? platformDashboardLinks
     : buildCommandLinks(roleCapabilities, adminCompanyId);
+  const briefPromptChips = isPlatformWorkspace
+    ? []
+    : [
+        "What should I act on first?",
+        roleCapabilities.canViewOps ? "Why are assets stale?" : "",
+        roleCapabilities.canViewJourneys ? "Which Trips need review?" : "",
+      ].filter(Boolean);
   const criticalEventGroups = groupCriticalEvents(fh.recent_critical_events || []);
   const refreshedAtLabel = new Intl.DateTimeFormat("en-KE", {
     hour: "2-digit",
@@ -1413,7 +1420,7 @@ export default function DashboardPage() {
                     </h2>
                     <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-300">
                       Action-first summary of today&apos;s tracking freshness,
-                      operational events, review blockers, and the next pages to open.
+                      tracker records, review blockers, and the next pages to open.
                     </p>
                     <div className="mt-5 flex flex-wrap gap-2 text-xs text-slate-300">
                       <span className="rounded-md border border-white/10 bg-slate-950/50 px-3 py-1.5">
@@ -1431,9 +1438,11 @@ export default function DashboardPage() {
                   <div className="rounded-lg border border-white/10 bg-slate-950/50 p-4">
                     <div className="flex items-center justify-between gap-3">
                       <div>
-                        <div className="text-sm font-semibold text-white">Ask Nava Eye</div>
+                        <div className="text-sm font-semibold text-white">
+                          Ask Nava Eye about this brief
+                        </div>
                         <div className="mt-1 text-xs text-slate-500">
-                          Ask about the active brief or a specific truck.
+                          Turn the brief into a scoped answer or next action.
                         </div>
                       </div>
                       <span className="rounded-md border border-blue-500/30 bg-blue-500/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-blue-300">
@@ -1459,6 +1468,20 @@ export default function DashboardPage() {
                         {copilotLoading ? "Checking..." : "Ask"}
                       </button>
                     </div>
+                    {briefPromptChips.length > 0 && (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {briefPromptChips.map((prompt) => (
+                          <button
+                            key={prompt}
+                            type="button"
+                            onClick={() => askCopilot(prompt)}
+                            className="rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1.5 text-xs font-medium text-cyan-100 transition hover:border-cyan-300/40 hover:bg-cyan-300/15"
+                          >
+                            {prompt}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
               </section>
@@ -1528,8 +1551,8 @@ export default function DashboardPage() {
                 <BriefMetric label="Enabled assets" value={Number(fh.total_trucks || 0).toLocaleString()} />
                 <BriefMetric label="Live now" value={Number(fh.online_trucks || 0).toLocaleString()} tone="good" />
                 <BriefMetric label="Stale/offline" value={Number(fh.offline_trucks || 0).toLocaleString()} tone="warn" />
-                <BriefMetric label="Trip review" value={roleCapabilities.canViewJourneys ? "Open queue" : "Restricted"} />
-                <BriefMetric label="Critical events" value={Number(fh.critical_events_24h || 0).toLocaleString()} tone={Number(fh.critical_events_24h || 0) > 0 ? "danger" : "good"} />
+                <BriefMetric label="Trip review" value={roleCapabilities.canViewJourneys ? "Review queue" : "Restricted"} />
+                <BriefMetric label="Tracker records" value={`${Number(fh.critical_events_24h || 0).toLocaleString()} records`} tone={Number(fh.critical_events_24h || 0) > 0 ? "danger" : "good"} />
                 <BriefMetric label="Provider readiness" value={roleCapabilities.canReviewAssets ? `${Number(data.asset_review_summary?.unreviewed_assets || 0).toLocaleString()} review` : "Role-gated"} />
               </section>
 
@@ -1592,11 +1615,35 @@ export default function DashboardPage() {
                   </div>
 
                   <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-5">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <h2 className="text-lg font-semibold text-white">
+                          Command routes
+                        </h2>
+                        <p className="mt-1 text-sm text-slate-500">
+                          Open the specialist workspace when you already know where to go.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      {commandLinks.map((item) => (
+                        <Link
+                          key={`${item.label}-${item.href}`}
+                          href={item.href}
+                          className="rounded-md border border-white/10 bg-slate-950/40 px-3 py-2 text-sm font-semibold text-slate-200 transition hover:border-cyan-300/40 hover:text-cyan-100"
+                        >
+                          {item.label}
+                        </Link>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-5">
                     <h2 className="text-lg font-semibold text-white">
                       Event review
                     </h2>
                     <p className="mt-1 text-sm text-slate-500">
-                      High-severity tracker events grouped for triage, not shown as raw event spam.
+                      Tracker event records grouped for triage, not shown as raw event spam.
                     </p>
                     {criticalEventGroups.length ? (
                       <div className="mt-4 grid gap-3 md:grid-cols-2">
@@ -1620,34 +1667,11 @@ export default function DashboardPage() {
                       </div>
                     ) : (
                       <div className="mt-4 rounded-lg border border-white/10 bg-slate-950/40 p-4 text-sm text-slate-400">
-                        No high-severity tracker events in the current dashboard window.
+                        No tracker event records need triage in the current dashboard window.
                       </div>
                     )}
                   </div>
 
-                  <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-5">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <h2 className="text-lg font-semibold text-white">
-                          Command routes
-                        </h2>
-                        <p className="mt-1 text-sm text-slate-500">
-                          Open the specialist workspace after this brief points you there.
-                        </p>
-                      </div>
-                    </div>
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      {commandLinks.map((item) => (
-                        <Link
-                          key={`${item.label}-${item.href}`}
-                          href={item.href}
-                          className="rounded-md border border-white/10 bg-slate-950/40 px-3 py-2 text-sm font-semibold text-slate-200 transition hover:border-cyan-300/40 hover:text-cyan-100"
-                        >
-                          {item.label}
-                        </Link>
-                      ))}
-                    </div>
-                  </div>
                 </div>
 
                 <div className="space-y-6">
@@ -1724,10 +1748,10 @@ export default function DashboardPage() {
 
                   <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-5">
                     <h2 className="text-lg font-semibold text-white">
-                      Active intelligence notes
+                      Saved intelligence notes
                     </h2>
                     <p className="mt-1 text-sm text-slate-500">
-                      Durable Nava Eye notes that remain visible for this workspace and role.
+                      Pinned Nava Eye notes saved for this workspace and role.
                     </p>
                     {memories.length ? (
                       <div className="mt-4 space-y-3">
@@ -1766,7 +1790,7 @@ export default function DashboardPage() {
                       </div>
                     ) : (
                       <div className="mt-4 rounded-lg border border-white/10 bg-slate-950/40 p-4 text-sm text-slate-400">
-                        No active intelligence notes for this workspace.
+                        No saved intelligence notes yet.
                       </div>
                     )}
                   </div>

@@ -73,11 +73,12 @@ Open `/dashboard` as an admin/finance user for a customer tenant.
 - [ ] Confirm the page title and first section read as a Command Brief / operating brief, not a raw widget dashboard.
 - [ ] Confirm `Needs attention today` appears above the compact fleet-state tiles.
 - [ ] Confirm action cards route to the right specialist page and include safe `Ask Nava Eye` shortcuts where available.
+- [ ] Confirm the top Nava Eye block says `Ask Nava Eye about this brief` and shows two or three tenant-safe prompt chips.
 - [ ] Confirm the compact fleet-state strip appears below the action cards.
 - [ ] Confirm review queues are role-aware and do not expose restricted finance amounts to roles without finance/management access.
-- [ ] Confirm quick links are secondary under `Command routes`, not the first thing on the page.
+- [ ] Confirm quick links are secondary under `Command routes`, visible before grouped event review but not dominant at the top.
 - [ ] Confirm Nava Eye Watch is prominent and actionable.
-- [ ] Confirm grouped event review avoids raw event spam as the primary experience.
+- [ ] Confirm grouped event review uses tracker event record / triage wording and avoids raw event spam as the primary experience.
 - [ ] Confirm links route to Live Tracking, Trips, Ops Intelligence, Revenue Review, Provider Vault, and Nava Eye according to role permissions.
 - [ ] As an ops/clerk-style role, confirm finance/revenue/contribution queues are restricted or absent while operational routes remain usable.
 
