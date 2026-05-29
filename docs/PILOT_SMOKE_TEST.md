@@ -66,7 +66,22 @@ Expected result:
 - [ ] Pages that do not support automatic tenant context say so clearly instead of pretending.
 - [ ] Non-platform users cannot use `companyId` to cross tenants.
 
-## 4. Provider Smoke Test
+## 4. Dashboard Command Brief Smoke Test
+
+Open `/dashboard` as an admin/finance user for a customer tenant.
+
+- [ ] Confirm the page title and first section read as a Command Brief / operating brief, not a raw widget dashboard.
+- [ ] Confirm `Needs attention today` appears above the compact fleet-state tiles.
+- [ ] Confirm action cards route to the right specialist page and include safe `Ask Nava Eye` shortcuts where available.
+- [ ] Confirm the compact fleet-state strip appears below the action cards.
+- [ ] Confirm review queues are role-aware and do not expose restricted finance amounts to roles without finance/management access.
+- [ ] Confirm quick links are secondary under `Command routes`, not the first thing on the page.
+- [ ] Confirm Nava Eye Watch is prominent and actionable.
+- [ ] Confirm grouped event review avoids raw event spam as the primary experience.
+- [ ] Confirm links route to Live Tracking, Trips, Ops Intelligence, Revenue Review, Provider Vault, and Nava Eye according to role permissions.
+- [ ] As an ops/clerk-style role, confirm finance/revenue/contribution queues are restricted or absent while operational routes remain usable.
+
+## 5. Provider Smoke Test
 
 Open `/admin/providers?companyId=<id>`.
 
@@ -157,7 +172,7 @@ Expected BlueTrax note:
 
 - Primary BlueTrax location sync can work while Fleet Current Status fuel remains pending until the web analytics auth/report feed is correctly authorized or BlueTrax provides official report API access.
 
-## 5. Asset Review Smoke Test
+## 6. Asset Review Smoke Test
 
 Open `/admin/assets?companyId=<id>`.
 
@@ -188,7 +203,7 @@ Open `/admin/assets?companyId=<id>`.
 - [ ] Confirm strict billable count drops after disabling/review-later.
 - [ ] Confirm unreviewed assets do not appear in Live Tracking.
 
-## 6. Billing Smoke Test
+## 7. Billing Smoke Test
 
 Open `/admin/tenants/[companyId]` and `/admin/tenants/[companyId]/invoice-preview`.
 
@@ -214,7 +229,7 @@ Expected result:
 - [ ] No Stripe charge, PDF, email, customer-facing invoice, or payment collection is created.
 - [ ] Missing `billing_invoices` SQL shows setup guidance instead of a generic crash.
 
-## 7. Operations Smoke Test
+## 8. Operations Smoke Test
 
 Open these routes with appropriate company roles:
 
@@ -383,7 +398,7 @@ Confirm workflow behavior:
 - [ ] Confirm Management operational drag distinguishes GPS-stopped evidence from provider idle markers and does not present either as true engine-on idle without verified ignition/engine data.
 - [ ] Confirm ops/clerk roles cannot access Management Intelligence finance metrics.
 
-## 8. Nava Eye Smoke Test
+## 9. Nava Eye Smoke Test
 
 Run the detailed Nava Eye regression pack in `docs/NAVA_EYE_REGRESSION_TESTS.md` before changing routing, timeline intelligence, metric answers, provider capability wording, or conversation thread UX.
 
@@ -473,7 +488,7 @@ Expected result:
 - [ ] Closed conversations are archived, not hard-deleted, and remain accessible under Closed conversations.
 - [ ] Deleted Nava Eye conversations are soft-deleted from the current user's visible list after the delete migration is applied.
 
-## 9. Client Visibility Smoke Test
+## 10. Client Visibility Smoke Test
 
 Open `/admin/client-visibility`.
 
@@ -484,7 +499,7 @@ Open `/admin/client-visibility`.
 - [ ] Confirm it does not expose internal dashboards, provider diagnostics, provider raw payloads, auth config, private driver data, or unreviewed assets.
 - [ ] Confirm `record_client_visibility_link_access` behavior is either working or documented by Platform Health/manual verification.
 
-## 10. Failure-State Checks
+## 11. Failure-State Checks
 
 - [ ] Missing `billing_invoices` table shows setup-required guidance.
 - [ ] Provider test failure shows readable diagnostics.
@@ -495,7 +510,7 @@ Open `/admin/client-visibility`.
 - [ ] Expired or invalid client visibility tokens do not leak data.
 - [ ] API errors show clear UI messages instead of infinite loading states.
 
-## 11. Demo Readiness Pass/Fail
+## 12. Demo Readiness Pass/Fail
 
 Mark the pilot/demo ready only when all critical checks pass:
 

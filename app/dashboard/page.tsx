@@ -65,14 +65,6 @@ function chooseDefaultDashboardCompanyId(
   return companies[0]?.id || "";
 }
 
-const dashboardLinks = [
-  { label: "Fleet / live tracking", href: "/tracking/live" },
-  { label: "Trips", href: "/ops/journey" },
-  { label: "Fuel", href: "/fuel" },
-  { label: "Nava Eye", href: "/nava-eye" },
-  { label: "Settings", href: "/admin/company" },
-];
-
 const platformDashboardLinks = [
   { label: "Admin Hub", href: "/admin" },
   { label: "Tenant Billing", href: "/admin/tenants" },
@@ -91,6 +83,27 @@ interface WatchItem {
   suggested_next_check: string;
   suggested_question?: string;
   href?: string;
+}
+
+interface CommandActionItem {
+  id: string;
+  severity: "info" | "warning" | "critical";
+  title: string;
+  count: string;
+  implication: string;
+  href: string;
+  actionLabel: string;
+  suggestedQuestion?: string;
+}
+
+interface ReviewQueueItem {
+  id: string;
+  title: string;
+  value: string;
+  body: string;
+  href: string;
+  show: boolean;
+  restricted?: boolean;
 }
 
 type TenantWorkspaceSummary = {
@@ -415,7 +428,9 @@ function formatWatchNumber(value: any) {
 }
 
 function formatWatchLabel(value: any) {
-  return String(value || "event").replace(/_/g, " ");
+  return String(value || "event")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 function severityRank(severity: WatchItem["severity"]) {
@@ -428,6 +443,267 @@ function severityClasses(severity: WatchItem["severity"]) {
   if (severity === "critical") return "border-red-500/40 bg-red-500/10 text-red-200";
   if (severity === "warning") return "border-yellow-500/40 bg-yellow-500/10 text-yellow-200";
   return "border-blue-500/40 bg-blue-500/10 text-blue-200";
+}
+
+function actionCardClasses(severity: CommandActionItem["severity"]) {
+  if (severity === "critical") {
+    return "border-rose-300/35 bg-rose-500/10";
+  }
+  if (severity === "warning") {
+    return "border-amber-300/35 bg-amber-400/10";
+  }
+  return "border-cyan-300/25 bg-cyan-300/10";
+}
+
+function buildCommandActions(
+  overview: OverviewData | null,
+  capabilities: DashboardRoleCapabilities,
+  adminCompanyId: string
+): CommandActionItem[] {
+  const fleetHealth = overview?.fleet_health || {};
+  const assetReview = overview?.asset_review_summary || {};
+  const fuelSummary = fleetHealth.fuel_telemetry_summary || {};
+  const actions: CommandActionItem[] = [];
+  const offlineCount = Number(fleetHealth.offline_trucks || 0);
+  const criticalCount = Number(fleetHealth.critical_events_24h || 0);
+  const idleMarkerCount = Number(fleetHealth.idle_events_24h || 0);
+  const unreviewedAssets = Number(assetReview.unreviewed_assets || 0);
+  const enabledAssets = Number(assetReview.enabled_assets || 0);
+  const importedAssets = Number(assetReview.imported_assets || 0);
+
+  if (capabilities.canViewOps && offlineCount > 0) {
+    actions.push({
+      id: "tracking-freshness",
+      severity: offlineCount >= 5 ? "critical" : "warning",
+      title: "Tracking freshness",
+      count: `${offlineCount.toLocaleString()} stale/offline`,
+      implication:
+        "Live status is incomplete until provider sync or device reporting is checked.",
+      href: "/tracking/live",
+      actionLabel: "Open Live Tracking",
+      suggestedQuestion:
+        "Which enabled assets are stale or offline, and what should I check first?",
+    });
+  }
+
+  if (capabilities.canViewOps && criticalCount > 0) {
+    actions.push({
+      id: "critical-events",
+      severity: "critical",
+      title: "Operational events",
+      count: `${criticalCount.toLocaleString()} high-severity`,
+      implication:
+        "Review the affected trucks and add operational context before escalating.",
+      href: "/ops/dashboard",
+      actionLabel: "Review events",
+      suggestedQuestion:
+        "Explain today's high-severity tracker events and what context matters.",
+    });
+  }
+
+  if (capabilities.canViewOps && idleMarkerCount > 0) {
+    actions.push({
+      id: "tracker-idle-markers",
+      severity: "warning",
+      title: "Tracker idle markers",
+      count: `${idleMarkerCount.toLocaleString()} marker(s)`,
+      implication:
+        "Treat these as provider evidence to review, not engine-on idle or fuel-burn proof.",
+      href: "/ops/efficiency",
+      actionLabel: "Open Ops Intelligence",
+      suggestedQuestion:
+        "Which trucks have tracker idle markers today, and what should I review?",
+    });
+  }
+
+  if (capabilities.canReviewAssets && (unreviewedAssets > 0 || enabledAssets === 0)) {
+    actions.push({
+      id: "provider-readiness",
+      severity: enabledAssets === 0 && importedAssets > 0 ? "warning" : "info",
+      title: "Provider readiness",
+      count:
+        unreviewedAssets > 0
+          ? `${unreviewedAssets.toLocaleString()} awaiting review`
+          : "Review enabled assets",
+      implication:
+        "Unreviewed provider assets stay out of Live Tracking and Nava Eye answers.",
+      href: withCompanyContext("/admin/assets", adminCompanyId),
+      actionLabel: "Open Asset Review",
+      suggestedQuestion:
+        "Which provider assets are waiting for review before Nava can use them?",
+    });
+  }
+
+  if (
+    capabilities.canViewFuel &&
+    Number(fuelSummary.enabled_assets_checked || 0) > 0 &&
+    Number(fuelSummary.enabled_assets_with_usable_fuel || 0) === 0
+  ) {
+    actions.push({
+      id: "fuel-evidence",
+      severity: "info",
+      title: "Fuel evidence",
+      count: "Fuel feed limited",
+      implication:
+        "Use manual fuel records and provider diagnostics until usable fuel telemetry is available.",
+      href: capabilities.canReviewAssets
+        ? withCompanyContext("/admin/providers", adminCompanyId)
+        : "/fuel",
+      actionLabel: capabilities.canReviewAssets ? "Open Provider Vault" : "Open Fuel",
+      suggestedQuestion:
+        "Which enabled trucks have usable fuel evidence, and what is missing?",
+    });
+  }
+
+  if (capabilities.canViewFinance) {
+    actions.push({
+      id: "revenue-review",
+      severity: "info",
+      title: "Revenue review",
+      count: "Finance queue",
+      implication:
+        "Review Trips against configured client rates before relying on contribution intelligence.",
+      href: "/finance/revenue",
+      actionLabel: "Open Revenue Review",
+      suggestedQuestion: "Which trips need revenue review today?",
+    });
+  }
+
+  if (!actions.length) {
+    actions.push({
+      id: "steady-state",
+      severity: "info",
+      title: "No urgent blocker",
+      count: "Ready for review",
+      implication:
+        "No high-priority dashboard blockers are visible from the current role-safe summary.",
+      href: "/nava-eye",
+      actionLabel: "Ask Nava Eye",
+      suggestedQuestion: "What should I act on today?",
+    });
+  }
+
+  return actions
+    .sort((a, b) => severityRank(b.severity) - severityRank(a.severity))
+    .slice(0, 5);
+}
+
+function buildReviewQueues(
+  overview: OverviewData | null,
+  capabilities: DashboardRoleCapabilities,
+  adminCompanyId: string
+): ReviewQueueItem[] {
+  const fleetHealth = overview?.fleet_health || {};
+  const assetReview = overview?.asset_review_summary || {};
+  const offlineCount = Number(fleetHealth.offline_trucks || 0);
+  const criticalCount = Number(fleetHealth.critical_events_24h || 0);
+  const unreviewedAssets = Number(assetReview.unreviewed_assets || 0);
+
+  return [
+    {
+      id: "tracking",
+      title: "Tracking issues",
+      value: `${offlineCount.toLocaleString()} stale/offline`,
+      body: "Check freshness, live status, and readable operational locations.",
+      href: "/tracking/live",
+      show: capabilities.canViewOps,
+    },
+    {
+      id: "ops",
+      title: "Trip operations",
+      value: `${criticalCount.toLocaleString()} event(s)`,
+      body: "Review high-severity tracker events and add operational context.",
+      href: "/ops/dashboard",
+      show: capabilities.canViewOps,
+    },
+    {
+      id: "intelligence",
+      title: "Ops Intelligence",
+      value: "Movement review",
+      body: "Review distance evidence, stopped-time, tracker markers, and trip readiness.",
+      href: "/ops/efficiency",
+      show: capabilities.canViewOps,
+    },
+    {
+      id: "revenue",
+      title: "Revenue Review",
+      value: capabilities.canViewFinance ? "Finance queue" : "Restricted",
+      body: capabilities.canViewFinance
+        ? "Match Trips to client rates and apply auditable revenue entries."
+        : "Finance details are restricted to finance and management roles.",
+      href: capabilities.canViewFinance ? "/finance/revenue" : "/dashboard",
+      show: true,
+      restricted: !capabilities.canViewFinance,
+    },
+    {
+      id: "management",
+      title: "Management intelligence",
+      value: capabilities.canViewFinance ? "Contribution velocity" : "Restricted",
+      body: capabilities.canViewFinance
+        ? "Review contribution velocity, blocked reviews, and operational drag."
+        : "Management finance intelligence is not visible for this role.",
+      href: capabilities.canViewFinance ? "/management/dashboard" : "/dashboard",
+      show: true,
+      restricted: !capabilities.canViewFinance,
+    },
+    {
+      id: "provider",
+      title: "Provider readiness",
+      value:
+        unreviewedAssets > 0
+          ? `${unreviewedAssets.toLocaleString()} awaiting review`
+          : "Review status",
+      body: "Review provider connection health, asset matching, and signal capability.",
+      href: withCompanyContext("/admin/providers", adminCompanyId),
+      show: capabilities.canReviewAssets,
+    },
+  ].filter((item) => item.show);
+}
+
+function buildCommandLinks(
+  capabilities: DashboardRoleCapabilities,
+  adminCompanyId: string
+) {
+  return [
+    { label: "Live Tracking", href: "/tracking/live", show: capabilities.canViewOps },
+    { label: "Trips", href: "/ops/journey", show: capabilities.canViewJourneys },
+    { label: "Ops Intelligence", href: "/ops/efficiency", show: capabilities.canViewOps },
+    { label: "Revenue Review", href: "/finance/revenue", show: capabilities.canViewFinance },
+    {
+      label: "Provider Vault",
+      href: withCompanyContext("/admin/providers", adminCompanyId),
+      show: capabilities.canReviewAssets,
+    },
+    { label: "Nava Eye", href: "/nava-eye", show: true },
+  ].filter((item) => item.show);
+}
+
+function groupCriticalEvents(events: any[]) {
+  const groups = new Map<string, { type: string; count: number; trucks: Set<string>; latest: string | null }>();
+
+  for (const event of events || []) {
+    const type = String(event.event_type || "tracker event");
+    const current = groups.get(type) || {
+      type,
+      count: 0,
+      trucks: new Set<string>(),
+      latest: null,
+    };
+    current.count += 1;
+    if (event.truck_id) current.trucks.add(event.truck_id);
+    if (
+      event.created_at &&
+      (!current.latest ||
+        new Date(event.created_at).getTime() > new Date(current.latest).getTime())
+    ) {
+      current.latest = event.created_at;
+    }
+    groups.set(type, current);
+  }
+
+  return Array.from(groups.values())
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 5);
 }
 
 function formatMoney(value: number, currency: string) {
@@ -510,6 +786,32 @@ function buildDashboardRoleCapabilities(roles: string[], isPlatformOwner: boolea
     isPlatformOwner,
     canReviewAssets: elevated,
   };
+}
+
+function BriefMetric({
+  label,
+  value,
+  tone = "neutral",
+}: {
+  label: string;
+  value: string;
+  tone?: "neutral" | "good" | "warn" | "danger";
+}) {
+  const toneClasses =
+    tone === "good"
+      ? "text-emerald-200"
+      : tone === "warn"
+        ? "text-amber-200"
+        : tone === "danger"
+          ? "text-rose-200"
+          : "text-white";
+
+  return (
+    <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-4">
+      <div className={`text-lg font-semibold ${toneClasses}`}>{value}</div>
+      <div className="mt-1 text-xs text-slate-500">{label}</div>
+    </div>
+  );
 }
 
 export default function DashboardPage() {
@@ -665,8 +967,10 @@ export default function DashboardPage() {
     }
   };
 
-  const askCopilot = async () => {
-    if (!copilotQuery.trim()) return;
+  const askCopilot = async (questionOverride?: string) => {
+    const question = String(questionOverride || copilotQuery || "").trim();
+    if (!question) return;
+    setCopilotQuery(question);
     setCopilotLoading(true);
     setCopilotAnswer("");
     try {
@@ -684,7 +988,7 @@ export default function DashboardPage() {
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
-          question: copilotQuery,
+          question,
           dashboard_context: buildDashboardCopilotContext(),
           ...(isPlatformOwner && selectedCompanyId
             ? { companyId: selectedCompanyId }
@@ -712,10 +1016,9 @@ export default function DashboardPage() {
   }
   if (!data || !data.success) return <div className="min-h-screen bg-slate-950 text-white p-8">Unable to load dashboard.</div>;
 
-  const fh = data.fleet_health!;
+  const fh = data.fleet_health || {};
   const company = data.company!;
   const memories = data.active_memories || [];
-  const ugandaTrucks = data.trucks_in_uganda || [];
   const showCompanySelector = isPlatformOwner || companies.length > 1;
   const selectedCompany =
     companies.find((companyOption) => companyOption.id === selectedCompanyId) ||
@@ -732,6 +1035,22 @@ export default function DashboardPage() {
   const watchItems = isPlatformWorkspace
     ? []
     : buildWatchItems(data, roleCapabilities, adminCompanyId);
+  const commandActions = isPlatformWorkspace
+    ? []
+    : buildCommandActions(data, roleCapabilities, adminCompanyId);
+  const reviewQueues = isPlatformWorkspace
+    ? []
+    : buildReviewQueues(data, roleCapabilities, adminCompanyId);
+  const commandLinks = isPlatformWorkspace
+    ? platformDashboardLinks
+    : buildCommandLinks(roleCapabilities, adminCompanyId);
+  const criticalEventGroups = groupCriticalEvents(fh.recent_critical_events || []);
+  const refreshedAtLabel = new Intl.DateTimeFormat("en-KE", {
+    hour: "2-digit",
+    minute: "2-digit",
+    day: "2-digit",
+    month: "short",
+  }).format(new Date());
   const platformSummary = data.platform_operator_summary;
   const tenantWorkspaces = platformSummary?.tenant_workspaces || [];
   const normalizedCompanySearch = companySearch.toLowerCase();
@@ -747,7 +1066,7 @@ export default function DashboardPage() {
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 bg-blue-600 rounded-full animate-pulse" />
           <h1 className="text-2xl font-bold tracking-tight">
-            {isPlatformWorkspace ? "Platform Workspace" : "Dashboard"}
+            {isPlatformWorkspace ? "Platform Workspace" : "Command Brief"}
           </h1>
           {showCompanySelector ? (
             <div className="relative ml-2">
@@ -834,20 +1153,22 @@ export default function DashboardPage() {
       </header>
 
       <div className="flex">
-        <aside className="w-64 border-r border-slate-800 p-6 space-y-6">
-          <nav className="space-y-2">
-            <div className="text-slate-400 text-sm font-semibold uppercase tracking-wider">Quick links</div>
-            {(isPlatformWorkspace ? platformDashboardLinks : dashboardLinks).map((item) => (
-              <Link
-                key={`${item.label}-${item.href}`}
-                href={item.href}
-                className="block text-slate-300 hover:text-white py-1"
-              >
-                {item.label}
-              </Link>
-            ))}
-          </nav>
-        </aside>
+        {isPlatformWorkspace && (
+          <aside className="w-64 border-r border-slate-800 p-6 space-y-6">
+            <nav className="space-y-2">
+              <div className="text-slate-400 text-sm font-semibold uppercase tracking-wider">Platform routes</div>
+              {platformDashboardLinks.map((item) => (
+                <Link
+                  key={`${item.label}-${item.href}`}
+                  href={item.href}
+                  className="block text-slate-300 hover:text-white py-1"
+                >
+                  {item.label}
+                </Link>
+              ))}
+            </nav>
+          </aside>
+        )}
 
         <main className="flex-1 p-8">
           {isPlatformWorkspace ? (
@@ -1080,119 +1401,293 @@ export default function DashboardPage() {
               </section>
             </div>
           ) : (
-            <>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-5 mb-10">
-                <div className="bg-slate-900/50 border border-slate-800 rounded-lg p-5">
-                  <div className="text-4xl font-bold">{fh.total_trucks}</div>
-                  <div className="text-slate-500 text-sm">Active Trucks</div>
-                </div>
-                <div className="bg-slate-900/50 border border-slate-800 rounded-lg p-5">
-                  <div className="text-4xl font-bold text-green-500">{fh.online_trucks}</div>
-                  <div className="text-slate-500 text-sm">Online</div>
-                </div>
-                <div className="bg-slate-900/50 border border-slate-800 rounded-lg p-5">
-                  <div className="text-4xl font-bold text-yellow-500">{fh.critical_events_24h}</div>
-                  <div className="text-slate-500 text-sm">Critical Events (24h)</div>
-                </div>
-                <div className="bg-slate-900/50 border border-slate-800 rounded-lg p-5">
-                  <div className="text-4xl font-bold text-purple-500">{ugandaTrucks.length}</div>
-                  <div className="text-slate-500 text-sm">Trucks in Uganda</div>
-                </div>
-              </div>
-
-              <div className="grid lg:grid-cols-2 gap-8">
-                <div className="space-y-6">
-                  <div className="bg-slate-900/50 border border-slate-800 rounded-lg p-5">
-                    <h2 className="text-lg font-semibold mb-4">⚠️ Highest Risk Trucks</h2>
-                    {fh.highest_risk_trucks.map((t: any) => (
-                      <div key={t.truck_id} className="flex justify-between border-b border-slate-800 py-2">
-                        <span className="font-mono">{t.truck_id}</span>
-                        <span className="text-red-400">{t.event_count} events</span>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="bg-slate-900/50 border border-slate-800 rounded-lg p-5">
-                    <h2 className="text-lg font-semibold mb-4">🛑 Highest Idle Trucks</h2>
-                    {fh.highest_idle_trucks.map((t: any) => (
-                      <div key={t.truck_id} className="flex justify-between border-b border-slate-800 py-2">
-                        <span className="font-mono">{t.truck_id}</span>
-                        <span className="text-yellow-400">{t.idle_hours} hr marker span</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="space-y-6">
-                  <div className="bg-slate-900/50 border border-slate-800 rounded-lg p-5">
-                    <h2 className="text-lg font-semibold mb-4">🔥 Recent Critical Events</h2>
-                    <div className="space-y-3 max-h-64 overflow-y-auto">
-                      {fh.recent_critical_events.map((e: any, idx: number) => (
-                        <div key={idx} className="border-l-2 border-red-500 pl-3">
-                          <div className="flex justify-between text-sm">
-                            <span className="font-mono">{e.truck_id}</span>
-                            <span className="text-slate-500 text-xs">{new Date(e.created_at).toLocaleString()}</span>
-                          </div>
-                          <div className="text-sm my-1">{e.event_type.replace(/_/g, " ").toUpperCase()}</div>
-                          <div className="text-xs text-slate-500">{e.location_name || "Unknown"}</div>
-                        </div>
-                      ))}
+            <div className="space-y-8">
+              <section className="rounded-lg border border-cyan-200/20 bg-slate-900/70 p-6 shadow-2xl shadow-black/20">
+                <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr] xl:items-start">
+                  <div>
+                    <div className="text-xs font-semibold uppercase tracking-[0.24em] text-cyan-200">
+                      Command brief
+                    </div>
+                    <h2 className="mt-2 text-3xl font-semibold tracking-tight text-white">
+                      {company.name} operating brief
+                    </h2>
+                    <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-300">
+                      Action-first summary of today&apos;s tracking freshness,
+                      operational events, review blockers, and the next pages to open.
+                    </p>
+                    <div className="mt-5 flex flex-wrap gap-2 text-xs text-slate-300">
+                      <span className="rounded-md border border-white/10 bg-slate-950/50 px-3 py-1.5">
+                        Refreshed {refreshedAtLabel}
+                      </span>
+                      <span className="rounded-md border border-white/10 bg-slate-950/50 px-3 py-1.5">
+                        {Number(fh.online_trucks || 0).toLocaleString()} live now
+                      </span>
+                      <span className="rounded-md border border-white/10 bg-slate-950/50 px-3 py-1.5">
+                        {Number(fh.offline_trucks || 0).toLocaleString()} stale/offline
+                      </span>
                     </div>
                   </div>
 
-                  <div className="bg-slate-900/50 border border-slate-800 rounded-lg p-5">
-                    <div className="flex items-start justify-between gap-4 mb-4">
+                  <div className="rounded-lg border border-white/10 bg-slate-950/50 p-4">
+                    <div className="flex items-center justify-between gap-3">
                       <div>
-                        <h2 className="text-lg font-semibold">Nava Eye Watch</h2>
-                        <p className="text-xs text-slate-500 mt-1">
-                          Evidence-led items from the current dashboard data.
+                        <div className="text-sm font-semibold text-white">Ask Nava Eye</div>
+                        <div className="mt-1 text-xs text-slate-500">
+                          Ask about the active brief or a specific truck.
+                        </div>
+                      </div>
+                      <span className="rounded-md border border-blue-500/30 bg-blue-500/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-blue-300">
+                        Source-grounded
+                      </span>
+                    </div>
+                    <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+                      <input
+                        value={copilotQuery}
+                        onChange={(e) => setCopilotQuery(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") askCopilot();
+                        }}
+                        placeholder="Ask what needs attention today..."
+                        className="min-w-0 flex-1 rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => askCopilot()}
+                        disabled={copilotLoading || !copilotQuery.trim()}
+                        className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-blue-900"
+                      >
+                        {copilotLoading ? "Checking..." : "Ask"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section>
+                <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+                  <div>
+                    <h2 className="text-lg font-semibold text-white">
+                      Needs attention today
+                    </h2>
+                    <p className="mt-1 text-sm text-slate-500">
+                      Prioritized from role-safe fleet, provider, and review signals.
+                    </p>
+                  </div>
+                  <Link
+                    href="/nava-eye"
+                    className="rounded-md border border-cyan-300/30 px-3 py-2 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-300/10"
+                  >
+                    Open Nava Eye
+                  </Link>
+                </div>
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                  {commandActions.map((item) => (
+                    <div
+                      key={item.id}
+                      className={`rounded-lg border p-5 ${actionCardClasses(item.severity)}`}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="text-sm font-semibold text-white">
+                            {item.title}
+                          </div>
+                          <div className="mt-2 text-2xl font-semibold text-white">
+                            {item.count}
+                          </div>
+                        </div>
+                        <span className="rounded-md border border-current/30 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-200">
+                          {item.severity}
+                        </span>
+                      </div>
+                      <p className="mt-3 text-sm leading-6 text-slate-300">
+                        {item.implication}
+                      </p>
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        <Link
+                          href={item.href}
+                          className="rounded-md border border-white/10 bg-slate-950/40 px-3 py-2 text-xs font-semibold text-slate-100 transition hover:border-cyan-300/40 hover:text-cyan-100"
+                        >
+                          {item.actionLabel}
+                        </Link>
+                        {item.suggestedQuestion && (
+                          <button
+                            type="button"
+                            onClick={() => askCopilot(item.suggestedQuestion)}
+                            className="rounded-md border border-blue-400/30 px-3 py-2 text-xs font-semibold text-blue-100 transition hover:bg-blue-500/10"
+                          >
+                            Ask Nava Eye
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+
+              <section className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+                <BriefMetric label="Enabled assets" value={Number(fh.total_trucks || 0).toLocaleString()} />
+                <BriefMetric label="Live now" value={Number(fh.online_trucks || 0).toLocaleString()} tone="good" />
+                <BriefMetric label="Stale/offline" value={Number(fh.offline_trucks || 0).toLocaleString()} tone="warn" />
+                <BriefMetric label="Trip review" value={roleCapabilities.canViewJourneys ? "Open queue" : "Restricted"} />
+                <BriefMetric label="Critical events" value={Number(fh.critical_events_24h || 0).toLocaleString()} tone={Number(fh.critical_events_24h || 0) > 0 ? "danger" : "good"} />
+                <BriefMetric label="Provider readiness" value={roleCapabilities.canReviewAssets ? `${Number(data.asset_review_summary?.unreviewed_assets || 0).toLocaleString()} review` : "Role-gated"} />
+              </section>
+
+              <section className="grid gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(360px,0.65fr)]">
+                <div className="space-y-6">
+                  <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-5">
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <h2 className="text-lg font-semibold text-white">Review queues</h2>
+                        <p className="mt-1 text-sm text-slate-500">
+                          Role-aware work areas. Restricted queues show boundaries without exposing amounts.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="mt-5 grid gap-3 md:grid-cols-2">
+                      {reviewQueues.map((queue) =>
+                        queue.restricted ? (
+                          <div
+                            key={queue.id}
+                            className="rounded-lg border border-white/10 bg-slate-950/40 p-4"
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div>
+                                <div className="text-sm font-semibold text-slate-100">
+                                  {queue.title}
+                                </div>
+                                <div className="mt-2 text-lg font-semibold text-slate-400">
+                                  {queue.value}
+                                </div>
+                              </div>
+                            </div>
+                            <p className="mt-2 text-sm leading-5 text-slate-500">
+                              {queue.body}
+                            </p>
+                          </div>
+                        ) : (
+                          <Link
+                            key={queue.id}
+                            href={queue.href}
+                            className="group rounded-lg border border-white/10 bg-slate-950/40 p-4 transition hover:border-cyan-300/40 hover:bg-slate-900"
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div>
+                                <div className="text-sm font-semibold text-slate-100 group-hover:text-cyan-100">
+                                  {queue.title}
+                                </div>
+                                <div className="mt-2 text-lg font-semibold text-white">
+                                  {queue.value}
+                                </div>
+                              </div>
+                              <span className="text-slate-500 group-hover:text-cyan-200">→</span>
+                            </div>
+                            <p className="mt-2 text-sm leading-5 text-slate-500">
+                              {queue.body}
+                            </p>
+                          </Link>
+                        )
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-5">
+                    <h2 className="text-lg font-semibold text-white">
+                      Event review
+                    </h2>
+                    <p className="mt-1 text-sm text-slate-500">
+                      High-severity tracker events grouped for triage, not shown as raw event spam.
+                    </p>
+                    {criticalEventGroups.length ? (
+                      <div className="mt-4 grid gap-3 md:grid-cols-2">
+                        {criticalEventGroups.map((group) => (
+                          <div
+                            key={group.type}
+                            className="rounded-lg border border-rose-300/20 bg-rose-500/10 p-4"
+                          >
+                            <div className="text-sm font-semibold text-rose-100">
+                              {formatWatchLabel(group.type)}
+                            </div>
+                            <div className="mt-2 text-2xl font-semibold text-white">
+                              {group.count.toLocaleString()}
+                            </div>
+                            <div className="mt-1 text-xs text-slate-400">
+                              {group.trucks.size.toLocaleString()} affected truck(s)
+                              {group.latest ? ` · latest ${formatRelativeTime(group.latest)}` : ""}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="mt-4 rounded-lg border border-white/10 bg-slate-950/40 p-4 text-sm text-slate-400">
+                        No high-severity tracker events in the current dashboard window.
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-5">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <h2 className="text-lg font-semibold text-white">
+                          Command routes
+                        </h2>
+                        <p className="mt-1 text-sm text-slate-500">
+                          Open the specialist workspace after this brief points you there.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      {commandLinks.map((item) => (
+                        <Link
+                          key={`${item.label}-${item.href}`}
+                          href={item.href}
+                          className="rounded-md border border-white/10 bg-slate-950/40 px-3 py-2 text-sm font-semibold text-slate-200 transition hover:border-cyan-300/40 hover:text-cyan-100"
+                        >
+                          {item.label}
+                        </Link>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-6">
+                  <div className="rounded-lg border border-cyan-200/20 bg-slate-900/50 p-5">
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <h2 className="text-lg font-semibold text-white">Nava Eye Watch</h2>
+                        <p className="mt-1 text-sm text-slate-500">
+                          Suggested questions from the current brief.
                         </p>
                       </div>
                       <span className="rounded-md border border-blue-500/30 bg-blue-500/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-blue-300">
-                        Live read
+                        Action assistant
                       </span>
                     </div>
 
                     {watchItems.length ? (
-                      <div className="space-y-3">
+                      <div className="mt-4 space-y-3">
                         {watchItems.map((item) => (
                           <div
                             key={item.id}
                             className={`rounded-lg border p-3 ${severityClasses(item.severity)}`}
                           >
-                            <div className="flex flex-wrap items-start justify-between gap-2">
-                              <div className="min-w-0">
-                                <div className="text-sm font-semibold text-slate-100">
-                                  {item.title}
-                                </div>
-                                <div className="mt-1 text-xs leading-5 text-slate-300">
-                                  {item.summary}
-                                </div>
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="text-sm font-semibold text-slate-100">
+                                {item.title}
                               </div>
                               <span className="shrink-0 rounded-md border border-current/30 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide">
                                 {item.severity}
                               </span>
                             </div>
-
-                            {item.evidence.length > 0 && (
-                              <ul className="mt-3 space-y-1 text-xs text-slate-300">
-                                {item.evidence.slice(0, 4).map((evidence) => (
-                                  <li key={evidence} className="break-words">
-                                    • {evidence}
-                                  </li>
-                                ))}
-                              </ul>
-                            )}
-
-                            <div className="mt-3 rounded-lg bg-slate-950/40 p-2 text-xs text-slate-300">
-                              {item.suggested_next_check}
-                            </div>
-
+                            <p className="mt-2 text-xs leading-5 text-slate-300">
+                              {item.summary}
+                            </p>
                             <div className="mt-3 flex flex-wrap gap-2">
                               {item.suggested_question && (
                                 <button
                                   type="button"
-                                  onClick={() => setCopilotQuery(item.suggested_question || "")}
-                                  className="rounded-lg border border-blue-500/40 px-3 py-1.5 text-xs font-medium text-blue-200 hover:bg-blue-500/10"
+                                  onClick={() => askCopilot(item.suggested_question)}
+                                  className="rounded-md border border-blue-400/30 px-3 py-1.5 text-xs font-semibold text-blue-100 transition hover:bg-blue-500/10"
                                 >
                                   Ask Nava Eye
                                 </button>
@@ -1200,9 +1695,9 @@ export default function DashboardPage() {
                               {item.href && (
                                 <Link
                                   href={item.href}
-                                  className="rounded-lg border border-slate-600 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-800"
+                                  className="rounded-md border border-slate-600 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:bg-slate-800"
                                 >
-                                  Open related view
+                                  Open view
                                 </Link>
                               )}
                             </div>
@@ -1210,60 +1705,74 @@ export default function DashboardPage() {
                         ))}
                       </div>
                     ) : (
-                      <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-4 text-sm text-slate-400">
-                        No urgent watch items from the current dashboard data.
+                      <div className="mt-4 rounded-lg border border-slate-800 bg-slate-950/40 p-4 text-sm text-slate-400">
+                        No urgent watch items from the current role-safe summary.
                       </div>
                     )}
-                  </div>
 
-                  <div className="bg-slate-900/50 border border-slate-800 rounded-lg p-5">
-                    <h2 className="text-lg font-semibold mb-4">Nava Eye fleet answers</h2>
-                    <textarea
-                      value={copilotQuery}
-                      onChange={(e) => setCopilotQuery(e.target.value)}
-                      placeholder="Ask about live status, trip review, fuel records, or a specific truck..."
-                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-600"
-                      rows={3}
-                    />
-                    <button
-                      onClick={askCopilot}
-                      disabled={copilotLoading || !copilotQuery.trim()}
-                      className="mt-3 w-full bg-blue-600 hover:bg-blue-500 disabled:bg-blue-800 text-white font-medium py-2 rounded-md transition"
-                    >
-                      {copilotLoading ? "Checking your fleet data..." : "Ask Nava Eye"}
-                    </button>
                     {copilotAnswer && (
-                      <div className="mt-4 bg-slate-800/50 rounded-lg p-4 border border-slate-700">
-                        <div className="text-sm text-slate-300 whitespace-pre-wrap">{copilotAnswer}</div>
+                      <div className="mt-4 rounded-lg border border-slate-700 bg-slate-950/60 p-4">
+                        <div className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-200">
+                          Nava Eye answer
+                        </div>
+                        <div className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-300">
+                          {copilotAnswer}
+                        </div>
                       </div>
                     )}
                   </div>
 
-                  <div className="bg-slate-900/50 border border-slate-800 rounded-lg p-5">
-                    <h2 className="text-lg font-semibold mb-4">💡 Active Insights</h2>
-                    <div className="space-y-3">
-                      {memories.map((m) => (
-                        <div key={m.id} className="border border-slate-700 rounded-lg p-3">
-                          <div className="flex items-center gap-2 mb-1">
-                            <span className={`px-2 py-0.5 text-xs rounded-md font-medium ${
-                              m.severity === "critical" ? "bg-red-900/50 text-red-300" :
-                              m.severity === "warning" ? "bg-yellow-900/50 text-yellow-300" :
-                              "bg-blue-900/50 text-blue-300"
-                            }`}>
-                              {m.severity}
-                            </span>
-                            <span className="text-xs text-slate-500 font-mono">{m.memory_type}</span>
+                  <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-5">
+                    <h2 className="text-lg font-semibold text-white">
+                      Active intelligence notes
+                    </h2>
+                    <p className="mt-1 text-sm text-slate-500">
+                      Durable Nava Eye notes that remain visible for this workspace and role.
+                    </p>
+                    {memories.length ? (
+                      <div className="mt-4 space-y-3">
+                        {memories.slice(0, 4).map((memory) => (
+                          <div
+                            key={memory.id}
+                            className="rounded-lg border border-white/10 bg-slate-950/40 p-3"
+                          >
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className={`rounded-md px-2 py-0.5 text-xs font-semibold ${
+                                memory.severity === "critical"
+                                  ? "bg-red-900/50 text-red-300"
+                                  : memory.severity === "warning"
+                                    ? "bg-yellow-900/50 text-yellow-300"
+                                    : "bg-blue-900/50 text-blue-300"
+                              }`}>
+                                {memory.severity || "info"}
+                              </span>
+                              <span className="text-xs text-slate-500">
+                                {formatWatchLabel(memory.memory_type)}
+                              </span>
+                            </div>
+                            <div className="mt-2 text-sm font-semibold text-slate-100">
+                              {memory.title}
+                            </div>
+                            <div className="mt-1 text-xs leading-5 text-slate-400">
+                              {memory.summary}
+                            </div>
+                            {memory.recommendation && (
+                              <div className="mt-2 text-xs text-blue-300">
+                                {memory.recommendation}
+                              </div>
+                            )}
                           </div>
-                          <div className="font-medium text-sm">{m.title}</div>
-                          <div className="text-xs text-slate-400 mt-1">{m.summary}</div>
-                          {m.recommendation && <div className="text-xs text-blue-400 mt-2">🔧 {m.recommendation}</div>}
-                        </div>
-                      ))}
-                    </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="mt-4 rounded-lg border border-white/10 bg-slate-950/40 p-4 text-sm text-slate-400">
+                        No active intelligence notes for this workspace.
+                      </div>
+                    )}
                   </div>
                 </div>
-              </div>
-            </>
+              </section>
+            </div>
           )}
         </main>
       </div>
