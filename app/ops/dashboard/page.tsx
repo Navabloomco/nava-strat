@@ -40,6 +40,12 @@ function normalizeTruck(value: string | null | undefined) {
   return String(value || "").trim().toUpperCase().replace(/\s+/g, "");
 }
 
+function eventLabel(value: any) {
+  return String(value || "Event")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
 function freshnessLabel(lastSeenAt: string | null | undefined) {
   if (!lastSeenAt) return "No recent telemetry";
   const minutes = Math.floor((Date.now() - new Date(lastSeenAt).getTime()) / 60000);
@@ -281,7 +287,7 @@ export default function OpsDashboard() {
         />
 
         <section className="mt-8 grid gap-4 md:grid-cols-3">
-          <Metric label="Active journeys" value={data.summary?.active_journeys || 0} />
+          <Metric label="Active trips" value={data.summary?.active_journeys || 0} />
           <Metric label="Online assets" value={data.summary?.online_assets || 0} accent />
           <Metric label="Alerts" value={data.summary?.alert_count || 0} />
         </section>
@@ -486,7 +492,7 @@ export default function OpsDashboard() {
                   >
                     <div className="flex items-center justify-between gap-4">
                       <div className="text-sm font-semibold text-slate-100">
-                        {alert.truck_id || "Unknown asset"} - {alert.event_type || "Event"}
+                        {alert.truck_id || "Unknown asset"} - {eventLabel(alert.event_type)}
                       </div>
                       <StatusPill tone={alert.severity === "high" ? "danger" : "warning"}>
                         {alert.severity || "event"}

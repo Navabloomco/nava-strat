@@ -434,7 +434,7 @@ export async function PATCH(req: Request) {
 
     if (!journeys || journeys.length !== journeyIds.length) {
       return NextResponse.json(
-        { success: false, error: "One or more journeys were not found" },
+        { success: false, error: "One or more trips were not found" },
         { status: 404 }
       );
     }

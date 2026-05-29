@@ -154,7 +154,7 @@ export default function ExpensesPage() {
                 value={expenses.length.toLocaleString()}
               />
               <SummaryCard label="Total amount" value={formatMoney(totalAmount)} />
-              <SummaryCard label="Linked to journeys" value={linkedCount.toLocaleString()} />
+              <SummaryCard label="Linked to trips" value={linkedCount.toLocaleString()} />
               <SummaryCard
                 label="Unallocated"
                 value={unallocatedCount.toLocaleString()}

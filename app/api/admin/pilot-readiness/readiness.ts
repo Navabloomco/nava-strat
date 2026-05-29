@@ -363,7 +363,7 @@ function buildChecks(input: {
       input.company.name && input.company.slug
         ? "Name and slug are present."
         : "Company name or slug is missing.",
-      "Update company settings before pilot.",
+      "Update company settings before launch.",
       `/admin/company?companyId=${companyId}`
     ),
     check(
@@ -395,7 +395,7 @@ function buildChecks(input: {
       input.pricing.pricing_set
         ? "Per-asset price is configured."
         : "Per-asset price is missing or zero.",
-      "Set asset_unit_price before pilot billing.",
+      "Set asset_unit_price before billing review.",
       `/admin/company?companyId=${companyId}`
     ),
     check(
@@ -477,7 +477,7 @@ function buildChecks(input: {
         input.assetSummary.enabled_intelligence_count === 0
         ? "Imported assets exist, but none are enabled for live intelligence."
         : "Imported assets are not stuck outside intelligence review.",
-      "Open Asset Review and enable the pilot vehicles.",
+      "Open Asset Review and enable vehicles.",
       `/admin/assets?companyId=${companyId}`
     ),
     check(
@@ -521,7 +521,7 @@ function buildChecks(input: {
       adminCount > 0
         ? `${adminCount} owner/admin/platform owner membership(s) found.`
         : "No owner, admin, or platform owner membership was found for this company.",
-      "Add at least one owner/admin membership before pilot support.",
+      "Add at least one owner/admin membership before support.",
       "/admin"
     ),
     check(
@@ -541,7 +541,7 @@ function buildChecks(input: {
       input.assetSummary.enabled_intelligence_count > 0
         ? "Operations can use at least one enabled asset."
         : "Operations will be thin until at least one asset is enabled.",
-      "Enable pilot vehicles in Asset Review.",
+      "Enable vehicles in Asset Review.",
       `/admin/assets?companyId=${companyId}`
     ),
     optionalCountCheck(
@@ -549,7 +549,7 @@ function buildChecks(input: {
       "Driver directory",
       input.drivers,
       "driver",
-      "Add drivers so alerts and journeys can use consistent driver names.",
+      "Add drivers so alerts and trips can use consistent driver names.",
       "/ops/drivers"
     ),
     optionalCountCheck(
@@ -562,12 +562,12 @@ function buildChecks(input: {
     ),
     check(
       "Operations readiness",
-      "Journeys or saved routes",
+      "Trips or saved routes",
       journeyOrRouteCount > 0 ? "pass" : "warning",
       journeyOrRouteCount > 0
-        ? `${journeyOrRouteCount} journey/saved route record(s) found.`
-        : "No journeys or saved routes exist yet.",
-      "Create a journey or saved route before live pilot operations.",
+        ? `${journeyOrRouteCount} trip/saved route record(s) found.`
+        : "No trips or saved routes exist yet.",
+      "Create a trip or saved route before live operations.",
       "/ops/journey"
     ),
     check(
@@ -725,14 +725,14 @@ function overallReadiness(counts: { pass: number; warning: number; fail: number 
     return {
       status: "needs_attention",
       label: "Needs attention",
-      explanation: "No blockers, but warnings should be reviewed before pilot.",
+      explanation: "No blockers, but warnings should be reviewed before launch.",
     };
   }
 
   return {
     status: "ready",
     label: "Ready",
-    explanation: "All pilot readiness checks are passing.",
+    explanation: "All readiness checks are passing.",
   };
 }
 

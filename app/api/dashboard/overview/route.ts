@@ -103,7 +103,7 @@ async function getPlatformOperatorSummary(operatorCompanyId: string) {
       .from("tracking_providers")
       .select("id, company_id, is_active"),
     buildPilotReadinessList().catch((error) => ({
-      error: error?.message || "Pilot readiness summary unavailable",
+      error: error?.message || "Readiness summary unavailable",
     })),
   ]);
 

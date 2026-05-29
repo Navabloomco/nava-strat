@@ -246,7 +246,7 @@ export default function ClientVisibilityPage() {
           <Panel dark className="p-6">
             <h2 className="text-xl font-semibold">Create visibility link</h2>
             <p className="mt-2 text-sm leading-6 text-slate-300">
-              Enter the client name exactly as used on journeys. Nava stores the
+              Enter the client name exactly as used on trips. Nava stores the
               link token securely and only shows the public URL once.
             </p>
 

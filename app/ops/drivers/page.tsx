@@ -384,7 +384,7 @@ export default function DriversPage() {
           dark
           eyebrow="Operations"
           title="Drivers"
-          body="Keep driver names consistent before they are used in journeys, alerts, and fleet answers."
+          body="Keep driver names consistent before they are used in trips, alerts, and fleet answers."
           actions={
             <div className="flex flex-col gap-3 sm:flex-row">
               <Link href="/ops/dashboard">
@@ -604,7 +604,7 @@ export default function DriversPage() {
                 <EmptyState
                   dark
                   title="No drivers yet"
-                  body="Add drivers once so journeys and alerts can use consistent driver names."
+                  body="Add drivers once so trips and alerts can use consistent driver names."
                 />
               ) : filteredDrivers.length === 0 ? (
                 <EmptyState

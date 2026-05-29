@@ -67,7 +67,7 @@ function chooseDefaultDashboardCompanyId(
 
 const dashboardLinks = [
   { label: "Fleet / live tracking", href: "/tracking/live" },
-  { label: "Journeys", href: "/ops/journey" },
+  { label: "Trips", href: "/ops/journey" },
   { label: "Fuel", href: "/fuel" },
   { label: "Nava Eye", href: "/nava-eye" },
   { label: "Settings", href: "/admin/company" },
@@ -76,7 +76,7 @@ const dashboardLinks = [
 const platformDashboardLinks = [
   { label: "Admin Hub", href: "/admin" },
   { label: "Tenant Billing", href: "/admin/tenants" },
-  { label: "Pilot Readiness", href: "/admin/pilot-readiness" },
+  { label: "Readiness", href: "/admin/pilot-readiness" },
   { label: "Platform Health", href: "/admin/health" },
   { label: "Provider Requests", href: "/admin/provider-requests" },
   { label: "Provider Vault", href: "/admin/providers" },
@@ -146,7 +146,7 @@ const platformActionGroups = [
         label: "Platform Health",
         href: "/admin/health",
         description:
-          "Check environment, schema, billing, provider, and pilot readiness foundations.",
+          "Check environment, schema, billing, provider, and go-live readiness.",
       },
       {
         label: "Provider Requests",
@@ -173,7 +173,7 @@ const platformActionGroups = [
           "Review strict billable assets, pricing setup, and tenant billing previews.",
       },
       {
-        label: "Pilot Readiness",
+        label: "Readiness",
         href: "/admin/pilot-readiness",
         description:
           "See which tenants are ready, blocked, or need setup attention.",
@@ -261,7 +261,7 @@ function buildWatchItems(
           )}, latest provider marker ${formatRelativeTime(truck.latest_idle_event_at)}`
       ),
       suggested_next_check:
-        "Check active journeys, geofences, driver assignment, and provider freshness for the same trucks.",
+        "Check active trips, geofences, driver assignment, and provider freshness for the same trucks.",
       suggested_question:
         "Are the top provider idle-marker trucks still stopped, and what context explains the stop?",
       href: "/tracking/live",
@@ -353,7 +353,7 @@ function buildWatchItems(
           `${event.truck_id}: ${formatWatchLabel(event.event_type)} ${formatRelativeTime(event.created_at)}`
       ),
       suggested_next_check:
-        "Check whether these events line up with journeys, geofences, driver assignment, or shared disruption context.",
+        "Check whether these events line up with trips, geofences, driver assignment, or shared disruption context.",
       suggested_question:
         "Explain the recent critical events and what context might matter.",
       href: "/ops/dashboard",
@@ -1217,11 +1217,11 @@ export default function DashboardPage() {
                   </div>
 
                   <div className="bg-slate-900/50 border border-slate-800 rounded-lg p-5">
-                    <h2 className="text-lg font-semibold mb-4">🧠 Nava Eye fleet answers</h2>
+                    <h2 className="text-lg font-semibold mb-4">Nava Eye fleet answers</h2>
                     <textarea
                       value={copilotQuery}
                       onChange={(e) => setCopilotQuery(e.target.value)}
-                      placeholder="Ask about fleet health, fuel risk, specific trucks..."
+                      placeholder="Ask about live status, trip review, fuel records, or a specific truck..."
                       className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-600"
                       rows={3}
                     />

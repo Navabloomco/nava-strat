@@ -303,7 +303,7 @@ function buildSafeProviderFeedSummary(provider: any) {
       ]).slice(0, 10),
       setup_message: reportConfigured
         ? "Report/distance feed is configured for dry-run testing."
-        : "Report endpoint not configured yet. Ask provider for get_reports parameters: date range, report type, vehicle id, row path, and sample JSON.",
+        : "Report feed is not configured yet. Ask provider for report parameters: date range, report type, vehicle id, vehicle data group, and sample response.",
     },
   };
 }
@@ -1337,7 +1337,7 @@ async function applySuggestedVehiclePath({
     field_mapping: nextFieldMapping,
     is_active: false,
     last_test_status: "retest_required",
-    last_test_message: `Vehicle row path updated to ${rowPathResult.path}. Run Test Connection again.`,
+    last_test_message: `Vehicle data group updated to ${rowPathResult.path}. Run Test Connection again.`,
     last_test_at: null,
   };
 
@@ -1356,7 +1356,7 @@ async function applySuggestedVehiclePath({
     provider: sanitizeProvider(provider, resolved.capabilities),
     applied_vehicle_path: rowPathResult.path,
     applied_field_mapping: mappingSuggestions,
-    message: `Vehicle row path updated to ${rowPathResult.path}. Run Test Connection again.`,
+    message: `Vehicle data group updated to ${rowPathResult.path}. Run Test Connection again.`,
   });
 }
 
@@ -1367,7 +1367,7 @@ function clonePlainObject(value: any) {
 
 function sanitizeSuggestedVehicleRowPath(value: any) {
   const path = normalizeProviderRowPath(value);
-  if (!path) return { error: "Suggested vehicle row path is required." };
+  if (!path) return { error: "Suggested vehicle data group is required." };
   if (
     path.includes("://") ||
     /[\s,]/.test(path) ||
@@ -1376,7 +1376,7 @@ function sanitizeSuggestedVehicleRowPath(value: any) {
   ) {
     return {
       error:
-        "Use one JSON row path only, for example $, $.items, data, items, or data.vehicles.",
+        "Use one vehicle data group only, for example $, $.items, data, items, or data.vehicles.",
     };
   }
   return { path };

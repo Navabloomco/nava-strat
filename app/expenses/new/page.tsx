@@ -53,7 +53,7 @@ export default function NewExpensePage() {
     const json = await res.json();
 
     if (!res.ok || !json.success) {
-      setMessage(json.error || "Failed to load journeys.");
+      setMessage(json.error || "Failed to load trips.");
       setLoading(false);
       return;
     }
@@ -140,12 +140,12 @@ export default function NewExpensePage() {
           dark
           eyebrow="Finance control"
           title="Add Expense"
-          body="Capture operational costs and optionally allocate them to an active journey."
+          body="Capture operational costs and optionally allocate them to an active trip."
         />
 
         {loading && (
           <Panel dark className="mt-8 p-6">
-            <div className="text-sm text-slate-300">Loading journeys...</div>
+            <div className="text-sm text-slate-300">Loading trips...</div>
           </Panel>
         )}
         {message && (
@@ -156,7 +156,7 @@ export default function NewExpensePage() {
 
         <Panel dark className="mt-8 p-6">
           <form onSubmit={handleSubmit} className="grid gap-5">
-            <FormField label="Journey optional" dark>
+            <FormField label="Trip optional" dark>
               <JourneyPicker
                 journeys={journeys}
                 value={journeyId}
@@ -169,7 +169,7 @@ export default function NewExpensePage() {
             <div className="grid gap-5 md:grid-cols-2">
               <FormField label="Truck" dark>
                 <input
-                  placeholder="Truck e.g. KBJ123A"
+                  placeholder="Enter vehicle registration"
                   value={truck}
                   onChange={(e) => setTruck(e.target.value.toUpperCase())}
                   className={inputClass}
@@ -241,7 +241,7 @@ export default function NewExpensePage() {
             <div className="grid gap-5 md:grid-cols-2">
               <FormField label="Paid to / vendor" dark>
                 <input
-                  placeholder="Paid to / Vendor e.g. KARIUKI, KRA, COUNTY"
+                  placeholder="Enter payee or vendor"
                   value={vendor}
                   onChange={(e) => setVendor(e.target.value.toUpperCase())}
                   className={inputClass}

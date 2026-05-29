@@ -223,7 +223,7 @@ export default function PlatformTenantDetailPage() {
           dark
           eyebrow="Tenant readiness"
           title={company.name || "Tenant"}
-          body="Internal platform view for pilot billing readiness, provider setup, asset review, and telemetry freshness."
+          body="Internal platform view for billing readiness, provider setup, asset review, and telemetry freshness."
           actions={
             <div className="flex flex-col gap-2 sm:flex-row">
               <Link href={`/admin/tenants/${companyId || ""}/invoice-preview`}>

@@ -399,7 +399,7 @@ export default function Onboarding() {
             <section className="rounded-lg border border-slate-200 bg-white p-6">
               <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <h2 className="text-xl font-semibold">Pilot readiness checklist</h2>
+                  <h2 className="text-xl font-semibold">Go-live readiness checklist</h2>
                   <p className="mt-1 text-sm text-slate-600">
                     {completeCount} of {checklistItems.length} checks complete.
                   </p>

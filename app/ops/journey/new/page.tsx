@@ -403,7 +403,7 @@ export default function NewJourneyPage() {
           dark
           eyebrow="Operations"
           title="Create Trip"
-          body="Create a real production trip so Nava can link movement, driver context, fuel, expenses, revenue, and progress to the right operation."
+          body="Create a production trip so Nava can link movement, driver context, fuel, expenses, revenue review, and proof to the right operation."
           actions={
             <Link href="/ops/journey">
               <SecondaryButton type="button">Back to trips</SecondaryButton>
@@ -503,7 +503,7 @@ export default function NewJourneyPage() {
               <div className="mt-5 grid gap-5 md:grid-cols-2">
                 <FormField label="Client" dark>
                   <input
-                    placeholder="Client e.g. ENGAANO"
+                    placeholder="Enter client name"
                     value={client}
                     onChange={(e) => setClient(e.target.value.toUpperCase())}
                     className={inputClass}
@@ -513,7 +513,7 @@ export default function NewJourneyPage() {
 
                 <FormField label="Vehicle" dark>
                   <input
-                    placeholder="Vehicle e.g. KBJ123A"
+                    placeholder="Enter vehicle registration"
                     value={truck}
                     onChange={(e) => {
                       setSelectedVehicleId("");
@@ -527,7 +527,7 @@ export default function NewJourneyPage() {
 
                 <FormField label="Driver optional" dark>
                   <input
-                    placeholder="Driver e.g. KARIUKI"
+                    placeholder="Enter driver name"
                     value={driver}
                     onChange={(e) => {
                       setSelectedDriverId("");
@@ -697,12 +697,12 @@ export default function NewJourneyPage() {
             <section>
               <h2 className="text-lg font-semibold text-white">Route</h2>
               <p className="mt-1 text-sm leading-6 text-slate-400">
-                Capture where the journey starts and where the customer expects delivery.
+                Capture where the trip starts and where the customer expects delivery.
               </p>
               <div className="mt-5 grid gap-5 md:grid-cols-2">
                 <FormField label="From" dark>
                   <input
-                    placeholder="From e.g. MOMBASA"
+                    placeholder="Enter origin"
                     value={fromLocation}
                     onChange={(e) => setFromLocation(e.target.value.toUpperCase())}
                     className={inputClass}
@@ -712,7 +712,7 @@ export default function NewJourneyPage() {
 
                 <FormField label="To" dark>
                   <input
-                    placeholder="To e.g. JINJA"
+                    placeholder="Enter destination"
                     value={toLocation}
                     onChange={(e) => setToLocation(e.target.value.toUpperCase())}
                     className={inputClass}
@@ -761,7 +761,7 @@ export default function NewJourneyPage() {
               <div className="mt-5">
                 <FormField label="Expected fuel optional" dark>
                   <input
-                    placeholder="Default route fuel optional e.g. 480"
+                    placeholder="Expected litres, if known"
                     value={expectedFuel}
                     onChange={(e) => setExpectedFuel(e.target.value)}
                     className={inputClass}

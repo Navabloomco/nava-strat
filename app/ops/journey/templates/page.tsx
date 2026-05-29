@@ -251,17 +251,17 @@ export default function JourneyTemplatesPage() {
           dark
           eyebrow="Operations setup"
           title="Saved Routes"
-          body="Save frequent client routes so journey creation takes seconds, not minutes."
+          body="Save frequent client routes so trip creation takes seconds, not minutes."
           actions={
             <div className="flex flex-col gap-3 sm:flex-row">
               <Link href="/ops/journey">
                 <SecondaryButton type="button" className="w-full sm:w-auto">
-                  Back to journeys
+                  Back to trips
                 </SecondaryButton>
               </Link>
               <Link href="/ops/journey/new">
                 <PrimaryButton type="button" className="w-full sm:w-auto">
-                  Create journey
+                  Create trip
                 </PrimaryButton>
               </Link>
             </div>
@@ -325,7 +325,7 @@ export default function JourneyTemplatesPage() {
                       Add saved route
                     </h2>
                     <p className="mt-2 text-sm leading-6 text-slate-300">
-                      Create a route preset your team can use when starting repeat journeys.
+                      Create a route preset your team can use when starting repeat trips.
                     </p>
                   </div>
 

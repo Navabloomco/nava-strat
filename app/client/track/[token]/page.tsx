@@ -79,7 +79,7 @@ export default function ClientTrackingPortalPage() {
               {data?.client.name || "Client tracking"}
             </h1>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-300">
-              A secure delivery view for active journeys, current truck status, and
+              A secure delivery view for active trips, current truck status, and
               quantity movement.
             </p>
           </div>
@@ -122,7 +122,7 @@ export default function ClientTrackingPortalPage() {
         ) : (
           <>
             <section className="mt-8 grid gap-4 sm:grid-cols-3">
-              <Metric label="Visible journeys" value={data?.journeys.length || 0} />
+              <Metric label="Visible trips" value={data?.journeys.length || 0} />
               <Metric
                 label="With location"
                 value={

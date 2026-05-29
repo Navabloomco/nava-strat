@@ -25,9 +25,9 @@ export async function GET(
       readiness,
     });
   } catch (err: any) {
-    console.error("Admin pilot readiness detail GET error:", err);
+    console.error("Admin readiness detail GET error:", err);
     return noStoreJson(
-      { success: false, error: err.message || "Failed to load pilot readiness" },
+      { success: false, error: err.message || "Failed to load readiness" },
       { status: 500 }
     );
   }

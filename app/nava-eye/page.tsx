@@ -683,7 +683,7 @@ export default function NavaEyeChatPage() {
                 <EmptyState
                   dark
                   title="Start a Nava Eye conversation"
-                  body="Ask a direct fleet, journey, fuel, provider, or profitability question. Nava Eye will keep the short follow-up context inside this thread."
+                  body="Ask a direct fleet, trip, fuel, provider, or contribution-review question. Nava Eye will keep the short follow-up context inside this thread."
                 />
               )}
 

@@ -58,13 +58,13 @@ export default function PilotReadinessPage() {
       const json = await res.json();
 
       if (!res.ok || !json.success) {
-        throw new Error(json.error || "Failed to load pilot readiness.");
+        throw new Error(json.error || "Failed to load readiness.");
       }
 
       setTenants(json.tenants || []);
       setTotals(json.totals || null);
     } catch (err: any) {
-      setError(err.message || "Failed to load pilot readiness.");
+      setError(err.message || "Failed to load readiness.");
     } finally {
       setLoading(false);
     }
@@ -81,7 +81,7 @@ export default function PilotReadinessPage() {
     return (
       <main className="min-h-screen bg-slate-950 px-4 py-6 text-white sm:px-8 sm:py-10">
         <Panel dark className="p-6">
-          <div className="text-sm text-slate-300">Loading pilot readiness...</div>
+          <div className="text-sm text-slate-300">Loading readiness...</div>
         </Panel>
       </main>
     );
@@ -94,7 +94,7 @@ export default function PilotReadinessPage() {
           <Panel dark className="border-rose-300/30 bg-rose-500/10 p-6">
             <StatusPill tone="danger">Platform only</StatusPill>
             <h1 className="mt-4 text-2xl font-semibold text-white">
-              Pilot readiness unavailable
+              Readiness unavailable
             </h1>
             <p className="mt-3 text-sm leading-6 text-rose-100">{error}</p>
             <div className="mt-5">
@@ -113,9 +113,9 @@ export default function PilotReadinessPage() {
       <div className="mx-auto max-w-7xl">
         <PageHeader
           dark
-          eyebrow="Pilot readiness"
-          title="Pilot Readiness Checklist"
-          body="See which tenants are ready for pilot operations, which need attention, and which are blocked before go-live."
+          eyebrow="Readiness"
+          title="Go-live Readiness Checklist"
+          body="See which tenants are ready for operations, which need attention, and which are blocked before go-live."
           actions={
             <div className="flex flex-col gap-2 sm:flex-row">
               <Link href="/admin">
@@ -153,7 +153,7 @@ export default function PilotReadinessPage() {
             <EmptyState
               dark
               title="No tenants yet"
-              body="Pilot readiness appears after companies are created."
+              body="Readiness appears after companies are created."
             />
           </div>
         ) : (

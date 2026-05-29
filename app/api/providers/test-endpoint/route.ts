@@ -540,7 +540,7 @@ function buildAutoSetupConnectionContract(input: {
           "date range",
           "report type",
           "vehicle/device id if required",
-          "row path",
+          "vehicle data group",
           "distance field mapping",
         ],
       },
@@ -1308,7 +1308,7 @@ function buildSetupBlockers(
   }
   if (truncated) blockers.push("Response was truncated before analysis.");
   if (analysis.response_type === "text") {
-    blockers.push("Response is not JSON, so row paths and field mappings may not be detectable.");
+    blockers.push("Response is not JSON, so vehicle data groups and field mappings may not be detectable.");
   }
   if (
     mode !== "login" &&

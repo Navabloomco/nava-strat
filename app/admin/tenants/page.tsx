@@ -134,7 +134,7 @@ export default function PlatformTenantsPage() {
           dark
           eyebrow="Platform billing"
           title="Tenant Billing Preview"
-          body="Estimate pilot billing readiness from reviewed, active, intelligence-enabled assets. This is an internal preview only; it does not create invoices."
+          body="Estimate billing readiness from reviewed, active, intelligence-enabled assets. This is an internal preview only; it does not create invoices."
           actions={
             <div className="flex flex-col gap-2 sm:flex-row">
               <Link href="/admin">

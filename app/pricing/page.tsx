@@ -24,8 +24,8 @@ const tiers = [
     description: "More operating intelligence for teams managing more vehicles, clients, and exceptions.",
     features: [
       "Everything in Starter",
-      "Profitability dashboard",
-      "Trip profit simulator",
+      "Contribution review dashboard",
+      "Trip contribution review",
       "Management dashboard",
       "25 client visibility links",
       "2 provider connections",

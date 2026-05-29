@@ -24,12 +24,12 @@ const financeCards = [
   },
   {
     title: "Fuel Ledger",
-    body: "Review fuel records, allocation, and journey-level fuel totals.",
+    body: "Review fuel records, allocation, and trip-level fuel totals.",
     href: "/fuel",
   },
   {
     title: "Add Fuel",
-    body: "Capture a fuel entry and link it to an open journey when available.",
+    body: "Capture a fuel entry and link it to an open trip when available.",
     href: "/fuel/new",
   },
   {
@@ -39,12 +39,12 @@ const financeCards = [
   },
   {
     title: "Management Dashboard",
-    body: "Review profitability, revenue, costs, and client performance.",
+    body: "Review contribution, revenue, costs, and client performance.",
     href: "/management/dashboard",
   },
   {
-    title: "Create Journey",
-    body: "Start a new journey so finance can price and track the trip.",
+    title: "Create Trip",
+    body: "Start a new trip so finance can review quantities and revenue later.",
     href: "/ops/journey/new",
   },
 ];
@@ -165,11 +165,11 @@ export default function FinanceDashboard() {
           dark
           eyebrow="Finance workspace"
           title="Finance Hub"
-          body="Manage trip revenue, fuel, expenses, and profitability from one place."
+          body="Manage trip revenue, fuel, expenses, and contribution review from one place."
           actions={
             <Link href="/finance/revenue">
               <PrimaryButton type="button" className="w-full sm:w-auto">
-                Open Revenue Management
+                Open Revenue Review
               </PrimaryButton>
             </Link>
           }

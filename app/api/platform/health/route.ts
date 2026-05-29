@@ -642,7 +642,7 @@ async function checkBillingInvoiceIndexes(): Promise<MetadataCheckResult> {
       status: foundIndexes.has(indexName) ? "pass" : "fail",
       detail: foundIndexes.has(indexName)
         ? "Expected billing invoice index is present."
-        : "Expected billing invoice index is missing. Apply the additive billing_invoices index migration before pilot billing.",
+        : "Expected billing invoice index is missing. Apply the additive billing_invoices index migration before billing review.",
     })) as HealthCheck[]);
   } catch (err) {
     const message = sanitizeError(err);

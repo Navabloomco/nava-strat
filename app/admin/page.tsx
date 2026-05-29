@@ -14,16 +14,16 @@ import {
 const platformCards = [
   {
     title: "Platform Health",
-    body: "Check environment, database schema, constraints, and pilot readiness before launch.",
+    body: "Check environment, database schema, constraints, and go-live readiness.",
     href: "/admin/health",
   },
   {
     title: "Tenant Billing Preview",
-    body: "Review tenant readiness, strict billable assets, and estimated pilot billing.",
+    body: "Review tenant readiness, strict billable assets, and estimated billing.",
     href: "/admin/tenants",
   },
   {
-    title: "Pilot Readiness",
+    title: "Readiness",
     body: "Run the go-live checklist across company setup, providers, assets, billing, roles, operations, and Nava Eye.",
     href: "/admin/pilot-readiness",
   },

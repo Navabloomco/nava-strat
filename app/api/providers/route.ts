@@ -256,7 +256,7 @@ function buildSafeProviderFeedSummary(provider: any) {
       ]).slice(0, 10),
       setup_message: reportConfigured
         ? "Report/distance feed is configured for dry-run testing."
-        : "Report endpoint not configured yet. Ask provider for get_reports parameters: date range, report type, vehicle id, row path, and sample JSON.",
+        : "Report feed is not configured yet. Ask provider for report parameters: date range, report type, vehicle id, vehicle data group, and sample response.",
     },
   };
 }
@@ -910,11 +910,11 @@ function buildReportFeedPlaceholder(input: {
       "date range",
       "report type",
       "vehicle/device id if required",
-      "row path",
+      "vehicle data group",
       "distance field mapping",
     ],
     setup_message:
-      "Report endpoint not configured yet. Ask provider for get_reports parameters: date range, report type, vehicle id, row path, and sample JSON.",
+      "Report feed is not configured yet. Ask provider for report parameters: date range, report type, vehicle id, vehicle data group, and sample response.",
   };
 }
 

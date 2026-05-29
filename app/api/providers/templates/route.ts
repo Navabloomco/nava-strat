@@ -104,7 +104,7 @@ const GENERIC_REST_GPS_TEMPLATE = {
     capability_profile: {
       default_capability: "GPS_ONLY",
       note:
-        "Generic setup template. Platform owner must verify endpoint, row path, and field mapping before live sync.",
+        "Generic setup template. Platform owner must verify provider feed, vehicle data group, and field mapping before live sync.",
     },
     supported_signals: {
       latitude: true,
@@ -135,7 +135,7 @@ const GENERIC_REST_GPS_TEMPLATE = {
   provider_timezone: "Africa/Nairobi",
   source_signal_notes: {
     onboarding_note:
-      "Generic GPS setup requires verified endpoint, row path, and vehicle identifier mapping before live sync.",
+      "Generic GPS setup requires a verified provider feed, vehicle data group, and vehicle identifier mapping before live sync.",
   },
   setup_only: true,
   self_serve: false,

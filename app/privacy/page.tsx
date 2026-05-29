@@ -7,7 +7,7 @@ const sections = [
   },
   {
     title: "2. Company Data",
-    body: "We may process company profile information, workspace settings, users, operational records, journeys, expenses, revenue information, and other business content submitted to the platform.",
+    body: "We may process company profile information, workspace settings, users, operational records, trips, expenses, revenue information, and other business content submitted to the platform.",
   },
   {
     title: "3. Fleet and Location Data",

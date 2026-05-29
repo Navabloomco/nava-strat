@@ -72,7 +72,7 @@ export function generateMetadata(): Metadata {
       metadataBase: new URL(productUrl),
       title: "Nava Strat | Fleet Intelligence SaaS",
       description:
-        "Nava Strat helps fleet operators connect vehicle activity, journeys, fuel, costs, maintenance signals, and management visibility into one secure workspace.",
+        "Nava Strat helps fleet operators connect vehicle activity, trips, fuel, costs, maintenance signals, and management visibility into one secure workspace.",
       applicationName: "Nava Strat",
       alternates: {
         canonical: "/",
@@ -110,7 +110,7 @@ export function generateMetadata(): Metadata {
 const buildAreas = [
   {
     title: "Fleet intelligence platforms",
-    body: "Secure workspaces that help operators understand vehicle activity, journeys, fuel movement, operating costs, and fleet patterns.",
+    body: "Secure workspaces that help operators understand vehicle activity, trips, fuel movement, operating costs, and fleet patterns.",
   },
   {
     title: "Operational data systems",
@@ -310,7 +310,7 @@ function CompanyLandingPage() {
               Our first platform: Nava Strat
             </h2>
             <p className="mt-5 text-base leading-8 text-slate-300">
-              Nava Strat helps fleet operators bring vehicle activity, journeys,
+              Nava Strat helps fleet operators bring vehicle activity, trips,
               fuel awareness, operating costs, maintenance signals, and
               management visibility into one secure workspace.
             </p>
@@ -415,7 +415,7 @@ function ProductLandingPage() {
               </h1>
               <p className="mt-7 max-w-2xl text-lg leading-8 text-slate-300">
                 Nava Strat helps fleet operators connect vehicle activity,
-                journeys, fuel, costs, maintenance signals, and management
+                trips, fuel, costs, maintenance signals, and management
                 visibility into one secure workspace.
               </p>
               <div className="mt-9 flex flex-col gap-3 sm:flex-row sm:flex-wrap">

@@ -37,11 +37,11 @@ function statusLabel(status: CheckStatus) {
 }
 
 function overallCopy(status: CheckStatus) {
-  if (status === "pass") return "Pilot readiness checks are passing.";
+  if (status === "pass") return "Readiness checks are passing.";
   if (status === "warn") {
-    return "Pilot readiness has warnings. Review the items below before launch.";
+    return "Readiness has warnings. Review the items below before launch.";
   }
-  return "Pilot readiness is blocked until the missing items below are fixed.";
+  return "Readiness is blocked until the missing items below are fixed.";
 }
 
 export default function PlatformHealthPage() {
@@ -179,7 +179,7 @@ export default function PlatformHealthPage() {
           dark
           eyebrow="Platform readiness"
           title="Platform Health"
-          body="This page checks whether the database and environment are ready for pilot operations."
+          body="This page checks whether the database and environment are ready for launch operations."
           actions={
             <div className="flex flex-col gap-2 sm:flex-row">
               <Link href="/admin">

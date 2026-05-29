@@ -195,7 +195,7 @@ export default function NewFuelPage() {
 
               <FormField label="Truck" dark>
                 <input
-                  placeholder="Truck e.g. KBJ123A"
+                  placeholder="Enter vehicle registration"
                   value={truck}
                   onChange={(e) => {
                     setTruck(e.target.value.toUpperCase());
@@ -213,8 +213,8 @@ export default function NewFuelPage() {
               </h2>
               <p className="mt-2 text-sm text-slate-300">
                 {suggestedJourneys.length === 0
-                  ? "No matching active journey. Fuel can be saved as unallocated."
-                  : `${suggestedJourneys.length} matching active journey/journeys found.`}
+                  ? "No matching active trip. Fuel can be saved as unallocated."
+                  : `${suggestedJourneys.length} matching active trip(s) found.`}
               </p>
 
               {suggestedJourneys.length > 0 && (

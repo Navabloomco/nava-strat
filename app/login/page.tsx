@@ -152,7 +152,7 @@ export default function LoginPage() {
             </h1>
             <p className="mt-5 text-lg leading-8 text-slate-300">
               Access your fleet operations, live provider data, fuel risk,
-              profitability context, and Nava Eye fleet answers from one secure workspace.
+              contribution context, and Nava Eye fleet answers from one secure workspace.
             </p>
           </div>
           <Link href="/pricing" className="text-sm font-medium text-slate-300 hover:text-white">

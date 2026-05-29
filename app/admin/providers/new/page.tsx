@@ -2043,7 +2043,7 @@ function CustomApiProviderForm({
         </summary>
       <div style={advancedTroubleshootingIntroStyle}>
         Use these tools only when Simple Connect cannot find vehicles or your
-        provider has supplied exact technical setup details.
+        provider has supplied exact setup details.
       </div>
       <div style={autoActionsStyle}>
         <button type="button" style={secondaryButtonStyle} onClick={onAutoFill}>
@@ -2110,7 +2110,7 @@ function CustomApiProviderForm({
             style={textareaStyle}
             value={form.provider_notes}
             onChange={(e) => updateForm({ provider_notes: e.target.value })}
-            placeholder="Paste short hints such as get_devices, user_api_hash, or provider endpoint notes."
+            placeholder="Paste short provider setup notes, if supplied."
           />
         </div>
       </ProviderWizardSection>
@@ -2203,7 +2203,7 @@ function CustomApiProviderForm({
                 required
               />
               <TextField
-                label="Login token path"
+                label="Login token field"
                 value={form.login_token_path}
                 onChange={(value) => updateForm({ login_token_path: value })}
                 placeholder="data.token"
@@ -2246,12 +2246,12 @@ function CustomApiProviderForm({
       </ProviderWizardSection>
 
       <ProviderWizardSection
-        title="Fleet/current location endpoint"
-        copy="This should be the endpoint that returns current vehicle location rows."
+        title="Current vehicle location feed"
+        copy="This should be the provider feed that returns current vehicle locations."
       >
         <div style={gridStyle}>
           <TextField
-            label="Endpoint URL"
+            label="Feed URL"
             value={form.endpoint_url}
             onChange={(value) => updateForm({ endpoint_url: value })}
             placeholder="https://api.provider.example/fleet"
@@ -2285,7 +2285,7 @@ function CustomApiProviderForm({
             </select>
           </div>
           <TextField
-            label="Row path / data group"
+            label="Vehicle data group"
             value={form.row_path}
             onChange={(value) => updateForm({ row_path: value })}
             placeholder="data.vehicles"
@@ -2293,7 +2293,7 @@ function CustomApiProviderForm({
           />
         </div>
         <div style={helperTextStyle}>
-          Enter one JSON path only, for example data, items, devices, or
+          Enter one data group only, for example data, items, devices, or
           data.vehicles.
         </div>
 
@@ -2333,8 +2333,8 @@ function CustomApiProviderForm({
       </ProviderWizardSection>
 
       <ProviderWizardSection
-        title="Field mapping"
-        copy="Map provider keys into Nava's standard vehicle signals. Use dot paths if the data is nested."
+        title="Vehicle signal mapping"
+        copy="Map provider fields into Nava's standard vehicle signals. Use nested field names only when the provider data is nested."
       >
         <div style={gridStyle}>
           <TextField

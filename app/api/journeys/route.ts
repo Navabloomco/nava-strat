@@ -242,9 +242,9 @@ export async function GET(req: Request) {
       journeys: journeys || [],
     });
   } catch (err: any) {
-    console.error("Journeys GET error:", err);
+    console.error("Trips GET error:", err);
     return NextResponse.json(
-      { success: false, error: err.message || "Failed to load journeys" },
+      { success: false, error: err.message || "Failed to load trips" },
       { status: 500 }
     );
   }
@@ -511,7 +511,7 @@ export async function POST(req: Request) {
       warnings,
     });
   } catch (err: any) {
-    console.error("Journeys POST error:", err);
+    console.error("Trips POST error:", err);
     return NextResponse.json(
       { success: false, error: err.message || "Failed to create journey" },
       { status: 500 }

@@ -90,12 +90,12 @@ export default function PilotReadinessDetailPage() {
       const json = await res.json();
 
       if (!res.ok || !json.success) {
-        throw new Error(json.error || "Failed to load pilot readiness.");
+        throw new Error(json.error || "Failed to load readiness.");
       }
 
       setReadiness(json.readiness || null);
     } catch (err: any) {
-      setError(err.message || "Failed to load pilot readiness.");
+      setError(err.message || "Failed to load readiness.");
     } finally {
       setLoading(false);
     }
@@ -147,7 +147,7 @@ export default function PilotReadinessDetailPage() {
         <EmptyState
           dark
           title="Tenant not found"
-          body="This company could not be loaded from the pilot readiness checklist."
+          body="This company could not be loaded from the readiness checklist."
           action={
             <Link href="/admin/pilot-readiness">
               <PrimaryButton type="button">Back to Readiness</PrimaryButton>
