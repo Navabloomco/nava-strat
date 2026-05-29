@@ -151,8 +151,8 @@ export default function LoginPage() {
               Sign in to your fleet intelligence workspace.
             </h1>
             <p className="mt-5 text-lg leading-8 text-slate-300">
-              Access your fleet operations, live provider data, fuel risk,
-              contribution context, and Nava Eye fleet answers from one secure workspace.
+              Access operations, provider-connected fleet activity, contribution
+              context, and Nava Eye answers from one secure company workspace.
             </p>
           </div>
           <Link href="/pricing" className="text-sm font-medium text-slate-300 hover:text-white">
@@ -194,7 +194,7 @@ export default function LoginPage() {
             </div>
 
             <h2 className="text-2xl font-semibold">
-              {mode === "signin" ? "Welcome back" : "Start your Nava Strat trial"}
+              {mode === "signin" ? "Welcome back" : "Create your Nava Strat account"}
             </h2>
             <p className="mt-2 text-sm leading-6 text-slate-300">
               {mode === "signin"

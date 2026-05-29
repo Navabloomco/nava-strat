@@ -75,9 +75,10 @@ export default function PrivacyPage() {
             Privacy Notice
           </h1>
           <p className="mt-5 max-w-3xl text-base leading-7 text-slate-300">
-            This notice is practical privacy information for Nava Strat. It
-            should be reviewed by qualified counsel before broad commercial
-            rollout or use as a final customer privacy notice.
+            This notice explains how Nava Strat handles account, company,
+            fleet, provider, and usage information for secure customer
+            workspaces. Your contract or account terms may include additional
+            privacy and data-processing commitments.
           </p>
 
           <div className="mt-10 grid gap-4">

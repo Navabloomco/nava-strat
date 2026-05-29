@@ -110,15 +110,15 @@ export function generateMetadata(): Metadata {
 const buildAreas = [
   {
     title: "Fleet intelligence platforms",
-    body: "Secure workspaces that help operators understand vehicle activity, trips, fuel movement, operating costs, and fleet patterns.",
+    body: "Secure workspaces that help operators understand vehicle activity, trips, fuel records, operating costs, and fleet patterns.",
   },
   {
     title: "Operational data systems",
     body: "Tools that consolidate fragmented information from the field, the corridor, and the back office into usable management workflows.",
   },
   {
-    title: "AI-assisted decision support",
-    body: "Context-aware decision support that helps teams spot risk, ask sharper questions, and act with more confidence.",
+    title: "Nava Eye decision support",
+    body: "Source-grounded fleet intelligence that helps teams ask sharper questions, review evidence, and act with more confidence.",
   },
 ];
 
@@ -133,7 +133,7 @@ const productCapabilities = [
   },
   {
     title: "Fuel & Cost Awareness",
-    body: "Practical visibility into fuel movement, consumption patterns, and operating cost trends.",
+    body: "Practical visibility into fuel movement, allocation evidence, and operating cost trends.",
   },
   {
     title: "Maintenance & Spares Signals",
@@ -420,13 +420,13 @@ function ProductLandingPage() {
               </p>
               <div className="mt-9 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
                 <Link href="/login" className={`${primaryControlClass} text-center`}>
-                  Sign In to Dashboard
+                  Open workspace
                 </Link>
                 <a
                   href={`mailto:${contactEmail}`}
                   className={`${secondaryControlClass} text-center`}
                 >
-                  Request Fleet Access
+                  Request implementation review
                 </a>
               </div>
             </div>
@@ -493,17 +493,17 @@ function ProductLandingPage() {
         <div className="mx-auto grid max-w-7xl gap-8 lg:grid-cols-[0.8fr_1.2fr] lg:items-start">
           <div>
             <p className="text-sm font-bold uppercase tracking-[0.18em] text-cyan-200">
-              Advanced Fleet Answers
+              Nava Eye
             </p>
             <h2 className="mt-3 text-3xl font-semibold tracking-normal md:text-4xl">
-              Ask sharper operational questions.
+              Ask source-grounded fleet questions.
             </h2>
           </div>
           <div className="rounded-lg border border-white/10 bg-white/[0.04] p-6">
             <p className="text-base leading-8 text-slate-300">
-              Nava Eye helps operations teams ask better questions about fleet
-              activity, stale vehicles, idle patterns, fuel visibility, and
-              operational risk.
+              Nava Eye helps teams ask concise questions about fleet activity,
+              stale vehicles, stopped-time evidence, fuel visibility, Trip
+              readiness, and operational risk.
             </p>
           </div>
         </div>

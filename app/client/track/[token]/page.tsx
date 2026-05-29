@@ -171,9 +171,7 @@ function JourneyCard({ journey }: { journey: ClientJourney }) {
   const locationText =
     journey.location.label ||
     (journey.location.coordinates
-      ? `${formatCoordinate(journey.location.coordinates.latitude)}, ${formatCoordinate(
-          journey.location.coordinates.longitude
-        )}`
+      ? "Location update available; readable place pending."
       : "Location not currently available.");
 
   return (
@@ -234,7 +232,7 @@ function JourneyCard({ journey }: { journey: ClientJourney }) {
       </div>
 
       <div className="mt-4 text-xs text-slate-500">
-        Journey recorded {journey.updated_at ? formatDateTime(journey.updated_at) : "not available"}
+        Trip updated {journey.updated_at ? formatDateTime(journey.updated_at) : "not available"}
       </div>
     </article>
   );
@@ -290,9 +288,4 @@ function formatDateTime(value: string) {
 
 function formatNumber(value: number) {
   return new Intl.NumberFormat().format(value);
-}
-
-function formatCoordinate(value: number | null) {
-  if (value === null || !Number.isFinite(value)) return "—";
-  return value.toFixed(5);
 }

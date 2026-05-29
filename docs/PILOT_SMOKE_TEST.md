@@ -13,6 +13,8 @@ This playbook may use pilot/testing language because it is an internal validatio
 - [ ] Evidence caveats remain visible but concise: GPS-derived distance estimate, provider distance evidence, stopped-time evidence, tracker idle markers, and engine-on idle not verified.
 - [ ] Nava Eye answers are concise by default and only show audit details after questions such as `how`, `why`, `show evidence`, or `why should I trust it`.
 - [ ] Reusable UI placeholders do not contain tenant-specific examples, real truck plates, real client names, real trip IDs, or pilot contribution amounts.
+- [ ] Public, pricing, login, and onboarding pages use controlled-rollout language such as `Request implementation review`, `Start setup`, `Open workspace`, and `Talk to Nava Bloom` instead of customer-facing `pilot trial` / `Start trial` copy.
+- [ ] Public/client-facing tracking pages do not show raw coordinates as the primary location when a readable place label is unavailable.
 
 ## 1. Pre-Test Setup
 

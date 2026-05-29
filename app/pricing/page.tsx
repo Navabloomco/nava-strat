@@ -1,5 +1,7 @@
 import Link from "next/link";
 
+const contactEmail = "contact@navabloomco.com";
+
 const tiers = [
   {
     name: "Starter",
@@ -14,7 +16,7 @@ const tiers = [
       "5 client visibility links",
       "1 provider connection",
     ],
-    cta: "Start trial",
+    cta: "Start setup",
   },
   {
     name: "Growth",
@@ -31,7 +33,7 @@ const tiers = [
       "2 provider connections",
       "Priority onboarding support",
     ],
-    cta: "Start trial",
+    cta: "Start setup",
     featured: true,
   },
   {
@@ -48,7 +50,7 @@ const tiers = [
       "100 client visibility links",
       "Priority support",
     ],
-    cta: "Talk to us",
+    cta: "Talk to Nava Bloom",
   },
   {
     name: "Enterprise",
@@ -63,7 +65,7 @@ const tiers = [
       "Dedicated onboarding",
       "Dedicated support terms",
     ],
-    cta: "Talk to us",
+    cta: "Talk to Nava Bloom",
   },
 ];
 
@@ -86,7 +88,7 @@ export default function PricingPage() {
               href="/login?signup"
               className="rounded-md bg-cyan-300 px-4 py-2 text-sm font-bold text-slate-950 hover:bg-cyan-200"
             >
-              Start trial
+              Start setup
             </Link>
           </div>
         </div>
@@ -156,7 +158,11 @@ export default function PricingPage() {
                   ))}
                 </ul>
                 <Link
-                  href={tier.cta === "Start trial" ? "/login?signup" : "/login"}
+                  href={
+                    tier.cta === "Start setup"
+                      ? "/login?signup"
+                      : `mailto:${contactEmail}`
+                  }
                   className={`mt-7 inline-flex w-full justify-center rounded-md px-4 py-3 text-sm font-bold ${
                     tier.featured
                       ? "bg-slate-950 text-white hover:bg-slate-800"
@@ -182,21 +188,21 @@ export default function PricingPage() {
                 <li>Imported provider vehicles are not billed automatically.</li>
                 <li>New vehicles can be reviewed before they affect billing.</li>
                 <li>Mid-cycle additions are prorated.</li>
-                <li>Trial customers see estimates before any charge.</li>
+                <li>Rollout customers see estimates before any charge.</li>
               </ul>
             </section>
 
             <section className="rounded-lg border border-cyan-200/20 bg-cyan-300/10 p-6">
               <p className="break-words text-sm font-bold uppercase tracking-[0.14em] text-cyan-200 sm:tracking-[0.18em]">
-                Pilot trial
+                Controlled rollout
               </p>
               <h2 className="mt-3 break-words text-2xl font-semibold tracking-normal sm:text-3xl">
-                30-day pilot with assisted onboarding.
+                Implementation review with assisted onboarding.
               </h2>
               <p className="mt-5 text-sm leading-6 text-slate-300">
-                Billing starts only after vehicles are enabled and terms are confirmed.
-                Your team can review the fleet, provider connection, and estimated monthly
-                pricing before moving beyond the pilot.
+                Billing starts only after vehicles are enabled and commercial terms
+                are confirmed. Your team can review the fleet, provider connection,
+                and estimated monthly pricing before live billing begins.
               </p>
             </section>
           </div>

@@ -57,7 +57,7 @@ const checklistItems: Array<{ key: keyof Checklist; label: string; detail: strin
   },
   {
     key: "ready_to_create_first_journey",
-    label: "Ready to create first journey",
+    label: "Ready to create first Trip",
     detail: "Provider, fleet, and telemetry checks are green.",
   },
 ];
@@ -231,7 +231,7 @@ export default function Onboarding() {
               <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600">
                 Create the company workspace, connect a real tracking provider,
                 review imported assets, and enable vehicles before creating the
-                first operational journey.
+                first operational Trip.
               </p>
             </div>
             {status?.company && (
@@ -355,7 +355,7 @@ export default function Onboarding() {
                     </select>
                     <p className="mt-2 text-xs leading-5 text-slate-500">
                       This is only the company default. Actual billing can vary by client,
-                      route, journey, or cargo terms.
+                      route, Trip, or cargo terms.
                     </p>
                   </label>
 
@@ -576,9 +576,9 @@ function getNextBestStep(state: OnboardingState, status: any, onRefresh: () => v
     },
     live_tracking_ready: {
       eyebrow: "Ready for operations",
-      title: "Create your first journey",
-      body: "Your live fleet picture is ready. Start the first customer journey and monitor it from Nava.",
-      primary: { label: "Create First Journey", href: "/ops/journey/new" },
+      title: "Create your first Trip",
+      body: "Your live fleet picture is ready. Start the first operational Trip and monitor it from Nava.",
+      primary: { label: "Create First Trip", href: "/ops/journey/new" },
       secondary: { label: "Open Live Tracking", href: "/tracking/live" },
       tertiary: { label: "Ask Nava Eye", href: "/nava-eye" },
     },

@@ -44,6 +44,7 @@ Nava Strat should sound like a mature enterprise SaaS: operational, concise, sou
 - Do not expose internal terms such as `canonical`, `legacy`, `event_type`, `provider_signal_flags`, `raw payload`, or row-path/debug wording on normal customer surfaces. Platform/admin advanced diagnostics may use technical detail when it is collapsed, sanitized, and useful.
 - Nava Eye answers should be concise by default: direct answer, source, caveat if needed, and action when asked. Audit detail appears only for questions such as `how`, `why`, `show evidence`, or `why should I trust it`.
 - Contextual Nava Eye entry points must have predictable answer placement. Embedded page prompts answer inline beside the prompt. Row, Trip, finance, provider, and other contextual links open `/nava-eye` with the scoped prompt focused in a fresh investigation thread. Do not render contextual answers far away from the triggering prompt without scroll/focus.
+- Public, pricing, login, and onboarding copy should sound like a controlled enterprise rollout, not a trial dashboard. Preferred CTAs include `Request implementation review`, `Start setup`, `Open workspace`, and `Talk to Nava Bloom`.
 - Reusable UI must not hardcode tenant/customer examples such as pilot client names, real truck plates, real trip IDs, or contribution amounts. Render company data only when it comes from the authenticated tenant context.
 
 ## 2. Current Route/Page Map
