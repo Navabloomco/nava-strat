@@ -18,6 +18,15 @@ import {
   providerCurrentStopEvidenceFromSignalFlags,
   providerReportedDistanceValueFromSignalFlags,
 } from "../providers/providerReportedFields";
+import {
+  availabilityContextNote,
+  buildAssetAvailabilityLookup,
+  fetchActiveAssetAvailabilityEvents,
+  findAssetAvailabilityForTarget,
+  isKnownUnavailableAvailability,
+  isSiteContextAvailability,
+  labelAssetAvailabilityStatus,
+} from "../operations/assetAvailability";
 
 export type OperationalEfficiencyRange = "today" | "yesterday" | "7d";
 
@@ -106,9 +115,13 @@ type TruckTelemetryStats = {
   stop_context: StopContextType;
   stop_context_label: string;
   stop_context_note: string;
+  asset_availability: any | null;
+  asset_availability_known_unavailable: boolean;
 };
 
 type StopContextType =
+  | "known_unavailable"
+  | "recorded_operational_status"
   | "provider_current_stop"
   | "provider_status_stopped"
   | "site_or_known_place"
@@ -179,11 +192,13 @@ export async function buildOperationalEfficiencySummary(
     )
   );
 
-  const [providerDistanceResult, telemetryResult, idleEventResult] = await Promise.all([
+  const [providerDistanceResult, telemetryResult, idleEventResult, availabilityResult] = await Promise.all([
     fetchProviderDistanceRows(input.companyId, timeframe),
     fetchTelemetryRows(input.companyId, enabledTruckIds, timeframe),
     fetchIdleEventRows(input.companyId, enabledTruckIds, timeframe),
+    fetchActiveAssetAvailabilityEvents(input.companyId),
   ]);
+  const availabilityLookup = buildAssetAvailabilityLookup(availabilityResult.rows || []);
 
   const providerDistanceByTruck = summarizeProviderDistanceRows(
     providerDistanceResult.rows,
@@ -192,6 +207,7 @@ export async function buildOperationalEfficiencySummary(
   const telemetryStatsByTruck = summarizeTelemetryRows(
     telemetryResult.rows,
     assetLookups,
+    availabilityLookup,
     timeframe
   );
   const movement = buildTruckMovementSummary(
@@ -233,6 +249,7 @@ export async function buildOperationalEfficiencySummary(
       provider_trip_summaries: sourceStatus(providerDistanceResult),
       telemetry_logs: sourceStatus(telemetryResult),
       telemetry_events: sourceStatus(idleEventResult),
+      asset_availability_events: sourceStatus(availabilityResult),
       fleet_assets: sourceStatus(assetsResult),
       asset_driver_assignments: sourceStatus(driverAssignmentsResult),
       journeys: sourceStatus(journeysResult),
@@ -736,6 +753,7 @@ function summarizeProviderDistanceRows(rows: any[], assetLookups: ReturnType<typ
 function summarizeTelemetryRows(
   rows: any[],
   assetLookups: ReturnType<typeof buildAssetLookups>,
+  availabilityLookup: ReturnType<typeof buildAssetAvailabilityLookup>,
   timeframe: OperationalEfficiencyTimeframe
 ) {
   const rowsByTruck = new Map<string, any[]>();
@@ -759,6 +777,11 @@ function summarizeTelemetryRows(
       .slice()
       .sort((a: any, b: any) => new Date(a.recorded_at).getTime() - new Date(b.recorded_at).getTime());
     const asset = assetLookups.byKey.get(truckKey);
+    const assetAvailability = findAssetAvailabilityForTarget(availabilityLookup, {
+      id: asset?.id || null,
+      truck_id: sorted[0]?.truck_id || asset?.truck_id || truckKey,
+      registration: asset?.registration || null,
+    });
     let previous: any = null;
     let pointCount = 0;
     let segmentCount = 0;
@@ -875,6 +898,7 @@ function summarizeTelemetryRows(
       timeframeMinutes,
     });
     const stopContext = classifyStopContext({
+      availability: assetAvailability,
       providerCurrentStop: latestProviderCurrentStop,
       providerLocationLabel: latestProviderLocationLabel,
     });
@@ -921,6 +945,10 @@ function summarizeTelemetryRows(
       stop_context: stopContext.context,
       stop_context_label: stopContext.label,
       stop_context_note: stopContext.note,
+      asset_availability: assetAvailability,
+      asset_availability_known_unavailable: isKnownUnavailableAvailability(
+        assetAvailability?.status
+      ),
     });
   }
 
@@ -935,9 +963,35 @@ function providerCurrentStopEvidenceFromProviderEvidence(evidence: any) {
 }
 
 function classifyStopContext(input: {
+  availability?: any | null;
   providerCurrentStop: any;
   providerLocationLabel: string | null;
 }): { context: StopContextType; label: string; note: string } {
+  if (input.availability?.status && input.availability.status !== "available") {
+    const statusLabel = labelAssetAvailabilityStatus(input.availability.status);
+    if (isKnownUnavailableAvailability(input.availability.status)) {
+      return {
+        context: "known_unavailable",
+        label: `Context: Known unavailable: ${statusLabel}`,
+        note: availabilityContextNote(input.availability),
+      };
+    }
+    if (isSiteContextAvailability(input.availability.status)) {
+      return {
+        context: "recorded_operational_status",
+        label: `Context: ${statusLabel}`,
+        note: availabilityContextNote(input.availability),
+      };
+    }
+    if (input.availability.status === "on_trip") {
+      return {
+        context: "recorded_operational_status",
+        label: "Context: On trip",
+        note: availabilityContextNote(input.availability),
+      };
+    }
+  }
+
   if (
     input.providerCurrentStop?.provider_current_stop_duration_minutes ||
     input.providerCurrentStop?.provider_current_stop_label
@@ -1222,6 +1276,10 @@ function buildTruckMovementSummary(
       provider_current_status_label: telemetry?.provider_current_status_label || null,
       provider_stop_source_path: telemetry?.provider_stop_source_path || null,
       provider_status_source_path: telemetry?.provider_status_source_path || null,
+      asset_availability: telemetry?.asset_availability || null,
+      asset_availability_known_unavailable: Boolean(
+        telemetry?.asset_availability_known_unavailable
+      ),
       stop_context: telemetry?.stop_context || "unknown_stopped_time",
       stop_context_label: telemetry?.stop_context_label || "Context: Unknown stopped time",
       stop_context_note:
@@ -1394,6 +1452,10 @@ function buildIdleTimeSummary(
       provider_current_status_label: stats.provider_current_status_label,
       provider_stop_source_path: stats.provider_stop_source_path,
       provider_status_source_path: stats.provider_status_source_path,
+      asset_availability: stats.asset_availability || null,
+      asset_availability_known_unavailable: Boolean(
+        stats.asset_availability_known_unavailable
+      ),
       stop_context: stats.stop_context,
       stop_context_label: stats.stop_context_label,
       stop_context_note: stats.stop_context_note,
@@ -1651,6 +1713,11 @@ function buildProductivitySummary(
           truck.provider_stop_source_path || stats.provider_stop_source_path,
         provider_status_source_path:
           truck.provider_status_source_path || stats.provider_status_source_path,
+        asset_availability: truck.asset_availability || stats.asset_availability || null,
+        asset_availability_known_unavailable: Boolean(
+          truck.asset_availability_known_unavailable ||
+            stats.asset_availability_known_unavailable
+        ),
         stop_context: truck.stop_context || stats.stop_context,
         stop_context_label: truck.stop_context_label || stats.stop_context_label,
         stop_context_note: truck.stop_context_note || stats.stop_context_note,
@@ -1673,9 +1740,14 @@ function buildProductivitySummary(
     })
     .filter(Boolean) as any[];
 
+  const knownUnavailableRows = rows
+    .filter((row) => Boolean(row.asset_availability_known_unavailable))
+    .sort((a, b) => b.stopped_minutes - a.stopped_minutes);
+
   const lowProductiveRows = rows
     .filter(
       (row) =>
+        !row.asset_availability_known_unavailable &&
         Number(row.distance_km || 0) > 1 &&
         (Number(row.productive_ratio || 0) < 0.25 ||
           Number(row.stopped_minutes || 0) > Number(row.moving_minutes || 0) * 2)
@@ -1691,6 +1763,8 @@ function buildProductivitySummary(
       "productive time is estimated from moving versus stationary GPS point intervals; it is not engine-on idle, fuel burn, revenue, or profit.",
     analyzed_truck_count: rows.length,
     low_productive_time_count: lowProductiveRows.length,
+    known_unavailable_count: knownUnavailableRows.length,
+    known_unavailable_trucks: knownUnavailableRows.slice(0, 15),
     low_productive_trucks: lowProductiveRows.slice(0, 15),
     stopped_most_of_day: rows
       .slice()

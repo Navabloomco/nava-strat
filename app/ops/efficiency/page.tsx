@@ -299,6 +299,22 @@ export default function OpsEfficiencyPage() {
               />
 
               <RankedPanel
+                title="Known Unavailable"
+                subtitle="Manual availability context keeps known downtime separate from normal low-productivity review."
+                emptyTitle="No known unavailable assets"
+                emptyBody="No active grounded, repair, breakdown, or out-of-service status is recorded."
+                rows={(productivity.known_unavailable_trucks || []).slice(0, 8)}
+                renderRow={(truck: any) => (
+                  <RankRow
+                    key={truck.truck_key || truck.truck_id}
+                    title={truck.truck_id || "Unknown truck"}
+                    metric={availabilityLabel(truck.asset_availability?.status)}
+                    detail={`${formatMinutes(truck.stopped_minutes)} stopped-time evidence · ${formatStoppedRowDetail(truck, timeframe)}`}
+                  />
+                )}
+              />
+
+              <RankedPanel
                 title="Tracker Idle Markers"
                 subtitle={idle.evidence_label}
                 emptyTitle="No tracker idle markers"
@@ -891,6 +907,22 @@ function formatStopContext(row: any) {
   const note = String(row?.stop_context_note || "").trim();
   if (!label && !note) return "";
   return [label, note].filter(Boolean).join(": ");
+}
+
+function availabilityLabel(value: any) {
+  const labels: Record<string, string> = {
+    grounded: "Grounded",
+    under_repair: "Under repair",
+    breakdown_reported: "Breakdown reported",
+    out_of_service: "Out of service",
+    at_client_site: "At client/site",
+    loading: "Loading",
+    offloading: "Offloading",
+    waiting: "Waiting",
+    unknown_stopped_time: "Unknown stopped time",
+    on_trip: "On trip",
+  };
+  return labels[String(value || "").toLowerCase()] || "Known unavailable";
 }
 
 function formatStoppedReconciliation(row: any, timeframe: any) {

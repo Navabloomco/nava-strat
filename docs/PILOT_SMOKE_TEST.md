@@ -266,6 +266,7 @@ Confirm workflow behavior:
 - [ ] Finance-visible commercial fields can store quantity/rate when known, but Trip Intelligence still marks contribution unsafe until linked cost evidence exists.
 - [ ] After creating a Trip, open `/ops/journey/[id]` from the Trip list or the create flow and confirm the detail page shows trip reference, status, truck/provider asset, client, route, start/end time, driver, Trip Intelligence readiness, missing-data notes, and management flags.
 - [ ] On Trip Detail, assign or update a driver/timing/status with an ops/admin role and confirm the page refreshes without changing finance values.
+- [ ] On Trip Detail, use the Asset availability context row to mark the Trip truck Under repair, Breakdown reported, Out of service, At client/site, Loading, Offloading, Waiting, or Available; confirm it is operating context only and does not create a transfer/incident workflow.
 - [ ] On Trip Detail, enter `KARIUKI` as manual driver text, save, and confirm Driver shows `KARIUKI` and Trip Intelligence labels driver evidence as manual driver text instead of missing.
 - [ ] On Trip Detail, add or update revenue with a finance/elevated role and confirm Trip Intelligence no longer lists missing revenue after refresh.
 - [ ] On Trip Detail, confirm allocated fuel appears as litres/cost allocation evidence and does not claim actual fuel burn, theft, tank balance, or fuel efficiency.
@@ -345,6 +346,8 @@ Confirm workflow behavior:
 - [ ] With only a quick filter active, confirm the reset button says `Reset filter` and returns to `All`.
 - [ ] With search text and a quick filter active, confirm the reset button says `Reset search & filter` and clears both.
 - [ ] With search text active, click the `All` chip and confirm the search text remains.
+- [ ] Apply the `asset_availability_events` migration, mark an enabled truck `Under repair` or `Grounded` from Live Tracking or Trip Detail with an ops/admin role, and confirm Live Tracking shows a compact availability chip without raw coordinates or incident-form clutter.
+- [ ] Mark the same truck `Available` again and confirm the active availability chip clears.
 - [ ] Call `GET /api/ops/efficiency?range=yesterday` with an ops-visible role and confirm the JSON returns movement, idle/stopped, stale-location, productivity, driver-readiness, and client-waiting readiness sections.
 - [ ] Confirm `/api/ops/efficiency` labels metric evidence as provider-reported, GPS-estimated, provider-derived, unavailable, or not enough linked data instead of inventing fuel/contribution/driver/client conclusions.
 - [ ] Confirm Trucks Moved Most separates provider trip/report distance, provider current-feed odometer/mileage delta, and GPS-estimated fallback. If provider mileage is detected but cannot form a safe period delta, the row should say that instead of presenting GPS fallback as final provider distance.
@@ -355,6 +358,7 @@ Confirm workflow behavior:
 - [ ] Confirm stopped-time rows are labeled GPS-estimated stopped time and do not claim engine-on idling, fuel burn, driver waste, or fuel misuse.
 - [ ] If a provider current-feed stop duration is present, confirm `/ops/efficiency` shows it separately from Nava GPS-stopped time and explains that provider current stop is the current continuous episode while Nava GPS-stopped is the selected-period stationary total.
 - [ ] Confirm stopped rows show cautious context labels such as Provider current stop episode, Provider status indicates stopped/parked, At/near known place, or Unknown stopped time, without turning site dwell into client delay or blame.
+- [ ] Confirm trucks with active availability statuses such as Grounded, Under repair, Breakdown reported, or Out of service are labelled as known unavailable context in Ops Intelligence and are not treated as ordinary low-productivity candidates.
 - [ ] Confirm idle/excessive-idle event sections are labeled provider idle markers/provider-derived marker windows unless ignition/engine/CAN data verifies true engine-on idle.
 - [ ] Confirm provider idle markers are present in `telemetry_events` as canonical `provider_idle_marker` rows when the provider feed supplies idle/excessive-idle marker values.
 - [ ] Confirm legacy `excessive_idle` / `long_idle` rows count as provider-derived markers only when metadata does not mark them as GPS-generated/event-engine stopped estimates.
@@ -449,6 +453,7 @@ Open `/nava-eye` and ask:
 - [ ] Ask "What should I act on today?" and confirm Nava Eye returns role-appropriate action items from company-scoped fleet health without leaking finance amounts to non-finance roles.
 - [ ] Ask "What should I do today?" with no active truck/Trip context and confirm Nava Eye returns a company-scoped action summary, not a "which truck?" clarification.
 - [ ] After a truck or Trip problem answer, ask "What should I do about it?" and confirm Nava Eye keeps the current subject without exposing internal context wording.
+- [ ] After marking a truck Under repair or Grounded, ask Nava Eye "why is this truck stopped?" and confirm it uses the recorded availability status first, while saying engine-on idle, fuel burn, driver blame, and client blame are not verified by that status.
 - [ ] After a truck distance-unavailable answer, ask "what should i do about it?" and confirm Nava Eye recommends provider sync/freshness and retrying when enough telemetry exists, not whole-fleet health.
 - [ ] After a GPS-estimated distance answer, ask "what should i do with that?" and confirm Nava Eye says to treat it as provisional movement evidence and get provider trip/report distance or a safe odometer delta before final per-km review.
 - [ ] After an idle-marker answer, ask "what should i do?" and confirm Nava Eye recommends reviewing marker windows without claiming fuel burn, theft, or true engine-on idle.

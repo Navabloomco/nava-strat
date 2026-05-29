@@ -241,7 +241,11 @@ function detectMetric(lower: string): NavaEyeMetric {
   if (/\b(idle markers?|idling|idle alert|provider idle)\b/.test(lower)) {
     return "idle_markers";
   }
-  if (/\b(stopped|stuck|stationary|not moving|parked|waiting)\b/.test(lower)) {
+  if (
+    /\b(stopped|stuck|stationary|not moving|parked|waiting|grounded|under repair|repair|breakdown|out of service)\b/.test(
+      lower
+    )
+  ) {
     return "stopped_time";
   }
   if (/\b(proof|receipt|evidence|attachments?|documents?|screenshot)\b/.test(lower)) {

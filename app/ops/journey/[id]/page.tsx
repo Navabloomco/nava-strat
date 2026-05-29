@@ -50,6 +50,19 @@ const expenseEvidenceTypes = [
   { value: "other", label: "Other" },
 ];
 
+const availabilityStatusOptions = [
+  { value: "available", label: "Available / clear status" },
+  { value: "grounded", label: "Grounded" },
+  { value: "under_repair", label: "Under repair" },
+  { value: "breakdown_reported", label: "Breakdown reported" },
+  { value: "out_of_service", label: "Out of service" },
+  { value: "at_client_site", label: "At client/site" },
+  { value: "loading", label: "Loading" },
+  { value: "offloading", label: "Offloading" },
+  { value: "waiting", label: "Waiting" },
+  { value: "unknown_stopped_time", label: "Unknown stopped time" },
+];
+
 function emptyExpenseEvidenceForm() {
   return {
     evidenceType: "receipt",
@@ -73,6 +86,9 @@ export default function TripDetailPage() {
   const [startTime, setStartTime] = useState("");
   const [endTime, setEndTime] = useState("");
   const [expectedFuel, setExpectedFuel] = useState("");
+  const [availabilityStatus, setAvailabilityStatus] = useState("available");
+  const [availabilityNote, setAvailabilityNote] = useState("");
+  const [availabilitySaving, setAvailabilitySaving] = useState(false);
 
   const [loadedQuantity, setLoadedQuantity] = useState("");
   const [offloadedQuantity, setOffloadedQuantity] = useState("");
@@ -153,6 +169,8 @@ export default function TripDetailPage() {
     );
     setData({ ...json, evidence });
     primeForms(json.journey || {});
+    setAvailabilityStatus(json.asset_availability?.availability?.status || "available");
+    setAvailabilityNote("");
     setLoading(false);
   }
 
@@ -273,6 +291,45 @@ export default function TripDetailPage() {
       return;
     }
     await loadDetail("Trip details saved.");
+  }
+
+  async function saveAssetAvailability(e: any) {
+    e.preventDefault();
+    setAvailabilitySaving(true);
+    setMessage("Saving asset availability...");
+    const token = await getToken();
+    if (!token) {
+      setMessage("Session expired. Please log in again.");
+      setAvailabilitySaving(false);
+      return;
+    }
+
+    try {
+      const res = await fetch("/api/asset-availability", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          companyId: currentCompanyId(),
+          asset_id: data?.journey?.asset_id || null,
+          truck_id: data?.journey?.truck || null,
+          journey_id: tripId,
+          status: availabilityStatus,
+          note: availabilityNote,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || "Failed to save asset availability.");
+      }
+      await loadDetail(json.message || "Asset availability saved.");
+    } catch (err: any) {
+      setMessage(err.message || "Failed to save asset availability.");
+    } finally {
+      setAvailabilitySaving(false);
+    }
   }
 
   async function saveRevenue(e: any) {
@@ -618,6 +675,8 @@ export default function TripDetailPage() {
   const readiness = trip?.profitability_readiness || {};
   const contributionSummary = readiness?.contribution_summary || {};
   const fuel = data?.fuel || {};
+  const assetAvailabilityBundle = data?.asset_availability || {};
+  const assetAvailability = assetAvailabilityBundle?.availability || null;
   const tripAllocations = fuel?.trip_allocations || [];
   const expenses = data?.expenses || [];
   const fuelIssueSummaries = fuel?.fuel_issue_summaries || {};
@@ -731,6 +790,80 @@ export default function TripDetailPage() {
                   <Detail label="Driver" value={displayDriver} />
                   <Detail label="Start" value={formatDateTime(journey.start_time)} />
                   <Detail label="End" value={formatDateTime(journey.end_time)} />
+                </div>
+                <div className="mt-5 rounded-md border border-white/10 bg-white/[0.04] p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-semibold text-white">
+                        Asset availability
+                      </div>
+                      <p className="mt-1 text-xs leading-5 text-slate-400">
+                        Optional operational context for interpreting stopped time and trip risk.
+                      </p>
+                    </div>
+                    <AvailabilityPill availability={assetAvailability} />
+                  </div>
+                  {assetAvailability?.note && (
+                    <div className="mt-3 text-sm leading-6 text-slate-300">
+                      {assetAvailability.note}
+                    </div>
+                  )}
+                  {availabilityInterpretation(assetAvailability) && (
+                    <div className="mt-3 text-xs leading-5 text-amber-100">
+                      {availabilityInterpretation(assetAvailability)}
+                    </div>
+                  )}
+                  {capabilities.can_edit_asset_availability ? (
+                    <details className="mt-4 rounded-md border border-white/10 bg-slate-950/35 p-4">
+                      <summary className="cursor-pointer text-sm font-semibold text-cyan-100">
+                        Update availability
+                      </summary>
+                      <form onSubmit={saveAssetAvailability} className="mt-5 grid gap-4">
+                        <div className="grid gap-4 md:grid-cols-2">
+                          <FormField label="Status" dark>
+                            <select
+                              value={availabilityStatus}
+                              onChange={(event) => setAvailabilityStatus(event.target.value)}
+                              className={inputClass}
+                            >
+                              {availabilityStatusOptions.map((option) => (
+                                <option key={option.value} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                          </FormField>
+                          <FormField label="Linked trip" dark>
+                            <div className="rounded-md border border-white/10 bg-slate-950/50 px-3 py-3 text-sm text-slate-300">
+                              {journey.internal_trip_id || "Current trip"}
+                            </div>
+                          </FormField>
+                        </div>
+                        <FormField label="Note optional" dark>
+                          <textarea
+                            value={availabilityNote}
+                            onChange={(event) => setAvailabilityNote(event.target.value)}
+                            rows={3}
+                            placeholder="Short operational context. Evidence workflows can come later."
+                            className={inputClass}
+                          />
+                        </FormField>
+                        <PrimaryButton
+                          type="submit"
+                          disabled={availabilitySaving}
+                          className="w-full sm:w-auto"
+                        >
+                          {availabilitySaving
+                            ? "Saving..."
+                            : availabilityStatus === "available"
+                              ? "Clear status"
+                              : "Save availability"}
+                        </PrimaryButton>
+                      </form>
+                    </details>
+                  ) : (
+                    <ReadOnlyNotice text="Your role can view asset availability but cannot update it." />
+                  )}
                 </div>
               </Panel>
 
@@ -1740,6 +1873,58 @@ function Detail({ label, value }: { label: string; value: string }) {
       <div className="mt-1 break-words text-sm text-slate-200">{value}</div>
     </div>
   );
+}
+
+function AvailabilityPill({ availability }: { availability?: any }) {
+  if (!availability?.status) {
+    return <StatusPill tone="neutral">No status recorded</StatusPill>;
+  }
+  return (
+    <StatusPill tone={availabilityTone(availability.status) as any}>
+      {availabilityLabel(availability.status)}
+    </StatusPill>
+  );
+}
+
+function availabilityLabel(value: any) {
+  const labels: Record<string, string> = {
+    available: "Available",
+    on_trip: "On trip",
+    grounded: "Grounded",
+    under_repair: "Under repair",
+    breakdown_reported: "Breakdown reported",
+    out_of_service: "Out of service",
+    at_client_site: "At client/site",
+    loading: "Loading",
+    offloading: "Offloading",
+    waiting: "Waiting",
+    unknown_stopped_time: "Unknown stopped time",
+  };
+  return labels[String(value || "").toLowerCase()] || "Availability";
+}
+
+function availabilityTone(value: any) {
+  const status = String(value || "").toLowerCase();
+  if (["grounded", "under_repair", "breakdown_reported", "out_of_service"].includes(status)) {
+    return "danger";
+  }
+  if (["at_client_site", "waiting", "unknown_stopped_time"].includes(status)) return "warning";
+  if (["on_trip", "loading", "offloading"].includes(status)) return "info";
+  return "neutral";
+}
+
+function availabilityInterpretation(availability: any) {
+  const status = String(availability?.status || "").toLowerCase();
+  if (["grounded", "under_repair", "breakdown_reported", "out_of_service"].includes(status)) {
+    return `${availabilityLabel(status)} means stopped time should be read as known operational downtime, not normal low productivity, fuel burn, or driver blame.`;
+  }
+  if (["at_client_site", "loading", "offloading", "waiting"].includes(status)) {
+    return `${availabilityLabel(status)} is operational context. It does not prove client delay without supporting Trip/site evidence.`;
+  }
+  if (status === "unknown_stopped_time") {
+    return "Unknown stopped time remains a review item until provider, site, Trip, or manual evidence explains it.";
+  }
+  return "";
 }
 
 function ContributionValue({

@@ -1,5 +1,10 @@
 // lib/intelligence/contextRouter.ts
 import { supabaseAdmin } from "../supabaseAdmin";
+import {
+  buildAssetAvailabilityLookup,
+  fetchActiveAssetAvailabilityEvents,
+  findAssetAvailabilityForTarget,
+} from "../operations/assetAvailability";
 import { analyzeTruckFuelRisk } from "./fuelRiskEngine.universal";
 import {
   fetchActiveGeofences,
@@ -3005,9 +3010,12 @@ async function fetchTruckStatus(
     getVehicleMatchKeys(item).some((key) => key === targetKey)
   );
   if (!asset) return null;
+  const availabilityResult = await fetchActiveAssetAvailabilityEvents(companyId);
+  const availabilityLookup = buildAssetAvailabilityLookup(availabilityResult.rows || []);
 
   return {
     ...asset,
+    asset_availability: findAssetAvailabilityForTarget(availabilityLookup, asset),
     geofence_match: matchPointToGeofence(asset, geofences),
     location_resolution: await resolveOperationalLocation({
       company_id: companyId,

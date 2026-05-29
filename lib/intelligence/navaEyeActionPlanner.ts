@@ -143,6 +143,21 @@ function buildTruckActionPlan(context: any, activeTopic: any) {
   const metricIntent = String(activeTopic.metric_intent || "");
   const result = activeTopic.metric_result || activeTopic.result_summary || {};
   const recentIssue = context.action_plan_context?.recent_issue || {};
+  const availability =
+    context.truck?.asset_availability ||
+    context.investigation_case_file?.asset_status?.asset_availability ||
+    null;
+
+  if (availability?.status && availability.status !== "available") {
+    const availabilityLabel = humanizeActionLabel(availability.status);
+    const note = availability.note ? ` Note: ${String(availability.note).slice(0, 180)}` : "";
+    return [
+      `For ${label}, ${availabilityLabel.toLowerCase()} is already recorded.${note}`,
+      "1. Treat stopped time as operational context first, not normal low productivity or engine-on idle.",
+      "2. Check provider freshness and site/Trip context before escalating.",
+      "3. If the truck is blocking a Trip, record the next operational step separately; incident and transfer workflows are deferred.",
+    ].join("\n");
+  }
 
   if (metricIntent === "distance_covered" || result.distance_source) {
     return buildTruckDistanceActionPlan(label, result, recentIssue);
@@ -383,4 +398,10 @@ function formatKm(value: number) {
     minimumFractionDigits: Number.isInteger(number) ? 0 : 2,
     maximumFractionDigits: 2,
   })} km`;
+}
+
+function humanizeActionLabel(value: any) {
+  return String(value || "status")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }

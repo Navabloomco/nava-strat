@@ -7,6 +7,7 @@ import { getCurrentFleetLocations } from "../../../../lib/intelligence/fleetLoca
 import { supabase } from "../../../../lib/supabase";
 import { supabaseAdmin } from "../../../../lib/supabaseAdmin";
 import {
+  canEditJourneys,
   canReviewAssets,
   canViewOps,
   normalizeRole,
@@ -17,6 +18,11 @@ import {
   normalizeProviderLocationLabel,
   resolveOperationalLocation,
 } from "../../../../lib/location/resolveOperationalLocation";
+import {
+  buildAssetAvailabilityLookup,
+  fetchActiveAssetAvailabilityEvents,
+  findAssetAvailabilityForTarget,
+} from "../../../../lib/operations/assetAvailability";
 import { readStoredVehicleIdentityContext } from "../../../../lib/providers/vehicleIdentity";
 
 export const dynamic = "force-dynamic";
@@ -559,6 +565,8 @@ export async function GET(req: Request) {
       ...liveTrucks,
       ...enabledAssets,
     ]);
+    const availabilityResult = await fetchActiveAssetAvailabilityEvents(resolved.company.id);
+    const availabilityLookup = buildAssetAvailabilityLookup(availabilityResult.rows || []);
 
     const trucks = await Promise.all(liveTrucks.map(async (truck) => {
       const telemetry = telemetryByTruck[truck.truck_id] || null;
@@ -584,6 +592,7 @@ export async function GET(req: Request) {
       });
 
       return {
+        asset_id: matchingAsset?.id || null,
         truck_id: truck.truck_id,
         registration: truck.registration,
         ...(includeCoordinates
@@ -605,6 +614,11 @@ export async function GET(req: Request) {
         location_source: location.location_source,
         location_note: location.location_note,
         geofence_match: location.geofence_match || matchPointToGeofence(truck, geofences),
+        availability: findAssetAvailabilityForTarget(availabilityLookup, {
+          id: matchingAsset?.id || null,
+          truck_id: truck.truck_id,
+          registration: truck.registration,
+        }),
         ...activeTrip,
       };
     }));
@@ -627,6 +641,7 @@ export async function GET(req: Request) {
           journeys,
         });
         return {
+          asset_id: asset.id || null,
           truck_id: asset.truck_id,
           registration: asset.registration || asset.truck_id,
           ...(includeCoordinates
@@ -644,6 +659,7 @@ export async function GET(req: Request) {
           location_source: location.location_source,
           location_note: location.location_note,
           geofence_match: location.geofence_match || matchPointToGeofence(asset, geofences),
+          availability: findAssetAvailabilityForTarget(availabilityLookup, asset),
           ...activeTrip,
         };
       }));
@@ -662,6 +678,10 @@ export async function GET(req: Request) {
         provider_count: providers.length,
         active_provider_count: providers.filter((provider) => provider.is_active).length,
         coordinates_included: includeCoordinates,
+        availability_setup_required: Boolean(availabilityResult.missing),
+      },
+      capabilities: {
+        can_edit_availability: canEditJourneys(resolved.roles),
       },
       trucks,
       stale_assets: staleAssets,

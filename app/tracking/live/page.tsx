@@ -17,6 +17,9 @@ type LiveTrackingData = {
     provider_count: number;
     active_provider_count: number;
   };
+  capabilities?: {
+    can_edit_availability?: boolean;
+  };
   trucks: any[];
   stale_assets: any[];
   providers: any[];
@@ -54,10 +57,24 @@ const emptyData: LiveTrackingData = {
     provider_count: 0,
     active_provider_count: 0,
   },
+  capabilities: {},
   trucks: [],
   stale_assets: [],
   providers: [],
 };
+
+const availabilityStatusOptions = [
+  { value: "available", label: "Available / clear status" },
+  { value: "grounded", label: "Grounded" },
+  { value: "under_repair", label: "Under repair" },
+  { value: "breakdown_reported", label: "Breakdown reported" },
+  { value: "out_of_service", label: "Out of service" },
+  { value: "at_client_site", label: "At client/site" },
+  { value: "loading", label: "Loading" },
+  { value: "offloading", label: "Offloading" },
+  { value: "waiting", label: "Waiting" },
+  { value: "unknown_stopped_time", label: "Unknown stopped time" },
+];
 
 export default function LiveTrackingPage() {
   const [data, setData] = useState<LiveTrackingData>(emptyData);
@@ -142,6 +159,7 @@ export default function LiveTrackingPage() {
         company: json.company || null,
         freshness_minutes: json.freshness_minutes || 30,
         summary: json.summary || emptyData.summary,
+        capabilities: json.capabilities || {},
         trucks: json.trucks || [],
         stale_assets: json.stale_assets || [],
         providers: json.providers || [],
@@ -152,6 +170,44 @@ export default function LiveTrackingPage() {
     } finally {
       setLoading(false);
       setRefreshing(false);
+    }
+  }
+
+  async function saveAvailability(row: any, status: string, note: string) {
+    setError("");
+    setEnrichmentMessage("");
+    const accessToken = await getAccessToken();
+    if (!accessToken) {
+      window.location.href = "/login";
+      return;
+    }
+
+    try {
+      const res = await fetch("/api/asset-availability", {
+        method: "POST",
+        cache: "no-store",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          asset_id: row.asset_id || null,
+          truck_id: row.registration || row.truck_id || null,
+          journey_id: row.active_trip_id || null,
+          status,
+          note,
+        }),
+      });
+      const json = await res.json();
+
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || "Failed to save availability status.");
+      }
+
+      setEnrichmentMessage(json.message || "Availability status saved.");
+      await loadData();
+    } catch (err: any) {
+      setError(err.message || "Failed to save availability status.");
     }
   }
 
@@ -222,6 +278,7 @@ export default function LiveTrackingPage() {
     liveCount: filteredRows.live.length,
     staleCount: filteredRows.stale.length,
   });
+  const canEditAvailability = Boolean(data.capabilities?.can_edit_availability);
 
   return (
     <main className="min-h-screen bg-slate-950 px-4 py-6 text-white sm:px-6 sm:py-8">
@@ -367,7 +424,12 @@ export default function LiveTrackingPage() {
                 ) : (
                   <div className="divide-y divide-white/10">
                     {filteredRows.live.map((truck) => (
-                      <TruckRow key={truck.truck_id} truck={truck} />
+                      <TruckRow
+                        key={truck.truck_id}
+                        truck={truck}
+                        canEditAvailability={canEditAvailability}
+                        onSaveAvailability={saveAvailability}
+                      />
                     ))}
                   </div>
                 )}
@@ -425,6 +487,7 @@ export default function LiveTrackingPage() {
                             {asset.provider_name || "Provider not specified"}
                           </div>
                           <IdentityHints item={asset} />
+                          <AvailabilityChip availability={asset.availability} />
                           <TripContext item={asset} compact />
                           <GeofenceBadge match={asset.geofence_match} />
                           <div className="mt-1 text-sm text-slate-300">
@@ -438,6 +501,13 @@ export default function LiveTrackingPage() {
                           <div className="mt-1 text-xs text-slate-400">
                             Last seen: {formatDateTime(asset.last_seen_at)}
                           </div>
+                          {canEditAvailability && (
+                            <AvailabilityEditor
+                              item={asset}
+                              compact
+                              onSave={saveAvailability}
+                            />
+                          )}
                         </div>
                       ))}
                     </div>
@@ -587,7 +657,15 @@ function LiveTrackingCommandBar({
   );
 }
 
-function TruckRow({ truck }: { truck: any }) {
+function TruckRow({
+  truck,
+  canEditAvailability,
+  onSaveAvailability,
+}: {
+  truck: any;
+  canEditAvailability: boolean;
+  onSaveAvailability: (row: any, status: string, note: string) => Promise<void>;
+}) {
   return (
     <article className="grid gap-4 px-5 py-4 lg:grid-cols-[1.2fr_1fr_1fr_1fr] lg:items-center">
       <div>
@@ -598,7 +676,11 @@ function TruckRow({ truck }: { truck: any }) {
           {truck.provider_name || "Provider not specified"}
         </div>
         <IdentityHints item={truck} />
+        <AvailabilityChip availability={truck.availability} />
         <TripContext item={truck} />
+        {canEditAvailability && (
+          <AvailabilityEditor item={truck} onSave={onSaveAvailability} />
+        )}
       </div>
 
       <div className="text-sm text-slate-200">
@@ -628,6 +710,78 @@ function TruckRow({ truck }: { truck: any }) {
         </div>
       </div>
     </article>
+  );
+}
+
+function AvailabilityChip({ availability }: { availability?: any }) {
+  if (!availability?.status) return null;
+  const status = String(availability.status || "");
+  const tone = availabilityTone(status);
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-2">
+      <span className={availabilityPillClass(tone)}>
+        {availabilityLabel(status)}
+      </span>
+      {availability.note && (
+        <span className="text-xs leading-5 text-slate-400">{availability.note}</span>
+      )}
+    </div>
+  );
+}
+
+function AvailabilityEditor({
+  item,
+  compact = false,
+  onSave,
+}: {
+  item: any;
+  compact?: boolean;
+  onSave: (row: any, status: string, note: string) => Promise<void>;
+}) {
+  const [status, setStatus] = useState(item?.availability?.status || "available");
+  const [note, setNote] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  async function submit(event: any) {
+    event.preventDefault();
+    setSaving(true);
+    await onSave(item, status, note);
+    setNote("");
+    setSaving(false);
+  }
+
+  return (
+    <details className={compact ? "mt-3 text-xs" : "mt-3 text-xs"}>
+      <summary className="cursor-pointer font-semibold text-cyan-100">
+        Update availability
+      </summary>
+      <form onSubmit={submit} className="mt-3 grid gap-2">
+        <select
+          value={status}
+          onChange={(event) => setStatus(event.target.value)}
+          className="w-full rounded-md border border-white/10 bg-slate-950 px-3 py-2 text-xs text-white outline-none focus:border-cyan-200/50"
+        >
+          {availabilityStatusOptions.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+        <input
+          value={note}
+          onChange={(event) => setNote(event.target.value)}
+          placeholder="Optional note"
+          className="w-full rounded-md border border-white/10 bg-slate-950 px-3 py-2 text-xs text-white outline-none placeholder:text-slate-500 focus:border-cyan-200/50"
+        />
+        <button
+          type="submit"
+          disabled={saving}
+          className="rounded-md border border-cyan-200/30 px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-cyan-100 hover:bg-cyan-300/10 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {saving ? "Saving..." : status === "available" ? "Clear status" : "Save status"}
+        </button>
+      </form>
+    </details>
   );
 }
 
@@ -823,6 +977,8 @@ function buildSearchFields(row: any, statusText: "live" | "stale") {
     geofence.name,
     geofence.type,
     geofence.relation,
+    row?.availability?.status,
+    row?.availability?.note,
     row?.active_trip_reference,
     row?.active_trip_client,
     row?.active_trip_from,
@@ -847,7 +1003,7 @@ function rowMatchesFilter(
   }
   if (activeFilter === "stopped") {
     const speed = Number(row?.speed);
-    const status = normalizeSearchText(row?.status);
+    const status = normalizeSearchText(`${row?.status || ""} ${row?.availability?.status || ""}`);
     return (
       (statusText === "live" && Number.isFinite(speed) && speed === 0) ||
       /\b(stopped|stationary|parked|idle|idling)\b/.test(status)
@@ -871,6 +1027,43 @@ function rowNeedsReadableLocation(row: any) {
     label.includes("location not labeled") ||
     label.includes("unavailable")
   );
+}
+
+function availabilityLabel(value: string) {
+  const labels: Record<string, string> = {
+    available: "Available",
+    on_trip: "On trip",
+    grounded: "Grounded",
+    under_repair: "Under repair",
+    breakdown_reported: "Breakdown reported",
+    out_of_service: "Out of service",
+    at_client_site: "At client/site",
+    loading: "Loading",
+    offloading: "Offloading",
+    waiting: "Waiting",
+    unknown_stopped_time: "Unknown stopped time",
+  };
+  return labels[String(value || "").toLowerCase()] || "Availability";
+}
+
+function availabilityTone(value: string) {
+  const status = String(value || "").toLowerCase();
+  if (["grounded", "under_repair", "breakdown_reported", "out_of_service"].includes(status)) {
+    return "danger";
+  }
+  if (["at_client_site", "waiting", "unknown_stopped_time"].includes(status)) return "warning";
+  if (["on_trip", "loading", "offloading"].includes(status)) return "info";
+  return "neutral";
+}
+
+function availabilityPillClass(tone: string) {
+  const classes: Record<string, string> = {
+    neutral: "border-slate-300/30 bg-slate-300/10 text-slate-200",
+    info: "border-cyan-200/30 bg-cyan-300/10 text-cyan-100",
+    warning: "border-amber-300/30 bg-amber-300/10 text-amber-100",
+    danger: "border-rose-300/30 bg-rose-300/10 text-rose-100",
+  };
+  return `inline-flex max-w-full whitespace-normal break-words rounded-full border px-2.5 py-1 text-center text-xs font-semibold leading-5 ${classes[tone] || classes.neutral}`;
 }
 
 function formatResultCountText({

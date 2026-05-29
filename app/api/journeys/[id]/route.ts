@@ -22,6 +22,11 @@ import {
   buildTripIntelligenceSummary,
   resolveTripIntelligenceTimeframe,
 } from "../../../../lib/intelligence/tripIntelligence";
+import {
+  buildAssetAvailabilityLookup,
+  fetchActiveAssetAvailabilityEvents,
+  findAssetAvailabilityForTarget,
+} from "../../../../lib/operations/assetAvailability";
 import { supabase } from "../../../../lib/supabase";
 import { supabaseAdmin } from "../../../../lib/supabaseAdmin";
 import { parseProviderTimestamp } from "../../../../lib/timeFormatting";
@@ -424,6 +429,18 @@ async function loadTripIntelligence(companyId: string, company: any, journey: an
   };
 }
 
+async function loadAssetAvailability(companyId: string, journey: any) {
+  const result = await fetchActiveAssetAvailabilityEvents(companyId);
+  const lookup = buildAssetAvailabilityLookup(result.rows || []);
+  return {
+    setup_required: Boolean(result.missing),
+    availability: findAssetAvailabilityForTarget(lookup, {
+      asset_id: journey.asset_id || null,
+      truck: journey.truck || null,
+    }),
+  };
+}
+
 function buildCapabilities(roles: string[]) {
   return {
     can_view_journey: canViewJourneys(roles),
@@ -436,6 +453,9 @@ function buildCapabilities(roles: string[]) {
     can_edit_expenses: canEditExpenses(roles),
     can_view_trip_expenses: canViewTripExpenses(roles),
     can_edit_trip_expenses: canEditTripExpenses(roles),
+    can_view_asset_availability:
+      canViewJourneys(roles) || canViewFinance(roles) || canViewFuel(roles),
+    can_edit_asset_availability: canEditJourneys(roles),
   };
 }
 
@@ -464,7 +484,7 @@ export async function GET(
       return noStoreJson({ success: false, error: "Trip not found" }, { status: 404 });
     }
 
-    const [drivers, expenses, fuel, intelligence] = await Promise.all([
+    const [drivers, expenses, fuel, intelligence, assetAvailability] = await Promise.all([
       canEditJourneys(resolved.roles) ? loadDrivers(resolved.company.id) : Promise.resolve([]),
       canViewTripExpenses(resolved.roles)
         ? loadExpenses(resolved.company.id, journey.id)
@@ -473,6 +493,7 @@ export async function GET(
         ? loadFuelBundle(resolved.company.id, journey, canViewFinance(resolved.roles))
         : Promise.resolve(null),
       loadTripIntelligence(resolved.company.id, resolved.company, journey, resolved.roles),
+      loadAssetAvailability(resolved.company.id, journey),
     ]);
 
     return noStoreJson({
@@ -484,6 +505,7 @@ export async function GET(
       drivers,
       expenses,
       fuel,
+      asset_availability: assetAvailability,
       trip_intelligence: intelligence,
       guardrails: {
         no_raw_coordinates: true,

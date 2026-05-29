@@ -44,6 +44,11 @@ import {
   buildNavaEyeActionPlan,
   buildNavaEyeActionPlannerContext,
 } from "../../../../lib/intelligence/navaEyeActionPlanner";
+import {
+  availabilityContextNote,
+  isKnownUnavailableAvailability,
+  labelAssetAvailabilityStatus,
+} from "../../../../lib/operations/assetAvailability";
 
 export async function POST(req: Request) {
   try {
@@ -2812,6 +2817,11 @@ function buildTruckStatusFallbackAnswer(context: any, options: any = {}) {
     parts.push(trailerContext);
   }
 
+  const availabilityContext = formatAssetAvailabilityContext(model.assetAvailability);
+  if (availabilityContext) {
+    parts.push(availabilityContext);
+  }
+
   if (context.coordinate_request && model.hasGpsPoint) {
     parts.push(
       "Latest GPS/status evidence is available, but raw coordinates are kept as backend evidence."
@@ -2823,7 +2833,7 @@ function buildTruckStatusFallbackAnswer(context: any, options: any = {}) {
     );
   }
 
-  parts.push(formatLiveOperationalState(model.speed, model.stale));
+  parts.push(formatLiveOperationalState(model.speed, model.stale, model.assetAvailability));
 
   const timestampNote = formatProviderTimestampQualityNote(
     model.timestampQuality,
@@ -2857,7 +2867,10 @@ function buildTruckStatusFallbackAnswer(context: any, options: any = {}) {
 
 function buildTruckIdleStatusAnswer(context: any) {
   const model = buildLiveTruckStatusModel(context);
-  const parts = [formatLiveOperationalState(model.speed, model.stale)];
+  const parts = [
+    formatAssetAvailabilityContext(model.assetAvailability),
+    formatLiveOperationalState(model.speed, model.stale, model.assetAvailability),
+  ].filter(Boolean);
   const idleRead = formatLiveIdleMarkerRead({
     idleEvents: model.idleEvents,
     latestPoint: model.locationPoint,
@@ -2874,6 +2887,7 @@ function buildTruckIdleStatusAnswer(context: any) {
 
 function buildLiveTruckStatusModel(context: any) {
   const truck = context.truck || {};
+  const assetAvailability = truck.asset_availability || null;
   const telemetry = Array.isArray(context.recent_telemetry)
     ? context.recent_telemetry
     : [];
@@ -2994,6 +3008,7 @@ function buildLiveTruckStatusModel(context: any) {
     ignitionState,
     telemetryCapability,
     trailerContext,
+    assetAvailability,
   };
 }
 
@@ -3171,7 +3186,14 @@ function buildJourneyLocationFallback(journeys: any[]) {
   return null;
 }
 
-function formatLiveOperationalState(speed: number | null, stale: boolean) {
+function formatLiveOperationalState(
+  speed: number | null,
+  stale: boolean,
+  availability: any = null
+) {
+  if (availability?.status && isKnownUnavailableAvailability(availability.status)) {
+    return `${labelAssetAvailabilityStatus(availability.status)} is recorded, so stopped-time evidence should be treated as known operational downtime, not normal low productivity.`;
+  }
   if (stale) {
     return "Provider data is stale; refresh sync or live tracking before treating it as current.";
   }
@@ -3182,6 +3204,14 @@ function formatLiveOperationalState(speed: number | null, stale: boolean) {
     return "This is active movement.";
   }
   return "The truck is stopped/stationary.";
+}
+
+function formatAssetAvailabilityContext(availability: any) {
+  if (!availability?.status || availability.status === "available") return "";
+  const label = labelAssetAvailabilityStatus(availability.status);
+  const note = availabilityContextNote(availability);
+  const userNote = availability.note ? ` Note: ${availability.note}` : "";
+  return `${label} is recorded for this asset.${userNote}${note ? ` ${note}` : ""}`;
 }
 
 function formatLiveIdleMarkerRead({
