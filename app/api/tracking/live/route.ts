@@ -565,6 +565,9 @@ export async function GET(req: Request) {
       const matchingAsset = enabledAssets.find(
         (asset) => asset.truck_id === truck.truck_id
       );
+      const identity = matchingAsset
+        ? readStoredVehicleIdentityContext(matchingAsset)
+        : null;
       const location = await resolveLiveLocationLabel({
         companyId: resolved.company.id,
         latitude: truck.latitude,
@@ -596,6 +599,8 @@ export async function GET(req: Request) {
         fuel_level: telemetry?.fuel_level ?? null,
         fuel_unit: telemetry?.fuel_unit || null,
         provider_name: matchingAsset?.provider_name || null,
+        provider_asset_label: identity?.provider_label || null,
+        attached_trailer_plate: identity?.attached_trailer_plate || null,
         location_label: location.location_label,
         location_source: location.location_source,
         location_note: location.location_note,
@@ -607,6 +612,7 @@ export async function GET(req: Request) {
     const staleAssets = await Promise.all(enabledAssets
       .filter((asset) => !liveTruckIds.has(asset.truck_id))
       .map(async (asset) => {
+        const identity = readStoredVehicleIdentityContext(asset);
         const location = await resolveLiveLocationLabel({
           companyId: resolved.company.id,
           latitude: asset.latitude,
@@ -631,6 +637,9 @@ export async function GET(req: Request) {
             : {}),
           last_seen_at: asset.last_seen_at || null,
           status: asset.status || null,
+          provider_name: asset.provider_name || null,
+          provider_asset_label: identity.provider_label || null,
+          attached_trailer_plate: identity.attached_trailer_plate || null,
           location_label: location.location_label,
           location_source: location.location_source,
           location_note: location.location_note,

@@ -311,6 +311,10 @@ Confirm workflow behavior:
 - [ ] Confirm Live Tracking top cards prioritize operational state (`Enabled assets`, `Live now`, `Stale assets`, `Telemetry 24h`, `Providers`) and do not show raw imported asset counts as a primary card.
 - [ ] Confirm Live Tracking rows show active Trip context when a same-company non-demo journey is active/open and matched to the truck, for example `Trip: BAMBURI · MOMBASA → ATHI RIVER`, while keeping current location separate.
 - [ ] Complete/offload/end that Trip and confirm Live Tracking no longer shows it as active Trip context.
+- [ ] Confirm the Live Tracking command bar appears below setup/review notices and above the Live trucks / Provider status / Stale assets grid.
+- [ ] Search a truck with and without spaces or hyphens and confirm the same row appears without clearing on auto-refresh.
+- [ ] Search by provider name, safe provider asset label, attached trailer label when present, active Trip client/route, geofence, and readable location; confirm raw coordinates are not exposed.
+- [ ] Confirm quick filters preserve grouping: Live, Stale, Moving, Stopped, Has active trip, and Needs readable location. If no rows match, the page shows `No matching assets found.`
 - [ ] Call `GET /api/ops/efficiency?range=yesterday` with an ops-visible role and confirm the JSON returns movement, idle/stopped, stale-location, productivity, driver-readiness, and client-waiting readiness sections.
 - [ ] Confirm `/api/ops/efficiency` labels metric evidence as provider-reported, GPS-estimated, provider-derived, unavailable, or not enough linked data instead of inventing fuel/profit/driver/client conclusions.
 - [ ] Confirm Trucks Moved Most separates provider trip/report distance, provider current-feed odometer/mileage delta, and GPS-estimated fallback. If provider mileage is detected but cannot form a safe period delta, the row should say that instead of presenting GPS fallback as final provider distance.

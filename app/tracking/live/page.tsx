@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { supabase } from "../../../lib/supabase";
 
@@ -21,6 +21,25 @@ type LiveTrackingData = {
   stale_assets: any[];
   providers: any[];
 };
+
+type LiveTrackingFilter =
+  | "all"
+  | "live"
+  | "stale"
+  | "moving"
+  | "stopped"
+  | "active_trip"
+  | "needs_location";
+
+const LIVE_TRACKING_FILTERS: Array<{ key: LiveTrackingFilter; label: string }> = [
+  { key: "all", label: "All" },
+  { key: "live", label: "Live" },
+  { key: "stale", label: "Stale" },
+  { key: "moving", label: "Moving" },
+  { key: "stopped", label: "Stopped" },
+  { key: "active_trip", label: "Has active trip" },
+  { key: "needs_location", label: "Needs readable location" },
+];
 
 const emptyData: LiveTrackingData = {
   company: null,
@@ -49,6 +68,8 @@ export default function LiveTrackingPage() {
   const [error, setError] = useState("");
   const [enrichmentMessage, setEnrichmentMessage] = useState("");
   const [lastLoadedAt, setLastLoadedAt] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [activeFilter, setActiveFilter] = useState<LiveTrackingFilter>("all");
 
   useEffect(() => {
     loadAccess();
@@ -180,6 +201,27 @@ export default function LiveTrackingPage() {
   const importedAssetsAwaitingReview =
     summary.imported_assets > summary.enabled_assets;
   const noLiveLocations = summary.enabled_assets > 0 && summary.live_assets === 0;
+  const filteredRows = useMemo(
+    () =>
+      filterLiveTrackingRows({
+        liveRows: data.trucks,
+        staleRows: data.stale_assets,
+        searchQuery,
+        activeFilter,
+      }),
+    [data.trucks, data.stale_assets, searchQuery, activeFilter]
+  );
+  const hasActiveFilters = searchQuery.trim().length > 0 || activeFilter !== "all";
+  const totalSearchableAssets = data.trucks.length + data.stale_assets.length;
+  const visibleAssetCount = filteredRows.live.length + filteredRows.stale.length;
+  const resultCountText = formatResultCountText({
+    query: searchQuery,
+    activeFilter,
+    visibleAssetCount,
+    totalAssetCount: totalSearchableAssets,
+    liveCount: filteredRows.live.length,
+    staleCount: filteredRows.stale.length,
+  });
 
   return (
     <main className="min-h-screen bg-slate-950 px-4 py-6 text-white sm:px-6 sm:py-8">
@@ -272,6 +314,24 @@ export default function LiveTrackingPage() {
               />
             )}
 
+            <LiveTrackingCommandBar
+              searchQuery={searchQuery}
+              activeFilter={activeFilter}
+              resultText={resultCountText}
+              onSearchChange={setSearchQuery}
+              onFilterChange={setActiveFilter}
+              onClear={() => {
+                setSearchQuery("");
+                setActiveFilter("all");
+              }}
+            />
+
+            {hasActiveFilters && visibleAssetCount === 0 && (
+              <section className="mt-4 rounded-lg border border-white/10 bg-white/[0.04] p-4 text-sm text-slate-300">
+                No matching assets found.
+              </section>
+            )}
+
             <section className="mt-8 grid gap-6 xl:grid-cols-[1fr_360px]">
               <div className="rounded-lg border border-white/10 bg-white/[0.06]">
                 <div className="flex flex-col gap-3 border-b border-white/10 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
@@ -291,13 +351,15 @@ export default function LiveTrackingPage() {
                   </button>
                 </div>
 
-                {data.trucks.length === 0 ? (
+                {filteredRows.live.length === 0 ? (
                   <div className="p-6 text-sm text-slate-300">
-                    No fresh live locations in the last {data.freshness_minutes} minutes.
+                    {hasActiveFilters
+                      ? "No matching live trucks."
+                      : `No fresh live locations in the last ${data.freshness_minutes} minutes.`}
                   </div>
                 ) : (
                   <div className="divide-y divide-white/10">
-                    {data.trucks.map((truck) => (
+                    {filteredRows.live.map((truck) => (
                       <TruckRow key={truck.truck_id} truck={truck} />
                     ))}
                   </div>
@@ -339,17 +401,23 @@ export default function LiveTrackingPage() {
                       Active assets without fresh location updates.
                     </p>
                   </div>
-                  {data.stale_assets.length === 0 ? (
+                  {filteredRows.stale.length === 0 ? (
                     <div className="p-5 text-sm text-slate-300">
-                      No stale active assets right now.
+                      {hasActiveFilters
+                        ? "No matching stale assets."
+                        : "No stale active assets right now."}
                     </div>
                   ) : (
                     <div className="divide-y divide-white/10">
-                      {data.stale_assets.map((asset) => (
+                      {filteredRows.stale.map((asset) => (
                         <div key={asset.truck_id} className="px-5 py-4">
                           <div className="font-semibold text-slate-100">
                             {asset.registration || asset.truck_id}
                           </div>
+                          <div className="mt-1 text-xs text-slate-400">
+                            {asset.provider_name || "Provider not specified"}
+                          </div>
+                          <IdentityHints item={asset} />
                           <TripContext item={asset} compact />
                           <GeofenceBadge match={asset.geofence_match} />
                           <div className="mt-1 text-sm text-slate-300">
@@ -398,6 +466,75 @@ function Metric({
   );
 }
 
+function LiveTrackingCommandBar({
+  searchQuery,
+  activeFilter,
+  resultText,
+  onSearchChange,
+  onFilterChange,
+  onClear,
+}: {
+  searchQuery: string;
+  activeFilter: LiveTrackingFilter;
+  resultText: string;
+  onSearchChange: (value: string) => void;
+  onFilterChange: (value: LiveTrackingFilter) => void;
+  onClear: () => void;
+}) {
+  const hasActiveInput = searchQuery.trim().length > 0 || activeFilter !== "all";
+
+  return (
+    <section className="mt-6 rounded-lg border border-white/10 bg-slate-900/60 p-3">
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
+          <label htmlFor="live-tracking-search" className="sr-only">
+            Search live tracking assets
+          </label>
+          <input
+            id="live-tracking-search"
+            type="search"
+            value={searchQuery}
+            onChange={(event) => onSearchChange(event.target.value)}
+            placeholder="Search truck, trailer, provider, client, route, or location..."
+            className="min-h-10 min-w-0 flex-1 rounded-md border border-white/10 bg-slate-950/80 px-3 py-2 text-sm text-white outline-none placeholder:text-slate-500 focus:border-cyan-200/60 focus:ring-1 focus:ring-cyan-200/25"
+          />
+          {hasActiveInput && (
+            <button
+              type="button"
+              onClick={onClear}
+              className="rounded-md border border-white/10 px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-slate-200 hover:border-cyan-200/40 hover:bg-cyan-300/10"
+            >
+              Clear
+            </button>
+          )}
+          <div className="text-xs leading-5 text-slate-400 lg:min-w-[240px] lg:text-right">
+            {resultText}
+          </div>
+        </div>
+        <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1 sm:flex-wrap sm:overflow-visible sm:pb-0">
+          {LIVE_TRACKING_FILTERS.map((filter) => {
+            const active = activeFilter === filter.key;
+            return (
+              <button
+                key={filter.key}
+                type="button"
+                onClick={() => onFilterChange(filter.key)}
+                className={
+                  active
+                    ? "shrink-0 rounded-full border border-cyan-200/60 bg-cyan-300/15 px-3 py-1.5 text-xs font-semibold text-cyan-50"
+                    : "shrink-0 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs font-semibold text-slate-300 hover:border-cyan-200/30 hover:bg-cyan-300/10"
+                }
+              >
+                {filter.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function TruckRow({ truck }: { truck: any }) {
   return (
     <article className="grid gap-4 px-5 py-4 lg:grid-cols-[1.2fr_1fr_1fr_1fr] lg:items-center">
@@ -408,6 +545,7 @@ function TruckRow({ truck }: { truck: any }) {
         <div className="mt-1 text-xs text-slate-400">
           {truck.provider_name || "Provider not specified"}
         </div>
+        <IdentityHints item={truck} />
         <TripContext item={truck} />
       </div>
 
@@ -438,6 +576,25 @@ function TruckRow({ truck }: { truck: any }) {
         </div>
       </div>
     </article>
+  );
+}
+
+function IdentityHints({ item }: { item: any }) {
+  const registration = normalizeSearchCompact(item?.registration || item?.truck_id);
+  const hints = [
+    item?.provider_asset_label &&
+    normalizeSearchCompact(item.provider_asset_label) !== registration
+      ? `Provider asset: ${item.provider_asset_label}`
+      : null,
+    item?.attached_trailer_plate ? `Trailer: ${item.attached_trailer_plate}` : null,
+  ].filter(Boolean);
+
+  if (!hints.length) return null;
+
+  return (
+    <div className="mt-1 break-words text-xs text-slate-500">
+      {hints.join(" · ")}
+    </div>
   );
 }
 
@@ -551,6 +708,159 @@ function StatusPill({ value }: { value: string }) {
       {value || "unknown"}
     </span>
   );
+}
+
+function filterLiveTrackingRows({
+  liveRows,
+  staleRows,
+  searchQuery,
+  activeFilter,
+}: {
+  liveRows: any[];
+  staleRows: any[];
+  searchQuery: string;
+  activeFilter: LiveTrackingFilter;
+}) {
+  const query = normalizeSearchText(searchQuery);
+  const compactQuery = normalizeSearchCompact(searchQuery);
+
+  return {
+    live: (liveRows || []).filter(
+      (row) =>
+        rowMatchesFilter(row, "live", activeFilter) &&
+        rowMatchesSearch(row, "live", query, compactQuery)
+    ),
+    stale: (staleRows || []).filter(
+      (row) =>
+        rowMatchesFilter(row, "stale", activeFilter) &&
+        rowMatchesSearch(row, "stale", query, compactQuery)
+    ),
+  };
+}
+
+function rowMatchesSearch(
+  row: any,
+  statusText: "live" | "stale",
+  query: string,
+  compactQuery: string
+) {
+  if (!query && !compactQuery) return true;
+  const fields = buildSearchFields(row, statusText);
+  const readableText = normalizeSearchText(fields.join(" "));
+  const compactText = normalizeSearchCompact(fields.join(" "));
+
+  return Boolean(
+    (query && readableText.includes(query)) ||
+    (compactQuery && compactText.includes(compactQuery))
+  );
+}
+
+function buildSearchFields(row: any, statusText: "live" | "stale") {
+  const geofence = row?.geofence_match || {};
+  return [
+    statusText,
+    row?.truck_id,
+    row?.registration,
+    row?.provider_name,
+    row?.provider_asset_label,
+    row?.attached_trailer_plate,
+    row?.status,
+    row?.location_label,
+    row?.location_note,
+    row?.location_source,
+    geofence.name,
+    geofence.type,
+    geofence.relation,
+    row?.active_trip_reference,
+    row?.active_trip_client,
+    row?.active_trip_from,
+    row?.active_trip_to,
+    row?.active_trip_status,
+    row?.active_trip_message,
+  ]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+}
+
+function rowMatchesFilter(
+  row: any,
+  statusText: "live" | "stale",
+  activeFilter: LiveTrackingFilter
+) {
+  if (activeFilter === "all") return true;
+  if (activeFilter === "live") return statusText === "live";
+  if (activeFilter === "stale") return statusText === "stale";
+  if (activeFilter === "moving") {
+    return statusText === "live" && Number(row?.speed || 0) > 0;
+  }
+  if (activeFilter === "stopped") {
+    const speed = Number(row?.speed);
+    const status = normalizeSearchText(row?.status);
+    return (
+      (statusText === "live" && Number.isFinite(speed) && speed === 0) ||
+      /\b(stopped|stationary|parked|idle|idling)\b/.test(status)
+    );
+  }
+  if (activeFilter === "active_trip") {
+    return Boolean(row?.active_trip_id || row?.active_trip_conflict);
+  }
+  if (activeFilter === "needs_location") {
+    return rowNeedsReadableLocation(row);
+  }
+  return true;
+}
+
+function rowNeedsReadableLocation(row: any) {
+  const label = normalizeSearchText(row?.location_label);
+  return (
+    !label ||
+    label === "-" ||
+    label.includes("readable place name unavailable") ||
+    label.includes("location not labeled") ||
+    label.includes("unavailable")
+  );
+}
+
+function formatResultCountText({
+  query,
+  activeFilter,
+  visibleAssetCount,
+  totalAssetCount,
+  liveCount,
+  staleCount,
+}: {
+  query: string;
+  activeFilter: LiveTrackingFilter;
+  visibleAssetCount: number;
+  totalAssetCount: number;
+  liveCount: number;
+  staleCount: number;
+}) {
+  const trimmedQuery = query.trim();
+  const filterLabel = LIVE_TRACKING_FILTERS.find((filter) => filter.key === activeFilter)?.label;
+  const countText = trimmedQuery
+    ? `${visibleAssetCount.toLocaleString()} ${
+        visibleAssetCount === 1 ? "match" : "matches"
+      } for "${trimmedQuery}"`
+    : `Showing ${visibleAssetCount.toLocaleString()} of ${totalAssetCount.toLocaleString()} assets`;
+  const filterText = activeFilter !== "all" && filterLabel ? ` · ${filterLabel}` : "";
+
+  return `${countText}${filterText} · ${liveCount.toLocaleString()} live / ${staleCount.toLocaleString()} stale`;
+}
+
+function normalizeSearchText(value: any) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[’]/g, "'")
+    .replace(/[-_]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeSearchCompact(value: any) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
 }
 
 function formatDateTime(value?: string | null) {
