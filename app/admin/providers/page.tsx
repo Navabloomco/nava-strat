@@ -1034,11 +1034,11 @@ function ProviderApiCapabilityDiscovery({ summary }: { summary: any }) {
     <section style={diagnosticsStyle}>
       <div style={diagnosticsHeaderStyle}>
         <div>
-          <div style={diagnosticsEyebrowStyle}>Provider API discovery</div>
-          <h4 style={diagnosticsTitleStyle}>Safe Capability Scan</h4>
+          <div style={diagnosticsEyebrowStyle}>Signal capability</div>
+          <h4 style={diagnosticsTitleStyle}>Provider Capability Scan</h4>
           <div style={diagnosticsSmallTextStyle}>
-            Field names only. Nava does not show raw provider values, coordinates,
-            credentials, or payload samples here.
+            Field-name evidence only. Nava does not show provider values,
+            coordinates, credentials, or payload samples here.
           </div>
         </div>
         <div style={diagnosticsMetaStyle}>
@@ -1071,15 +1071,15 @@ function ProviderApiCapabilityDiscovery({ summary }: { summary: any }) {
         mutedEmpty="All tracked capability categories were detected."
       />
       <DiagnosticFieldBlock
-        title="Useful fields Nava does not currently map"
+        title="Available signal fields not mapped"
         value={(summary.useful_unmapped_fields || []).map(
           (entry: any) =>
             `${entry.label}: ${(entry.keys || []).join(", ")}`
         )}
-        mutedEmpty="No useful unmapped field names detected."
+        mutedEmpty="No additional signal field names detected."
       />
       <DiagnosticFieldBlock
-        title="Next provider questions"
+        title="Recommended provider follow-up"
         value={summary.next_actions || []}
         mutedEmpty="No provider capability follow-up needed from this scan."
       />
@@ -1125,7 +1125,7 @@ function providerCapabilityDiscoveryLine(detail: any) {
       : detail.evidence === "provider-marker"
         ? "provider-derived"
         : detail.evidence === "raw-field"
-          ? "field found, not mapped"
+          ? "field-name evidence"
           : "not found";
   const rowCount = Number(detail.row_count || 0);
   return `${label} (${evidence}${rowCount ? `, ${rowCount.toLocaleString()} row${rowCount === 1 ? "" : "s"}` : ""})`;
@@ -1236,7 +1236,7 @@ function ProviderFeedContractSummary({ summary }: { summary: any }) {
     <section style={diagnosticsStyle}>
       <div style={diagnosticsHeaderStyle}>
         <div>
-          <div style={diagnosticsEyebrowStyle}>Provider connection contract</div>
+          <div style={diagnosticsEyebrowStyle}>Provider connection setup</div>
           <h4 style={diagnosticsTitleStyle}>Current vehicle feed and report feed</h4>
         </div>
       </div>
@@ -1276,10 +1276,10 @@ function ProviderFeedContractSummary({ summary }: { summary: any }) {
 function providerFailureNextStep(stage: string | null, message: string) {
   const text = String(message || "").toLowerCase();
   if (stage === "auth" || text.includes("sign-in") || text.includes("token")) {
-    return "Check username/password, login endpoint, token path, and token placement.";
+    return "Check username/password, login setup, token field, and token placement.";
   }
   if (text.includes("vehicle endpoint") || text.includes("vehicle rows")) {
-    return "Check the vehicle endpoint, token placement, and row path.";
+    return "Check the vehicle feed, token placement, and vehicle data group.";
   }
   if (text.includes("report")) {
     return "Check report endpoint parameters before enabling automated distance ingestion.";
@@ -1368,7 +1368,7 @@ function ProviderDistanceDiagnostics({ diagnostics }: { diagnostics: any }) {
       {diagnostics.no_automated_distance_feed && (
         <div style={diagnosticsEmptyStyle}>
           No automated distance report feed is active yet. Configure a provider
-          report endpoint, auth profile, row path, and distance field mapping.
+          report feed, auth profile, vehicle data group, and distance field mapping.
         </div>
       )}
 
@@ -1531,15 +1531,15 @@ function ProviderDataDiscoveryDiagnostics({
       }
 
       if (!res.ok || !payload.success) {
-        throw new Error(payload.error || "Unable to apply suggested vehicle path.");
+        throw new Error(payload.error || "Unable to apply suggested vehicle group.");
       }
 
       if (payload.provider) onApplied(payload.provider);
       setApplyMessage(
-        payload.message || "Vehicle row path updated. Run Test Connection again."
+        payload.message || "Vehicle data group updated. Run Test Connection again."
       );
     } catch (err: any) {
-      setApplyMessage(err.message || "Unable to apply suggested vehicle path.");
+      setApplyMessage(err.message || "Unable to apply suggested vehicle group.");
     } finally {
       setIsApplyingSuggestion(false);
     }
@@ -1554,14 +1554,14 @@ function ProviderDataDiscoveryDiagnostics({
     <section style={diagnosticsStyle}>
       <div style={diagnosticsHeaderStyle}>
         <div>
-          <div style={diagnosticsEyebrowStyle}>Provider data discovery</div>
-          <h4 style={diagnosticsTitleStyle}>Data Discovery Diagnostics</h4>
+          <div style={diagnosticsEyebrowStyle}>Advanced provider check</div>
+          <h4 style={diagnosticsTitleStyle}>Advanced Setup Check</h4>
         </div>
-        <div style={diagnosticsMetaStyle}>diagnostic only</div>
+        <div style={diagnosticsMetaStyle}>advanced</div>
       </div>
 
       <div style={diagnosticsEmptyStyle}>
-        Test the configured provider endpoint and any explicit report endpoint
+        Test the configured provider connection and any explicit report endpoint
         candidates. This does not activate sync and does not write telemetry or
         trip summaries.
       </div>
@@ -1626,14 +1626,14 @@ function ProviderDataDiscoveryDiagnostics({
 
           {suggestedVehiclePath && (
             <section style={warningPanelStyle}>
-              <div style={diagnosticsEyebrowStyle}>Vehicle row path suggestion</div>
-              <h4 style={diagnosticsTitleStyle}>Better vehicle array found</h4>
+              <div style={diagnosticsEyebrowStyle}>Vehicle group suggestion</div>
+              <h4 style={diagnosticsTitleStyle}>Better vehicle group found</h4>
               <p style={panelCopyStyle}>
-                Current row path{" "}
+                Current vehicle group{" "}
                 <code>{suggestedVehiclePath.currentPath || "not set"}</code>{" "}
                 found {suggestedVehiclePath.currentCount.toLocaleString()} row
                 {suggestedVehiclePath.currentCount === 1 ? "" : "s"}. Nava
-                found a better vehicle row path:{" "}
+                found a better vehicle group:{" "}
                 <code>{suggestedVehiclePath.path}</code> with{" "}
                 {suggestedVehiclePath.count.toLocaleString()} rows.
               </p>
@@ -1652,7 +1652,7 @@ function ProviderDataDiscoveryDiagnostics({
                   >
                     {isApplyingSuggestion
                       ? "APPLYING..."
-                      : "APPLY SUGGESTED VEHICLE PATH"}
+                      : "APPLY SUGGESTED VEHICLE GROUP"}
                   </button>
                   <span style={diagnosticsSmallTextStyle}>
                     This keeps the provider inactive until Test Connection passes again.
@@ -1660,7 +1660,7 @@ function ProviderDataDiscoveryDiagnostics({
                 </div>
               ) : (
                 <div style={diagnosticsEmptyStyle}>
-                  Ask a company administrator to apply this suggested row path.
+                  Ask a company administrator to apply this suggested vehicle group.
                 </div>
               )}
               {applyMessage && (
@@ -1710,7 +1710,7 @@ function ProviderDataDiscoveryDiagnostics({
                   value={[endpoint.endpoint_tested]}
                 />
                 <DiagnosticFieldBlock
-                  title="Response shape"
+                  title="Response structure"
                   value={[
                     endpoint.response_type
                       ? `type: ${endpoint.response_type}`
@@ -1728,12 +1728,12 @@ function ProviderDataDiscoveryDiagnostics({
                   mutedEmpty="No safe top-level keys detected."
                 />
                 <DiagnosticFieldBlock
-                  title="Candidate row paths"
+                  title="Candidate vehicle groups"
                   value={endpoint.candidate_row_paths}
-                  mutedEmpty="No row paths checked."
+                  mutedEmpty="No vehicle groups checked."
                 />
                 <DiagnosticFieldBlock
-                  title="Array paths found"
+                  title="Vehicle groups found"
                   value={endpoint.candidate_row_paths_found}
                   mutedEmpty="No array paths found."
                   includeZeroCounts
@@ -2411,12 +2411,12 @@ function ProviderEnrichmentDiagnostics({
                     mutedEmpty="No object keys detected."
                   />
                   <DiagnosticFieldBlock
-                    title="Candidate row paths checked"
+                    title="Candidate vehicle groups checked"
                     value={feed.candidate_row_paths_checked}
-                    mutedEmpty="No row paths checked."
+                    mutedEmpty="No vehicle groups checked."
                   />
                   <DiagnosticFieldBlock
-                    title="Array paths found"
+                    title="Vehicle groups found"
                     value={feed.first_array_paths_found}
                     mutedEmpty="No arrays detected in the response."
                     includeZeroCounts

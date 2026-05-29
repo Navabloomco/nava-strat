@@ -164,8 +164,8 @@ export default function OpsEfficiencyPage() {
         <PageHeader
           dark
           eyebrow="Operations"
-          title="Efficiency Intelligence"
-          body="A pilot view of movement, GPS-estimated stopped time, provider idle markers, trip readiness, and missing links. This page explains operational evidence; it does not replace provider maps or invent fuel/profit conclusions."
+          title="Ops Intelligence"
+          body="Movement, stopped-time evidence, tracker idle markers, trip readiness, and missing links for the selected period. This page shows operational evidence without claiming fuel burn, theft, or final audited profit."
           actions={
             <div className="flex flex-wrap gap-2">
               {rangeOptions.map((option) => (
@@ -203,7 +203,7 @@ export default function OpsEfficiencyPage() {
           <>
             <Panel dark className="mt-6 border-cyan-200/20 bg-cyan-300/10 p-4">
               <div className="flex flex-wrap items-center gap-3 text-sm text-cyan-50">
-                <span>{data.efficiency?.company?.name || "Company"} efficiency view</span>
+                <span>{data.efficiency?.company?.name || "Company"} operations intelligence</span>
                 <StatusPill tone="info">
                   {timeframe.display_label || range}
                 </StatusPill>
@@ -234,7 +234,7 @@ export default function OpsEfficiencyPage() {
               <MetricCard
                 label="Stopped-time trucks"
                 value={formatCount(idle.gps_stopped_truck_count)}
-                detail={idle.evidence_label || "GPS-estimated stopped-time evidence unavailable"}
+                detail={idle.evidence_label || "Stopped-time evidence unavailable"}
               />
               <MetricCard
                 label="Stale locations"
@@ -254,7 +254,7 @@ export default function OpsEfficiencyPage() {
                 title="Trucks Moved Most"
                 subtitle={movement.evidence_label}
                 emptyTitle="No movement evidence"
-                emptyBody="No provider-reported or GPS-estimated distance was found for this range."
+                emptyBody="No provider distance evidence or GPS-derived distance estimate was found for this range."
                 rows={(movement.top_movers || []).slice(0, 8)}
                 renderRow={(truck: any) => (
                   <RankRow
@@ -267,16 +267,16 @@ export default function OpsEfficiencyPage() {
               />
 
               <RankedPanel
-                title="GPS-Stopped Most"
+                title="Stopped Most"
                 subtitle={productivity.evidence_label || idle.evidence_label}
-                emptyTitle="No GPS-stopped evidence"
-                emptyBody="GPS-stopped ranking needs enough GPS point intervals in the selected range."
+                emptyTitle="No stopped-time evidence"
+                emptyBody="Stopped-time ranking needs enough tracker intervals in the selected range."
                 rows={(productivity.stopped_most_of_day || idle.top_stopped_by_gps || []).slice(0, 8)}
                 renderRow={(truck: any) => (
                   <RankRow
                     key={truck.truck_key || truck.truck_id}
                     title={truck.truck_id || "Unknown truck"}
-                    metric={`${formatMinutes(truck.stopped_minutes)} GPS-estimated`}
+                    metric={`${formatMinutes(truck.stopped_minutes)} estimate`}
                     detail={formatStoppedRowDetail(truck, timeframe)}
                   />
                 )}
@@ -293,16 +293,16 @@ export default function OpsEfficiencyPage() {
                     key={truck.truck_key || truck.truck_id}
                     title={truck.truck_id || "Unknown truck"}
                     metric={formatPercent(truck.productive_ratio)}
-                    detail={`${formatKm(truck.distance_km)} km, ${formatMinutes(truck.stopped_minutes)} GPS-stopped estimate · ${formatStoppedRowDetail(truck, timeframe)}`}
+                    detail={`${formatKm(truck.distance_km)} km, ${formatMinutes(truck.stopped_minutes)} stopped-time estimate · ${formatStoppedRowDetail(truck, timeframe)}`}
                   />
                 )}
               />
 
               <RankedPanel
-                title="Provider Idle Markers"
+                title="Tracker Idle Markers"
                 subtitle={idle.evidence_label}
-                emptyTitle="No provider idle markers"
-                emptyBody="No canonical provider idle markers or qualifying legacy excessive-idle/long-idle markers were found for this range. GPS-stopped evidence remains separate."
+                emptyTitle="No tracker idle markers"
+                emptyBody="No provider or tracker idle-marker evidence was found for this range. Stopped-time evidence remains separate."
                 rows={(idle.top_idle_alert_windows || []).slice(0, 8)}
                 renderRow={(truck: any) => (
                   <RankRow
@@ -319,7 +319,7 @@ export default function OpsEfficiencyPage() {
               <Panel dark className="p-5">
                 <SectionTitle
                   title="Trip Intelligence"
-                  subtitle="Projected from journeys and linked evidence. Profit appears only when revenue and linked costs are safe."
+                  subtitle="Projected from trip records and linked evidence. Contribution appears only when revenue and linked costs are ready."
                 />
                 <div className="mt-4 grid gap-3 md:grid-cols-3">
                   <SmallStat
@@ -341,7 +341,7 @@ export default function OpsEfficiencyPage() {
                     title="No trips projected"
                     body={
                       data.tripIntelligence?.empty_state?.message ||
-                      "No real journey records are linked for this period yet."
+                      "No production trip records are linked for this period yet."
                     }
                   />
                 ) : (
@@ -390,10 +390,10 @@ export default function OpsEfficiencyPage() {
               <ReadinessPanel
                 title="Client Waiting Ranking"
                 item={clientWaiting}
-                fallback="Client waiting needs GPS-stopped evidence or provider idle markers linked to client sites, geofences, or journey legs."
+                fallback="Client waiting needs stopped-time evidence or tracker idle markers linked to client sites, geofences, or trip legs."
               />
               <ReadinessPanel
-                title="Trip Profitability"
+                title="Trip Contribution Review"
                 item={{
                   status:
                     contributionReadyCount > 0
@@ -407,9 +407,9 @@ export default function OpsEfficiencyPage() {
                     Number(tripSummary.trip_count || 0)
                   ),
                   evidence_label:
-                    "journey revenue minus linked fuel/expense cost evidence; per-km metrics need distance",
+                    "trip revenue minus linked fuel/expense cost evidence; per-km metrics need distance",
                 }}
-                fallback="Profitability requires linked revenue and cost evidence. Unlinked costs are not used for exact trip contribution."
+                fallback="Contribution review requires linked revenue and cost evidence. Unlinked costs are not used for exact trip contribution."
               />
             </section>
 
@@ -419,7 +419,7 @@ export default function OpsEfficiencyPage() {
                 <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                   <EvidenceSource label="Provider reports" source={data.efficiency?.data_sources?.provider_trip_summaries} />
                   <EvidenceSource label="GPS telemetry" source={data.efficiency?.data_sources?.telemetry_logs} />
-                  <EvidenceSource label="Provider idle markers" source={data.efficiency?.data_sources?.telemetry_events} />
+                  <EvidenceSource label="Tracker idle markers" source={data.efficiency?.data_sources?.telemetry_events} />
                   <EvidenceSource label="Trip records" source={data.tripIntelligence?.data_sources?.journeys} />
                 </div>
               </Panel>
@@ -749,7 +749,7 @@ function formatPercentValue(value: any) {
 function formatTripPerKmContribution(contribution: any) {
   const value = formatCurrency(contribution.per_km_contribution);
   if (contribution.per_km_distance_source === "gps-estimated") {
-    return `GPS-estimated per km: ${value}`;
+    return `Provisional per km: ${value}`;
   }
   if (contribution.per_km_distance_source === "provider-reported") {
     return `Per km: ${value} provider distance`;
@@ -790,7 +790,7 @@ function formatDistanceEvidenceDetail(row: any, timeZone?: string) {
       : evidenceType === "provider_current_feed_delta"
         ? "Provider current-feed odometer/mileage delta"
         : evidenceType === "gps_estimated" || normalized.includes("gps")
-          ? "GPS-estimated distance"
+          ? "GPS-derived distance estimate"
           : normalized === "provider-reported"
             ? "Provider-reported distance"
             : `${humanize(source)} distance`;
@@ -915,12 +915,12 @@ function formatStoppedReconciliation(row: any, timeframe: any) {
     ? `Provider current stop: ${formatMinutes(providerMinutes)}`
     : `Provider current stop: ${providerLabel}`;
   const navaText = navaMinutes
-    ? `Nava GPS-stopped ${rangeLabel}: ${formatMinutes(navaMinutes)}`
+    ? `Stopped-time total ${rangeLabel}: ${formatMinutes(navaMinutes)}`
     : "";
   return [
     navaText,
     providerText,
-    "Different metrics: provider current stop is the current episode; Nava GPS-stopped is selected-period stationary total.",
+    "Different metrics: provider current stop is the current episode; stopped-time total covers the selected period.",
   ].filter(Boolean).join(" · ");
 }
 
@@ -948,9 +948,9 @@ function formatProviderIdleSourceSummary(row: any) {
   const markers = formatCount(row?.marker_count);
   const legacy = Number(row?.legacy_provider_marker_count || 0);
   const canonical = Number(row?.canonical_provider_marker_count || 0);
-  const parts = [`${windows} provider-derived window(s)`, `${markers} marker(s)`];
-  if (legacy > 0) parts.push(`${formatCount(legacy)} legacy provider marker(s)`);
-  if (canonical > 0 && legacy > 0) parts.push(`${formatCount(canonical)} canonical marker(s)`);
+  const parts = [`${windows} tracker window(s)`, `${markers} marker(s)`];
+  if (legacy > 0) parts.push(`${formatCount(legacy)} prior-format marker(s)`);
+  if (canonical > 0 && legacy > 0) parts.push(`${formatCount(canonical)} current-format marker(s)`);
   return `${parts.join(", ")}.`;
 }
 

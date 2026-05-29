@@ -24,7 +24,7 @@ export default function JourneyListPage() {
     const token = sessionData.session?.access_token;
 
     if (!token) {
-      setErrorDetail("You must be signed in to view journeys.");
+      setErrorDetail("You must be signed in to view trips.");
       setLoading(false);
       return;
     }
@@ -38,7 +38,7 @@ export default function JourneyListPage() {
     const json = await res.json();
 
     if (!json.success) {
-      setErrorDetail(json.error || "Failed to load journeys");
+      setErrorDetail(json.error || "Failed to load trips");
       setLoading(false);
       return;
     }
@@ -57,18 +57,18 @@ export default function JourneyListPage() {
         <PageHeader
           dark
           eyebrow="Operations"
-          title="Journeys"
-          body="Plan and monitor customer trips, then connect fuel, expenses, revenue, and profit to the right movement."
+          title="Trips"
+          body="Plan and monitor customer trips, then connect fuel, expenses, revenue review, and proof to the right movement."
           actions={
             <Link href="/ops/journey/new">
-              <PrimaryButton type="button">Create journey</PrimaryButton>
+              <PrimaryButton type="button">Create trip</PrimaryButton>
             </Link>
           }
         />
 
         {loading ? (
           <Panel dark className="mt-8 p-6">
-            <div className="text-sm text-slate-300">Loading journeys...</div>
+            <div className="text-sm text-slate-300">Loading trips...</div>
           </Panel>
         ) : errorDetail ? (
           <Panel dark className="mt-8 border-rose-300/30 bg-rose-500/10 p-4">
@@ -78,11 +78,11 @@ export default function JourneyListPage() {
           <div className="mt-8">
             <EmptyState
               dark
-              title="No journeys yet"
-              body="Create your first journey to start tracking fuel, expenses, revenue, and profit."
+              title="No trips yet"
+              body="Create your first trip to start linking fuel, expenses, revenue review, and proof."
               action={
                 <Link href="/ops/journey/new">
-                  <PrimaryButton type="button">Create first journey</PrimaryButton>
+                  <PrimaryButton type="button">Create first trip</PrimaryButton>
                 </Link>
               }
             />

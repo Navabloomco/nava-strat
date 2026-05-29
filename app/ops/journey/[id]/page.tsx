@@ -671,7 +671,7 @@ export default function TripDetailPage() {
               </Link>
               <Link href={`/ops/efficiency${efficiencyQuery}`}>
                 <PrimaryButton type="button" className="w-full sm:w-auto">
-                  Efficiency view
+                  Ops Intelligence
                 </PrimaryButton>
               </Link>
             </div>
@@ -722,7 +722,7 @@ export default function TripDetailPage() {
               <Panel dark className="p-5">
                 <SectionTitle
                   title="Trip"
-                  subtitle="The product object is Trip; the database still stores these records in journeys."
+                  subtitle="Operational record for the customer movement."
                 />
                 <div className="mt-5 grid gap-4 sm:grid-cols-2">
                   <Detail label="Truck / provider asset" value={journey.truck || "Missing"} />
@@ -739,7 +739,7 @@ export default function TripDetailPage() {
                   title={canViewFinance ? "Management intelligence" : "Operational readiness"}
                   subtitle={
                     canViewFinance
-                      ? "Contribution and readiness are deterministic, not guessed profit."
+                      ? "Contribution and readiness are based on linked records."
                       : "Operational links for clerks and ops users. Finance values stay hidden."
                   }
                 />
@@ -835,7 +835,7 @@ export default function TripDetailPage() {
                 <Panel dark className="p-5">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <SectionTitle
-                      title="Management intelligence"
+                      title="Contribution review"
                       subtitle="Linked revenue minus allocated fuel and linked trip expenses. This is review-ready contribution, not final audited profit."
                     />
                     <StatusPill tone={readinessTone(readiness.status)}>

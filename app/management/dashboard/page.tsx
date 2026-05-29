@@ -280,13 +280,13 @@ export default function ManagementDashboard() {
           <Panel dark className="p-5">
             <SectionTitle
               title="Operational drag"
-              subtitle="GPS-stopped evidence, provider and legacy idle markers, and delay evidence by safe attribution"
+              subtitle="Stopped-time evidence, tracker idle markers, and delay evidence by safe attribution"
             />
             {delayCategories.length === 0 ? (
               <EmptyState
                 dark
                 title="No delay evidence in this period"
-                body="Delay categories appear when Trip-linked provider markers or GPS-stopped evidence is available."
+                body="Delay categories appear when trip-linked tracker markers or stopped-time evidence is available."
               />
             ) : (
               <div className="mt-4 grid gap-3">

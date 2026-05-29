@@ -149,7 +149,7 @@ export default function Sidebar() {
           show: roles.isPlatformOwner,
         },
         {
-          name: "Pilot Readiness",
+          name: "Readiness",
           href: "/admin/pilot-readiness",
           show: roles.isPlatformOwner,
         },
@@ -210,12 +210,12 @@ export default function Sidebar() {
           show: roles.isOps || roles.isAdmin,
         },
         {
-          name: "Efficiency",
+          name: "Ops Intelligence",
           href: "/ops/efficiency",
           show: roles.isOps || roles.isManagement || roles.isAdmin,
         },
         {
-          name: "Journeys",
+          name: "Trips",
           href: "/ops/journey",
           show: roles.isOps || roles.isAdmin,
         },
@@ -264,7 +264,7 @@ export default function Sidebar() {
           show: roles.isFinance || roles.isAdmin,
         },
         {
-          name: "Revenue",
+          name: "Revenue Review",
           href: "/finance/revenue",
           show: roles.isFinance || roles.isAdmin,
         },

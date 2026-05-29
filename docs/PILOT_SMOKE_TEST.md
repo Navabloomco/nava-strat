@@ -4,6 +4,16 @@ Use this checklist before a pilot, demo, or go-live. The goal is to validate the
 
 When this playbook discovers a bug, batch fixes into one Codex prompt. Do not patch one tiny issue at a time unless it blocks testing.
 
+## Product Voice Guardrails
+
+This playbook may use pilot/testing language because it is an internal validation document. The product UI should sound productized and enterprise-ready.
+
+- [ ] Customer-facing pages use `Trips`, `Ops Intelligence`, `Revenue Review`, `Client rates`, `Contribution review`, and `review-ready contribution` instead of old pilot/dashboard/profitability language.
+- [ ] Customer-facing pages do not show `pilot view`, `pilot readiness`, `canonical`, `legacy`, `event_type`, `provider_signal_flags`, raw payload wording, or row-path/debug terminology unless it is inside a clearly advanced/platform diagnostic surface.
+- [ ] Evidence caveats remain visible but concise: GPS-derived distance estimate, provider distance evidence, stopped-time evidence, tracker idle markers, and engine-on idle not verified.
+- [ ] Nava Eye answers are concise by default and only show audit details after questions such as `how`, `why`, `show evidence`, or `why should I trust it`.
+- [ ] Reusable UI placeholders do not contain tenant-specific examples, real truck plates, real client names, real trip IDs, or pilot contribution amounts.
+
 ## 1. Pre-Test Setup
 
 - [ ] Confirm the repo is clean or that any local changes are intentional.
@@ -320,7 +330,7 @@ Confirm workflow behavior:
 - [ ] With search text and a quick filter active, confirm the reset button says `Reset search & filter` and clears both.
 - [ ] With search text active, click the `All` chip and confirm the search text remains.
 - [ ] Call `GET /api/ops/efficiency?range=yesterday` with an ops-visible role and confirm the JSON returns movement, idle/stopped, stale-location, productivity, driver-readiness, and client-waiting readiness sections.
-- [ ] Confirm `/api/ops/efficiency` labels metric evidence as provider-reported, GPS-estimated, provider-derived, unavailable, or not enough linked data instead of inventing fuel/profit/driver/client conclusions.
+- [ ] Confirm `/api/ops/efficiency` labels metric evidence as provider-reported, GPS-estimated, provider-derived, unavailable, or not enough linked data instead of inventing fuel/contribution/driver/client conclusions.
 - [ ] Confirm Trucks Moved Most separates provider trip/report distance, provider current-feed odometer/mileage delta, and GPS-estimated fallback. If provider mileage is detected but cannot form a safe period delta, the row should say that instead of presenting GPS fallback as final provider distance.
 - [ ] Confirm Trucks Moved Most telemetry is fetched across the full selected data window with ordered pagination, not from a single globally limited early-day batch.
 - [ ] Confirm Evidence Sources shows GPS telemetry rows/pages fetched and marks the source partial if a telemetry row cap is reached.
@@ -350,7 +360,7 @@ Confirm workflow behavior:
 - [ ] Confirm Trip Intelligence interprets journey `start_time`, `end_time`, and `created_at` values without explicit timezone offsets in the company/operator timezone, so same-day active Trips are not dropped on UTC server runtimes.
 - [ ] Confirm production Trip Intelligence excludes demo journeys. If no real trips exist, the API succeeds with `trips: []`, journey source `empty`, and a clear empty-state message instead of schema-missing output.
 - [ ] Create one real production Trip in `/ops/journey/new`, then open `/ops/efficiency?range=today` and confirm Trips projected is greater than 0 with clear missing-data notes if revenue/cost/distance links are incomplete.
-- [ ] Confirm Trip Intelligence returns trip identity, asset evidence, driver evidence, movement evidence, delay evidence, stale-tracking evidence, missing-data notes, profitability readiness, and management flags.
+- [ ] Confirm Trip Intelligence returns trip identity, asset evidence, driver evidence, movement evidence, delay evidence, stale-tracking evidence, missing-data notes, contribution-review readiness, and management flags.
 - [ ] Confirm Trip Intelligence labels movement distance as provider-reported, GPS-estimated, journey-recorded, or unavailable, and does not return raw coordinate series.
 - [ ] Confirm Trip Intelligence uses journey revenue plus `fuel_allocations` and linked `expenses` only when the role can see finance, and does not use unlinked fuel/costs for exact trip contribution.
 - [ ] If a journey has no fuel allocations but has legacy `fuel_logs.journey_id`, confirm Trip Intelligence labels the fuel source as `legacy_journey_link`.
@@ -364,7 +374,7 @@ Confirm workflow behavior:
 - [ ] If per-km contribution uses GPS-estimated distance, confirm Trip Detail, `/ops/efficiency`, and Nava Eye label it as provisional/GPS-estimated and say provider distance is still needed for final per-km review.
 - [ ] Confirm trips with linked fuel allocation and no other expenses show `No additional trip expenses linked yet` as a supporting note rather than a blocker.
 - [ ] Confirm contribution wording does not claim final audited profit, fuel burn, fuel efficiency, or fuel theft.
-- [ ] Confirm Trip Intelligence does not require fuel as the only cost source and does not invent profit when linked revenue/cost evidence is missing.
+- [ ] Confirm Trip Intelligence does not require fuel as the only cost source and does not invent contribution when linked revenue/cost evidence is missing.
 - [ ] As a finance/management/elevated role, open `/management/dashboard` and confirm the period selector supports Today, Yesterday, 7 days, and 30 days.
 - [ ] Confirm Management Intelligence uses `Review-ready contribution`, `Contribution per active day`, `Trips reviewed`, and `Trips needing review` instead of `Net Margin`, `Top clients by profit`, or `Journey ranking`.
 - [ ] Confirm Trip contribution velocity ranks reviewed Trips by contribution/day, shows contribution/trip, duration, estimated trips/week potential, and marks active/open Trips as provisional.
@@ -412,8 +422,8 @@ Open `/nava-eye` and ask:
 - [ ] Ask "What are yesterday's movements for KCX 113Y?", then "Can you show me exactly where it was yesterday?" and confirm Nava Eye gives operational location evidence plus a map pin when available.
 - [ ] Ask "Where did KCW 103Z spend most of yesterday?" and confirm Nava Eye summarizes major stop/location anchors instead of returning a generic fallback.
 - [ ] "Did KCW 103Z make money yesterday?" and confirm the answer either calculates from linked revenue/cost/distance or clearly lists missing data.
-- [ ] After a profit readiness answer, ask "What about KDQ265T?" and confirm Nava Eye inherits the profit readiness intent only for roles allowed to see it.
-- [ ] "What is contribution per km for KCW 103Z?" and confirm Nava Eye does not invent revenue, cost, or profit if records are missing.
+- [ ] After a contribution-review readiness answer, ask "What about KDQ265T?" and confirm Nava Eye inherits the contribution-review intent only for roles allowed to see it.
+- [ ] "What is contribution per km for KCW 103Z?" and confirm Nava Eye does not invent revenue, cost, or contribution if records are missing.
 - [ ] Ask "How did the KBJ132C Bamburi trip perform?" and confirm Nava Eye answers from Trip Intelligence instead of live truck status.
 - [ ] Ask "Did the Bamburi trip make money?" as a finance/management/elevated role and confirm the answer includes trip reference, truck/client/route, readiness, revenue, linked fuel allocation cost, linked expenses, contribution, margin, per-tonne where available, and per-km pending when distance is missing.
 - [ ] Ask "What was the contribution on KBJ132C Bamburi?" and confirm Nava Eye routes to Trip Intelligence, not live truck status.
@@ -435,7 +445,7 @@ Open `/nava-eye` and ask:
 - [ ] Ask an idle/stopped question and confirm Nava Eye distinguishes GPS-stationary evidence, provider idle markers, and true engine-on idle; without ignition/engine/CAN support it says engine-on idling and fuel burn are not verified.
 - [ ] "Which trucks moved but have no revenue?" and confirm it requires reliable trip/revenue linking before producing an exception list.
 - [ ] "Can we trust KCW 103Z odometer?" and confirm the answer uses odometer health/distance quality evidence.
-- [ ] As an `ops` user, ask a profit/revenue/contribution question and confirm Nava Eye shows a role boundary without leaking finance values.
+- [ ] As an `ops` user, ask a revenue/contribution question and confirm Nava Eye shows a role boundary without leaking finance values.
 - [ ] Confirm Nava Eye suggested prompt chips are generic or generated from current-company data only. They must not hardcode pilot trucks, clients, trip IDs, contribution amounts, or tenant examples.
 - [ ] Close the conversation and confirm the thread becomes read-only.
 - [ ] Refresh `/nava-eye` and confirm the selected company, selected thread, and open/closed tab remain stable.

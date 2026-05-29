@@ -625,7 +625,7 @@ function buildFallbackAnswer(context: any): string {
     return buildProviderIdleMarkerFleetAnswer(context);
   }
   if (context.financial_access_restricted) {
-    return "Operational context is available for this role, but financial values are restricted. Ask an owner, admin, finance, management, or platform owner user to review profitability.";
+    return "Operational context is available for this role, but financial values are restricted. Ask an owner, admin, finance, management, or platform owner user to review contribution and revenue details.";
   }
   if (context.profit_simulation) {
     const simulation = context.profit_simulation;
@@ -665,7 +665,7 @@ function buildFallbackAnswer(context: any): string {
     const inputs = simulation.inputs || {};
     const costBreakdown = formatSimulationCosts(inputs);
 
-    parts.push("Estimated trip profit");
+    parts.push("Trip contribution estimate");
     parts.push("");
     if (routeText) {
       parts.push(routeText);
@@ -681,7 +681,7 @@ function buildFallbackAnswer(context: any): string {
     parts.push(`Total costs: ${formatMoney(result.total_costs)}`);
     parts.push("");
     parts.push("Result");
-    parts.push(`Estimated profit: ${formatMoney(result.profit)}`);
+    parts.push(`Estimated contribution: ${formatMoney(result.profit)}`);
     parts.push(
       `Margin: ${
         result.margin_percent === null || result.margin_percent === undefined
@@ -724,34 +724,34 @@ function buildFallbackAnswer(context: any): string {
     const weakRoute = p.least_profitable_routes?.[0];
 
     parts.push(
-      `Profitability summary: revenue is ${Number(
+      `Finance summary: revenue is ${Number(
         summary.total_revenue || 0
       ).toLocaleString()} KES, fuel cost is ${Number(
         summary.total_fuel_cost || 0
       ).toLocaleString()} KES, expenses are ${Number(
         summary.total_expenses || 0
-      ).toLocaleString()} KES, and estimated profit is ${Number(
+      ).toLocaleString()} KES, and estimated contribution is ${Number(
         summary.estimated_profit || 0
       ).toLocaleString()} KES.`
     );
 
     if (topTruck) {
       parts.push(
-        `Most profitable truck: ${topTruck.name} at ${Number(
+        `Highest contribution truck: ${topTruck.name} at ${Number(
           topTruck.profit || 0
-        ).toLocaleString()} KES across ${topTruck.count || 0} journey(s).`
+        ).toLocaleString()} KES across ${topTruck.count || 0} trip(s).`
       );
     }
     if (weakTruck) {
       parts.push(
-        `Least profitable truck: ${weakTruck.name} at ${Number(
+        `Lowest contribution truck: ${weakTruck.name} at ${Number(
           weakTruck.profit || 0
-        ).toLocaleString()} KES across ${weakTruck.count || 0} journey(s).`
+        ).toLocaleString()} KES across ${weakTruck.count || 0} trip(s).`
       );
     }
     if (topClient) {
       parts.push(
-        `Most profitable client: ${topClient.name} at ${Number(
+        `Highest contribution client: ${topClient.name} at ${Number(
           topClient.profit || 0
         ).toLocaleString()} KES.`
       );
@@ -765,7 +765,7 @@ function buildFallbackAnswer(context: any): string {
     }
     if (weakRoute) {
       parts.push(
-        `Route bleeding money: ${weakRoute.name} at ${Number(
+        `Route needs contribution review: ${weakRoute.name} at ${Number(
           weakRoute.profit || 0
         ).toLocaleString()} KES.`
       );
@@ -777,14 +777,14 @@ function buildFallbackAnswer(context: any): string {
       parts.push(
         `Note: ${Number(summary.unlinked_fuel_cost || 0).toLocaleString()} KES fuel cost and ${Number(
           summary.unlinked_expense_cost || 0
-        ).toLocaleString()} KES expenses are unlinked company costs, so they affect total profit but are not attributed to a specific truck, client, or route.`
+        ).toLocaleString()} KES expenses are unlinked company costs, so they affect overall contribution review but are not attributed to a specific truck, client, or route.`
       );
     }
   }
   if (context.fleet_health) {
     const f = context.fleet_health;
     parts.push(
-      `Fleet health: ${f.online_trucks}/${f.total_trucks} online, ${f.offline_trucks} offline, ${f.critical_events_24h} critical events, ${f.fuel_events_24h} fuel events, and ${f.idle_events_24h} provider idle markers in the last 24 hours.`
+      `Fleet status: ${f.online_trucks}/${f.total_trucks} online, ${f.offline_trucks} offline, ${f.critical_events_24h} critical events, ${f.fuel_events_24h} fuel events, and ${f.idle_events_24h} tracker idle markers in the last 24 hours.`
     );
   }
   if (context.offline_trucks?.length) {
@@ -899,7 +899,7 @@ function buildFallbackAnswer(context: any): string {
     );
   }
   if (parts.length === 0) {
-    return "Nava Eye found limited context. Ask about fleet health, offline trucks, fuel risk, truck status, driver activity, or journeys.";
+    return "Nava Eye found limited context. Ask about fleet status, offline trucks, fuel records, truck status, driver activity, or trips.";
   }
   return parts.join(" ");
 }
@@ -1199,7 +1199,7 @@ function buildPendingFollowup(context: any, answer: string) {
     return attachActiveTopic({
       type: "fuel_investigation_next_checks",
       truck_id: truckLabel,
-      prompt: `Continue the fuel investigation for ${truckLabel}. Check stops, journeys, manual fuel entries, and usable provider fuel telemetry without accusing anyone.`,
+      prompt: `Continue the fuel investigation for ${truckLabel}. Check stops, trips, manual fuel entries, and usable provider fuel telemetry without accusing anyone.`,
     });
   }
 
@@ -1212,7 +1212,7 @@ function buildPendingFollowup(context: any, answer: string) {
       return {
         type: "dashboard_truck_followup",
         truck_ids: trucks,
-        prompt: `Continue investigating these same dashboard trucks: ${trucks.join(", ")}. Check active journeys, geofence/location context, spares/mechanical history, provider freshness, and idle-event data quality within the user's role permissions.`,
+        prompt: `Continue investigating these same dashboard trucks: ${trucks.join(", ")}. Check active trips, geofence/location context, spares/mechanical history, provider freshness, and idle-event data quality within the user's role permissions.`,
       };
     }
   }
@@ -1623,7 +1623,7 @@ function buildMetricFollowupContext(company: any, roleCapabilities: any, resolut
         ? {
             category: "finance",
             message:
-              "I can help with operational context, but revenue, rates, profit, and margin data are restricted for your role.",
+              "I can help with operational context, but revenue, rates, contribution, and margin data are restricted for your role.",
           }
         : null,
     metric_followup: {
@@ -1794,11 +1794,11 @@ function buildFinanceReviewAnswer(context: any) {
   const parts = [
     `${Number(review.missing_revenue_count || 0).toLocaleString()} of ${Number(
       review.trip_count || 0
-    ).toLocaleString()} production trip(s) need revenue review. Source: journeys plus latest journey_revenue_entries.`,
+    ).toLocaleString()} production trip(s) need revenue review. Source: trip records plus latest revenue entries.`,
   ];
   if (review.revenue_entry_status === "schema_missing") {
     parts.push(
-      "Auditable revenue entries are not available until the revenue-entry migration is applied; journey snapshots may be incomplete."
+      "Auditable revenue entries are not available until the revenue-entry migration is applied; trip revenue snapshots may be incomplete."
     );
   }
 
@@ -1999,7 +1999,7 @@ function buildDistanceComparisonConflictAnswer(label: string, comparison: any) {
   const rightLabel = formatComparisonPeriodLabel(right);
   const todayLabel = formatOperationalTodayLabel();
   const parts = [
-    `The safe reading is: ${label} is being compared across ${leftLabel} and ${rightLabel}, not the whole fleet.`,
+    `${label} is being compared across ${leftLabel} and ${rightLabel}, not the whole fleet.`,
   ];
 
   if (todayLabel) {
@@ -2538,16 +2538,16 @@ function buildContributionReadinessAnswer(
   }
 
   if (type === "missing_profit_data") {
-    parts.push("Profit readiness is incomplete.");
+    parts.push("Contribution review is incomplete.");
   } else {
-    parts.push("Profit and contribution per km cannot be calculated yet.");
+    parts.push("Contribution and per-km review cannot be calculated yet.");
   }
 
   parts.push(`Missing: ${missing || "linked revenue, linked costs, or reliable distance"}.`);
 
   if (finance.journey_count || finance.revenue_record_count || finance.fuel_record_count || finance.expense_record_count) {
     parts.push(
-      `Current finance trail: ${Number(finance.journey_count || 0).toLocaleString()} journey(s), ${Number(
+      `Current finance trail: ${Number(finance.journey_count || 0).toLocaleString()} trip(s), ${Number(
         finance.revenue_record_count || 0
       ).toLocaleString()} revenue record(s), ${Number(finance.fuel_record_count || 0).toLocaleString()} fuel cost record(s), and ${Number(
         finance.expense_record_count || 0
@@ -4455,7 +4455,7 @@ function buildDashboardFollowupQuestion(trucks: any[]) {
   const hasGeofenceContext = trucks.some((truck) => truck.geofence_match?.name);
   const hasSuspiciousTotals = trucks.some(hasSuspiciousDashboardIdleTotal);
   const options = [
-    "whether these trucks are on active journeys",
+    "whether these trucks are on active trips",
     "whether they have recent mechanical or spares issues",
   ];
 
@@ -4575,7 +4575,7 @@ function buildFuelSuspicionFallbackAnswer(context: any) {
   const telemetryExplanation = formatFuelTelemetryExplanation(telemetry);
   parts.push(telemetryExplanation.text);
   if (!telemetryExplanation.usable) {
-    parts.push("For now, stops, locations, driver assignment, journeys, and manual fuel entries carry more weight than fuel telemetry.");
+    parts.push("For now, stops, locations, driver assignment, trips, and manual fuel entries carry more weight than fuel telemetry.");
     parts.push(formatFleetFuelAvailability(fleetFuelAvailability));
   }
 
@@ -4598,7 +4598,7 @@ function buildFuelSuspicionFallbackAnswer(context: any) {
         `There is fuel-event evidence to investigate: ${fuelEvents
           .slice(0, 3)
           .map(formatEventBrief)
-          .join("; ")}. That is not proof of siphoning, but it is worth checking.`
+          .join("; ")}. That is not proof of fuel theft or siphoning, but it is worth checking.`
       );
     }
     if (idleEvents.length) {
@@ -4614,10 +4614,10 @@ function buildFuelSuspicionFallbackAnswer(context: any) {
   }
 
   if (journeys.length) {
-    parts.push("Recent journey context:");
+    parts.push("Recent trip context:");
     parts.push(...journeys.slice(0, 3).map(formatJourneyBrief));
   } else {
-    parts.push("No recent journey record appears for this vehicle.");
+    parts.push("No recent trip record appears for this vehicle.");
   }
 
   parts.push("");
@@ -4625,7 +4625,7 @@ function buildFuelSuspicionFallbackAnswer(context: any) {
     "Small repeated losses may not show as a single major drop unless the truck has reliable fuel-level telemetry or you compare tank dips/receipts against expected consumption."
   );
   parts.push("");
-  parts.push("I can next check stops around the idle times, show which enabled trucks have usable fuel data, or compare this vehicle against similar trips once journeys and fuel entries are recorded.");
+  parts.push("I can next check stops around the idle times, show which enabled trucks have usable fuel data, or compare this vehicle against similar trips once trip and fuel entries are recorded.");
 
   return parts.join("\n");
 }
@@ -4907,7 +4907,7 @@ function formatVehicleCandidateLine(candidate: any) {
 
 function buildInvestigationOpening(focus: any) {
   if (focus?.fuel_focus) {
-    return "Fuel siphoning is not confirmed from one question, so the wider operational trail around this vehicle matters.";
+    return "Fuel theft or siphoning is not confirmed from one question, so the wider operational trail around this vehicle matters.";
   }
   if (focus?.stops_focus) {
     return "The recent GPS-stop/provider idle-marker trail matters more than a single location snapshot here.";
@@ -4979,9 +4979,9 @@ function formatInvestigationFindings(caseFile: any, focus: any, label: string) {
   }
 
   if (journeys.recent_journeys?.length) {
-    lines.push(`- Recent journey context: ${formatJourneyBrief(journeys.recent_journeys[0]).replace(/^- /, "")}`);
+    lines.push(`- Recent trip context: ${formatJourneyBrief(journeys.recent_journeys[0]).replace(/^- /, "")}`);
   } else {
-    lines.push("- No recent journey record appears for this vehicle.");
+    lines.push("- No recent trip record appears for this vehicle.");
   }
 
   if (focus?.repair_focus || spares.recent_events?.length) {
@@ -4994,7 +4994,7 @@ function formatInvestigationFindings(caseFile: any, focus: any, label: string) {
 
   if (financials.visible) {
     lines.push(
-      `- Finance trail: ${financials.journey_count || 0} journey(s), ${formatMoney(financials.revenue_kes)} revenue, ${formatMoney(financials.fuel_cost_kes)} fuel, ${formatMoney(financials.expense_cost_kes)} expenses, estimated profit ${formatMoney(financials.estimated_profit_kes)}.`
+      `- Finance trail: ${financials.journey_count || 0} trip(s), ${formatMoney(financials.revenue_kes)} revenue, ${formatMoney(financials.fuel_cost_kes)} fuel, ${formatMoney(financials.expense_cost_kes)} expenses, estimated contribution ${formatMoney(financials.estimated_profit_kes)}.`
     );
   } else if (focus?.profitability_focus) {
     lines.push("- Financial values are hidden for this role.");
@@ -5029,7 +5029,7 @@ function formatInvestigationMeanings(caseFile: any, focus: any) {
 
   if (focus?.profitability_focus && financials.visible) {
     if (Number(financials.estimated_profit_kes || 0) < 0) {
-      lines.push("- The visible finance trail suggests this vehicle is loss-making in the sampled records.");
+      lines.push("- The visible finance trail shows negative contribution in the sampled records.");
     } else if (financials.journey_count > 0) {
       lines.push("- The sampled finance trail does not establish this vehicle as too expensive by itself, but it gives a baseline for comparison.");
     }
@@ -5059,7 +5059,7 @@ function formatInvestigationLimits(caseFile: any, focus: any) {
   }
 
   if (focus?.fuel_focus) {
-    lines.push("- Siphoning stays unconfirmed without usable fuel readings, tank dips, receipts, or clear fuel-drop events.");
+    lines.push("- Fuel theft or siphoning stays unconfirmed without usable fuel readings, tank dips, receipts, or clear fuel-drop events.");
   }
   if (focus?.repair_focus) {
     lines.push("- Repair lifespan or mechanic/vendor quality is not established without enough install/removal/replacement history.");
@@ -5091,7 +5091,7 @@ function formatInvestigationNextChecks(caseFile: any, focus: any, label: string)
     checks.push("- Check whether the same part was repaired, removed, or replaced again after the last repair.");
   }
   if (!checks.length) {
-    checks.push(`- Review recent events, journeys, fuel entries, and repairs for ${label}.`);
+    checks.push(`- Review recent events, trips, fuel entries, and repairs for ${label}.`);
   }
 
   return checks;
@@ -5109,12 +5109,12 @@ function formatInvestigationFollowUps(focus: any, label: string, caseFile: any =
     return `I can next compare ${label} against similar routes, clients, or fuel/expense patterns.`;
   }
   if (focus?.profitability_focus) {
-    return `I can next compare ${label} against similar routes and fuel/expense patterns if your role can view finance data, or stay with operational clues like stops, journeys, and repairs.`;
+    return `I can next compare ${label} against similar routes and fuel/expense patterns if your role can view finance data, or stay with operational clues like stops, trips, and repairs.`;
   }
   if (focus?.repair_focus) {
     return `I can next list the repair/spares timeline for ${label}, or look for repeat parts and mechanics.`;
   }
-  return `I can next narrow this by stops, fuel, journeys, or repairs for ${label}.`;
+  return `I can next narrow this by stops, fuel, trips, or repairs for ${label}.`;
 }
 
 function formatFuelTelemetryExplanation(telemetry: any) {
@@ -5504,7 +5504,7 @@ function stripLeadingPlacePrefix(value: any) {
 }
 
 function formatJourneyBrief(journey: any) {
-  const reference = journey.reference || "Journey";
+  const reference = journey.reference || "Trip";
   const route = [journey.from_location, journey.to_location].filter(Boolean).join(" to ");
   const status = journey.status ? ` - ${journey.status}` : "";
   const client = journey.client_name ? ` - ${journey.client_name}` : "";
