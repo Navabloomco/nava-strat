@@ -123,7 +123,7 @@ export async function matchVehicleInFleet(question: string, companyId: string) {
     }
   }
 
-  const sortedCandidates = Array.from(candidates.values())
+  const sortedCandidates = dedupeVehicleMatchCandidates(Array.from(candidates.values()))
     .sort((a, b) => b.rank - a.rank)
     .slice(0, 5);
 
@@ -275,6 +275,54 @@ function sanitizeVehicleCandidate(candidate: any) {
     trailer_context: Boolean(candidate.trailer_context),
     enabled_for_intelligence: Boolean(candidate.enabled_for_intelligence),
   };
+}
+
+function dedupeVehicleMatchCandidates(candidates: any[]) {
+  const grouped = new Map<string, any>();
+  for (const candidate of candidates) {
+    const key = vehicleCandidateDedupeKey(candidate);
+    const current = grouped.get(key);
+    if (!current || isVehicleCandidatePreferred(candidate, current)) {
+      grouped.set(key, candidate);
+    }
+  }
+  return Array.from(grouped.values());
+}
+
+function vehicleCandidateDedupeKey(candidate: any) {
+  const rawLabel = candidate.provider_label || candidate.display_label;
+  const providerLabelKey = normalizeVehicleKey(
+    rawLabel && normalizeVehicleKey(rawLabel) !== "TRUCK" ? rawLabel : null
+  );
+  const displayKey =
+    normalizeVehicleKey(candidate.display_label) === "TRUCK"
+      ? ""
+      : normalizeVehicleKey(candidate.display_label);
+  const truckKey =
+    normalizeVehicleKey(candidate.truck_id) || normalizeVehicleKey(candidate.registration);
+  const trailerKey = normalizeVehicleKey(candidate.attached_trailer_plate);
+
+  if (providerLabelKey || displayKey) {
+    return `label:${providerLabelKey || displayKey}|trailer:${trailerKey}`;
+  }
+  if (truckKey) return `truck:${truckKey}|trailer:${trailerKey}`;
+  return `asset:${candidate.id || ""}`;
+}
+
+function isVehicleCandidatePreferred(candidate: any, current: any) {
+  const candidateEnabled = Boolean(candidate.enabled_for_intelligence);
+  const currentEnabled = Boolean(current.enabled_for_intelligence);
+  if (candidateEnabled !== currentEnabled) return candidateEnabled;
+
+  const candidateRank = Number(candidate.rank || candidate.rank_bias || 0);
+  const currentRank = Number(current.rank || current.rank_bias || 0);
+  if (candidateRank !== currentRank) return candidateRank > currentRank;
+
+  const candidateHasTruck = Boolean(candidate.truck_id || candidate.registration);
+  const currentHasTruck = Boolean(current.truck_id || current.registration);
+  if (candidateHasTruck !== currentHasTruck) return candidateHasTruck;
+
+  return false;
 }
 
 function vehicleCandidateRankBias(asset: any, identityContext: any) {

@@ -714,13 +714,16 @@ async function resolvePromptVehicle(
   }));
 
   for (const input of inputs) {
-    const exact = assets.filter((asset: any) => asset.keys.includes(input.key));
+    const exact = buildVehicleCandidateSet(
+      assets.filter((asset: any) => asset.keys.includes(input.key)),
+      { match_type: "exact_normalized" }
+    );
     if (exact.length === 1) {
       return {
         ...base,
         input: input.input,
         input_key: input.key,
-        selected: { ...exact[0], match_type: "exact_normalized" },
+        selected: exact[0],
       };
     }
     if (exact.length > 1) {
@@ -730,30 +733,30 @@ async function resolvePromptVehicle(
           ...base,
           input: input.input,
           input_key: input.key,
-          selected: { ...bestExact, match_type: "exact_normalized" },
+          selected: bestExact,
         };
       }
       return {
         ...base,
         input: input.input,
         input_key: input.key,
-        ambiguous: exact.map((asset: any) => ({ ...asset, match_type: "exact_normalized" })),
+        ambiguous: exact,
       };
     }
 
-    const trailerExact = assets.filter((asset: any) =>
-      (asset.trailer_keys || []).includes(input.key)
+    const trailerExact = buildVehicleCandidateSet(
+      assets.filter((asset: any) => (asset.trailer_keys || []).includes(input.key)),
+      {
+        match_type: "attached_trailer_context",
+        trailer_context: true,
+      }
     );
     if (trailerExact.length === 1) {
       return {
         ...base,
         input: input.input,
         input_key: input.key,
-        selected: {
-          ...trailerExact[0],
-          match_type: "attached_trailer_context",
-          trailer_context: true,
-        },
+        selected: trailerExact[0],
       };
     }
     if (trailerExact.length > 1) {
@@ -763,27 +766,22 @@ async function resolvePromptVehicle(
           ...base,
           input: input.input,
           input_key: input.key,
-          selected: {
-            ...bestTrailer,
-            match_type: "attached_trailer_context",
-            trailer_context: true,
-          },
+          selected: bestTrailer,
         };
       }
       return {
         ...base,
         input: input.input,
         input_key: input.key,
-        ambiguous: trailerExact.map((asset: any) => ({
-          ...asset,
-          match_type: "attached_trailer_context",
-          trailer_context: true,
-        })),
+        ambiguous: trailerExact,
       };
     }
 
-    const prefix = assets.filter((asset: any) =>
-      asset.keys.some((key: string) => key.startsWith(input.key) || input.key.startsWith(key))
+    const prefix = buildVehicleCandidateSet(
+      assets.filter((asset: any) =>
+        asset.keys.some((key: string) => key.startsWith(input.key) || input.key.startsWith(key))
+      ),
+      { match_type: "prefix" }
     );
     if (prefix.length === 1) {
       return {
@@ -794,11 +792,20 @@ async function resolvePromptVehicle(
       };
     }
     if (prefix.length > 1) {
+      const bestPrefix = selectUniqueBestVehicleCandidate(prefix);
+      if (bestPrefix) {
+        return {
+          ...base,
+          input: input.input,
+          input_key: input.key,
+          selected: { ...bestPrefix, match_type: "unique_prefix" },
+        };
+      }
       return {
         ...base,
         input: input.input,
         input_key: input.key,
-        ambiguous: prefix.map((asset: any) => ({ ...asset, match_type: "prefix" })),
+        ambiguous: prefix,
       };
     }
 
@@ -865,6 +872,63 @@ function buildConversationVehicleCandidate(asset: any) {
     ),
     rank_bias: rankBias,
   };
+}
+
+function buildVehicleCandidateSet(candidates: any[], additions: Record<string, any>) {
+  return dedupeVehicleCandidates(
+    candidates.map((candidate: any) => ({
+      ...candidate,
+      ...additions,
+    }))
+  );
+}
+
+function dedupeVehicleCandidates(candidates: any[]) {
+  const grouped = new Map<string, any>();
+  for (const candidate of candidates) {
+    const key = vehicleCandidateDedupeKey(candidate);
+    const current = grouped.get(key);
+    if (!current || isVehicleCandidatePreferred(candidate, current)) {
+      grouped.set(key, candidate);
+    }
+  }
+  return Array.from(grouped.values());
+}
+
+function vehicleCandidateDedupeKey(candidate: any) {
+  const rawLabel = candidate.provider_label || candidate.display_label;
+  const providerLabelKey = normalizeVehicleKey(
+    rawLabel && normalizeVehicleKey(rawLabel) !== "TRUCK" ? rawLabel : null
+  );
+  const displayKey =
+    normalizeVehicleKey(candidate.display_label) === "TRUCK"
+      ? ""
+      : normalizeVehicleKey(candidate.display_label);
+  const truckKey =
+    normalizeVehicleKey(candidate.truck_id) || normalizeVehicleKey(candidate.registration);
+  const trailerKey = normalizeVehicleKey(candidate.attached_trailer_plate);
+
+  if (providerLabelKey || displayKey) {
+    return `label:${providerLabelKey || displayKey}|trailer:${trailerKey}`;
+  }
+  if (truckKey) return `truck:${truckKey}|trailer:${trailerKey}`;
+  return `asset:${candidate.id || ""}`;
+}
+
+function isVehicleCandidatePreferred(candidate: any, current: any) {
+  const candidateEnabled = Boolean(candidate.enabled_for_intelligence);
+  const currentEnabled = Boolean(current.enabled_for_intelligence);
+  if (candidateEnabled !== currentEnabled) return candidateEnabled;
+
+  const candidateRank = Number(candidate.rank_bias || candidate.rank || 0);
+  const currentRank = Number(current.rank_bias || current.rank || 0);
+  if (candidateRank !== currentRank) return candidateRank > currentRank;
+
+  const candidateHasTruck = Boolean(candidate.truck_id || candidate.registration);
+  const currentHasTruck = Boolean(current.truck_id || current.registration);
+  if (candidateHasTruck !== currentHasTruck) return candidateHasTruck;
+
+  return false;
 }
 
 function selectUniqueBestVehicleCandidate(candidates: any[]) {
@@ -994,11 +1058,51 @@ function buildVehicleNotFoundClarification(resolution: VehicleResolution) {
 
 function buildAmbiguousVehicleClarification(resolution: VehicleResolution) {
   const inputLabel = formatMissingVehicleLabel(resolution.input || resolution.input_key || "that truck");
-  const candidates = resolution.ambiguous
+  const candidates = dedupeVehicleCandidates(resolution.ambiguous)
     .slice(0, 5)
-    .map((candidate: any) => candidate.display_label)
+    .map(formatAmbiguousVehicleCandidate)
     .filter(Boolean);
-  return `${inputLabel} matched more than one asset in this workspace. Which one do you mean: ${candidates.join(", ")}?`;
+  if (candidates.length <= 1) {
+    return `${inputLabel} matched one likely asset, but Nava needs one more detail before answering. Which truck should I check?`;
+  }
+  return `${inputLabel} matched more than one asset in this workspace. Which one do you mean?\n${candidates
+    .map((candidate, index) => `${index + 1}. ${candidate}`)
+    .join("\n")}`;
+}
+
+function formatAmbiguousVehicleCandidate(candidate: any) {
+  const label =
+    candidate.display_label ||
+    candidate.provider_label ||
+    candidate.registration ||
+    candidate.truck_id ||
+    "Vehicle";
+  const parts = [label];
+  const providerLabel = candidate.provider_label || null;
+  if (providerLabel && normalizeVehicleKey(providerLabel) !== normalizeVehicleKey(label)) {
+    parts.push(`provider label ${providerLabel}`);
+  }
+  const registration = candidate.registration || null;
+  if (registration && normalizeVehicleKey(registration) !== normalizeVehicleKey(label)) {
+    parts.push(`registration ${registration}`);
+  }
+  const truckId = candidate.truck_id || null;
+  if (
+    truckId &&
+    normalizeVehicleKey(truckId) !== normalizeVehicleKey(label) &&
+    normalizeVehicleKey(truckId) !== normalizeVehicleKey(registration)
+  ) {
+    parts.push(`truck ${truckId}`);
+  }
+  if (
+    candidate.attached_trailer_plate &&
+    !normalizeVehicleKey(label).includes(normalizeVehicleKey(candidate.attached_trailer_plate))
+  ) {
+    parts.push(`trailer ${candidate.attached_trailer_plate}`);
+  }
+  parts.push(candidate.enabled_for_intelligence ? "enabled" : "not enabled");
+  if (candidate.trailer_context) parts.push("trailer match");
+  return parts.join(" · ");
 }
 
 function formatMissingVehicleLabel(value: string) {
