@@ -59,6 +59,7 @@ import {
   labelAssetAvailabilityStatus,
 } from "../../../../lib/operations/assetAvailability";
 import { productBoundaryForSurface } from "../../../../lib/product/productBoundaries";
+import { getCopyContractForSurface } from "../../../../lib/product/productCopyContracts";
 
 export async function POST(req: Request) {
   try {
@@ -311,6 +312,7 @@ export async function POST(req: Request) {
           structuredQuery: effectiveQueryUnderstanding,
         });
     context.product_boundary = productBoundaryForSurface("nava_eye", roleCapabilities);
+    context.copy_contract = getCopyContractForSurface("nava_eye");
     context.conversation_followup = {
       used_active_topic: pendingFollowupResolution.usedActiveTopic,
       used_pending_followup: pendingFollowupResolution.usedPendingFollowup,

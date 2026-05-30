@@ -8,16 +8,19 @@ When this playbook discovers a bug, batch fixes into one Codex prompt. Do not pa
 
 This playbook may use pilot/testing language because it is an internal validation document. The product UI should sound productized and enterprise-ready.
 
+- [ ] Before changing a product surface, check `lib/product/productBoundaries.ts` for the surface contract and `lib/product/productCopyContracts.ts` for the copy level.
 - [ ] Customer-facing pages use `Trips`, `Ops Intelligence`, `Revenue Review`, `Client rates`, `Contribution review`, and `review-ready contribution` instead of old pilot/dashboard/profitability language.
 - [ ] Customer-facing pages do not show `pilot view`, `pilot readiness`, `canonical`, `legacy`, `event_type`, `provider_signal_flags`, raw payload wording, or row-path/debug terminology unless it is inside a clearly advanced/platform diagnostic surface.
 - [ ] Evidence caveats remain visible but concise: GPS-derived distance estimate, provider distance evidence, stopped-time evidence, tracker idle markers, and engine-on idle not verified.
 - [ ] Ops Intelligence uses concise default labels such as `Low Movement Review`, `tracker/provider idle-marker evidence`, and `Contribution review ready`; longer stopped-context and marker-source mechanics are left to Nava Eye/audit detail.
 - [ ] Product boundaries hold: Operations pages show operational evidence and review status, but do not show revenue amounts, linked cost amounts, contribution amounts, margin, per-km money metrics, fuel cost amounts, or rate details. Finance and Management surfaces own those values.
-- [ ] Run `npm run check:product-boundaries` before launch builds to catch customer-facing Ops copy regressions such as finance amounts, old profit-review wording, or idle-marker internals.
+- [ ] Run `npm run check:product-boundaries` before launch builds to catch customer-facing regressions in Ops Intelligence, Operations copy, Client Portal privacy, Team Access copy, public entry copy, and Provider Vault default copy.
 - [ ] Nava Eye answers are concise by default and only show audit details after questions such as `how`, `why`, `show evidence`, or `why should I trust it`.
 - [ ] Reusable UI placeholders do not contain tenant-specific examples, real truck plates, real client names, real trip IDs, or pilot contribution amounts.
 - [ ] Public, pricing, login, and onboarding pages use controlled-rollout language such as `Request implementation review`, `Start setup`, `Open workspace`, and `Talk to Nava Bloom` instead of customer-facing `pilot trial` / `Start trial` copy.
 - [ ] Public/client-facing tracking pages do not show raw coordinates as the primary location when a readable place label is unavailable.
+- [ ] Team Access tenant UI does not mention platform-owner/internal access, support superusers, service roles, or auth-provider internals.
+- [ ] Provider default UI does not show raw payloads, secrets, auth internals, or row-path/debug detail unless the content is inside sanitized advanced diagnostics.
 
 ## 1. Pre-Test Setup
 

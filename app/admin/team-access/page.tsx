@@ -424,9 +424,9 @@ export default function TeamAccessPage() {
                         <td className="px-5 py-4">
                           {protectedRole ? (
                             <>
-                              <StatusPill tone="warning">Platform owner</StatusPill>
+                              <StatusPill tone="warning">Protected role</StatusPill>
                               <p className="mt-2 text-xs leading-5 text-slate-500">
-                                Platform owner access is managed separately.
+                                This access level cannot be edited here.
                               </p>
                             </>
                           ) : (

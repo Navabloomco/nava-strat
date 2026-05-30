@@ -47,9 +47,23 @@ Nava Strat should sound like a mature enterprise SaaS: operational, concise, sou
 - Public, pricing, login, and onboarding copy should sound like a controlled enterprise rollout, not a trial dashboard. Preferred CTAs include `Request implementation review`, `Start setup`, `Open workspace`, and `Talk to Nava Bloom`.
 - Reusable UI must not hardcode tenant/customer examples such as pilot client names, real truck plates, real trip IDs, or contribution amounts. Render company data only when it comes from the authenticated tenant context.
 
-### Product Boundary Contract
+### Product and Copy Contracts
 
-`lib/product/productBoundaries.ts` is the reusable product-surface contract. Operations pages may show Trip status, distance evidence, stopped-time, tracker idle markers, availability context, missing operational links, proof status, and finance/contribution review readiness. Operations pages must not render revenue amounts, linked cost amounts, contribution amounts, margin, per-km money metrics, fuel cost amounts, or rate details as the default UI. Finance owns rates, revenue, expenses, fuel cost review, and contribution review. Management may show decision-level contribution intelligence where the role allows it. Nava Eye must still enforce the same role and surface boundary server-side before answering finance, fuel-cost, evidence, provider, or location questions.
+`lib/product/productBoundaries.ts` is the reusable product-surface contract and must be checked before editing a customer, admin, client, provider, finance, management, or Nava Eye surface. It defines purpose, primary user, allowed domains, restricted domains, forbidden default fields, forbidden default terms, preferred terms, detail level, and Nava Eye behavior for dashboard, live tracking, Ops Intelligence, Trips, Trip Detail, expenses, fuel, Finance Hub, Revenue Review, Client Rates, Management, Provider Vault/admin, Team Access, Client Visibility admin, Client Portal, Nava Eye, public site, onboarding, and pricing surfaces.
+
+`lib/product/productCopyContracts.ts` is the copy contract. It defines Nava Strat's voice and copy levels for public marketing, customer default UI, operational evidence, finance review, management summary, admin setup, admin diagnostics, Nava Eye default answers, Nava Eye audit answers, Client Portal, and internal docs. Customer UI should be concise and enterprise-ready; audit/method details belong in Nava Eye or advanced diagnostics.
+
+Product law:
+
+- Operations pages may show Trip status, distance evidence, stopped-time, tracker idle markers, availability context, missing operational links, proof status, and finance/contribution review readiness. Operations pages must not render revenue amounts, linked cost amounts, contribution amounts, margin, per-km money metrics, fuel cost amounts, or rate details as the default UI.
+- Finance owns rates, revenue, expenses, fuel cost review, and contribution review.
+- Management may show decision-level contribution intelligence where the role allows it.
+- Client Portal is token-scoped, privacy-first delivery visibility. It must not show raw coordinates, finance data, provider payloads, internal notes, or tenant workspace data.
+- Provider/admin surfaces lead with readiness and capability. Secrets, raw payloads, response samples, row paths, and field diagnostics belong only in sanitized advanced diagnostics where role policy allows it.
+- Team Access tenant UI must not reveal platform-owner/internal support mechanics, internal rows, service roles, or auth-provider internals.
+- Nava Eye must enforce the same role and surface boundary server-side before answering finance, fuel-cost, evidence, provider, or location questions.
+- Evidence claim limits are product law: GPS-derived distance is provisional unless provider distance confirms it; GPS-stopped evidence is stationary evidence, not engine-on idle; provider current stop is a current episode, not daily stopped total; tracker/provider idle markers are evidence, not fuel burn; contribution is not final audited profit; client/site dwell is not client blame; driver blame is never inferred from stopped/idle data alone.
+- Before patching a surface, check its surface contract, copy contract, role contract, evidence contract, and guardrail script.
 
 ## 2. Current Route/Page Map
 
