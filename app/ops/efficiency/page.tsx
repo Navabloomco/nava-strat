@@ -387,7 +387,7 @@ export default function OpsEfficiencyPage() {
               <Panel dark className="p-5">
                 <SectionTitle
                   title="Trip Intelligence"
-                  subtitle="Projected from trip records and linked evidence. Contribution appears only when revenue and linked costs are ready."
+                  subtitle="Projected from trip records and linked evidence. Ops shows review status; money details stay in Finance and Management."
                 />
                 <div className="mt-4 grid gap-3 md:grid-cols-3">
                   <SmallStat
@@ -465,7 +465,7 @@ export default function OpsEfficiencyPage() {
                 fallback="Client waiting needs stopped-time evidence or tracker idle markers linked to client sites, geofences, or trip legs."
               />
               <ReadinessPanel
-                title="Trip Contribution Review"
+                title="Trip Finance Review"
                 item={{
                   status:
                     contributionReadyCount > 0
@@ -479,9 +479,9 @@ export default function OpsEfficiencyPage() {
                     Number(tripSummary.trip_count || 0)
                   ),
                   evidence_label:
-                    "linked revenue minus linked fuel/expense cost evidence; distance-based metrics remain separate",
+                    "review status from linked evidence; money values stay in Finance and Management",
                 }}
-                fallback="Contribution review requires linked revenue and cost evidence. Unlinked costs are not used for exact trip contribution."
+                fallback="Finance review requires linked revenue and cost evidence. Unlinked costs are not used for exact contribution review."
               />
             </section>
 
@@ -562,14 +562,18 @@ function RankRow({
   );
 }
 
-function TripRow({ trip, companyId }: { trip: any; companyId?: string | null }) {
+function TripRow({
+  trip,
+  companyId,
+}: {
+  trip: any;
+  companyId?: string | null;
+}) {
   const identity = trip.trip_identity || {};
   const movement = trip.movement_evidence || {};
   const readiness = trip.profitability_readiness || {};
-  const contribution = readiness.contribution_summary || {};
   const flags = trip.management_flags || [];
   const route = identity.route?.route_label || "Route missing";
-  const showContribution = Boolean(contribution.ready_for_contribution_review);
 
   const content = (
     <div className="rounded-md border border-white/10 bg-white/[0.04] p-4 transition hover:border-cyan-200/40 hover:bg-cyan-300/10">
@@ -591,19 +595,6 @@ function TripRow({ trip, companyId }: { trip: any; companyId?: string | null }) 
         <span>Source: {formatDistanceEvidenceDetail({ ...movement, compact: true })}</span>
         <span>Flags: {flags.length ? flags.slice(0, 3).map(displayTripFlag).join(", ") : "None"}</span>
       </div>
-      {showContribution && (
-        <div className="mt-3 grid gap-2 rounded-md border border-emerald-300/15 bg-emerald-300/10 p-3 text-xs leading-5 text-emerald-50 sm:grid-cols-2 xl:grid-cols-5">
-          <span>Revenue: {formatCurrency(contribution.revenue_amount)}</span>
-          <span>Linked cost: {formatCurrency(contribution.linked_variable_cost)}</span>
-          <span>Contribution: {formatCurrency(contribution.contribution_amount)}</span>
-          <span>Margin: {formatPercentValue(contribution.contribution_margin_percent)}</span>
-          {hasMetricValue(contribution.per_km_contribution) ? (
-            <span className={contribution.per_km_metrics_provisional ? "text-emerald-100/70" : ""}>
-              {formatTripPerKmContribution(contribution)}
-            </span>
-          ) : null}
-        </div>
-      )}
       {Array.isArray(readiness.supporting_notes) && readiness.supporting_notes.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-2">
           {readiness.supporting_notes.slice(0, 3).map((note: string) => (
@@ -840,39 +831,6 @@ function formatKm(value: any) {
   return number.toLocaleString(undefined, {
     maximumFractionDigits: number % 1 === 0 ? 0 : 2,
   });
-}
-
-function formatCurrency(value: any) {
-  if (value === null || value === undefined || value === "") return "Pending";
-  const number = Number(value);
-  if (!Number.isFinite(number)) return "Pending";
-  return `KES ${number.toLocaleString(undefined, {
-    maximumFractionDigits: number % 1 === 0 ? 0 : 2,
-  })}`;
-}
-
-function formatPercentValue(value: any) {
-  if (value === null || value === undefined || value === "") return "Pending";
-  const number = Number(value);
-  if (!Number.isFinite(number)) return "Pending";
-  return `${number.toLocaleString(undefined, {
-    maximumFractionDigits: number % 1 === 0 ? 0 : 1,
-  })}%`;
-}
-
-function formatTripPerKmContribution(contribution: any) {
-  const value = formatCurrency(contribution.per_km_contribution);
-  if (contribution.per_km_distance_source === "gps-estimated") {
-    return `Provisional per-km: ${value} · provider distance needed`;
-  }
-  if (contribution.per_km_distance_source === "provider-reported") {
-    return `Per-km: ${value} · provider distance`;
-  }
-  return `Per-km: ${value}`;
-}
-
-function hasMetricValue(value: any) {
-  return value !== null && value !== undefined && value !== "" && Number.isFinite(Number(value));
 }
 
 function formatMinutes(value: any) {

@@ -2,10 +2,12 @@ import { NextResponse } from "next/server";
 import {
   canViewFinance,
   canViewOps,
+  getRoleCapabilities,
   normalizeRole,
   rolesForCompany,
 } from "../../../../lib/api/roleAccess";
 import { buildTripIntelligenceSummary } from "../../../../lib/intelligence/tripIntelligence";
+import { productBoundaryForSurface } from "../../../../lib/product/productBoundaries";
 import { supabase } from "../../../../lib/supabase";
 import { supabaseAdmin } from "../../../../lib/supabaseAdmin";
 
@@ -157,12 +159,15 @@ export async function GET(req: Request) {
     }
 
     const range = searchParams.get("range") || searchParams.get("timeframe") || "today";
+    const roleCapabilities = getRoleCapabilities(resolved.roles);
+    const productBoundary = productBoundaryForSurface("operations", roleCapabilities);
     const tripIntelligence = await buildTripIntelligenceSummary({
       companyId: resolved.company.id,
       company: resolved.company,
       range,
       roles: resolved.roles,
-      includeFinance: canViewFinancialTrips,
+      includeFinance: productBoundary.canShowFinanceAmounts && canViewFinancialTrips,
+      includeFinanceStatus: productBoundary.canShowFinanceReviewStatus,
     });
 
     return noStoreJson({
@@ -173,6 +178,7 @@ export async function GET(req: Request) {
         can_view_ops: canViewOperationalTrips,
         can_view_finance: canViewFinancialTrips,
       },
+      product_boundary: productBoundary,
       ...tripIntelligence,
     });
   } catch (err: any) {

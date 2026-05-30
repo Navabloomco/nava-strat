@@ -58,6 +58,7 @@ import {
   isKnownUnavailableAvailability,
   labelAssetAvailabilityStatus,
 } from "../../../../lib/operations/assetAvailability";
+import { productBoundaryForSurface } from "../../../../lib/product/productBoundaries";
 
 export async function POST(req: Request) {
   try {
@@ -309,6 +310,7 @@ export async function POST(req: Request) {
           dashboardContext,
           structuredQuery: effectiveQueryUnderstanding,
         });
+    context.product_boundary = productBoundaryForSurface("nava_eye", roleCapabilities);
     context.conversation_followup = {
       used_active_topic: pendingFollowupResolution.usedActiveTopic,
       used_pending_followup: pendingFollowupResolution.usedPendingFollowup,
@@ -692,6 +694,9 @@ function buildFallbackAnswer(context: any): string {
   if (context.provider_capability) {
     return buildProviderCapabilityAnswer(context);
   }
+  if (context.financial_access_restricted) {
+    return "Operational context is available for this role, but financial values are restricted. Ask an owner, admin, finance, management, or platform owner user to review contribution and revenue details.";
+  }
   if (context.metric_comparison) {
     return buildMetricComparisonAnswer(context);
   }
@@ -727,9 +732,6 @@ function buildFallbackAnswer(context: any): string {
   }
   if (context.fleet_health && context.provider_idle_marker_request) {
     return buildProviderIdleMarkerFleetAnswer(context);
-  }
-  if (context.financial_access_restricted) {
-    return "Operational context is available for this role, but financial values are restricted. Ask an owner, admin, finance, management, or platform owner user to review contribution and revenue details.";
   }
   if (context.profit_simulation) {
     const simulation = context.profit_simulation;
@@ -2010,6 +2012,7 @@ function buildFleetMovementInterpretation(summary: any) {
 function buildMetricFollowupContext(company: any, roleCapabilities: any, resolution: any) {
   const topic = resolution.metricTopic || {};
   const metricIntent = sanitizeMetricIntent(topic.metric_intent);
+  const productBoundary = productBoundaryForSurface("nava_eye", roleCapabilities);
   const financeMetric = [
     "contribution_per_km",
     "profit_readiness",
@@ -2026,8 +2029,9 @@ function buildMetricFollowupContext(company: any, roleCapabilities: any, resolut
       canViewFuel: Boolean(roleCapabilities?.canViewFuel),
       isPlatformOwner: Boolean(roleCapabilities?.isPlatformOwner),
     },
+    product_boundary: productBoundary,
     permission_boundary:
-      financeMetric && !roleCapabilities?.canViewFinance
+      financeMetric && !productBoundary.canShowFinanceAmounts
         ? {
             category: "finance",
             message:

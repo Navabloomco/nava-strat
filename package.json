@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "check:product-boundaries": "node scripts/check-product-boundaries.mjs",
     "start": "next start",
     "lint": "next lint"
   },

@@ -32,6 +32,7 @@ type TripIntelligenceInput = {
   range?: string | null;
   roles?: string[];
   includeFinance?: boolean;
+  includeFinanceStatus?: boolean;
 };
 
 type QueryResult<T> = {
@@ -101,17 +102,22 @@ export function resolveTripIntelligenceTimeframe(input: {
 }
 
 export async function buildTripIntelligenceSummary(input: TripIntelligenceInput) {
-  const includeFinance =
+  const includeFinanceAmounts =
     input.includeFinance === undefined
       ? canViewFinance(input.roles || [])
       : Boolean(input.includeFinance);
+  const includeFinanceStatus =
+    input.includeFinanceStatus === undefined
+      ? includeFinanceAmounts
+      : Boolean(input.includeFinanceStatus);
+  const loadFinanceEvidence = includeFinanceAmounts || includeFinanceStatus;
   const timeframe = resolveTripIntelligenceTimeframe({
     range: input.range,
     company: input.company,
   });
 
   const [journeysResult, assetsResult] = await Promise.all([
-    fetchJourneys(input.companyId, timeframe, includeFinance),
+    fetchJourneys(input.companyId, timeframe, loadFinanceEvidence),
     fetchAssets(input.companyId),
   ]);
 
@@ -136,10 +142,10 @@ export async function buildTripIntelligenceSummary(input: TripIntelligenceInput)
     fetchProviderDistanceRows(input.companyId, timeframe, truckIds),
     fetchTelemetryRows(input.companyId, timeframe, truckIds),
     fetchTelemetryEventRows(input.companyId, timeframe, truckIds),
-    includeFinance ? fetchJourneyRevenueEntries(input.companyId, journeyIds) : emptyResult<any>(),
-    includeFinance ? fetchFuelAllocations(input.companyId, journeyIds) : emptyResult<any>(),
-    includeFinance ? fetchFuelLogs(input.companyId, journeyIds) : emptyResult<any>(),
-    includeFinance ? fetchExpenses(input.companyId, journeyIds) : emptyResult<any>(),
+    loadFinanceEvidence ? fetchJourneyRevenueEntries(input.companyId, journeyIds) : emptyResult<any>(),
+    loadFinanceEvidence ? fetchFuelAllocations(input.companyId, journeyIds) : emptyResult<any>(),
+    loadFinanceEvidence ? fetchFuelLogs(input.companyId, journeyIds) : emptyResult<any>(),
+    loadFinanceEvidence ? fetchExpenses(input.companyId, journeyIds) : emptyResult<any>(),
   ]);
 
   const distanceByTruck = groupByTruckKey(distanceRowsResult.rows, "truck_id");
@@ -192,7 +198,7 @@ export async function buildTripIntelligenceSummary(input: TripIntelligenceInput)
       linkedFuelLogs,
       linkedExpenses,
       revenueEntries,
-      includeFinance,
+      { includeStatus: loadFinanceEvidence, includeAmounts: includeFinanceAmounts },
       fuelAllocationIssueSummaries
     );
     const missingData = buildTripMissingData({
@@ -201,13 +207,14 @@ export async function buildTripIntelligenceSummary(input: TripIntelligenceInput)
       driverEvidence,
       movementEvidence,
       financeEvidence,
-      includeFinance,
+      includeFinance: loadFinanceEvidence,
     });
     const profitability = buildProfitabilityReadiness(
       financeEvidence,
       movementEvidence,
       missingData,
-      includeFinance
+      loadFinanceEvidence,
+      includeFinanceAmounts
     );
     const stale = buildStaleTrackingEvidence(asset);
 
@@ -229,7 +236,7 @@ export async function buildTripIntelligenceSummary(input: TripIntelligenceInput)
         stale,
         profitability,
         missingData,
-        includeFinance,
+        includeFinance: loadFinanceEvidence,
       }),
       missing_data: missingData,
     };
@@ -245,25 +252,28 @@ export async function buildTripIntelligenceSummary(input: TripIntelligenceInput)
       provider_trip_summaries: sourceStatus(distanceRowsResult),
       telemetry_logs: sourceStatus(telemetryResult),
       telemetry_events: sourceStatus(eventsResult),
-      journey_revenue_entries: includeFinance
+      journey_revenue_entries: includeFinanceAmounts
         ? sourceStatus(revenueEntriesResult)
         : hiddenSourceStatus(),
-      fuel_allocations: includeFinance
+      fuel_allocations: includeFinanceAmounts
         ? sourceStatus(fuelAllocationsResult)
         : hiddenSourceStatus(),
-      fuel_logs: includeFinance ? sourceStatus(fuelResult) : hiddenSourceStatus(),
-      expenses: includeFinance ? sourceStatus(expensesResult) : hiddenSourceStatus(),
+      fuel_logs: includeFinanceAmounts ? sourceStatus(fuelResult) : hiddenSourceStatus(),
+      expenses: includeFinanceAmounts ? sourceStatus(expensesResult) : hiddenSourceStatus(),
     },
     empty_state: buildTripEmptyState(journeysResult, timeframe),
     summary: buildTripSummary(tripRecords),
     evidence_source_summary: buildEvidenceSourceSummary(tripRecords),
     missing_data_summary: buildMissingDataSummary(tripRecords),
     role_visibility: {
-      finance_values_visible: includeFinance,
-      notes: includeFinance
+      finance_values_visible: includeFinanceAmounts,
+      finance_review_status_visible: loadFinanceEvidence,
+      notes: includeFinanceAmounts
         ? []
         : [
-            "Finance amounts, revenue, expenses, contribution, and profitability readiness are hidden for this role.",
+            loadFinanceEvidence
+              ? "Finance review status is visible, but money values are hidden for this role or product surface."
+              : "Finance amounts, revenue, expenses, contribution, and contribution readiness are hidden for this role.",
           ],
     },
     trips: tripRecords,
@@ -1035,12 +1045,24 @@ function buildFinanceEvidence(
   fuelLogs: any[],
   expenses: any[],
   revenueEntries: any[],
-  includeFinance: boolean,
+  options:
+    | boolean
+    | {
+        includeStatus?: boolean;
+        includeAmounts?: boolean;
+      },
   fuelIssueSummaries: Record<string, FuelIssueAllocationSummary> = {}
 ) {
-  if (!includeFinance) {
+  const includeStatus =
+    typeof options === "boolean" ? options : Boolean(options.includeStatus);
+  const includeAmounts =
+    typeof options === "boolean" ? options : Boolean(options.includeAmounts);
+
+  if (!includeStatus) {
     return {
       visible: false,
+      status_visible: false,
+      amounts_visible: false,
       revenue_kes: null,
       linked_fuel_cost_kes: null,
       linked_fuel_liters: null,
@@ -1116,8 +1138,10 @@ function buildFinanceEvidence(
       ? "legacy_journey_link"
       : "missing";
 
-  return {
-    visible: true,
+  const fullEvidence = {
+    visible: includeAmounts,
+    status_visible: true,
+    amounts_visible: includeAmounts,
     revenue_kes: revenue,
     revenue_status:
       cleanText(journey.revenue_status) ||
@@ -1151,7 +1175,35 @@ function buildFinanceEvidence(
       : fuelLogs.length > 0
         ? `${latestRevenueEntry ? "latest revenue entry" : "journey revenue snapshot"}, legacy fuel_logs.journey_id fallback, and linked expenses`
         : `${latestRevenueEntry ? "latest revenue entry" : "journey revenue snapshot"} and linked expenses; no fuel allocation evidence`,
-    unlinked_costs_used_for_profit: false,
+    unlinked_costs_used_for_contribution: false,
+  };
+
+  if (includeAmounts) return fullEvidence;
+
+  return {
+    ...fullEvidence,
+    visible: false,
+    amounts_visible: false,
+    revenue_kes: null,
+    revenue_entry_id: null,
+    revenue_rate_rule_id: null,
+    revenue_applied_at: null,
+    rate_type: null,
+    rate_amount: null,
+    rate_currency: null,
+    fx_rate_to_kes: null,
+    billing_quantity: null,
+    billing_unit: null,
+    linked_fuel_cost_kes: null,
+    linked_fuel_liters: fuelLiters > 0 ? fuelLiters : null,
+    linked_expense_cost_kes: null,
+    linked_variable_costs_kes: null,
+    revenue_present: revenue > 0,
+    linked_fuel_cost_present: fuelCost > 0,
+    linked_expense_cost_present: expenseCost > 0,
+    linked_variable_costs_present: fuelCost + expenseCost > 0,
+    evidence_label: "finance review status only; money values hidden by product boundary",
+    unlinked_costs_used_for_contribution: false,
   };
 }
 
@@ -1168,11 +1220,14 @@ function buildProfitabilityReadiness(
   finance: any,
   movement: any,
   missingData: string[],
-  includeFinance: boolean
+  includeFinanceStatus: boolean,
+  includeFinanceAmounts = includeFinanceStatus
 ) {
-  if (!includeFinance || finance.visible === false) {
+  if (!includeFinanceStatus || (!finance.visible && !finance.status_visible)) {
     return {
       visible: false,
+      status_visible: false,
+      amounts_visible: false,
       status: null,
       contribution_kes: null,
       contribution_margin_percent: null,
@@ -1193,16 +1248,16 @@ function buildProfitabilityReadiness(
       contribution_review_ready: false,
       per_km_metrics_available: false,
       supporting_notes: [],
-      note: "Profitability values are hidden for this role.",
+      note: "Contribution values are hidden for this role.",
     };
   }
 
   const revenue = Number(finance.revenue_kes || 0);
   const variableCosts = Number(finance.linked_variable_costs_kes || 0);
-  const hasRevenue = revenue > 0;
+  const hasRevenue = financeHasRevenue(finance);
   const hasLinkedCostRecords =
     Number(finance.linked_fuel_log_count || 0) + Number(finance.linked_expense_count || 0) > 0;
-  const hasLinkedCostEvidence = variableCosts > 0;
+  const hasLinkedCostEvidence = financeHasLinkedCostEvidence(finance);
   const status: ProfitabilityReadiness =
     hasRevenue && hasLinkedCostEvidence
       ? "calculable"
@@ -1213,7 +1268,9 @@ function buildProfitabilityReadiness(
 
   if (status !== "calculable") {
     return {
-      visible: true,
+      visible: includeFinanceAmounts,
+      status_visible: true,
+      amounts_visible: includeFinanceAmounts,
       status,
       label: profitabilityReadinessLabel(status),
       customer_label: profitabilityReadinessLabel(status),
@@ -1227,13 +1284,50 @@ function buildProfitabilityReadiness(
       per_km_distance_source: "unavailable",
       per_km_metrics_provisional: false,
       provider_distance_needed_for_final_per_km: false,
-      revenue_amount: hasRevenue ? revenue : null,
+      revenue_amount: includeFinanceAmounts && hasRevenue ? revenue : null,
       linked_fuel_cost: null,
       linked_expense_cost: null,
       linked_variable_cost: null,
       contribution_amount: null,
-      contribution_summary: buildContributionSummary(finance, movement, null, false),
+      contribution_summary: includeFinanceAmounts
+        ? buildContributionSummary(finance, movement, null, false)
+        : null,
       missing: uniqueStrings(missingData),
+      note: includeFinanceAmounts
+        ? undefined
+        : "Finance review status is visible; money values are hidden by product boundary.",
+    };
+  }
+
+  if (!includeFinanceAmounts) {
+    return {
+      visible: false,
+      status_visible: true,
+      amounts_visible: false,
+      status,
+      label: "Contribution review ready",
+      customer_label: "Contribution review ready",
+      contribution_review_ready: true,
+      per_km_metrics_available: false,
+      supporting_notes: buildProfitabilitySupportingNotes(finance, movement, missingData, status),
+      contribution_kes: null,
+      contribution_margin_percent: null,
+      contribution_per_km: null,
+      contribution_per_tonne: null,
+      per_km_distance_source: "unavailable",
+      per_km_metrics_provisional: false,
+      provider_distance_needed_for_final_per_km: false,
+      revenue_amount: null,
+      linked_fuel_cost: null,
+      linked_expense_cost: null,
+      linked_variable_cost: null,
+      contribution_amount: null,
+      contribution_summary: null,
+      missing:
+        distanceKm > 0
+          ? []
+          : ["distance evidence for per-km contribution"],
+      note: "Finance review status is visible; money values are hidden by product boundary.",
     };
   }
 
@@ -1246,6 +1340,8 @@ function buildProfitabilityReadiness(
 
   return {
     visible: true,
+    status_visible: true,
+    amounts_visible: true,
     status,
     label: "Contribution review ready",
     customer_label: "Contribution review ready",
@@ -1292,17 +1388,16 @@ function buildTripMissingData(input: {
   if (!hasClient || !hasRoute) missing.push("missing client/route");
   if (input.movementEvidence.missing_distance) missing.push("missing distance");
 
-  if (input.includeFinance && input.financeEvidence.visible) {
-    const linkedFuelCost = Number(input.financeEvidence.linked_fuel_cost_kes || 0);
-    const linkedExpenseCost = Number(input.financeEvidence.linked_expense_cost_kes || 0);
-    const linkedVariableCosts = Number(input.financeEvidence.linked_variable_costs_kes || 0);
-    const hasAnyLinkedCostEvidence = linkedVariableCosts > 0;
-    if (Number(input.financeEvidence.revenue_kes || 0) <= 0) missing.push("missing revenue");
-    if (input.financeEvidence.fuel_cost_source === "missing" && linkedExpenseCost <= 0) {
+  if (input.includeFinance && (input.financeEvidence.visible || input.financeEvidence.status_visible)) {
+    const hasLinkedFuelCostEvidence = financeHasLinkedFuelCostEvidence(input.financeEvidence);
+    const hasLinkedExpenseCostEvidence = financeHasLinkedExpenseCostEvidence(input.financeEvidence);
+    const hasAnyLinkedCostEvidence = financeHasLinkedCostEvidence(input.financeEvidence);
+    if (!financeHasRevenue(input.financeEvidence)) missing.push("missing revenue");
+    if (input.financeEvidence.fuel_cost_source === "missing" && !hasLinkedExpenseCostEvidence) {
       missing.push("fuel allocation missing");
     } else if (input.financeEvidence.fuel_cost_source === "legacy_journey_link") {
       missing.push("legacy fuel link used");
-    } else if (input.financeEvidence.fuel_cost_source === "fuel_allocations" && linkedFuelCost <= 0) {
+    } else if (input.financeEvidence.fuel_cost_source === "fuel_allocations" && !hasLinkedFuelCostEvidence) {
       missing.push("fuel allocation cost unavailable");
     }
     if (!hasAnyLinkedCostEvidence && Number(input.financeEvidence.linked_expense_count || 0) === 0) {
@@ -1314,6 +1409,30 @@ function buildTripMissingData(input: {
   }
 
   return uniqueStrings(missing);
+}
+
+function financeHasRevenue(finance: any) {
+  return Boolean(finance?.revenue_present) || Number(finance?.revenue_kes || 0) > 0;
+}
+
+function financeHasLinkedFuelCostEvidence(finance: any) {
+  return Boolean(finance?.linked_fuel_cost_present) || Number(finance?.linked_fuel_cost_kes || 0) > 0;
+}
+
+function financeHasLinkedExpenseCostEvidence(finance: any) {
+  return (
+    Boolean(finance?.linked_expense_cost_present) ||
+    Number(finance?.linked_expense_cost_kes || 0) > 0
+  );
+}
+
+function financeHasLinkedCostEvidence(finance: any) {
+  return (
+    Boolean(finance?.linked_variable_costs_present) ||
+    Number(finance?.linked_variable_costs_kes || 0) > 0 ||
+    financeHasLinkedFuelCostEvidence(finance) ||
+    financeHasLinkedExpenseCostEvidence(finance)
+  );
 }
 
 function profitabilityReadinessLabel(status: ProfitabilityReadiness | null) {
@@ -1395,11 +1514,9 @@ function buildProfitabilitySupportingNotes(
 ) {
   const notes: string[] = [];
   const distanceKm = Number(movement.distance_km || 0);
-  const fuelCost = Number(finance.linked_fuel_cost_kes || 0);
-  const expenseCost = Number(finance.linked_expense_cost_kes || 0);
   const expenseCount = Number(finance.linked_expense_count || 0);
-  const hasFuelCostEvidence = fuelCost > 0;
-  const hasExpenseCostEvidence = expenseCost > 0;
+  const hasFuelCostEvidence = financeHasLinkedFuelCostEvidence(finance);
+  const hasExpenseCostEvidence = financeHasLinkedExpenseCostEvidence(finance);
 
   if (distanceKm <= 0) notes.push("Distance-based metrics pending");
   if (distanceKm > 0 && normalizedDistanceSource(movement.distance_source) === "gps-estimated") {
@@ -1429,9 +1546,9 @@ function buildManagementFlags(input: any) {
   const finance = input.financeEvidence || {};
   const movement = input.movementEvidence || {};
   const flags: string[] = [];
-  const hasRevenue = input.includeFinance && Number(finance.revenue_kes || 0) > 0;
+  const hasRevenue = input.includeFinance && financeHasRevenue(finance);
   const hasCosts =
-    input.includeFinance && Number(finance.linked_variable_costs_kes || 0) > 0;
+    input.includeFinance && financeHasLinkedCostEvidence(finance);
   const hasMovement = Number(movement.distance_km || 0) > 0;
 
   if (input.profitability?.status === "calculable") flags.push("ready_for_profit_review");

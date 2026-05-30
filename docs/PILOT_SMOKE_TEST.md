@@ -12,6 +12,8 @@ This playbook may use pilot/testing language because it is an internal validatio
 - [ ] Customer-facing pages do not show `pilot view`, `pilot readiness`, `canonical`, `legacy`, `event_type`, `provider_signal_flags`, raw payload wording, or row-path/debug terminology unless it is inside a clearly advanced/platform diagnostic surface.
 - [ ] Evidence caveats remain visible but concise: GPS-derived distance estimate, provider distance evidence, stopped-time evidence, tracker idle markers, and engine-on idle not verified.
 - [ ] Ops Intelligence uses concise default labels such as `Low Movement Review`, `tracker/provider idle-marker evidence`, and `Contribution review ready`; longer stopped-context and marker-source mechanics are left to Nava Eye/audit detail.
+- [ ] Product boundaries hold: Operations pages show operational evidence and review status, but do not show revenue amounts, linked cost amounts, contribution amounts, margin, per-km money metrics, fuel cost amounts, or rate details. Finance and Management surfaces own those values.
+- [ ] Run `npm run check:product-boundaries` before launch builds to catch customer-facing Ops copy regressions such as finance amounts, old profit-review wording, or idle-marker internals.
 - [ ] Nava Eye answers are concise by default and only show audit details after questions such as `how`, `why`, `show evidence`, or `why should I trust it`.
 - [ ] Reusable UI placeholders do not contain tenant-specific examples, real truck plates, real client names, real trip IDs, or pilot contribution amounts.
 - [ ] Public, pricing, login, and onboarding pages use controlled-rollout language such as `Request implementation review`, `Start setup`, `Open workspace`, and `Talk to Nava Bloom` instead of customer-facing `pilot trial` / `Start trial` copy.
@@ -430,16 +432,16 @@ Confirm workflow behavior:
 - [ ] Create one real production Trip in `/ops/journey/new`, then open `/ops/efficiency?range=today` and confirm Trips projected is greater than 0 with clear missing-data notes if revenue/cost/distance links are incomplete.
 - [ ] Confirm Trip Intelligence returns trip identity, asset evidence, driver evidence, movement evidence, delay evidence, stale-tracking evidence, missing-data notes, contribution-review readiness, and management flags.
 - [ ] Confirm Trip Intelligence labels movement distance as provider-reported, GPS-estimated, journey-recorded, or unavailable, and does not return raw coordinate series.
-- [ ] Confirm Trip Intelligence uses journey revenue plus `fuel_allocations` and linked `expenses` only when the role can see finance, and does not use unlinked fuel/costs for exact trip contribution.
+- [ ] Confirm Trip Intelligence uses journey revenue plus `fuel_allocations` and linked `expenses` only for finance-review status or finance-visible calculations, and does not use unlinked fuel/costs for exact trip contribution.
 - [ ] If a journey has no fuel allocations but has legacy `fuel_logs.journey_id`, confirm Trip Intelligence labels the fuel source as `legacy_journey_link`.
 - [ ] Confirm Trip Intelligence uses the 450L allocation/cost for Trip A, not the full 700L fuel issue, and does not claim actual fuel burn, fuel theft, or fuel efficiency.
-- [ ] As an ops-only role, confirm Trip Intelligence hides finance amounts and returns a role visibility note.
-- [ ] As a finance/management/elevated role, confirm Trip Intelligence keeps deterministic machine readiness while the UI labels revenue-plus-linked-cost trips as `Contribution review ready`, not raw `Calculable`.
+- [ ] As an ops-only role, confirm Trip Intelligence can show finance/contribution review status but hides revenue, linked cost, contribution, margin, per-km money, fuel cost, and rate amounts.
+- [ ] As a finance/management/elevated role, confirm Trip Intelligence keeps deterministic machine readiness while Finance/Management surfaces label revenue-plus-linked-cost trips as `Contribution review ready`, not raw `Calculable`.
 - [ ] On Trip Detail, confirm the Contribution summary shows revenue, allocated fuel cost, linked expenses, linked variable cost, contribution, and contribution margin from linked evidence only.
 - [ ] Confirm `Contribution per tonne` does not show `Requires billing quantity` when billing/offloaded quantity exists and the per-tonne value is calculated.
-- [ ] On `/ops/efficiency`, confirm contribution-ready trips show a compact contribution line with revenue, linked variable cost, contribution, and margin.
+- [ ] On `/ops/efficiency`, confirm contribution-ready Trips show review status and missing links only, not revenue, linked variable cost, contribution, margin, or per-km money values.
 - [ ] Confirm missing distance appears separately as `Distance evidence missing` / `Distance-based metrics pending` and only blocks per-km metrics, not basic contribution review from linked revenue minus linked costs.
-- [ ] If per-km contribution uses GPS-estimated distance, confirm Trip Detail, `/ops/efficiency`, and Nava Eye label it as provisional/GPS-estimated and say provider distance is still needed for final per-km review.
+- [ ] If per-km contribution uses GPS-estimated distance, confirm finance-visible Trip Detail and Nava Eye label it as provisional/GPS-estimated and say provider distance is still needed for final per-km review; Ops Intelligence should not show per-km money values.
 - [ ] Confirm trips with linked fuel allocation and no other expenses show `No additional trip expenses linked yet` as a supporting note rather than a blocker.
 - [ ] Confirm contribution wording does not claim final audited profit, fuel burn, fuel efficiency, or fuel theft.
 - [ ] Confirm Trip Intelligence does not require fuel as the only cost source and does not invent contribution when linked revenue/cost evidence is missing.
