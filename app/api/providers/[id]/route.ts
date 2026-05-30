@@ -180,6 +180,28 @@ function getProviderCapabilities(roles: string[], isPlatformOwner: boolean) {
   };
 }
 
+function rolesForSelectedCompany(
+  memberships: any[],
+  companyId: string,
+  includePlatformOwner = false
+) {
+  const roles = (memberships || [])
+    .filter((membership) => membership.company_id === companyId)
+    .map((membership) => String(membership.role || "").toLowerCase())
+    .filter(Boolean);
+
+  if (
+    includePlatformOwner &&
+    (memberships || []).some(
+      (membership) => String(membership.role || "").toLowerCase() === "platform_owner"
+    )
+  ) {
+    roles.push("platform_owner");
+  }
+
+  return Array.from(new Set(roles));
+}
+
 function sanitizeProvider(provider: any, capabilities: ProviderCapabilities) {
   const baseProvider: Record<string, any> = {
     id: provider.id,
@@ -981,17 +1003,9 @@ async function resolveCompany(
   if (membershipError) throw membershipError;
 
   const activeMemberships = memberships || [];
-  const roles = Array.from(
-    new Set(
-      activeMemberships
-        .map((membership) => String(membership.role || "").toLowerCase())
-        .filter(Boolean)
-    )
-  );
   const isPlatformOwner = activeMemberships.some(
-    (membership) => membership.role === "platform_owner"
+    (membership) => String(membership.role || "").toLowerCase() === "platform_owner"
   );
-  const capabilities = getProviderCapabilities(roles, isPlatformOwner);
 
   if (isPlatformOwner) {
     const companyQuery = supabaseAdmin
@@ -1012,14 +1026,20 @@ async function resolveCompany(
       };
     }
 
+    const roles = rolesForSelectedCompany(activeMemberships, company.id, true);
+    const capabilities = getProviderCapabilities(roles, true);
     return { company: company as ResolvedCompany, isPlatformOwner, roles, capabilities };
   }
 
-  const companyId = activeMemberships
-    .map((membership) => membership.company_id)
-    .filter(Boolean)[0];
+  const normalizedRequestedCompanyId = requestedCompanyId?.trim() || null;
+  const companyId =
+    normalizedRequestedCompanyId ||
+    activeMemberships.map((membership) => membership.company_id).filter(Boolean)[0];
 
-  if (!companyId) {
+  if (
+    !companyId ||
+    !activeMemberships.some((membership) => membership.company_id === companyId)
+  ) {
     return {
       error: NextResponse.json(
         { success: false, error: "Unable to resolve company access" },
@@ -1043,6 +1063,9 @@ async function resolveCompany(
       ),
     };
   }
+
+  const roles = rolesForSelectedCompany(activeMemberships, company.id);
+  const capabilities = getProviderCapabilities(roles, false);
 
   return { company: company as ResolvedCompany, isPlatformOwner, roles, capabilities };
 }

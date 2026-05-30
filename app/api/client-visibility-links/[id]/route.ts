@@ -39,6 +39,28 @@ function sanitizeLink(link: any) {
   };
 }
 
+function rolesForSelectedCompany(
+  memberships: any[],
+  companyId: string,
+  includePlatformOwner = false
+) {
+  const roles = (memberships || [])
+    .filter((membership) => membership.company_id === companyId)
+    .map((membership) => String(membership.role || "").toLowerCase())
+    .filter(Boolean);
+
+  if (
+    includePlatformOwner &&
+    (memberships || []).some(
+      (membership) => String(membership.role || "").toLowerCase() === "platform_owner"
+    )
+  ) {
+    roles.push("platform_owner");
+  }
+
+  return Array.from(new Set(roles));
+}
+
 async function resolveManageAccess(req: Request, requestedCompanyId?: string | null) {
   const authHeader = req.headers.get("authorization");
   if (!authHeader?.startsWith("Bearer ")) {
@@ -64,29 +86,15 @@ async function resolveManageAccess(req: Request, requestedCompanyId?: string | n
   if (membershipError) throw membershipError;
 
   const activeMemberships = memberships || [];
-  const roles = Array.from(
-    new Set(
-      activeMemberships
-        .map((membership) => String(membership.role || "").toLowerCase())
-        .filter(Boolean)
-    )
+  const isPlatformOwner = activeMemberships.some(
+    (membership) => String(membership.role || "").toLowerCase() === "platform_owner"
   );
-  const isPlatformOwner = roles.includes("platform_owner");
-  const canManage = roles.some((role) => MANAGER_ROLES.has(role));
-
-  if (!canManage) {
-    return {
-      error: noStoreJson(
-        { success: false, error: "Client visibility management access required" },
-        { status: 403 }
-      ),
-    };
-  }
+  const requestedCompanyIdValue = requestedCompanyId?.trim() || null;
 
   if (isPlatformOwner) {
     const companyQuery = supabaseAdmin.from("companies").select("id, name, slug");
-    const { data: company, error: companyError } = requestedCompanyId
-      ? await companyQuery.eq("id", requestedCompanyId).maybeSingle()
+    const { data: company, error: companyError } = requestedCompanyIdValue
+      ? await companyQuery.eq("id", requestedCompanyIdValue).maybeSingle()
       : await companyQuery.order("name", { ascending: true }).limit(1).maybeSingle();
 
     if (companyError) throw companyError;
@@ -99,16 +107,25 @@ async function resolveManageAccess(req: Request, requestedCompanyId?: string | n
       };
     }
 
+    const roles = rolesForSelectedCompany(activeMemberships, company.id, true);
+
     return {
       company: company as ResolvedCompany,
       userId: user.id,
+      roles,
       isPlatformOwner,
     };
   }
 
-  const managerMembership = activeMemberships.find((membership) =>
-    MANAGER_ROLES.has(String(membership.role || "").toLowerCase())
-  );
+  const managerMembership = requestedCompanyIdValue
+    ? activeMemberships.find(
+        (membership) =>
+          membership.company_id === requestedCompanyIdValue &&
+          MANAGER_ROLES.has(String(membership.role || "").toLowerCase())
+      )
+    : activeMemberships.find((membership) =>
+        MANAGER_ROLES.has(String(membership.role || "").toLowerCase())
+      );
   const companyId = managerMembership?.company_id;
 
   if (!companyId) {
@@ -136,9 +153,12 @@ async function resolveManageAccess(req: Request, requestedCompanyId?: string | n
     };
   }
 
+  const roles = rolesForSelectedCompany(activeMemberships, company.id);
+
   return {
     company: company as ResolvedCompany,
     userId: user.id,
+    roles,
     isPlatformOwner,
   };
 }

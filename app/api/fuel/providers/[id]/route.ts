@@ -80,6 +80,28 @@ function normalizeProviderUpdate(body: any) {
   return updates;
 }
 
+function rolesForSelectedCompany(
+  memberships: any[],
+  companyId: string,
+  includePlatformOwner = false
+) {
+  const roles = (memberships || [])
+    .filter((membership) => membership.company_id === companyId)
+    .map((membership) => String(membership.role || "").toLowerCase())
+    .filter(Boolean);
+
+  if (
+    includePlatformOwner &&
+    (memberships || []).some(
+      (membership) => String(membership.role || "").toLowerCase() === "platform_owner"
+    )
+  ) {
+    roles.push("platform_owner");
+  }
+
+  return Array.from(new Set(roles));
+}
+
 async function resolveFuelProviderAccess(
   req: Request,
   requestedCompanyId?: string | null
@@ -118,30 +140,15 @@ async function resolveFuelProviderAccess(
   if (membershipError) throw membershipError;
 
   const activeMemberships = memberships || [];
-  const roles = Array.from(
-    new Set(
-      activeMemberships
-        .map((membership) => String(membership.role || "").toLowerCase())
-        .filter(Boolean)
-    )
+  const isPlatformOwner = activeMemberships.some(
+    (membership) => String(membership.role || "").toLowerCase() === "platform_owner"
   );
-  const isPlatformOwner = roles.includes("platform_owner");
-  const hasManageRole =
-    isPlatformOwner || roles.some((role) => MANAGE_ROLES.has(role));
-
-  if (!hasManageRole) {
-    return {
-      error: noStoreJson(
-        { success: false, error: "Fuel provider management access required" },
-        { status: 403 }
-      ),
-    };
-  }
+  const requestedCompanyIdValue = requestedCompanyId?.trim() || null;
 
   if (isPlatformOwner) {
     const companyQuery = supabaseAdmin.from("companies").select("id, name, slug");
-    const { data: company, error: companyError } = requestedCompanyId
-      ? await companyQuery.eq("id", requestedCompanyId).maybeSingle()
+    const { data: company, error: companyError } = requestedCompanyIdValue
+      ? await companyQuery.eq("id", requestedCompanyIdValue).maybeSingle()
       : await companyQuery.order("name", { ascending: true }).limit(1).maybeSingle();
 
     if (companyError) throw companyError;
@@ -154,6 +161,8 @@ async function resolveFuelProviderAccess(
       };
     }
 
+    const roles = rolesForSelectedCompany(activeMemberships, company.id, true);
+
     return {
       company: company as ResolvedCompany,
       userId: user.id,
@@ -162,9 +171,15 @@ async function resolveFuelProviderAccess(
     };
   }
 
-  const membership = activeMemberships.find((item) =>
-    MANAGE_ROLES.has(String(item.role || "").toLowerCase())
-  );
+  const membership = requestedCompanyIdValue
+    ? activeMemberships.find(
+        (item) =>
+          item.company_id === requestedCompanyIdValue &&
+          MANAGE_ROLES.has(String(item.role || "").toLowerCase())
+      )
+    : activeMemberships.find((item) =>
+        MANAGE_ROLES.has(String(item.role || "").toLowerCase())
+      );
   const companyId = membership?.company_id;
 
   if (!companyId) {
@@ -191,6 +206,8 @@ async function resolveFuelProviderAccess(
       ),
     };
   }
+
+  const roles = rolesForSelectedCompany(activeMemberships, company.id);
 
   return {
     company: company as ResolvedCompany,

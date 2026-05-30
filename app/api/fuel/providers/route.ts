@@ -72,6 +72,28 @@ function buildCapabilities(roles: string[], isPlatformOwner: boolean) {
   };
 }
 
+function rolesForSelectedCompany(
+  memberships: any[],
+  companyId: string,
+  includePlatformOwner = false
+) {
+  const roles = (memberships || [])
+    .filter((membership) => membership.company_id === companyId)
+    .map((membership) => String(membership.role || "").toLowerCase())
+    .filter(Boolean);
+
+  if (
+    includePlatformOwner &&
+    (memberships || []).some(
+      (membership) => String(membership.role || "").toLowerCase() === "platform_owner"
+    )
+  ) {
+    roles.push("platform_owner");
+  }
+
+  return Array.from(new Set(roles));
+}
+
 function badRequestStatus(err: any) {
   const message = String(err?.message || "");
   return message.includes("required") ||
@@ -151,32 +173,16 @@ async function resolveFuelProviderAccess(
   if (membershipError) throw membershipError;
 
   const activeMemberships = memberships || [];
-  const roles = Array.from(
-    new Set(
-      activeMemberships
-        .map((membership) => String(membership.role || "").toLowerCase())
-        .filter(Boolean)
-    )
+  const isPlatformOwner = activeMemberships.some(
+    (membership) => String(membership.role || "").toLowerCase() === "platform_owner"
   );
-  const isPlatformOwner = roles.includes("platform_owner");
-  const capabilities = buildCapabilities(roles, isPlatformOwner);
   const allowedRoles = mode === "manage" ? MANAGE_ROLES : VIEW_ROLES;
-  const hasAllowedRole =
-    isPlatformOwner || roles.some((role) => allowedRoles.has(role));
-
-  if (!hasAllowedRole) {
-    return {
-      error: noStoreJson(
-        { success: false, error: "Fuel provider access required" },
-        { status: 403 }
-      ),
-    };
-  }
+  const requestedCompanyIdValue = requestedCompanyId?.trim() || null;
 
   if (isPlatformOwner) {
     const companyQuery = supabaseAdmin.from("companies").select("id, name, slug");
-    const { data: company, error: companyError } = requestedCompanyId
-      ? await companyQuery.eq("id", requestedCompanyId).maybeSingle()
+    const { data: company, error: companyError } = requestedCompanyIdValue
+      ? await companyQuery.eq("id", requestedCompanyIdValue).maybeSingle()
       : await companyQuery.order("name", { ascending: true }).limit(1).maybeSingle();
 
     if (companyError) throw companyError;
@@ -189,6 +195,9 @@ async function resolveFuelProviderAccess(
       };
     }
 
+    const roles = rolesForSelectedCompany(activeMemberships, company.id, true);
+    const capabilities = buildCapabilities(roles, true);
+
     return {
       company: company as ResolvedCompany,
       userId: user.id,
@@ -198,9 +207,15 @@ async function resolveFuelProviderAccess(
     };
   }
 
-  const membership = activeMemberships.find((item) =>
-    allowedRoles.has(String(item.role || "").toLowerCase())
-  );
+  const membership = requestedCompanyIdValue
+    ? activeMemberships.find(
+        (item) =>
+          item.company_id === requestedCompanyIdValue &&
+          allowedRoles.has(String(item.role || "").toLowerCase())
+      )
+    : activeMemberships.find((item) =>
+        allowedRoles.has(String(item.role || "").toLowerCase())
+      );
   const companyId = membership?.company_id;
 
   if (!companyId) {
@@ -227,6 +242,9 @@ async function resolveFuelProviderAccess(
       ),
     };
   }
+
+  const roles = rolesForSelectedCompany(activeMemberships, company.id);
+  const capabilities = buildCapabilities(roles, false);
 
   return {
     company: company as ResolvedCompany,

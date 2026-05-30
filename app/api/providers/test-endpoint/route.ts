@@ -61,6 +61,37 @@ function noStoreJson(body: any, init?: ResponseInit) {
   });
 }
 
+function rolesForSelectedCompany(
+  memberships: any[],
+  companyId: string,
+  includePlatformOwner = false
+) {
+  const roles = (memberships || [])
+    .filter((membership) => membership.company_id === companyId)
+    .map((membership) => String(membership.role || "").toLowerCase())
+    .filter(Boolean);
+
+  if (
+    includePlatformOwner &&
+    (memberships || []).some(
+      (membership) => String(membership.role || "").toLowerCase() === "platform_owner"
+    )
+  ) {
+    roles.push("platform_owner");
+  }
+
+  return Array.from(new Set(roles));
+}
+
+function canUseProviderSetupTools(roles: string[], isPlatformOwner: boolean) {
+  return (
+    isPlatformOwner ||
+    roles.includes("platform_owner") ||
+    roles.includes("owner") ||
+    roles.includes("admin")
+  );
+}
+
 export async function POST(req: Request) {
   try {
     const body = await req.json();
@@ -151,16 +182,9 @@ async function resolveAccess(
   if (membershipError) throw membershipError;
 
   const activeMemberships = memberships || [];
-  const roles = Array.from(
-    new Set(
-      activeMemberships
-        .map((membership) => String(membership.role || "").toLowerCase())
-        .filter(Boolean)
-    )
+  const isPlatformOwner = activeMemberships.some(
+    (membership) => String(membership.role || "").toLowerCase() === "platform_owner"
   );
-  const isPlatformOwner = roles.includes("platform_owner");
-  const canUseProviderSetupTools =
-    isPlatformOwner || roles.includes("owner") || roles.includes("admin");
 
   if (isPlatformOwner && requestedCompanyId) {
     const { data: company, error: companyError } = await supabaseAdmin
@@ -179,20 +203,53 @@ async function resolveAccess(
       };
     }
 
+    const roles = rolesForSelectedCompany(activeMemberships, company.id, true);
+
     return {
       userId: user.id,
       companyId: company.id,
       isPlatformOwner,
       roles,
       capabilities: {
-        can_use_provider_setup_tools: canUseProviderSetupTools,
+        can_use_provider_setup_tools: canUseProviderSetupTools(roles, true),
       },
     };
   }
 
-  const companyId = activeMemberships
-    .map((membership) => membership.company_id)
-    .filter(Boolean)[0];
+  if (isPlatformOwner) {
+    const companyId = activeMemberships
+      .map((membership) => membership.company_id)
+      .filter(Boolean)[0];
+
+    if (!companyId) {
+      return {
+        error: noStoreJson(
+          { success: false, error: "Unable to resolve company access" },
+          { status: 403 }
+        ),
+      };
+    }
+
+    const roles = rolesForSelectedCompany(activeMemberships, companyId, true);
+
+    return {
+      userId: user.id,
+      companyId,
+      isPlatformOwner,
+      roles,
+      capabilities: {
+        can_use_provider_setup_tools: canUseProviderSetupTools(roles, true),
+      },
+    };
+  }
+
+  const requestedCompanyIdValue = requestedCompanyId?.trim() || null;
+  const matchingMembership = requestedCompanyIdValue
+    ? activeMemberships.find(
+        (membership) => membership.company_id === requestedCompanyIdValue
+      )
+    : activeMemberships.find((membership) => membership.company_id);
+  const companyId = matchingMembership?.company_id;
 
   if (!companyId) {
     return {
@@ -203,13 +260,15 @@ async function resolveAccess(
     };
   }
 
+  const roles = rolesForSelectedCompany(activeMemberships, companyId);
+
   return {
     userId: user.id,
     companyId,
     isPlatformOwner,
     roles,
     capabilities: {
-      can_use_provider_setup_tools: canUseProviderSetupTools,
+      can_use_provider_setup_tools: canUseProviderSetupTools(roles, false),
     },
   };
 }
