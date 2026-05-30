@@ -37,6 +37,7 @@ type TeamInvitation = {
   status: string;
   invited_at?: string | null;
   invite_error?: string | null;
+  invite_error_category?: string | null;
 };
 
 const ROLE_OPTIONS = [
@@ -515,7 +516,7 @@ export default function TeamAccessPage() {
                       </div>
                       <div className="mt-2 flex flex-wrap gap-2">
                         <StatusPill tone={invitation.status === "failed" ? "danger" : "warning"}>
-                          {invitation.status === "failed" ? "Send failed" : "Pending"}
+                          {invitation.status === "failed" ? "Needs attention" : "Pending"}
                         </StatusPill>
                         <StatusPill tone="neutral">{labelForRole(invitation.role)}</StatusPill>
                       </div>
@@ -525,8 +526,13 @@ export default function TeamAccessPage() {
                           : "Invite date unavailable"}
                       </div>
                       {invitation.invite_error && (
-                        <div className="mt-2 text-sm text-rose-200">
+                        <div className="mt-2 max-w-2xl text-sm leading-6 text-rose-200">
                           {invitation.invite_error}
+                          {invitation.invite_error_category === "existing_auth_user" && (
+                            <span className="block text-rose-100/80">
+                              Resend will use the verification email path for this existing account.
+                            </span>
+                          )}
                         </div>
                       )}
                     </div>

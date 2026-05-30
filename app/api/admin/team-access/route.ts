@@ -14,6 +14,25 @@ const INVITATION_SELECT =
 const PILOT_ROLES = new Set(["owner", "admin", "ops", "finance", "management"]);
 const TENANT_ADMIN_ROLES = new Set(["owner", "admin"]);
 const INTERNAL_ROLES = new Set(["platform_owner"]);
+const INVITE_ERROR_CATEGORIES = new Set([
+  "existing_auth_user",
+  "smtp_failure",
+  "redirect_failure",
+  "rate_limited",
+  "unknown",
+]);
+
+const INVITE_ERROR_MESSAGES: Record<string, string> = {
+  existing_auth_user:
+    "This account already exists. Ask the user to verify/sign in, or resend the verification email if it is still pending.",
+  smtp_failure:
+    "Invitation email could not be sent. Check email delivery setup and try again.",
+  redirect_failure:
+    "Invitation email could not be sent because the sign-in redirect URL is not allowed yet.",
+  rate_limited:
+    "Invitation email could not be sent right now because the email service is rate-limited. Try again shortly.",
+  unknown: "Invitation email could not be sent. Check Team Access setup and try again.",
+};
 
 type ResolvedAccess = {
   user: any;
@@ -88,6 +107,7 @@ function buildInviteRedirectTo(req: Request) {
 }
 
 function safeInvitation(invitation: any) {
+  const inviteErrorCategory = safeInviteErrorCategory(invitation.invite_error);
   return {
     id: invitation.id,
     email: invitation.email,
@@ -96,22 +116,55 @@ function safeInvitation(invitation: any) {
     invited_at: invitation.invited_at || invitation.created_at || null,
     accepted_at: invitation.accepted_at || null,
     revoked_at: invitation.revoked_at || null,
-    invite_error: invitation.invite_error ? "Invitation email could not be sent." : null,
+    invite_error_category: inviteErrorCategory,
+    invite_error: inviteErrorCategory
+      ? INVITE_ERROR_MESSAGES[inviteErrorCategory] || INVITE_ERROR_MESSAGES.unknown
+      : null,
   };
 }
 
-function safeInviteFailureMessage(error: any) {
-  const text = String(error?.message || "").toLowerCase();
+function safeInviteErrorCategory(value: any) {
+  const text = String(value || "").trim().toLowerCase();
+  if (!text) return null;
+  if (INVITE_ERROR_CATEGORIES.has(text)) return text;
+  if (
+    text.includes("already") ||
+    text.includes("registered") ||
+    text.includes("exists")
+  ) {
+    return "existing_auth_user";
+  }
   if (text.includes("rate") || text.includes("limit")) {
-    return "Invitation could not be sent right now because the email service is rate-limited. Try again shortly.";
+    return "rate_limited";
   }
   if (text.includes("redirect")) {
-    return "Invitation could not be sent because the sign-in redirect URL is not allowed yet.";
+    return "redirect_failure";
   }
-  if (text.includes("email")) {
-    return "Invitation could not be sent to that email address.";
+  if (
+    text.includes("smtp") ||
+    text.includes("email") ||
+    text.includes("mail") ||
+    text.includes("send")
+  ) {
+    return "smtp_failure";
   }
-  return "Invitation could not be sent. Check Team Access setup and try again.";
+  return "unknown";
+}
+
+function safeInviteFailureMessage(errorOrCategory: any) {
+  const category = safeInviteErrorCategory(errorOrCategory?.message || errorOrCategory);
+  return INVITE_ERROR_MESSAGES[category || "unknown"] || INVITE_ERROR_MESSAGES.unknown;
+}
+
+function inviteError(category: string, status = 502) {
+  return Object.assign(new Error(safeInviteFailureMessage(category)), {
+    status,
+    inviteErrorCategory: category,
+  });
+}
+
+function isAuthUserVerified(authUser: any) {
+  return Boolean(authUser?.email_confirmed_at || authUser?.confirmed_at);
 }
 
 async function authenticate(req: Request) {
@@ -324,6 +377,7 @@ async function createOrUpdatePendingInvitation(input: {
   email: string;
   role: string;
   invitedBy: string;
+  supabaseUserId?: string | null;
 }) {
   const existing = await findReusableInvitation(input.companyId, input.email);
   const values = {
@@ -337,6 +391,7 @@ async function createOrUpdatePendingInvitation(input: {
     accepted_at: null,
     revoked_by: null,
     revoked_at: null,
+    supabase_user_id: input.supabaseUserId || null,
     invite_error: null,
   };
 
@@ -381,15 +436,15 @@ async function sendSupabaseInvite(input: {
   );
 
   if (error) {
-    const safeMessage = safeInviteFailureMessage(error);
+    const category = safeInviteErrorCategory(error.message) || "unknown";
     await supabaseAdmin
       .from("company_user_invitations")
       .update({
         status: "failed",
-        invite_error: safeMessage,
+        invite_error: category,
       })
       .eq("id", input.invitation.id);
-    throw Object.assign(new Error(safeMessage), { status: 502 });
+    throw inviteError(category, category === "existing_auth_user" ? 409 : 502);
   }
 
   const invitedUserId = data?.user?.id || null;
@@ -403,6 +458,137 @@ async function sendSupabaseInvite(input: {
     .eq("id", input.invitation.id);
 
   return invitedUserId;
+}
+
+async function resendSignupVerification(input: {
+  req: Request;
+  invitation: any;
+  authUserId?: string | null;
+}) {
+  const { error } = await supabase.auth.resend({
+    type: "signup",
+    email: input.invitation.email,
+    options: {
+      emailRedirectTo: buildInviteRedirectTo(input.req),
+    },
+  });
+
+  if (error) {
+    const category = safeInviteErrorCategory(error.message) || "unknown";
+    await supabaseAdmin
+      .from("company_user_invitations")
+      .update({
+        status: "failed",
+        supabase_user_id: input.authUserId || input.invitation.supabase_user_id || null,
+        invite_error: category,
+      })
+      .eq("id", input.invitation.id);
+    throw inviteError(category, category === "existing_auth_user" ? 409 : 502);
+  }
+
+  await supabaseAdmin
+    .from("company_user_invitations")
+    .update({
+      status: "pending",
+      supabase_user_id: input.authUserId || input.invitation.supabase_user_id || null,
+      invite_error: null,
+      invited_at: new Date().toISOString(),
+    })
+    .eq("id", input.invitation.id);
+}
+
+async function activateCompanyAccessForAuthUser(input: {
+  resolved: ResolvedAccess;
+  authUser: any;
+  email: string;
+  role: string;
+}) {
+  const { data: existing, error: existingError } = await supabaseAdmin
+    .from("company_users")
+    .select(MEMBERSHIP_SELECT)
+    .eq("company_id", input.resolved.company.id)
+    .eq("user_id", input.authUser.id)
+    .maybeSingle();
+
+  if (existingError) throw existingError;
+
+  if (existing) {
+    if (isInternalRole(existing.role) && !input.resolved.isPlatformOwner) {
+      const err = new Error("This account cannot be managed from Team Access.");
+      (err as any).status = 403;
+      throw err;
+    }
+
+    if (Boolean(existing.is_active)) {
+      await markPendingInvitationsAccepted({
+        companyId: input.resolved.company.id,
+        email: input.email,
+        userId: input.authUser.id,
+      });
+      return {
+        mode: "already_active",
+        message: "That user already has access to this workspace.",
+      };
+    }
+
+    const { error: updateError } = await supabaseAdmin
+      .from("company_users")
+      .update({ role: input.role, is_active: true })
+      .eq("company_id", input.resolved.company.id)
+      .eq("user_id", input.authUser.id);
+
+    if (updateError) throw updateError;
+  } else {
+    const { error: insertError } = await supabaseAdmin
+      .from("company_users")
+      .insert({
+        company_id: input.resolved.company.id,
+        user_id: input.authUser.id,
+        role: input.role,
+        is_active: true,
+      });
+
+    if (insertError) throw insertError;
+  }
+
+  await markPendingInvitationsAccepted({
+    companyId: input.resolved.company.id,
+    email: input.email,
+    userId: input.authUser.id,
+  });
+
+  return {
+    mode: "added_existing",
+    message: "Team access updated.",
+  };
+}
+
+async function sendPendingVerificationForExistingAuthUser(input: {
+  req: Request;
+  resolved: ResolvedAccess;
+  authUser: any;
+  email: string;
+  role: string;
+}) {
+  const invitation = await createOrUpdatePendingInvitation({
+    companyId: input.resolved.company.id,
+    email: input.email,
+    role: input.role,
+    invitedBy: input.resolved.user.id,
+    supabaseUserId: input.authUser.id,
+  });
+
+  await resendSignupVerification({
+    req: input.req,
+    invitation,
+    authUserId: input.authUser.id,
+  });
+
+  return {
+    mode: "verification_sent",
+    message:
+      "Verification email sent. The user will be added after verifying and signing in.",
+  };
 }
 
 async function ensureNotRemovingLastTenantAdmin(input: {
@@ -564,61 +750,31 @@ export async function POST(req: Request) {
       );
     }
 
-    const { data: existing, error: existingError } = await supabaseAdmin
-      .from("company_users")
-      .select(MEMBERSHIP_SELECT)
-      .eq("company_id", resolved.company.id)
-      .eq("user_id", authUser.id)
-      .maybeSingle();
+    if (!isAuthUserVerified(authUser)) {
+      const result = await sendPendingVerificationForExistingAuthUser({
+        req,
+        resolved,
+        authUser,
+        email,
+        role,
+      });
 
-    if (existingError) throw existingError;
-
-    if (existing) {
-      if (isInternalRole(existing.role) && !resolved.isPlatformOwner) {
-        return noStoreJson(
-          { success: false, error: "This account cannot be managed from Team Access." },
-          { status: 403 }
-        );
-      }
-
-      if (Boolean(existing.is_active)) {
-        return noStoreJson({
-          success: true,
-          mode: "already_active",
-          message: "That user already has access to this workspace.",
-        });
-      }
-
-      const { error: updateError } = await supabaseAdmin
-        .from("company_users")
-        .update({ role, is_active: true })
-        .eq("company_id", resolved.company.id)
-        .eq("user_id", authUser.id);
-
-      if (updateError) throw updateError;
-    } else {
-      const { error: insertError } = await supabaseAdmin
-        .from("company_users")
-        .insert({
-          company_id: resolved.company.id,
-          user_id: authUser.id,
-          role,
-          is_active: true,
-        });
-
-      if (insertError) throw insertError;
+      return noStoreJson({
+        success: true,
+        ...result,
+      });
     }
 
-    await markPendingInvitationsAccepted({
-      companyId: resolved.company.id,
+    const result = await activateCompanyAccessForAuthUser({
+      resolved,
+      authUser,
       email,
-      userId: authUser.id,
+      role,
     });
 
     return noStoreJson({
       success: true,
-      mode: "added_existing",
-      message: "Team access updated.",
+      ...result,
     });
   } catch (err: any) {
     console.error("Team Access POST error:", err);
@@ -680,12 +836,27 @@ export async function PATCH(req: Request) {
           );
         }
 
+        const email = normalizeEmail(invitation.email);
+        const authUser = await findAuthUserByEmail(email);
+
+        if (
+          authUser &&
+          !resolved.isPlatformOwner &&
+          (await userHasInternalAccess(authUser.id))
+        ) {
+          return noStoreJson(
+            { success: false, error: "Invitation not found" },
+            { status: 404 }
+          );
+        }
+
         const { data: refreshedInvitation, error: refreshError } = await supabaseAdmin
           .from("company_user_invitations")
           .update({
             status: "pending",
             invited_by: resolved.user.id,
             invited_at: new Date().toISOString(),
+            supabase_user_id: authUser?.id || invitation.supabase_user_id || null,
             invite_error: null,
           })
           .eq("id", invitation.id)
@@ -694,11 +865,44 @@ export async function PATCH(req: Request) {
 
         if (refreshError) throw refreshError;
 
-        await sendSupabaseInvite({
-          req,
-          invitation: refreshedInvitation,
-          company: resolved.company,
-        });
+        if (authUser) {
+          if (isAuthUserVerified(authUser)) {
+            const result = await activateCompanyAccessForAuthUser({
+              resolved,
+              authUser,
+              email,
+              role,
+            });
+
+            return noStoreJson({
+              success: true,
+              mode: result.mode,
+              message:
+                result.mode === "already_active"
+                  ? result.message
+                  : "Account already verified. Workspace access is now active.",
+            });
+          }
+
+          await resendSignupVerification({
+            req,
+            invitation: refreshedInvitation,
+            authUserId: authUser.id,
+          });
+
+          return noStoreJson({
+            success: true,
+            mode: "verification_resent",
+            message:
+              "Verification email resent. The user will be added after verifying and signing in.",
+          });
+        } else {
+          await sendSupabaseInvite({
+            req,
+            invitation: refreshedInvitation,
+            company: resolved.company,
+          });
+        }
 
         return noStoreJson({
           success: true,

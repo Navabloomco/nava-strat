@@ -79,11 +79,13 @@ Open `/admin/team-access` as a company `owner` or `admin`, and as `platform_owne
 - [ ] Confirm only `owner`, `admin`, `ops`, `finance`, and `management` are offered as editable pilot roles.
 - [ ] Invite a new email as `ops` and confirm a real pending invitation appears.
 - [ ] Confirm invite email delivery is sent through the server-side auth invite path and no service-role key or provider internals appear in the browser.
+- [ ] Resend an invite for an email that already has an unverified Supabase Auth user and confirm Team Access uses the verification-email path instead of creating a duplicate invite.
+- [ ] Confirm resend failures show safe categories/next steps such as existing account, SMTP setup, redirect URL, rate limit, or unknown, without raw Supabase errors.
 - [ ] Accept the invite, sign in, and confirm the user appears in Team Access as an active `ops` user.
 - [ ] Confirm the invited `ops` user can access operational routes but cannot see restricted finance amounts.
 - [ ] Invite or add an existing authenticated user as `finance` and confirm the user appears in the same-company list.
 - [ ] Revoke a pending invite and confirm accepting/signing in through that revoked invite does not create company access.
-- [ ] Resend a pending/failed invite and confirm the status remains visible without raw Supabase errors.
+- [ ] Resend a pending/failed invite and confirm the status remains visible without raw Supabase errors; if the account is already verified, confirm workspace access is activated instead of sending another invite.
 - [ ] Change a user to `ops`, then confirm that user sees operational routes and does not see restricted finance amounts.
 - [ ] Change a user to `finance`, then confirm Revenue Review and Client Rates are visible and operational Trip creation is not presented as a finance-owned action.
 - [ ] Change a user to `management`, then confirm the Management dashboard is visible according to role policy.

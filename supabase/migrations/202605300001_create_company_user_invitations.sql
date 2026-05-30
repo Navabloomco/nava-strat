@@ -164,4 +164,4 @@ begin
 end $$;
 
 comment on table public.company_user_invitations is
-  'Company-scoped Team Access email invitations. Auth invites are sent server-side; active company access is created after the invited email authenticates.';
+  'Company-scoped Team Access email invitations. Auth invites are sent server-side; active company access is created after the invited email authenticates. invite_error stores safe categories only.';
