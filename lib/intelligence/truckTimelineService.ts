@@ -30,7 +30,7 @@ type TimelineInput = {
   startTimeUtc?: string;
   endTimeUtc?: string;
   dayOffset?: number;
-  timeframe?: "today" | "yesterday" | "custom";
+  timeframe?: "today" | "yesterday" | "day_before_yesterday" | "custom";
   timeZone?: string;
   geofences?: any[];
   maxRows?: number;
@@ -67,7 +67,14 @@ export async function buildTruckTimelineIntelligence(input: TimelineInput) {
   const explicitWindow = Boolean(input.startTimeUtc && input.endTimeUtc);
   const dayOffset = Number.isFinite(Number(input.dayOffset)) ? Number(input.dayOffset) : 0;
   const timeframe =
-    input.timeframe || (explicitWindow ? "custom" : dayOffset === -1 ? "yesterday" : "today");
+    input.timeframe ||
+    (explicitWindow
+      ? "custom"
+      : dayOffset === -1
+        ? "yesterday"
+        : dayOffset === -2
+          ? "day_before_yesterday"
+          : "today");
   const localDayRange =
     explicitWindow
       ? {

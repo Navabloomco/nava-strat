@@ -29,6 +29,7 @@ import {
 } from "../timeFormatting";
 import { resolveOperationalLocation } from "../location/resolveOperationalLocation";
 import { buildTruckTimelineIntelligence } from "./truckTimelineService";
+import { buildTruckDayStory } from "./truckDayStoryService";
 import {
   buildBusinessMetricContext,
   detectBusinessMetricIntent,
@@ -52,6 +53,7 @@ export type ContextIntent =
   | "offline_trucks"
   | "fuel_risk"
   | "truck_status"
+  | "truck_day_story"
   | "driver_activity"
   | "journey_context"
   | "country_trucks"
@@ -367,6 +369,16 @@ export async function routeContext(
       }
     }
   }
+  if (intent === "truck_day_story" && truckId && !context.asset_access_restricted) {
+    context.truck_day_story = await buildTruckDayStory({
+      companyId,
+      company,
+      truckId,
+      timeframe: context.timeline_timeframe,
+    });
+    context.truck_timeline_comparison = context.truck_day_story.timeline;
+    return context;
+  }
   if (intent === "truck_status" && truckId && !context.asset_access_restricted) {
     context.truck = await fetchTruckStatus(
       companyId,
@@ -549,6 +561,7 @@ function getIntentPermissionBoundary(
     "fleet_movement",
     "offline_trucks",
     "truck_status",
+    "truck_day_story",
     "driver_activity",
     "journey_context",
     "country_trucks",
@@ -617,6 +630,7 @@ function usesLocationContext(intent: ContextIntent) {
     "investigation_context",
     "fuel_risk",
     "truck_status",
+    "truck_day_story",
     "journey_context",
     "offline_trucks",
     "dashboard_followup",
@@ -631,6 +645,7 @@ function usesDriverAssignmentContext(intent: ContextIntent) {
     "investigation_context",
     "fuel_risk",
     "truck_status",
+    "truck_day_story",
     "journey_context",
     "driver_activity",
     "offline_trucks",
@@ -1320,6 +1335,9 @@ function detectIntent(
   if (structuredQuery?.intent_family === "live_status") {
     return "truck_status";
   }
+  if (structuredQuery?.intent_family === "truck_day_story") {
+    return "truck_day_story";
+  }
   if (structuredQuery?.intent_family === "idle_or_stopped") {
     return "truck_status";
   }
@@ -1660,6 +1678,18 @@ export function resolveTruckTimelineTimeframe(input: string, fallback: any = nul
   const lower = String(input || "")
     .toLowerCase()
     .replace(/[’]/g, "'");
+  if (
+    lower.includes("day_before_yesterday") ||
+    lower.includes("day before yesterday") ||
+    lower.includes("day-before-yesterday") ||
+    lower.includes("two days ago") ||
+    lower.includes("the day before")
+  ) {
+    return {
+      requested: "day_before_yesterday",
+      dayOffset: -2,
+    };
+  }
   if (
     lower.includes("yesterday") ||
     lower.includes("previous day") ||

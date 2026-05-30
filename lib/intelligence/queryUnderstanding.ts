@@ -3,6 +3,7 @@ export type NavaEyeIntentFamily =
   | "compare_metric"
   | "explain_previous_answer"
   | "live_status"
+  | "truck_day_story"
   | "idle_or_stopped"
   | "trip_performance"
   | "expense_evidence"
@@ -57,7 +58,7 @@ export type NavaEyeStructuredQuery = {
   } | null;
   metric: NavaEyeMetric;
   follow_up: boolean;
-  answer_mode: "concise" | "audit";
+  answer_mode: "concise" | "timeline" | "audit";
 };
 
 type QueryUnderstandingOptions = {
@@ -115,7 +116,11 @@ export function parseNavaEyeQuery(
   const detectedEntities = detectEntities(normalized.normalized_text);
   const detectedPeriods = detectPeriods(lower);
   const metric = detectMetric(lower);
-  const answerMode = detectAuditMode(lower) ? "audit" : "concise";
+  const answerMode = detectAuditMode(lower)
+    ? "audit"
+    : detectTimelineMode(lower)
+      ? "timeline"
+      : "concise";
   const comparison = detectComparison(lower, detectedPeriods, metric);
   const followUp = detectFollowUp(lower, options.pendingFollowup);
   const intentFamily = detectIntentFamily(lower, {
@@ -260,6 +265,31 @@ function detectAuditMode(lower: string) {
   );
 }
 
+function detectTimelineMode(lower: string) {
+  return /\b(show|give|list)\b.*\b(timeline|route|stops?|breakdown of the day)\b|\b(full|detailed|detail)\s+(timeline|route|stops?|day)\b|\bwhere\s+(?:has|had|did)\b.*\bbeen\b/.test(
+    lower
+  );
+}
+
+function detectTruckDayStory(lower: string) {
+  return (
+    /\bwhat\s+has\b.*\b(?:been\s+)?(?:up\s*to|upto)\b/.test(lower) ||
+    /\bwhat\s+has\s+(?:it|that truck|this truck|the truck)\s+been\s+(?:up\s*to|upto)\b/.test(lower) ||
+    /\bwhat\s+did\b.*\bdo\b.*\b(?:today|yesterday|day before yesterday)\b/.test(lower) ||
+    /\bhow\s+has\b.*\bbeen\b.*\b(?:today|yesterday)\b/.test(lower) ||
+    /\btruck\s+activity\b/.test(lower) ||
+    /\bmovement\s+summary\b/.test(lower) ||
+    /\b(day\s+story|activity\s+summary)\b/.test(lower) ||
+    /\bsummarize\b.*\b(?:today|yesterday|truck)\b/.test(lower) ||
+    /\bwhere\s+has\b.*\bbeen\b.*\b(?:today|yesterday)\b/.test(lower) ||
+    /\bshow\s+(?:the\s+)?timeline\b/.test(lower) ||
+    /\bshow\b.*\b(?:today'?s|yesterday'?s)\s+timeline\b/.test(lower) ||
+    /\bwhat\s+happened\s+with\s+(?:it|this truck|that truck|the truck|[a-z0-9\s-]{3,})\s*(?:today|yesterday)?\b/.test(
+      lower
+    )
+  );
+}
+
 function detectComparison(
   lower: string,
   periods: NavaEyePeriod[],
@@ -329,9 +359,10 @@ function detectIntentFamily(
   input: {
     metric: NavaEyeMetric;
     comparison: NavaEyeStructuredQuery["comparison"];
-    answerMode: "concise" | "audit";
+    answerMode: "concise" | "timeline" | "audit";
   }
 ): NavaEyeIntentFamily {
+  if (detectTruckDayStory(lower)) return "truck_day_story";
   if (input.answerMode === "audit" && input.metric !== "proof_status") {
     return "explain_previous_answer";
   }

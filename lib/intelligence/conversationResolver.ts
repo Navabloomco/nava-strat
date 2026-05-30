@@ -229,6 +229,21 @@ export async function resolveNavaEyeConversationFollowup(
   }
 
   if (metricFollowupType && !activeMetricFollowupTopic && !explicitVehicleInput && !explicitFleetScope) {
+    if (activeTopic?.last_intent === "truck_day_story") {
+      const timeframe = sanitizeTopicTimeframe(activeTopic.timeframe) ||
+        resolveTruckTimelineTimeframe(normalizedQuestion);
+      return {
+        question: `Show evidence for the ${activeTopic.truck_id} day story${formatTimeframeQuestionSuffix(
+          timeframe
+        )}.`,
+        usedPendingFollowup: true,
+        usedActiveTopic: true,
+        usedMetricTopic: false,
+        metricFollowup: true,
+        metricFollowupType,
+        pendingType: typeof pending.type === "string" ? pending.type : "active_truck_topic",
+      };
+    }
     return {
       question,
       usedPendingFollowup: false,
@@ -434,6 +449,16 @@ function buildInheritedEntityQuestion(input: {
   }
   if (metricIntent === "moved_without_revenue") {
     return `Did ${input.vehicleLabel} move without revenue${metricTimeframeSuffix}?`;
+  }
+
+  if (lastIntent === "truck_day_story") {
+    const label =
+      timeframe?.requested === "yesterday"
+        ? "yesterday"
+        : timeframe?.requested === "day_before_yesterday"
+          ? "the day before yesterday"
+          : "today";
+    return `What has ${input.vehicleLabel} been up to ${label}?`;
   }
 
   if (lastIntent === "truck_timeline" || isTimelinePendingFollowup(input.pending)) {
@@ -1370,6 +1395,7 @@ function sanitizeTopicTimeframe(value: any) {
 
 function formatTimeframeQuestionSuffix(timeframe: any) {
   const requested = String(timeframe?.requested || "").toLowerCase();
+  if (requested === "day_before_yesterday") return " for the day before yesterday";
   if (requested === "yesterday") return " for yesterday";
   if (requested === "today") return " for today";
   return "";
@@ -1398,11 +1424,27 @@ function buildTruckScopedFollowupQuestion(question: string, activeTopic: any) {
         : "";
 
   if (/^show\s+yesterday\b/.test(normalized) || /^what\s+about\s+yesterday\b/.test(normalized)) {
+    if (activeTopic.last_intent === "truck_day_story") {
+      return `What has ${truckId} been up to yesterday?`;
+    }
     return `Show yesterday's movement for ${truckId}.`;
   }
 
   if (/^show\s+today\b/.test(normalized) || /^what\s+about\s+today\b/.test(normalized)) {
+    if (activeTopic.last_intent === "truck_day_story") {
+      return `What has ${truckId} been up to today?`;
+    }
     return `Show today's movement for ${truckId}.`;
+  }
+
+  if (/^show\s+(?:the\s+)?timeline\b/.test(normalized) && activeTopic.last_intent === "truck_day_story") {
+    const label =
+      timeframe?.requested === "yesterday"
+        ? "yesterday"
+        : timeframe?.requested === "day_before_yesterday"
+          ? "the day before yesterday"
+          : "today";
+    return `Show ${label}'s timeline for ${truckId}.`;
   }
 
   if (/\bwhere\s+(?:is|are)\s+(?:it|that truck|this truck|the truck)\b/.test(normalized)) {
@@ -1415,6 +1457,10 @@ function buildTruckScopedFollowupQuestion(question: string, activeTopic: any) {
 
   if (isDetailedTimelineRequest(normalized)) {
     return `Show detailed timeline for ${truckId}${timeframeSuffix}.`;
+  }
+
+  if (detectMetricFollowupType(normalized) === "audit_detail" && activeTopic.last_intent === "truck_day_story") {
+    return `Show evidence for the ${truckId} day story${formatTimeframeQuestionSuffix(timeframe)}.`;
   }
 
   if (isLocationEvidenceRequest(normalized)) {
@@ -1483,6 +1529,7 @@ function isEllipticalTruckQuestion(question: string) {
     /\b(?:today'?s|yesterday'?s)\s+movements?\b/.test(lower) ||
     /\bshow\s+(?:today|yesterday)\b/.test(lower) ||
     /\bwhat\s+about\s+(?:today|yesterday)\b/.test(lower) ||
+    /^show\s+(?:the\s+)?timeline\b/.test(lower) ||
     /\bwhere\s+did\s+it\s+go\b/.test(lower) ||
     /\bwhere\s+(?:is|are)\s+(?:it|that truck|this truck|the truck)\b/.test(lower) ||
     /\bwhat\s+should\s+i\s+do\s+about\s+(?:it|that|this)\b/.test(lower) ||

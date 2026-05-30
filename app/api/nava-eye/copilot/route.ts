@@ -583,6 +583,9 @@ function buildFallbackAnswer(context: any): string {
   if (context.no_enabled_intelligence_assets && !context.spares) {
     return "Fleet data has been imported, but no assets are enabled for Nava intelligence yet. Review assets before I use them in answers.";
   }
+  if (context.intent === "truck_day_story" && !context.truck_day_story) {
+    return "Which truck should I summarize?";
+  }
   const actionPlan = buildNavaEyeActionPlan(context);
   if (actionPlan) {
     return actionPlan;
@@ -604,6 +607,9 @@ function buildFallbackAnswer(context: any): string {
   }
   if (context.compound_truck_request && context.truck) {
     return buildCompoundTruckAnswer(context);
+  }
+  if (context.truck_day_story) {
+    return buildTruckDayStoryAnswer(context);
   }
   if (context.fleet_movement_summary) {
     return buildFleetMovementSummaryAnswer(context);
@@ -1160,6 +1166,36 @@ function buildPendingFollowup(context: any, answer: string) {
     };
   }
 
+  if (context.truck_day_story && truckLabel) {
+    const story = context.truck_day_story;
+    const requestedTimeframe = story.period?.requested || "today";
+    const topicTimeframe =
+      sanitizeTimelineTimeframe(story.timeline) ||
+      sanitizeTopicTimeframe({
+        requested: requestedTimeframe,
+        dayOffset: story.period?.day_offset,
+        local_day: story.period?.local_day,
+        day_start_utc: story.period?.start_utc,
+        day_end_utc: story.period?.end_utc,
+        display_date_label: `${story.period?.local_day || requestedTimeframe} ${
+          story.period?.time_zone || ""
+        }`.trim(),
+      });
+    return attachActiveTopic({
+      type: "truck_day_story",
+      truck_id: truckLabel,
+      timeframe: requestedTimeframe,
+      display_date_label: topicTimeframe?.display_date_label || null,
+      prompt: `Summarize what ${truckLabel} has been up to ${
+        requestedTimeframe === "yesterday"
+          ? "yesterday"
+          : requestedTimeframe === "day_before_yesterday"
+            ? "the day before yesterday"
+            : "today"
+      }. Include movement, key stops, current status, tracker idle markers, active Trip context, and next action without raw coordinates.`,
+    }, topicTimeframe);
+  }
+
   if (
     context.truck_timeline_comparison &&
     truckLabel &&
@@ -1252,7 +1288,11 @@ function buildActiveTruckTopic(context: any, truckLabel: string, timeframeOverri
     truck_id: truckLabel,
     display_label: truckLabel,
     company_id: context.company?.id || null,
-    last_intent: hasTimelineContext ? "truck_timeline" : context.intent || null,
+    last_intent: context.truck_day_story
+      ? "truck_day_story"
+      : hasTimelineContext
+        ? "truck_timeline"
+        : context.intent || null,
     timeframe,
     local_day: timeframe?.local_day || null,
     display_date_label: timeframe?.display_date_label || null,
@@ -1361,7 +1401,13 @@ function metricDistanceSourceForTopic(distance: any) {
 function sanitizeTimelineTimeframe(timeline: any) {
   if (!timeline?.timeframe) return null;
   const requested = String(timeline.timeframe.requested || "").trim().toLowerCase();
-  if (requested !== "today" && requested !== "yesterday") return null;
+  if (
+    requested !== "today" &&
+    requested !== "yesterday" &&
+    requested !== "day_before_yesterday"
+  ) {
+    return null;
+  }
   return {
     requested,
     dayOffset:
@@ -1369,6 +1415,8 @@ function sanitizeTimelineTimeframe(timeline: any) {
         ? Number(timeline.timeframe.day_offset)
         : requested === "yesterday"
           ? -1
+          : requested === "day_before_yesterday"
+            ? -2
           : 0,
     local_day: timeline.local_day || timeline.timeframe.local_day || null,
     day_start_utc: timeline.query_window_utc?.start || null,
@@ -1413,6 +1461,264 @@ function buildVehicleCandidateAnswer(vehicleMatch: any) {
   ];
 
   return parts.join("\n");
+}
+
+function buildTruckDayStoryAnswer(context: any) {
+  const story = context.truck_day_story || {};
+  const answerMode = context.query_understanding?.answer_mode || "concise";
+  if (answerMode === "audit" || context.answer_detail_requested) {
+    return buildTruckDayStoryAuditAnswer(story);
+  }
+  if (answerMode === "timeline" || context.timeline_detail_requested) {
+    return buildTruckDayStoryTimelineAnswer(story);
+  }
+  return buildTruckDayStoryConciseAnswer(story);
+}
+
+function buildTruckDayStoryConciseAnswer(story: any) {
+  const label = formatTruckDayStoryLabel(story);
+  const periodLabel = story.period?.label || "today";
+  const timeZone = story.period?.time_zone || DEFAULT_OPERATIONAL_TIME_ZONE;
+  const telemetryPoints = Number(story.audit?.telemetry_points || 0);
+  const parts: string[] = [];
+
+  if (!story.timeline?.asset_found) {
+    return `${label} is not enabled for Nava intelligence in this workspace, so I cannot build a day story for it.`;
+  }
+
+  if (telemetryPoints < 2 && !story.latest_status?.recorded_at) {
+    return `${label} does not have enough valid telemetry for ${periodLabel} to build a reliable day story yet. Check provider sync/freshness, then retry once more points arrive.`;
+  }
+
+  const start = story.start_of_day;
+  const latest = story.latest_status || {};
+  const startText = start?.recorded_at
+    ? `It first appears around ${formatDayStoryLocation(start.location)} at ${formatTimelineClock(
+        start.recorded_at,
+        timeZone
+      )}`
+    : `I do not have a clear first point for ${periodLabel}`;
+  const currentText = latest.recorded_at
+      ? `now ${formatDayStoryState(latest.state)} near ${formatDayStoryLocation(
+        latest.location
+      )}, last seen at ${formatTimelineClock(latest.recorded_at, timeZone)}${
+        latest.speed !== null && latest.speed !== undefined
+          ? ` at ${formatNumber(latest.speed)} kph`
+          : ""
+      }`
+    : "latest status is unavailable";
+  parts.push(`${label} ${formatDayStoryActivityVerb(story)} ${periodLabel}. ${startText} and is ${currentText}.`);
+
+  parts.push(formatDayStoryDistanceSentence(story.movement));
+  const stopSentence = formatDayStoryStopSentence(story.stopped_time, timeZone);
+  if (stopSentence) parts.push(stopSentence);
+
+  const tripSentence = formatDayStoryTripSentence(story.active_trip);
+  if (tripSentence) parts.push(tripSentence);
+  const availabilitySentence = formatDayStoryAvailabilitySentence(story.availability);
+  if (availabilitySentence) parts.push(availabilitySentence);
+
+  const idleSentence = formatDayStoryIdleSentence(story.tracker_idle_markers);
+  if (idleSentence) parts.push(idleSentence);
+
+  if (story.action_notes?.length) {
+    parts.push(`Next: ${story.action_notes[0]}`);
+  }
+
+  return parts.filter(Boolean).join(" ");
+}
+
+function buildTruckDayStoryTimelineAnswer(story: any) {
+  const label = formatTruckDayStoryLabel(story);
+  const periodLabel = story.period?.label || "today";
+  const timeZone = story.period?.time_zone || DEFAULT_OPERATIONAL_TIME_ZONE;
+  const parts: string[] = [`${capitalizeSentence(periodLabel)} timeline for ${label}. ${formatTimelineTimeNote(timeZone)}`];
+  const start = story.start_of_day;
+  if (start?.recorded_at) {
+    parts.push(
+      `1. ${formatTimelineClock(start.recorded_at, timeZone)} - first seen ${formatDayStoryLocation(
+        start.location
+      )}${start.speed !== null && start.speed !== undefined ? ` at ${formatNumber(start.speed)} kph` : ""}.`
+    );
+  }
+  const route = cleanRoutePlaces(story.route?.places || []);
+  if (route.length) {
+    parts.push(`2. Route/place progression - ${formatRouteProgression(route)}.`);
+  }
+  const windows = story.stopped_time?.key_windows || [];
+  if (windows.length) {
+    parts.push("3. Key stopped windows");
+    parts.push(
+      ...windows.slice(0, 5).map((window: any) => {
+        const startAt = window.start_at ? formatTimelineClock(window.start_at, timeZone) : "start unknown";
+        const endAt = window.end_at ? formatTimelineClock(window.end_at, timeZone) : "end unknown";
+        const location = formatDayStoryLocation(window.location);
+        return `- ${startAt}-${endAt}: about ${formatDurationWords(window.duration_minutes)} ${location}.`;
+      })
+    );
+  } else {
+    parts.push("3. Key stopped windows - none large enough to summarize from the available telemetry.");
+  }
+  if (story.latest_status?.recorded_at) {
+    parts.push(
+      `Current/latest - ${formatDayStoryState(story.latest_status.state)} near ${formatDayStoryLocation(
+        story.latest_status.location
+      )}, last seen at ${formatTimelineClock(story.latest_status.recorded_at, timeZone)}.`
+    );
+  }
+  parts.push(formatDayStoryDistanceSentence(story.movement));
+  parts.push("Engine-on idle, fuel burn, driver blame, and client-caused delay are not confirmed from this evidence.");
+  return parts.filter(Boolean).join("\n");
+}
+
+function buildTruckDayStoryAuditAnswer(story: any) {
+  const label = formatTruckDayStoryLabel(story);
+  const periodLabel = story.period?.label || "today";
+  const timeZone = story.period?.time_zone || DEFAULT_OPERATIONAL_TIME_ZONE;
+  const audit = story.audit || {};
+  const distance = story.movement || {};
+  const stopped = story.stopped_time || {};
+  const lines = [
+    `Evidence used for ${label}'s ${periodLabel} activity summary. ${formatTimelineTimeNote(timeZone)}`,
+    `- Window: ${story.period?.local_day || periodLabel}, ${formatTimelineClock(
+      story.period?.start_utc,
+      timeZone
+    )} to ${formatTimelineClock(story.period?.end_utc, timeZone)}.`,
+    `- Telemetry: ${Number(audit.telemetry_points || 0).toLocaleString()} points, ${Number(
+      audit.motion_blocks || 0
+    ).toLocaleString()} movement/stationary blocks.`,
+    `- First/last evidence: ${audit.first_telemetry_at ? formatTimelineClock(audit.first_telemetry_at, timeZone) : "unavailable"} to ${audit.last_telemetry_at ? formatTimelineClock(audit.last_telemetry_at, timeZone) : "unavailable"}.`,
+    `- Distance: ${
+      distance.distance_km ? formatMetricKm(distance.distance_km) : "unavailable"
+    } from ${formatDayStoryDistanceSource(distance)}.`,
+    `- Stopped time: ${
+      stopped.total_gps_stopped_minutes !== null && stopped.total_gps_stopped_minutes !== undefined
+        ? `about ${formatDurationWords(stopped.total_gps_stopped_minutes)}`
+        : "unavailable"
+    } from GPS-stopped evidence across ${Number(stopped.window_count || 0).toLocaleString()} stopped window(s).`,
+  ];
+  if (stopped.provider_current_stop?.provider_current_stop_minutes) {
+    lines.push(
+      `- Provider current stop: ${formatDurationWords(
+        stopped.provider_current_stop.provider_current_stop_minutes
+      )}. This is a current episode, not the same metric as selected-period GPS-stopped total.`
+    );
+  }
+  if (story.tracker_idle_markers?.marker_count) {
+    lines.push(
+      `- Tracker idle markers: ${Number(story.tracker_idle_markers.marker_count).toLocaleString()} marker(s) across ${Number(
+        story.tracker_idle_markers.window_count || 0
+      ).toLocaleString()} window(s).`
+    );
+  }
+  if (distance.missing?.length) {
+    lines.push(`- Missing/limited distance evidence: ${distance.missing.join("; ")}.`);
+  }
+  if (audit.rows_truncated) {
+    lines.push("- Telemetry row cap was reached, so treat this as a partial read.");
+  }
+  lines.push("- Raw coordinates and provider payloads are not shown. Engine-on idle and fuel burn require ignition/engine/CAN evidence.");
+  return lines.join("\n");
+}
+
+function formatTruckDayStoryLabel(story: any) {
+  return (
+    story.identity?.provider_asset_label ||
+    story.identity?.registration ||
+    story.identity?.truck_id ||
+    "This truck"
+  );
+}
+
+function formatDayStoryActivityVerb(story: any) {
+  const distance = Number(story.movement?.distance_km || 0);
+  if (distance > 0) return "has been active";
+  if (Number(story.stopped_time?.total_gps_stopped_minutes || 0) > 0) return "has mostly been stationary";
+  return "has limited activity evidence";
+}
+
+function formatDayStoryLocation(location: any) {
+  const text = formatOperationalLocation(
+    {
+      location_resolution: location,
+      geofence_match: location?.geofence || null,
+    },
+    { gpsFallback: null }
+  );
+  return text
+    ? text.replace(/^(near|inside|at|around)\s+/i, "").trim()
+    : "a location without a readable place name";
+}
+
+function formatDayStoryState(state: any) {
+  const value = String(state || "unknown").replace(/_/g, " ");
+  if (value === "stationary") return "stopped";
+  return value;
+}
+
+function formatDayStoryDistanceSentence(distance: any) {
+  if (!distance || distance.distance_km === null || distance.distance_km === undefined) {
+    return "Distance evidence is unavailable for this operating window.";
+  }
+  const source = formatDayStoryDistanceSource(distance);
+  const caveat = distance.provisional
+    ? " Treat it as provisional route-distance evidence."
+    : "";
+  return `${formatMetricKm(distance.distance_km)} covered. Source: ${source}.${caveat}`;
+}
+
+function formatDayStoryDistanceSource(distance: any) {
+  const source = String(distance?.source || distance?.source_label || "unknown");
+  if (source === "provider_trip_report") return "provider distance evidence";
+  if (source === "provider_current_feed_delta") {
+    return "provider current-feed odometer/mileage delta";
+  }
+  if (source === "provider_mileage") return "provider-reported mileage";
+  if (source === "physical_odometer") return "provider/odometer distance evidence";
+  if (source === "gps_estimated") return "GPS-derived distance estimate";
+  return String(distance?.source_label || "distance evidence").replace(/_/g, " ");
+}
+
+function formatDayStoryStopSentence(stopped: any, timeZone: string) {
+  if (!stopped) return null;
+  const total = stopped.total_gps_stopped_minutes;
+  if (total === null || total === undefined) return null;
+  const longest = stopped.longest_stop || null;
+  const longestLocation = longest?.location
+    ? ` around ${formatDayStoryLocation(longest.location)}`
+    : "";
+  const longestText = longest?.duration_minutes
+    ? ` Longest stop: about ${formatDurationWords(longest.duration_minutes)}${longestLocation}${
+        longest.start_at ? ` from ${formatTimelineClock(longest.start_at, timeZone)}` : ""
+      }.`
+    : "";
+  return `GPS-stopped time totals about ${formatDurationWords(total)} across ${Number(
+    stopped.window_count || 0
+  ).toLocaleString()} stopped window(s).${longestText}`;
+}
+
+function formatDayStoryTripSentence(trip: any) {
+  if (!trip) return null;
+  const reference = trip.reference || "active Trip";
+  const route = [trip.route_from, trip.route_to].filter(Boolean).join(" to ");
+  return `Active Trip context: ${reference}${trip.client_name ? ` for ${trip.client_name}` : ""}${
+    route ? `, ${route}` : ""
+  }${trip.status ? `, status ${trip.status}` : ""}.`;
+}
+
+function formatDayStoryAvailabilitySentence(availability: any) {
+  if (!availability) return "No recorded availability exception is active.";
+  return `${availability.label} is recorded as operational context${
+    availability.note ? `: ${availability.note}` : "."
+  }`;
+}
+
+function formatDayStoryIdleSentence(markers: any) {
+  const count = Number(markers?.marker_count || 0);
+  if (!count) return "No tracker idle-marker evidence appears in this operating window.";
+  return `${count.toLocaleString()} tracker idle marker(s) found across ${Number(
+    markers.window_count || 0
+  ).toLocaleString()} window(s). Engine-on idle and fuel burn are not verified without ignition/engine evidence.`;
 }
 
 function buildAssetRestrictedAnswer(vehicleMatch: any) {
