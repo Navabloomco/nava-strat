@@ -74,6 +74,7 @@ Expected result:
 Open `/admin/team-access` as a company `owner` or `admin`, and as `platform_owner` with an explicit `companyId`.
 
 - [ ] Confirm current company users load with email/name where available, role, active/inactive state, and account date metadata.
+- [ ] As a tenant admin, confirm platform-owner/internal support users are absent from the visible table and excluded from total/active counts.
 - [ ] Confirm only `owner`, `admin`, `ops`, `finance`, and `management` are offered as editable pilot roles.
 - [ ] Add an existing authenticated user by work email and confirm the user appears in the same-company list.
 - [ ] Try an email with no existing account and confirm the page says the user must sign up first; no fake invitation email is implied.
@@ -83,8 +84,8 @@ Open `/admin/team-access` as a company `owner` or `admin`, and as `platform_owne
 - [ ] Deactivate a user and confirm the membership disappears from active company context and cannot access the workspace.
 - [ ] Reactivate the user and confirm access returns for the selected role.
 - [ ] Confirm the API blocks demoting/deactivating the last active owner/admin for the company.
-- [ ] Confirm tenant admins cannot edit `platform_owner` access rows.
-- [ ] Confirm `platform_owner` sees a clear company context before editing access and cannot accidentally edit another company through a tenant user's role.
+- [ ] Confirm tenant admins cannot edit internal access rows by guessed user id or email; the API rejects the request without exposing internal role mechanics.
+- [ ] Confirm `platform_owner` sees a clear company context before editing access, can retain internal visibility, and cannot accidentally edit another company through a tenant user's role.
 
 ## 4. Dashboard Command Brief Smoke Test
 

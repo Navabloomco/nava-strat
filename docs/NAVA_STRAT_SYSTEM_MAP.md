@@ -126,7 +126,7 @@ Nava Strat should sound like a mature enterprise SaaS: operational, concise, sou
 | `/admin/tenants/[companyId]/invoice-preview` | Platform-owner manual invoice preview for one tenant and billing period. Preview only; no invoice is created. |
 | `/admin/client-visibility` | Client visibility link management for owner/admin/platform-owner roles. Admins can list same-company links, generate a new link, regenerate/revoke existing links, and copy the raw public URL only immediately after generation/regeneration. Existing links show metadata only; `token_hash` is never displayed. |
 | `/admin/company` | Company operating context settings. Supports platform-owner `?companyId=` tenant context. |
-| `/admin/team-access` | Controlled-pilot Team Access for owner/admin/platform-owner roles. Lists same-company `company_users` memberships enriched with safe auth email/name metadata, lets admins add existing authenticated users by email, change pilot roles, and deactivate/reactivate users. It does not create auth users or send invitation emails. Platform owners manage access only in an explicit company context. |
+| `/admin/team-access` | Controlled-pilot Team Access for owner/admin/platform-owner roles. Tenant admins see only tenant-manageable `company_users` memberships enriched with safe auth email/name metadata; internal platform-owner memberships are hidden from tenant rows and counts. Admins can add existing authenticated users by email, change pilot roles, and deactivate/reactivate users. It does not create auth users or send invitation emails. Platform owners manage access only in an explicit company context and may see internal rows for support. |
 | `/admin/health` | Platform-owner readiness health check. |
 
 ### Shared Components
@@ -147,7 +147,7 @@ Nava Strat should sound like a mature enterprise SaaS: operational, concise, sou
 | --- | --- |
 | `GET /api/companies` | Returns active company memberships, normalized roles, platform-owner status, and visible companies. |
 | `GET /api/dashboard/overview` | Authenticated company dashboard overview. Returns `dashboard_mode = fleet` with role-aware safe fleet health for customer tenants, or `dashboard_mode = platform_operator` with safe aggregate platform stats and sanitized customer workspace summaries for the operator workspace when viewed by a platform owner. |
-| `GET/POST/PATCH /api/admin/team-access` | Owner/admin/platform-owner Team Access API for controlled pilots. Lists current company memberships, adds an existing authenticated user by email, changes pilot roles, and deactivates/reactivates access. It is company-scoped, blocks non-admin writes, protects platform-owner rows from tenant admins, and prevents removing the last active owner/admin. It does not create auth users, expose service-role credentials, or send invitation emails. |
+| `GET/POST/PATCH /api/admin/team-access` | Owner/admin/platform-owner Team Access API for controlled pilots. Lists tenant-manageable company memberships, adds an existing authenticated user by email, changes pilot roles, and deactivates/reactivates access. It is company-scoped, blocks non-admin writes, hides platform-owner rows from tenant admins, rejects tenant attempts to edit internal rows without naming internal access mechanics, and prevents removing the last active owner/admin. It does not create auth users, expose service-role credentials, or send invitation emails. |
 | `POST /api/onboarding/company` | Creates/updates company onboarding data, operating context, and provider setup requests. |
 | `GET/PATCH /api/company-settings` | Reads and updates safe company operating context. Supports platform-owner `companyId` context. No billing/provider secrets. |
 | `GET /api/admin/pilot-readiness` | Platform-owner-only readiness checklist list across companies. Returns pass/warning/fail counts and safe tenant summaries. |
@@ -365,7 +365,7 @@ Current shared helper behavior:
 | Pilot Readiness Checklist | `platform_owner` only |
 | Tenant billing/readiness preview | `platform_owner` only |
 
-Team Access Phase 1 uses `company_users` as the active access source. Owner/admin/platform-owner users can manage company memberships from `/admin/team-access`, with pilot roles limited to `owner`, `admin`, `ops`, `finance`, and `management`. Users must already have a Supabase Auth account before they can be added by email; email invitation automation, auth-user creation, and HR-directory workflows are deferred. Inactive memberships are excluded from `/api/companies` active company context and should not authorize workspace access. Platform owners must act in an explicit company context and should not use cross-company fallback for member edits.
+Team Access Phase 1 uses `company_users` as the active access source. Owner/admin/platform-owner users can manage company memberships from `/admin/team-access`, with tenant-editable roles limited to `owner`, `admin`, `ops`, `finance`, and `management`. Tenant admins must not see platform-owner/internal support memberships, labels, or counts in Team Access. Users must already have a Supabase Auth account before they can be added by email; email invitation automation, auth-user creation, and HR-directory workflows are deferred. Inactive memberships are excluded from `/api/companies` active company context and should not authorize workspace access. Platform owners must act in an explicit company context and should not use cross-company fallback for member edits.
 
 Nava Eye and Nava Eye Watch use explicit safe capability flags derived from the resolved same-company role. These include finance, expenses, billing, platform billing, ops, fuel, journeys, spares, and platform-owner capabilities. Nava Eye should answer broadly inside those permissions and return a clear permission-boundary message instead of exposing restricted finance, billing, invoice, expense, provider-secret, raw-payload, or cross-tenant data.
 
@@ -423,7 +423,7 @@ Asset availability status is a lightweight interpretation layer for operations, 
 
 - `company_users` is the access-control source.
 - Active membership requires `is_active = true`.
-- Team Access writes must remain company-scoped, owner/admin/platform-owner-only, and must not remove the last active owner/admin for a company.
+- Team Access writes must remain company-scoped, owner/admin/platform-owner-only, must hide internal platform-owner memberships from tenant admins, and must not remove the last active owner/admin for a company.
 - APIs must resolve a company before querying tenant data.
 - Same-company role checks matter: a role in one company must not authorize mutation in another company.
 - `platform_owner` can pass `companyId` on supported internal/admin APIs.

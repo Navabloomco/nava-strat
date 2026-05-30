@@ -11,6 +11,7 @@ const COMPANY_SELECT = "id, name, slug";
 const MEMBERSHIP_SELECT = "company_id, user_id, role, is_active";
 const PILOT_ROLES = new Set(["owner", "admin", "ops", "finance", "management"]);
 const TENANT_ADMIN_ROLES = new Set(["owner", "admin"]);
+const INTERNAL_ROLES = new Set(["platform_owner"]);
 
 type ResolvedAccess = {
   user: any;
@@ -40,6 +41,10 @@ function normalizeTeamRole(value: any) {
 
 function isTenantAdminRole(role: any) {
   return TENANT_ADMIN_ROLES.has(normalizeRole(role));
+}
+
+function isInternalRole(role: any) {
+  return INTERNAL_ROLES.has(normalizeRole(role));
 }
 
 function safeCompany(company: any) {
@@ -255,14 +260,19 @@ export async function GET(req: Request) {
       ? "User email lookup is unavailable; membership IDs are shown instead."
       : null;
 
-    const users = (memberships || []).map((membership) => {
+    const visibleMemberships = resolved.isPlatformOwner
+      ? memberships || []
+      : (memberships || []).filter((membership) => !isInternalRole(membership.role));
+
+    const users = visibleMemberships.map((membership) => {
+      const role = normalizeRole(membership.role);
       const authUser = usersById.get(membership.user_id);
       return {
         user_id: membership.user_id,
         company_id: membership.company_id,
-        role: normalizeRole(membership.role),
+        role,
         is_active: Boolean(membership.is_active),
-        protected_role: normalizeRole(membership.role) === "platform_owner",
+        protected_role: isInternalRole(role),
         ...safeUserSummary(authUser),
       };
     });
@@ -333,12 +343,9 @@ export async function POST(req: Request) {
     if (existingError) throw existingError;
 
     if (existing) {
-      if (
-        normalizeRole(existing.role) === "platform_owner" &&
-        !resolved.isPlatformOwner
-      ) {
+      if (isInternalRole(existing.role) && !resolved.isPlatformOwner) {
         return noStoreJson(
-          { success: false, error: "Platform owner access cannot be changed here" },
+          { success: false, error: "This account cannot be managed from Team Access." },
           { status: 403 }
         );
       }
@@ -406,10 +413,10 @@ export async function PATCH(req: Request) {
     }
 
     const currentRole = normalizeRole(current.role);
-    if (currentRole === "platform_owner" && !resolved.isPlatformOwner) {
+    if (isInternalRole(currentRole) && !resolved.isPlatformOwner) {
       return noStoreJson(
-        { success: false, error: "Platform owner access cannot be changed here" },
-        { status: 403 }
+        { success: false, error: "Team user not found" },
+        { status: 404 }
       );
     }
 
