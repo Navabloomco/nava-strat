@@ -45,6 +45,13 @@ import {
   buildNavaEyeActionPlannerContext,
 } from "../../../../lib/intelligence/navaEyeActionPlanner";
 import {
+  applyNavaEyeContextSnapshotToPendingFollowup,
+  attachNavaEyeContextSnapshot,
+  buildNavaEyeContextSnapshot,
+  isNavaEyeClearContextRequest,
+  resolveNavaEyeContextSnapshot,
+} from "../../../../lib/intelligence/navaEyeContextSnapshot";
+import {
   availabilityContextNote,
   isKnownUnavailableAvailability,
   labelAssetAvailabilityStatus,
@@ -127,19 +134,74 @@ export async function POST(req: Request) {
       );
     }
 
-    const queryUnderstanding = parseNavaEyeQuery(question, {
+    const storedContextSnapshot = resolveNavaEyeContextSnapshot({
       pendingFollowup: conversation?.pending_followup,
+      recentMessages: recentConversationMessages,
+      companyId: company.id,
+    });
+    const pendingFollowupForResolution = applyNavaEyeContextSnapshotToPendingFollowup({
+      pendingFollowup: conversation?.pending_followup,
+      snapshot: storedContextSnapshot,
+      companyId: company.id,
+    });
+
+    if (isNavaEyeClearContextRequest(question)) {
+      const clearAnswer = "Context cleared. What should we look at next?";
+      if (conversation) {
+        await appendConversationMessage({
+          conversationId: conversation.id,
+          companyId: company.id,
+          userId: auth.user.id,
+          sender: "user",
+          role: roleCategory(companyRoles, roleCapabilities),
+          content: question,
+          intent: "clear_context",
+          metadata: {},
+        });
+        await appendConversationMessage({
+          conversationId: conversation.id,
+          companyId: company.id,
+          userId: auth.user.id,
+          sender: "assistant",
+          role: "assistant",
+          content: clearAnswer,
+          intent: "clear_context",
+          metadata: { context_cleared: true },
+        });
+        await updateConversationAfterAnswer({
+          conversation,
+          companyId: company.id,
+          userId: auth.user.id,
+          intent: "clear_context",
+          pendingFollowup: {},
+          titleQuestion: question,
+        });
+      }
+
+      return jsonResponse({
+        success: true,
+        tenant: company.slug,
+        company,
+        answer: clearAnswer,
+        intent: "clear_context",
+        conversation_id: conversation?.id || null,
+        ai_used: false,
+      });
+    }
+
+    const queryUnderstanding = parseNavaEyeQuery(question, {
+      pendingFollowup: pendingFollowupForResolution,
     });
 
     const pendingFollowupResolution = await resolveNavaEyeConversationFollowup({
       question,
       structuredQuery: queryUnderstanding,
-      pendingFollowup: conversation?.pending_followup,
+      pendingFollowup: pendingFollowupForResolution,
       companyId: company.id,
     });
     const effectiveQuestion = pendingFollowupResolution.question;
     const effectiveQueryUnderstanding = parseNavaEyeQuery(effectiveQuestion, {
-      pendingFollowup: conversation?.pending_followup,
+      pendingFollowup: pendingFollowupForResolution,
     });
 
     if (pendingFollowupResolution.needsClarification) {
@@ -185,7 +247,7 @@ export async function POST(req: Request) {
           intent: "clarification",
           pendingFollowup:
             pendingFollowupResolution.nextPendingFollowup ||
-            conversation.pending_followup ||
+            pendingFollowupForResolution ||
             {},
           titleQuestion: question,
         });
@@ -241,7 +303,7 @@ export async function POST(req: Request) {
     };
     context.query_understanding = effectiveQueryUnderstanding;
     context.action_plan_context = buildNavaEyeActionPlannerContext({
-      pendingFollowup: conversation?.pending_followup,
+      pendingFollowup: pendingFollowupForResolution,
       recentMessages: recentConversationMessages,
     });
 
@@ -313,7 +375,7 @@ export async function POST(req: Request) {
           ...enhancedContext,
           conversation_thread: buildConversationContextForAi(
             recentConversationMessages,
-            conversation.pending_followup,
+            pendingFollowupForResolution,
             pendingFollowupResolution
           ),
         }
@@ -497,7 +559,17 @@ export async function POST(req: Request) {
       }
     }
 
-    const nextPendingFollowup = buildPendingFollowup(context, answer);
+    const nextPendingFollowupBase = buildPendingFollowup(context, answer);
+    const nextContextSnapshot = buildNavaEyeContextSnapshot({
+      context,
+      answer,
+      previousSnapshot: storedContextSnapshot,
+      pendingFollowup: nextPendingFollowupBase,
+    });
+    const nextPendingFollowup = attachNavaEyeContextSnapshot({
+      pendingFollowup: nextPendingFollowupBase,
+      snapshot: nextContextSnapshot,
+    });
     if (conversation) {
       await appendConversationMessage({
         conversationId: conversation.id,
@@ -511,6 +583,7 @@ export async function POST(req: Request) {
           ai_used: aiUsed,
           pending_followup_offered: Object.keys(nextPendingFollowup).length > 0,
           answer_quality_warnings: answerQualityWarnings,
+          context_snapshot: nextContextSnapshot || {},
         },
       });
 
@@ -1109,6 +1182,10 @@ function sanitizeTopicTimeframe(value: any) {
 
 function buildPendingFollowup(context: any, answer: string) {
   const truckLabel =
+    context.truck_day_story?.identity?.truck_id ||
+    context.truck_day_story?.identity?.registration ||
+    context.truck_timeline_comparison?.truck_id ||
+    context.truck_timeline_comparison?.registration ||
     context.truck?.registration ||
     context.truck?.truck_id ||
     context.vehicle_match?.matched_registration ||

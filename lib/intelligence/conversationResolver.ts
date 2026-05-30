@@ -38,6 +38,7 @@ export async function resolveNavaEyeConversationFollowup(
   const activeMetricFollowupTopic =
     activeMetricTopic || buildMetricTopicFromActiveTruckTopic(activeTopic);
   const activeTripTopic = getActiveTripTopic(pending, input.companyId);
+  const activeProviderTopic = getActiveProviderTopic(pending, input.companyId);
   const prompt = typeof pending.prompt === "string" ? pending.prompt.trim() : "";
   const parsedQuery =
     input.structuredQuery ||
@@ -59,7 +60,47 @@ export async function resolveNavaEyeConversationFollowup(
         nextPendingFollowup: {},
       };
     }
+    const selectedClarificationCandidate = selectClarificationCandidateReply(
+      normalizedQuestion,
+      pendingClarification
+    );
+    if (selectedClarificationCandidate) {
+      return {
+        question: buildClarifiedVehicleQuestion({
+          ...pendingClarification,
+          candidate_label: selectedClarificationCandidate.candidate_label,
+          candidate_truck_id: selectedClarificationCandidate.candidate_truck_id,
+          candidate_registration: selectedClarificationCandidate.candidate_registration,
+        }),
+        usedPendingFollowup: true,
+        usedActiveTopic: true,
+        usedMetricTopic: false,
+        pendingType: "vehicle_clarification",
+        acceptedClarification: true,
+        entityResolution: {
+          input: pendingClarification.original_input || null,
+          matched_truck_id: selectedClarificationCandidate.candidate_truck_id || null,
+          matched_registration: selectedClarificationCandidate.candidate_registration || null,
+          matched_display_label: selectedClarificationCandidate.candidate_label || null,
+          match_type: "accepted_candidate_choice",
+        },
+        nextPendingFollowup: {},
+      };
+    }
     if (isAffirmativeClarificationReply(normalizedQuestion)) {
+      if (pendingClarification.candidates?.length > 1) {
+        return {
+          question,
+          usedPendingFollowup: true,
+          usedActiveTopic: false,
+          usedMetricTopic: false,
+          pendingType: "vehicle_clarification",
+          needsClarification: true,
+          clarificationReason: "vehicle_candidate_choice_needed",
+          clarification: "Which one should I use? Reply with 1, 2, or the exact registration.",
+          nextPendingFollowup: pending,
+        };
+      }
       return {
         question: buildClarifiedVehicleQuestion(pendingClarification),
         usedPendingFollowup: true,
@@ -99,6 +140,13 @@ export async function resolveNavaEyeConversationFollowup(
       needsClarification: true,
       clarificationReason: "ambiguous_vehicle_match",
       clarification: buildAmbiguousVehicleClarification(vehicleResolution),
+      nextPendingFollowup: buildVehicleCandidateChoicePendingFollowup({
+        companyId: input.companyId,
+        originalQuestion: question,
+        originalIntent: parsedQuery.intent_family,
+        candidates: vehicleResolution.ambiguous,
+        originalInput: vehicleResolution.input || vehicleResolution.input_key || null,
+      }),
     };
   }
 
@@ -239,7 +287,6 @@ export async function resolveNavaEyeConversationFollowup(
         usedPendingFollowup: true,
         usedActiveTopic: true,
         usedMetricTopic: false,
-        metricFollowup: true,
         metricFollowupType,
         pendingType: typeof pending.type === "string" ? pending.type : "active_truck_topic",
       };
@@ -285,6 +332,22 @@ export async function resolveNavaEyeConversationFollowup(
       usedMetricTopic: false,
       inheritedIntent: true,
       pendingType: typeof pending.type === "string" ? pending.type : "active_trip_topic",
+    };
+  }
+
+  if (
+    activeProviderTopic &&
+    isProviderTopicFollowup(parsedQuery, normalizedQuestion) &&
+    !explicitVehicleInput &&
+    !explicitFleetScope
+  ) {
+    return {
+      question: buildActiveProviderFollowupQuestion(normalizedQuestion, activeProviderTopic),
+      usedPendingFollowup: true,
+      usedActiveTopic: false,
+      usedMetricTopic: false,
+      inheritedIntent: true,
+      pendingType: typeof pending.type === "string" ? pending.type : "provider_topic",
     };
   }
 
@@ -506,20 +569,39 @@ function buildInheritedFleetQuestion(input: {
 function getPendingVehicleClarification(pending: any, companyId?: string | null) {
   const clarification = pending?.pending_clarification;
   if (!clarification || typeof clarification !== "object") return null;
-  if (String(clarification.type || "") !== "vehicle_close_match") return null;
+  const type = String(clarification.type || "");
+  if (type !== "vehicle_close_match" && type !== "vehicle_candidate_choice") return null;
   const clarificationCompanyId = String(clarification.company_id || "").trim();
   if (companyId && clarificationCompanyId && clarificationCompanyId !== companyId) return null;
-  const candidateLabel = String(clarification.candidate_label || "").trim();
+  const candidates = Array.isArray(clarification.candidates)
+    ? clarification.candidates
+        .map((candidate: any) => ({
+          candidate_label: String(candidate.candidate_label || candidate.label || "").trim().slice(0, 80),
+          candidate_truck_id: String(candidate.candidate_truck_id || candidate.truck_id || "").trim().slice(0, 80),
+          candidate_registration: String(candidate.candidate_registration || candidate.registration || "").trim().slice(0, 80),
+        }))
+        .filter((candidate: any) => candidate.candidate_label)
+        .slice(0, 5)
+    : [];
+  const firstCandidate = candidates[0] || null;
+  const candidateLabel = String(
+    clarification.candidate_label || firstCandidate?.candidate_label || ""
+  ).trim();
   const originalQuestion = String(clarification.original_question || "").trim();
   if (!candidateLabel || !originalQuestion) return null;
   return {
-    type: "vehicle_close_match",
+    type,
     company_id: clarificationCompanyId || companyId || null,
     original_question: originalQuestion.slice(0, 500),
     original_input: String(clarification.original_input || "").trim().slice(0, 80),
     candidate_label: candidateLabel.slice(0, 80),
-    candidate_truck_id: String(clarification.candidate_truck_id || "").trim().slice(0, 80),
-    candidate_registration: String(clarification.candidate_registration || "").trim().slice(0, 80),
+    candidate_truck_id: String(
+      clarification.candidate_truck_id || firstCandidate?.candidate_truck_id || ""
+    ).trim().slice(0, 80),
+    candidate_registration: String(
+      clarification.candidate_registration || firstCandidate?.candidate_registration || ""
+    ).trim().slice(0, 80),
+    candidates,
   };
 }
 
@@ -541,6 +623,71 @@ function buildVehicleClarificationPendingFollowup(input: {
       candidate_registration: String(closest.registration || "").slice(0, 80),
     },
   };
+}
+
+function buildVehicleCandidateChoicePendingFollowup(input: {
+  companyId: string;
+  originalQuestion: string;
+  originalIntent?: string | null;
+  originalInput?: string | null;
+  candidates: any[];
+}) {
+  const candidates = dedupeVehicleCandidates(input.candidates || [])
+    .slice(0, 5)
+    .map((candidate: any) => ({
+      candidate_label: String(candidate.display_label || candidate.provider_label || candidate.registration || candidate.truck_id || "").slice(0, 80),
+      candidate_truck_id: String(candidate.truck_id || "").slice(0, 80),
+      candidate_registration: String(candidate.registration || "").slice(0, 80),
+    }))
+    .filter((candidate: any) => candidate.candidate_label);
+
+  return {
+    type: "vehicle_clarification",
+    pending_clarification: {
+      type: "vehicle_candidate_choice",
+      company_id: input.companyId,
+      original_question: String(input.originalQuestion || "").slice(0, 500),
+      original_intent: String(input.originalIntent || "").slice(0, 80) || null,
+      original_input: String(input.originalInput || "").slice(0, 80) || null,
+      candidate_label: candidates[0]?.candidate_label || null,
+      candidate_truck_id: candidates[0]?.candidate_truck_id || null,
+      candidate_registration: candidates[0]?.candidate_registration || null,
+      candidates,
+      asked_at: new Date().toISOString(),
+    },
+  };
+}
+
+function selectClarificationCandidateReply(normalizedQuestion: string, clarification: any) {
+  const candidates = clarification?.candidates || [];
+  if (!candidates.length) return null;
+  const compact = normalizeVehicleKey(normalizedQuestion);
+  const ordinalMatch = normalizedQuestion.match(/^(?:number\s+)?([1-5])$/);
+  if (ordinalMatch) {
+    return candidates[Number(ordinalMatch[1]) - 1] || null;
+  }
+  const ordinalWords: Record<string, number> = {
+    first: 0,
+    second: 1,
+    third: 2,
+    fourth: 3,
+    fifth: 4,
+  };
+  if (Object.prototype.hasOwnProperty.call(ordinalWords, normalizedQuestion)) {
+    return candidates[ordinalWords[normalizedQuestion]] || null;
+  }
+  return (
+    candidates.find((candidate: any) => {
+      const keys = [
+        candidate.candidate_label,
+        candidate.candidate_truck_id,
+        candidate.candidate_registration,
+      ]
+        .map(normalizeVehicleKey)
+        .filter(Boolean);
+      return keys.includes(compact);
+    }) || null
+  );
 }
 
 function buildClarifiedVehicleQuestion(clarification: any) {
@@ -1261,6 +1408,40 @@ function getActiveTripTopic(pending: any, companyId?: string | null) {
     route_label: String(topic.route_label || "").trim().slice(0, 160) || null,
     company_id: topicCompanyId || companyId || null,
   };
+}
+
+function getActiveProviderTopic(pending: any, companyId?: string | null) {
+  const topic = pending?.provider_topic;
+  if (!topic || typeof topic !== "object") return null;
+  const providerName = String(topic.provider_name || "").trim();
+  const providerId = String(topic.provider_id || "").trim();
+  if (!providerName && !providerId) return null;
+  const topicCompanyId = String(topic.company_id || "").trim();
+  if (companyId && topicCompanyId && topicCompanyId !== companyId) return null;
+
+  return {
+    entity_type: "provider",
+    provider_id: providerId.slice(0, 120) || null,
+    provider_name: providerName.slice(0, 120) || providerId.slice(0, 120),
+    company_id: topicCompanyId || companyId || null,
+    last_intent: typeof topic.last_intent === "string" ? topic.last_intent.slice(0, 80) : null,
+  };
+}
+
+function isProviderTopicFollowup(parsedQuery: NavaEyeStructuredQuery, normalizedQuestion: string) {
+  if (parsedQuery.intent_family === "provider_capability") return true;
+  if (parsedQuery.intent_family === "management_actions") return true;
+  return /\b(what should i fix|fix first|what should i check|what now|does it expose|does it have|fuel|engine|ignition|distance|mileage|odometer|sync|feed|mapping|capability)\b/.test(
+    normalizedQuestion
+  );
+}
+
+function buildActiveProviderFollowupQuestion(normalizedQuestion: string, activeProviderTopic: any) {
+  const provider = activeProviderTopic.provider_name || activeProviderTopic.provider_id || "this provider";
+  if (/\b(what should i fix|fix first|what should i check|what now|what should i do)\b/.test(normalizedQuestion)) {
+    return `What provider setup should I fix first for ${provider}? Include sync, feed, distance, engine, fuel, and mapping capability.`;
+  }
+  return `What does ${provider} expose? Include safe capability evidence for fuel, engine, ignition, distance, mileage, idle markers, and mapping status.`;
 }
 
 function sanitizeMetricIntent(value: any) {

@@ -449,6 +449,11 @@ Open `/nava-eye` and ask:
 - [ ] After the Truck Day Story, ask "show timeline" and confirm Nava Eye lists key movement/stopped windows for the same truck and operating day without raw coordinates.
 - [ ] After the Truck Day Story, ask "what about yesterday?" and confirm Nava Eye returns the same truck's previous operating-day story.
 - [ ] After the Truck Day Story, ask "how did you calculate that?" and confirm Nava Eye gives audit detail: source hierarchy, telemetry point/block counts, first/last evidence timestamps, distance source, stopped-window method, missing evidence, and no raw coordinates.
+- [ ] After the Truck Day Story chain, ask "where is it now?" and confirm Nava Eye keeps the same truck and switches to live status/location without asking which truck.
+- [ ] After the Truck Day Story chain, ask "was it idling?" and confirm Nava Eye keeps the same truck and distinguishes GPS-stopped evidence, tracker idle markers, and unverified engine-on idle.
+- [ ] Refresh or trigger a new serverless request between Truck Day Story follow-ups and confirm the same truck/period/audit target are rebuilt from persisted conversation context, not process memory.
+- [ ] Say "start over" or "clear context", then ask "where is it now?" and confirm Nava Eye asks which truck rather than reusing the previous subject.
+- [ ] When Nava Eye lists multiple true vehicle candidates, reply "1" or "second" and confirm it reruns the original question for the selected candidate and remembers that subject.
 - [ ] Ask "How about KCW103Z" after a truck-status answer and confirm Nava Eye inherits current-status intent for KCW 103Z.
 - [ ] Ask "Where is KDQ265?", then ask "How much mileage has it covered today?" and confirm the answer stays on KDQ 265T instead of switching to fleet-wide.
 - [ ] After a truck mileage answer, ask "how did you calculate that?" and confirm Nava Eye gives audit detail for the same truck and metric: source hierarchy, provider summary count if any, GPS point/segment counts if used, filtered jumps/gaps, and provisional caveats without raw coordinates.
