@@ -58,6 +58,11 @@ const platformCards = [
     href: "/admin/company",
   },
   {
+    title: "Team Access",
+    body: "Manage company users, roles, and active access for the workspace.",
+    href: "/admin/team-access",
+  },
+  {
     title: "Geofences",
     body: "Manage depots, customer sites, loading zones, and risk areas.",
     href: "/geofences",
@@ -89,6 +94,11 @@ const companyCards = [
     title: "Company Settings",
     body: "Update operating context for better review suggestions and answers.",
     href: "/admin/company",
+  },
+  {
+    title: "Team Access",
+    body: "Manage company users, workspace roles, and active access.",
+    href: "/admin/team-access",
   },
   {
     title: "Geofences",

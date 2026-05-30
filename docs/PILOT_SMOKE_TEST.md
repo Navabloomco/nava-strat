@@ -36,6 +36,7 @@ This playbook may use pilot/testing language because it is an internal validatio
 Open these pages as a `platform_owner`:
 
 - [ ] `/admin`
+- [ ] `/admin/team-access?companyId=<companyId>`
 - [ ] `/admin/health`
 - [ ] `/admin/pilot-readiness`
 - [ ] `/admin/pilot-readiness/[companyId]`
@@ -67,6 +68,23 @@ Expected result:
 - [ ] Tenant context banner appears where supported.
 - [ ] Pages that do not support automatic tenant context say so clearly instead of pretending.
 - [ ] Non-platform users cannot use `companyId` to cross tenants.
+
+## Team Access Controlled-Pilot Smoke Test
+
+Open `/admin/team-access` as a company `owner` or `admin`, and as `platform_owner` with an explicit `companyId`.
+
+- [ ] Confirm current company users load with email/name where available, role, active/inactive state, and account date metadata.
+- [ ] Confirm only `owner`, `admin`, `ops`, `finance`, and `management` are offered as editable pilot roles.
+- [ ] Add an existing authenticated user by work email and confirm the user appears in the same-company list.
+- [ ] Try an email with no existing account and confirm the page says the user must sign up first; no fake invitation email is implied.
+- [ ] Change a user to `ops`, then confirm that user sees operational routes and does not see restricted finance amounts.
+- [ ] Change a user to `finance`, then confirm Revenue Review and Client Rates are visible and operational Trip creation is not presented as a finance-owned action.
+- [ ] Change a user to `management`, then confirm the Management dashboard is visible according to role policy.
+- [ ] Deactivate a user and confirm the membership disappears from active company context and cannot access the workspace.
+- [ ] Reactivate the user and confirm access returns for the selected role.
+- [ ] Confirm the API blocks demoting/deactivating the last active owner/admin for the company.
+- [ ] Confirm tenant admins cannot edit `platform_owner` access rows.
+- [ ] Confirm `platform_owner` sees a clear company context before editing access and cannot accidentally edit another company through a tenant user's role.
 
 ## 4. Dashboard Command Brief Smoke Test
 

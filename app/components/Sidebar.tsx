@@ -193,6 +193,11 @@ export default function Sidebar() {
           show: roles.isAdmin,
         },
         {
+          name: "Team Access",
+          href: "/admin/team-access",
+          show: roles.isAdmin,
+        },
+        {
           name: "Client Visibility",
           href: "/admin/client-visibility",
           show: roles.isAdmin,
