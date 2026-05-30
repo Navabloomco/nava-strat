@@ -5,6 +5,7 @@ import {
   isMissingCompanyTypeColumn,
   isPlatformOperatorCompany,
 } from "../../../lib/companyType";
+import { acceptPendingCompanyInvitationsForUser } from "../../../lib/api/teamInvitations";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -82,6 +83,8 @@ export async function GET(req: Request) {
     if (userError || !user) {
       return noStoreJson({ error: "Unauthorized" }, { status: 401 });
     }
+
+    await acceptPendingCompanyInvitationsForUser(user);
 
     const { data: memberships, error: membershipError } = await supabaseAdmin
       .from("company_users")

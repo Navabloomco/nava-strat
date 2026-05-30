@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { isPendingAssetReview } from "../../../../lib/assetReview";
 import { supabase } from "../../../../lib/supabase";
 import { supabaseAdmin } from "../../../../lib/supabaseAdmin";
+import { acceptPendingCompanyInvitationsForUser } from "../../../../lib/api/teamInvitations";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -329,6 +330,8 @@ export async function GET(req: Request) {
     const { user, error } = await getUserFromRequest(req);
     if (error || !user) return error;
 
+    await acceptPendingCompanyInvitationsForUser(user);
+
     const memberships = await getActiveMemberships(user.id);
     const company = await getCompanyForMemberships(memberships);
     const status = await buildStatus(company);
@@ -351,6 +354,8 @@ export async function POST(req: Request) {
   try {
     const { user, error } = await getUserFromRequest(req);
     if (error || !user) return error;
+
+    await acceptPendingCompanyInvitationsForUser(user);
 
     const memberships = await getActiveMemberships(user.id);
     const existingCompany = await getCompanyForMemberships(memberships);

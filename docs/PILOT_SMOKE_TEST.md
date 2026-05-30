@@ -26,6 +26,7 @@ This playbook may use pilot/testing language because it is an internal validatio
 - [ ] Confirm platform-owner login works.
 - [ ] Confirm the additive `billing_invoices` SQL has been applied.
 - [ ] Confirm the `client_rate_rules` and `journey_revenue_entries` migrations have been applied before testing Client Rates / Revenue Rules.
+- [ ] Confirm the `company_user_invitations` migration has been applied before testing Team Access email invitations.
 - [ ] Confirm a test tenant/company exists.
 - [ ] Confirm at least one tracking provider is configured for the test tenant.
 - [ ] Confirm at least one current provider asset or asset-reviewable record exists.
@@ -76,14 +77,20 @@ Open `/admin/team-access` as a company `owner` or `admin`, and as `platform_owne
 - [ ] Confirm current company users load with email/name where available, role, active/inactive state, and account date metadata.
 - [ ] As a tenant admin, confirm platform-owner/internal support users are absent from the visible table and excluded from total/active counts.
 - [ ] Confirm only `owner`, `admin`, `ops`, `finance`, and `management` are offered as editable pilot roles.
-- [ ] Add an existing authenticated user by work email and confirm the user appears in the same-company list.
-- [ ] Try an email with no existing account and confirm the page says the user must sign up first; no fake invitation email is implied.
+- [ ] Invite a new email as `ops` and confirm a real pending invitation appears.
+- [ ] Confirm invite email delivery is sent through the server-side auth invite path and no service-role key or provider internals appear in the browser.
+- [ ] Accept the invite, sign in, and confirm the user appears in Team Access as an active `ops` user.
+- [ ] Confirm the invited `ops` user can access operational routes but cannot see restricted finance amounts.
+- [ ] Invite or add an existing authenticated user as `finance` and confirm the user appears in the same-company list.
+- [ ] Revoke a pending invite and confirm accepting/signing in through that revoked invite does not create company access.
+- [ ] Resend a pending/failed invite and confirm the status remains visible without raw Supabase errors.
 - [ ] Change a user to `ops`, then confirm that user sees operational routes and does not see restricted finance amounts.
 - [ ] Change a user to `finance`, then confirm Revenue Review and Client Rates are visible and operational Trip creation is not presented as a finance-owned action.
 - [ ] Change a user to `management`, then confirm the Management dashboard is visible according to role policy.
 - [ ] Deactivate a user and confirm the membership disappears from active company context and cannot access the workspace.
 - [ ] Reactivate the user and confirm access returns for the selected role.
 - [ ] Confirm the API blocks demoting/deactivating the last active owner/admin for the company.
+- [ ] Confirm tenant admins cannot invite or grant `platform_owner`.
 - [ ] Confirm tenant admins cannot edit internal access rows by guessed user id or email; the API rejects the request without exposing internal role mechanics.
 - [ ] Confirm `platform_owner` sees a clear company context before editing access, can retain internal visibility, and cannot accidentally edit another company through a tenant user's role.
 

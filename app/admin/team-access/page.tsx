@@ -30,6 +30,15 @@ type TeamUser = {
   last_sign_in_at?: string | null;
 };
 
+type TeamInvitation = {
+  id: string;
+  email: string;
+  role: string;
+  status: string;
+  invited_at?: string | null;
+  invite_error?: string | null;
+};
+
 const ROLE_OPTIONS = [
   { value: "owner", label: "Owner" },
   { value: "admin", label: "Admin" },
@@ -47,6 +56,7 @@ export default function TeamAccessPage() {
   const [isPlatformOwner, setIsPlatformOwner] = useState(false);
   const [company, setCompany] = useState<CompanyOption | null>(null);
   const [users, setUsers] = useState<TeamUser[]>([]);
+  const [invitations, setInvitations] = useState<TeamInvitation[]>([]);
   const [inviteMode, setInviteMode] = useState("");
   const [warning, setWarning] = useState("");
   const [newEmail, setNewEmail] = useState("");
@@ -146,6 +156,7 @@ export default function TeamAccessPage() {
 
       setCompany(json.company || null);
       setUsers(json.users || []);
+      setInvitations(json.invitations || []);
       setInviteMode(json.invite_flow?.message || "");
       setWarning(json.warning || "");
     } catch (err: any) {
@@ -155,7 +166,7 @@ export default function TeamAccessPage() {
     }
   }
 
-  async function addExistingUser(e: FormEvent) {
+  async function inviteUser(e: FormEvent) {
     e.preventDefault();
     setSaving(true);
     setError("");
@@ -190,6 +201,43 @@ export default function TeamAccessPage() {
       await loadTeamAccess(selectedCompanyId);
     } catch (err: any) {
       setError(err.message || "Unable to add user.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function updateInvitation(invitation: TeamInvitation, action: "resend_invite" | "revoke_invite") {
+    setSaving(true);
+    setError("");
+    setMessage("");
+
+    const token = await getAccessToken();
+    if (!token) return;
+
+    try {
+      const res = await fetch("/api/admin/team-access", {
+        method: "PATCH",
+        cache: "no-store",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          companyId: selectedCompanyId,
+          invitationId: invitation.id,
+          action,
+        }),
+      });
+      const json = await res.json();
+
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || "Unable to update invitation.");
+      }
+
+      setMessage(json.message || "Invitation updated.");
+      await loadTeamAccess(selectedCompanyId);
+    } catch (err: any) {
+      setError(err.message || "Unable to update invitation.");
     } finally {
       setSaving(false);
     }
@@ -321,7 +369,8 @@ export default function TeamAccessPage() {
         )}
 
         <section className="mt-8 grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
-          <Panel dark className="overflow-hidden">
+          <div className="grid gap-5">
+            <Panel dark className="overflow-hidden">
             <div className="flex flex-col gap-3 border-b border-white/10 p-5 sm:flex-row sm:items-end sm:justify-between">
               <div>
                 <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-400">
@@ -437,19 +486,88 @@ export default function TeamAccessPage() {
                 </tbody>
               </table>
             </div>
-          </Panel>
+            </Panel>
+
+            <Panel dark className="overflow-hidden">
+              <div className="flex flex-col gap-3 border-b border-white/10 p-5 sm:flex-row sm:items-end sm:justify-between">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-400">
+                    Pending invitations
+                  </p>
+                  <p className="mt-2 text-sm leading-6 text-slate-300">
+                    Invited users are added after accepting the email invitation and signing in.
+                  </p>
+                </div>
+                <StatusPill tone={invitations.length > 0 ? "info" : "neutral"}>
+                  {invitations.length} open
+                </StatusPill>
+              </div>
+
+              <div className="divide-y divide-white/10">
+                {invitations.map((invitation) => (
+                  <div
+                    key={invitation.id}
+                    className="flex flex-col gap-4 p-5 lg:flex-row lg:items-center lg:justify-between"
+                  >
+                    <div className="min-w-0">
+                      <div className="break-words font-semibold text-white">
+                        {invitation.email}
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <StatusPill tone={invitation.status === "failed" ? "danger" : "warning"}>
+                          {invitation.status === "failed" ? "Send failed" : "Pending"}
+                        </StatusPill>
+                        <StatusPill tone="neutral">{labelForRole(invitation.role)}</StatusPill>
+                      </div>
+                      <div className="mt-2 text-sm text-slate-400">
+                        {invitation.invited_at
+                          ? `Invited ${formatDate(invitation.invited_at)}`
+                          : "Invite date unavailable"}
+                      </div>
+                      {invitation.invite_error && (
+                        <div className="mt-2 text-sm text-rose-200">
+                          {invitation.invite_error}
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <SecondaryButton
+                        type="button"
+                        onClick={() => updateInvitation(invitation, "resend_invite")}
+                        disabled={saving}
+                      >
+                        Resend
+                      </SecondaryButton>
+                      <SecondaryButton
+                        type="button"
+                        onClick={() => updateInvitation(invitation, "revoke_invite")}
+                        disabled={saving}
+                      >
+                        Revoke
+                      </SecondaryButton>
+                    </div>
+                  </div>
+                ))}
+                {invitations.length === 0 && (
+                  <div className="p-5 text-sm text-slate-400">
+                    No pending invitations.
+                  </div>
+                )}
+              </div>
+            </Panel>
+          </div>
 
           <div className="grid gap-5">
             <Panel dark className="p-5">
               <p className="text-xs font-bold uppercase tracking-[0.14em] text-cyan-200">
-                Add existing user
+                Invite by email
               </p>
               <p className="mt-2 text-sm leading-6 text-slate-300">
-                Add a user after they have created a Nava Strat login. Nava does
-                not send invitation emails from this screen yet.
+                Send a secure invitation. If the user already has an account,
+                Nava will add or reactivate workspace access.
               </p>
 
-              <form onSubmit={addExistingUser} className="mt-5 grid gap-4">
+              <form onSubmit={inviteUser} className="mt-5 grid gap-4">
                 <FormField label="Work email" dark>
                   <input
                     type="email"
@@ -474,7 +592,7 @@ export default function TeamAccessPage() {
                   </select>
                 </FormField>
                 <PrimaryButton type="submit" disabled={saving || !newEmail.trim()}>
-                  {saving ? "Saving..." : "Add user"}
+                  {saving ? "Sending..." : "Send invitation"}
                 </PrimaryButton>
               </form>
             </Panel>
@@ -485,7 +603,7 @@ export default function TeamAccessPage() {
               </p>
               <p className="mt-2 text-sm leading-6 text-slate-300">
                 {inviteMode ||
-                  "Email invitation automation is not configured yet. Add existing authenticated users only."}
+                  "Invite users by email. They are added after accepting the invitation and signing in."}
               </p>
               <div className="mt-4 grid gap-2 text-sm leading-6 text-slate-400">
                 <p>Ops captures Trips, proof, tracking, and availability context.</p>
@@ -514,4 +632,8 @@ function formatDate(value?: string | null) {
     day: "numeric",
     year: "numeric",
   }).format(date);
+}
+
+function labelForRole(role: string) {
+  return ROLE_OPTIONS.find((option) => option.value === role)?.label || "Role";
 }
