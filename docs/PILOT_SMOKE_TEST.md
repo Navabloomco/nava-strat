@@ -428,6 +428,9 @@ Run the detailed Nava Eye regression pack in `docs/NAVA_EYE_REGRESSION_TESTS.md`
 
 Open `/nava-eye` and ask:
 
+- [ ] Confirm `/nava-eye` opens as a focused AI workspace with a slim conversation rail, wide message area, and bottom composer rather than a narrow form block.
+- [ ] Confirm suggested prompt chips sit above the composer, stay compact on desktop, and scroll/wrap safely on mobile.
+- [ ] Confirm the old `Done with this investigation?` flow does not interrupt the chat; close/delete controls remain available in the thread controls.
 - [ ] Create a new Nava Eye conversation.
 - [ ] Open Nava Eye from a contextual page prompt and confirm it creates a fresh investigation thread, sends the scoped prompt, and clears the prompt from the URL.
 - [ ] Confirm contextual links from Live Tracking, Ops Intelligence, Trip Detail, Finance Revenue Review, Client Rates, and Provider Vault open `/nava-eye` with the scoped prompt visible in the active conversation instead of rendering an answer on the source page.
