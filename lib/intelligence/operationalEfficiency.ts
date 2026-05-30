@@ -999,8 +999,7 @@ function classifyStopContext(input: {
     return {
       context: "provider_current_stop",
       label: "Context: Provider current stop episode",
-      note:
-        "Provider current stop is a current continuous episode; Nava GPS-stopped is the selected-period stationary total.",
+      note: "",
     };
   }
 
@@ -1017,16 +1016,14 @@ function classifyStopContext(input: {
     return {
       context: "site_or_known_place",
       label: "Context: At/near known place",
-      note:
-        "Known operational context lowers blame confidence; unknown stopped time needs review.",
+      note: "Known operational context lowers blame confidence.",
     };
   }
 
   return {
     context: "unknown_stopped_time",
     label: "Context: Unknown stopped time",
-    note:
-      "Unknown stopped time needs review; no provider current-stop or site context is linked yet.",
+    note: "Needs review; no recorded cause is linked yet.",
   };
 }
 
@@ -1295,7 +1292,7 @@ function buildTruckMovementSummary(
               provider_current_stop_label:
                 telemetry?.provider_current_stop_label || null,
               explanation:
-                "Provider current stop is the current continuous episode; Nava GPS-stopped is the selected-period stationary total.",
+                "Provider current stop is the current episode; stopped-time total covers the selected period.",
             }
           : null,
       observed_minutes: telemetry?.observed_minutes || 0,
@@ -1468,7 +1465,7 @@ function buildIdleTimeSummary(
                 stats.provider_current_stop_duration_minutes,
               provider_current_stop_label: stats.provider_current_stop_label,
               explanation:
-                "Provider current stop is the current continuous episode; Nava GPS-stopped is the selected-period stationary total.",
+                "Provider current stop is the current episode; stopped-time total covers the selected period.",
             }
           : null,
     }));
@@ -1477,7 +1474,7 @@ function buildIdleTimeSummary(
     status:
       alertRank.length || stoppedRank.length ? "available" : "not_enough_evidence",
     evidence_label:
-      "Provider idle markers include canonical provider_idle_marker rows and qualifying legacy excessive_idle/long_idle rows; GPS-stopped time is separate and not engine-on idle proof.",
+      "Tracker/provider idle-marker evidence where available. GPS-stopped time is separate and not engine-on idle proof.",
     top_idle_alert_windows: alertRank.slice(0, 15),
     top_stopped_by_gps: stoppedRank.slice(0, 15),
     idle_alert_truck_count: alertRank.length,
@@ -1545,12 +1542,7 @@ function buildIdleWindowsByTruck(
       },
       { canonical_provider_markers: 0, legacy_provider_markers: 0 }
     );
-    const evidenceLabel =
-      sourceCounts.legacy_provider_markers > 0 && sourceCounts.canonical_provider_markers > 0
-        ? "provider-derived and legacy provider idle marker windows"
-        : sourceCounts.legacy_provider_markers > 0
-          ? "legacy provider idle marker windows"
-          : "provider-derived idle marker windows";
+    const evidenceLabel = "tracker/provider idle-marker windows";
     const safeProviderDurationMinutes = windows.reduce(
       (sum, window) => sum + Number(window.safe_provider_duration_minutes || 0),
       0
@@ -1585,7 +1577,7 @@ function buildIdleWindowsByTruck(
       evidence_label: evidenceLabel,
       windows: windows.slice(0, 6),
       interpretation:
-        "This is provider marker evidence, including legacy markers where present. It is not confirmed engine-on idling unless ignition/engine data is available.",
+        "This is tracker/provider marker evidence where available. It is not confirmed engine-on idling unless ignition/engine data is available.",
     });
   }
 
@@ -1730,7 +1722,7 @@ function buildProductivitySummary(
                   stats.provider_current_stop_duration_minutes,
                 provider_current_stop_label: stats.provider_current_stop_label,
                 explanation:
-                  "Provider current stop is the current continuous episode; Nava GPS-stopped is the selected-period stationary total.",
+                  "Provider current stop is the current episode; stopped-time total covers the selected period.",
               }
             : null
         ),
@@ -1760,7 +1752,7 @@ function buildProductivitySummary(
   return {
     status: rows.length ? "available" : "not_enough_evidence",
     evidence_label:
-      "productive time is estimated from moving versus stationary GPS point intervals; it is not engine-on idle, fuel burn, revenue, or profit.",
+      "Movement review uses moving versus stationary GPS point intervals; it does not prove engine-on idle, fuel burn, revenue, or contribution.",
     analyzed_truck_count: rows.length,
     low_productive_time_count: lowProductiveRows.length,
     known_unavailable_count: knownUnavailableRows.length,

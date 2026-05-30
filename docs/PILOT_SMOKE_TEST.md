@@ -11,6 +11,7 @@ This playbook may use pilot/testing language because it is an internal validatio
 - [ ] Customer-facing pages use `Trips`, `Ops Intelligence`, `Revenue Review`, `Client rates`, `Contribution review`, and `review-ready contribution` instead of old pilot/dashboard/profitability language.
 - [ ] Customer-facing pages do not show `pilot view`, `pilot readiness`, `canonical`, `legacy`, `event_type`, `provider_signal_flags`, raw payload wording, or row-path/debug terminology unless it is inside a clearly advanced/platform diagnostic surface.
 - [ ] Evidence caveats remain visible but concise: GPS-derived distance estimate, provider distance evidence, stopped-time evidence, tracker idle markers, and engine-on idle not verified.
+- [ ] Ops Intelligence uses concise default labels such as `Low Movement Review`, `tracker/provider idle-marker evidence`, and `Contribution review ready`; longer stopped-context and marker-source mechanics are left to Nava Eye/audit detail.
 - [ ] Nava Eye answers are concise by default and only show audit details after questions such as `how`, `why`, `show evidence`, or `why should I trust it`.
 - [ ] Reusable UI placeholders do not contain tenant-specific examples, real truck plates, real client names, real trip IDs, or pilot contribution amounts.
 - [ ] Public, pricing, login, and onboarding pages use controlled-rollout language such as `Request implementation review`, `Start setup`, `Open workspace`, and `Talk to Nava Bloom` instead of customer-facing `pilot trial` / `Start trial` copy.
@@ -401,12 +402,12 @@ Confirm workflow behavior:
 - [ ] Confirm each distance row shows first/last telemetry point, points/segments used, and a partial-coverage warning when the last point is much earlier than the selected period end.
 - [ ] Confirm stopped-time rows show customer-readable evidence such as "No movement observed in sampled intervals", "Movement observed in X% of sampled intervals", GPS point/interval counts, and low-confidence sparse/capped labels instead of technical observed-interval ratios.
 - [ ] Confirm stopped-time rows are labeled GPS-estimated stopped time and do not claim engine-on idling, fuel burn, driver waste, or fuel misuse.
-- [ ] On Ops Intelligence movement, stopped, low-productive-time, known unavailable, and tracker idle-marker rows, click the compact Nava Eye action and confirm the prompt stays scoped to that truck/evidence type.
+- [ ] On Ops Intelligence movement, stopped, low movement review, known unavailable, and tracker idle-marker rows, click the compact Nava Eye action and confirm the prompt stays scoped to that truck/evidence type.
 - [ ] On an Ops Intelligence Trip row, click `Ask what is blocking this Trip` and confirm Nava Eye opens a Trip-scoped review question.
-- [ ] If a provider current-feed stop duration is present, confirm `/ops/efficiency` shows it separately from Nava GPS-stopped time and explains that provider current stop is the current continuous episode while Nava GPS-stopped is the selected-period stationary total.
+- [ ] If a provider current-feed stop duration is present, confirm `/ops/efficiency` shows it separately from stopped-time total and keeps the metric distinction concise on the default page.
 - [ ] Confirm stopped rows show cautious context labels such as Provider current stop episode, Provider status indicates stopped/parked, At/near known place, or Unknown stopped time, without turning site dwell into client delay or blame.
-- [ ] Confirm trucks with active availability statuses such as Grounded, Under repair, Breakdown reported, or Out of service are labelled as known unavailable context in Ops Intelligence and are not treated as ordinary low-productivity candidates.
-- [ ] Confirm idle/excessive-idle event sections are labeled provider idle markers/provider-derived marker windows unless ignition/engine/CAN data verifies true engine-on idle.
+- [ ] Confirm trucks with active availability statuses such as Grounded, Under repair, Breakdown reported, or Out of service are labelled as known unavailable context in Ops Intelligence and are not treated as ordinary low-movement candidates.
+- [ ] Confirm idle/excessive-idle event sections are labeled tracker/provider idle-marker evidence unless ignition/engine/CAN data verifies true engine-on idle.
 - [ ] Confirm provider idle markers are present in `telemetry_events` as canonical `provider_idle_marker` rows when the provider feed supplies idle/excessive-idle marker values.
 - [ ] Confirm legacy `excessive_idle` / `long_idle` rows count as provider-derived markers only when metadata does not mark them as GPS-generated/event-engine stopped estimates.
 - [ ] Confirm GPS-only stopped windows and GPS-generated `excessive_idle` rows are not counted as provider-derived idle markers.
@@ -420,7 +421,7 @@ Confirm workflow behavior:
 - [ ] Open `/ops/efficiency` and confirm the page fetches operational efficiency and Trip Intelligence through the authenticated app session pattern instead of requiring direct unauthenticated API browsing.
 - [ ] Confirm `/ops/efficiency` range selector works for today, yesterday, and 7 days.
 - [ ] Confirm Today defaults to the current company/operator date, the selected period/data window are shown in local time, Yesterday shows the previous local date, and stale async responses cannot repaint Yesterday data after switching to Today.
-- [ ] Confirm `/ops/efficiency` shows trucks moved most, stopped most, stale locations, low productive-time trucks, idle marker windows, evidence labels, Trip Intelligence counts, missing-data summary, and not-enough-linked-data panels.
+- [ ] Confirm `/ops/efficiency` shows trucks moved most, stopped most, stale locations, low movement review, idle marker windows, evidence labels, Trip Intelligence counts, missing-data summary, and not-enough-linked-data panels.
 - [ ] Confirm `/ops/efficiency` shows a friendly in-page access message instead of raw JSON when the user lacks access.
 - [ ] Call `GET /api/ops/trip-intelligence?range=yesterday` with an ops-visible role and confirm the JSON returns Trip records projected from `journeys`.
 - [ ] Confirm `/api/ops/trip-intelligence` does not require `journeys.updated_at`; it uses `start_time` / `end_time` when available and `created_at` as fallback.

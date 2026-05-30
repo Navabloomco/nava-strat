@@ -167,7 +167,7 @@ export default function OpsEfficiencyPage() {
           dark
           eyebrow="Operations"
           title="Ops Intelligence"
-          body="Movement, stopped-time evidence, tracker idle markers, trip readiness, and missing links for the selected period. This page shows operational evidence without claiming fuel burn, theft, or final audited profit."
+          body="Movement, stopped-time evidence, tracker idle markers, Trip readiness, and missing links for the selected period. This page shows operational evidence without claiming fuel burn, theft, or final audited financial results."
           actions={
             <div className="flex flex-wrap gap-2">
               {rangeOptions.map((option) => (
@@ -236,7 +236,7 @@ export default function OpsEfficiencyPage() {
               <MetricCard
                 label="Stopped-time trucks"
                 value={formatCount(idle.gps_stopped_truck_count)}
-                detail={idle.evidence_label || "Stopped-time evidence unavailable"}
+                detail="GPS-estimated stopped-time evidence"
               />
               <MetricCard
                 label="Stale locations"
@@ -280,7 +280,7 @@ export default function OpsEfficiencyPage() {
 
               <RankedPanel
                 title="Stopped Most"
-                subtitle={productivity.evidence_label || idle.evidence_label}
+                subtitle={stoppedSectionSubtitle(productivity.evidence_label || "GPS-estimated stopped-time evidence")}
                 emptyTitle="No stopped-time evidence"
                 emptyBody="Stopped-time ranking needs enough tracker intervals in the selected range."
                 rows={(productivity.stopped_most_of_day || idle.top_stopped_by_gps || []).slice(0, 8)}
@@ -305,10 +305,10 @@ export default function OpsEfficiencyPage() {
               />
 
               <RankedPanel
-                title="Low Productive-Time Trucks"
-                subtitle={productivity.evidence_label}
-                emptyTitle="No low productive-time exceptions"
-                emptyBody="No trucks met the low productive-time threshold for this range."
+                title="Low Movement Review"
+                subtitle="Review trucks with limited movement in the selected period. Known availability or site context lowers urgency."
+                emptyTitle="No low movement review items"
+                emptyBody="No trucks met the low movement review threshold for this range."
                 rows={(productivity.low_productive_trucks || []).slice(0, 8)}
                 renderRow={(truck: any) => (
                   <RankRow
@@ -319,7 +319,7 @@ export default function OpsEfficiencyPage() {
                     action={
                       <NavaEyePromptLink
                         label="Ask what to do"
-                        prompt={`What should I do about ${truck.truck_id || "this truck"} based on its low productive-time evidence for ${timeframe.display_label || range}?`}
+                        prompt={`What should I do about ${truck.truck_id || "this truck"} based on its low movement evidence for ${timeframe.display_label || range}?`}
                         companyId={companyIdParam}
                         contextType="truck"
                         contextId={truck.truck_key || truck.truck_id}
@@ -332,7 +332,7 @@ export default function OpsEfficiencyPage() {
 
               <RankedPanel
                 title="Known Unavailable"
-                subtitle="Manual availability context keeps known downtime separate from normal low-productivity review."
+                subtitle="Manual availability context keeps known downtime separate from normal low-movement review."
                 emptyTitle="No known unavailable assets"
                 emptyBody="No active grounded, repair, breakdown, or out-of-service status is recorded."
                 rows={(productivity.known_unavailable_trucks || []).slice(0, 8)}
@@ -479,7 +479,7 @@ export default function OpsEfficiencyPage() {
                     Number(tripSummary.trip_count || 0)
                   ),
                   evidence_label:
-                    "trip revenue minus linked fuel/expense cost evidence; per-km metrics need distance",
+                    "linked revenue minus linked fuel/expense cost evidence; distance-based metrics remain separate",
                 }}
                 fallback="Contribution review requires linked revenue and cost evidence. Unlinked costs are not used for exact trip contribution."
               />
@@ -589,7 +589,7 @@ function TripRow({ trip, companyId }: { trip: any; companyId?: string | null }) 
       <div className="mt-3 grid gap-2 text-xs text-slate-300 sm:grid-cols-3">
         <span>Distance: {movement.distance_km ? `${formatKm(movement.distance_km)} km` : "Unavailable"}</span>
         <span>Source: {formatDistanceEvidenceDetail({ ...movement, compact: true })}</span>
-        <span>Flags: {flags.length ? flags.slice(0, 3).map(humanize).join(", ") : "None"}</span>
+        <span>Flags: {flags.length ? flags.slice(0, 3).map(displayTripFlag).join(", ") : "None"}</span>
       </div>
       {showContribution && (
         <div className="mt-3 grid gap-2 rounded-md border border-emerald-300/15 bg-emerald-300/10 p-3 text-xs leading-5 text-emerald-50 sm:grid-cols-2 xl:grid-cols-5">
@@ -598,7 +598,9 @@ function TripRow({ trip, companyId }: { trip: any; companyId?: string | null }) 
           <span>Contribution: {formatCurrency(contribution.contribution_amount)}</span>
           <span>Margin: {formatPercentValue(contribution.contribution_margin_percent)}</span>
           {hasMetricValue(contribution.per_km_contribution) ? (
-            <span>{formatTripPerKmContribution(contribution)}</span>
+            <span className={contribution.per_km_metrics_provisional ? "text-emerald-100/70" : ""}>
+              {formatTripPerKmContribution(contribution)}
+            </span>
           ) : null}
         </div>
       )}
@@ -789,6 +791,25 @@ function missingDataLabel(value: any) {
   return humanize(value);
 }
 
+function displayTripFlag(value: any) {
+  const key = String(value || "").trim().toLowerCase();
+  const labels: Record<string, string> = {
+    ready_for_profit_review: "Ready for contribution review",
+    ready_for_contribution_review: "Ready for contribution review",
+    needs_finance_linking: "Needs finance linking",
+    needs_provider_distance: "Needs provider distance",
+    movement_without_revenue: "Movement without revenue review",
+    revenue_without_movement_evidence: "Revenue without movement evidence",
+    costs_without_revenue: "Costs without revenue review",
+    stale_tracking: "Stale tracking",
+    missing_driver: "Missing driver",
+    missing_client_or_route: "Missing client or route",
+    delay_evidence_present: "Delay evidence present",
+    not_enough_linked_data: "Not enough linked data",
+  };
+  return labels[key] || humanize(value);
+}
+
 function tripProfitabilityReason(
   contributionReadyCount: number,
   incompleteTripCount: number,
@@ -842,12 +863,12 @@ function formatPercentValue(value: any) {
 function formatTripPerKmContribution(contribution: any) {
   const value = formatCurrency(contribution.per_km_contribution);
   if (contribution.per_km_distance_source === "gps-estimated") {
-    return `Provisional per km: ${value}`;
+    return `Provisional per-km: ${value} · provider distance needed`;
   }
   if (contribution.per_km_distance_source === "provider-reported") {
-    return `Per km: ${value} provider distance`;
+    return `Per-km: ${value} · provider distance`;
   }
-  return `Per km: ${value}`;
+  return `Per-km: ${value}`;
 }
 
 function hasMetricValue(value: any) {
@@ -979,6 +1000,13 @@ function formatStoppedRowDetail(row: any, timeframe: any) {
   ].filter(Boolean).join(" · ");
 }
 
+function stoppedSectionSubtitle(value: any) {
+  const base = String(value || "").trim();
+  const helper =
+    "Provider current stop is the current episode; stopped-time totals cover the selected period.";
+  return base ? `${base} ${helper}` : helper;
+}
+
 function formatStopContext(row: any) {
   const label = String(row?.stop_context_label || "").trim();
   const note = String(row?.stop_context_note || "").trim();
@@ -1029,7 +1057,6 @@ function formatStoppedReconciliation(row: any, timeframe: any) {
   return [
     navaText,
     providerText,
-    "Different metrics: provider current stop is the current episode; stopped-time total covers the selected period.",
   ].filter(Boolean).join(" · ");
 }
 
@@ -1055,11 +1082,7 @@ function formatProviderIdleDurationNote(row: any) {
 function formatProviderIdleSourceSummary(row: any) {
   const windows = formatCount(row?.alert_window_count);
   const markers = formatCount(row?.marker_count);
-  const legacy = Number(row?.legacy_provider_marker_count || 0);
-  const canonical = Number(row?.canonical_provider_marker_count || 0);
   const parts = [`${windows} tracker window(s)`, `${markers} marker(s)`];
-  if (legacy > 0) parts.push(`${formatCount(legacy)} prior-format marker(s)`);
-  if (canonical > 0 && legacy > 0) parts.push(`${formatCount(canonical)} current-format marker(s)`);
   return `${parts.join(", ")}.`;
 }
 
