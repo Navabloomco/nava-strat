@@ -453,6 +453,9 @@ Open `/nava-eye` and ask:
 - [ ] After the Truck Day Story chain, ask "was it idling?" and confirm Nava Eye keeps the same truck and distinguishes GPS-stopped evidence, tracker idle markers, and unverified engine-on idle.
 - [ ] Refresh or trigger a new serverless request between Truck Day Story follow-ups and confirm the same truck/period/audit target are rebuilt from persisted conversation context, not process memory.
 - [ ] Say "start over" or "clear context", then ask "where is it now?" and confirm Nava Eye asks which truck rather than reusing the previous subject.
+- [ ] After "start over", ask "was it idling?" and confirm Nava Eye asks which truck instead of reusing the previous subject.
+- [ ] After "start over", ask "how did you calculate that?" and confirm Nava Eye says there is no recent answer to audit or asks what to review.
+- [ ] After a Truck Day Story audit, confirm window/date text remains readable, for example `2026-05-29 00:00 to 2026-05-29 23:59`, and is not altered by coordinate hiding.
 - [ ] When Nava Eye lists multiple true vehicle candidates, reply "1" or "second" and confirm it reruns the original question for the selected candidate and remembers that subject.
 - [ ] Ask "How about KCW103Z" after a truck-status answer and confirm Nava Eye inherits current-status intent for KCW 103Z.
 - [ ] Ask "Where is KDQ265?", then ask "How much mileage has it covered today?" and confirm the answer stays on KDQ 265T instead of switching to fleet-wide.

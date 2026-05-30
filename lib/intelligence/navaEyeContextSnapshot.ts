@@ -28,6 +28,8 @@ type SnapshotPeriodValue = "today" | "yesterday" | "day_before_yesterday" | "7d"
 export type NavaEyeContextSnapshot = {
   version: "2026-05-30";
   company_id: string | null;
+  contextGeneration?: number;
+  contextClearedAt?: string | null;
   activeSubject: SnapshotSubject;
   lastIntent: SnapshotIntent;
   lastPeriod: SnapshotPeriod | null;
@@ -97,6 +99,12 @@ type SnapshotClarification = {
   askedAt: string;
 };
 
+type NavaEyeContextClearMarker = {
+  type?: "context_cleared";
+  context_cleared_at?: string | null;
+  context_generation?: number | null;
+};
+
 const MAX_LABEL_LENGTH = 120;
 const MAX_SUMMARY_LENGTH = 220;
 const MAX_HISTORY = 5;
@@ -113,22 +121,116 @@ export function resolveNavaEyeContextSnapshot(input: {
   recentMessages?: any[];
   companyId?: string | null;
 }): NavaEyeContextSnapshot | null {
+  const clearMarker = resolveNavaEyeContextClearMarker({
+    pendingFollowup: input.pendingFollowup,
+    recentMessages: input.recentMessages,
+    companyId: input.companyId,
+  });
   const fromPending = sanitizeNavaEyeContextSnapshot(
     input.pendingFollowup?.context_snapshot,
-    input.companyId
+    input.companyId,
+    clearMarker
   );
   if (fromPending) return fromPending;
 
   const messages = [...(input.recentMessages || [])].reverse();
   for (const message of messages) {
+    if (isMessageBeforeClearMarker(message, clearMarker)) continue;
     const snapshot = sanitizeNavaEyeContextSnapshot(
       message?.metadata?.context_snapshot,
-      input.companyId
+      input.companyId,
+      clearMarker
     );
     if (snapshot) return snapshot;
   }
 
   return null;
+}
+
+export function buildNavaEyeContextClearMarker(input: {
+  pendingFollowup?: any;
+  recentMessages?: any[];
+  companyId?: string | null;
+  clearedAt?: string;
+}) {
+  const existing = resolveNavaEyeContextClearMarker({
+    pendingFollowup: input.pendingFollowup,
+    recentMessages: input.recentMessages,
+    companyId: input.companyId,
+  });
+  const generation = Math.max(
+    0,
+    Number(existing?.context_generation || 0),
+    Number(input.pendingFollowup?.context_generation || 0),
+    Number(input.pendingFollowup?.context_snapshot?.contextGeneration || 0)
+  ) + 1;
+
+  return {
+    type: "context_cleared",
+    context_cleared_at: input.clearedAt || new Date().toISOString(),
+    context_generation: generation,
+  };
+}
+
+export function resolveNavaEyeContextClearMarker(input: {
+  pendingFollowup?: any;
+  recentMessages?: any[];
+  companyId?: string | null;
+}): NavaEyeContextClearMarker | null {
+  const markers: NavaEyeContextClearMarker[] = [];
+  const pendingMarker = sanitizeContextClearMarker(input.pendingFollowup);
+  if (pendingMarker) markers.push(pendingMarker);
+
+  const pendingSnapshotMarker = sanitizeContextClearMarker(
+    input.pendingFollowup?.context_snapshot
+  );
+  if (pendingSnapshotMarker) markers.push(pendingSnapshotMarker);
+
+  for (const message of input.recentMessages || []) {
+    const metadata = message?.metadata;
+    if (!metadata || typeof metadata !== "object") continue;
+    const metadataCompanyId = cleanString(metadata.company_id, 80);
+    if (input.companyId && metadataCompanyId && metadataCompanyId !== input.companyId) continue;
+
+    const directMarker = sanitizeContextClearMarker({
+      ...metadata,
+      context_cleared_at:
+        metadata.context_cleared_at ||
+        metadata.contextClearedAt ||
+        (metadata.context_cleared ? message?.created_at : null),
+    });
+    if (directMarker) markers.push(directMarker);
+
+    const snapshotMarker = sanitizeContextClearMarker(metadata.context_snapshot);
+    if (snapshotMarker) markers.push(snapshotMarker);
+  }
+
+  if (!markers.length) return null;
+  return markers.reduce<NavaEyeContextClearMarker | null>((latest, marker) => {
+    if (!latest) return marker;
+    const latestAt = toTimestamp(latest.context_cleared_at);
+    const markerAt = toTimestamp(marker.context_cleared_at);
+    if (markerAt > latestAt) return marker;
+    if (
+      markerAt === latestAt &&
+      Number(marker.context_generation || 0) > Number(latest.context_generation || 0)
+    ) {
+      return marker;
+    }
+    return latest;
+  }, null);
+}
+
+export function filterNavaEyeMessagesAfterContextClear(input: {
+  pendingFollowup?: any;
+  recentMessages?: any[];
+  companyId?: string | null;
+}) {
+  const clearMarker = resolveNavaEyeContextClearMarker(input);
+  if (!clearMarker?.context_cleared_at) return input.recentMessages || [];
+  return (input.recentMessages || []).filter(
+    (message) => !isMessageBeforeClearMarker(message, clearMarker)
+  );
 }
 
 export function applyNavaEyeContextSnapshotToPendingFollowup(input: {
@@ -140,8 +242,24 @@ export function applyNavaEyeContextSnapshotToPendingFollowup(input: {
     input.pendingFollowup && typeof input.pendingFollowup === "object" && !Array.isArray(input.pendingFollowup)
       ? { ...input.pendingFollowup }
       : {};
-  const snapshot = sanitizeNavaEyeContextSnapshot(input.snapshot, input.companyId);
-  if (!snapshot) return pending;
+  const clearMarker = resolveNavaEyeContextClearMarker({
+    pendingFollowup: pending,
+    companyId: input.companyId,
+  });
+  if (clearMarker?.context_cleared_at) {
+    pending.context_cleared_at = clearMarker.context_cleared_at;
+    pending.context_generation = clearMarker.context_generation || 0;
+  }
+  const snapshot = sanitizeNavaEyeContextSnapshot(
+    input.snapshot,
+    input.companyId,
+    clearMarker
+  );
+  if (!snapshot) {
+    return clearMarker?.context_cleared_at
+      ? buildClearedPendingFollowup(clearMarker)
+      : pending;
+  }
 
   pending.context_snapshot = snapshot;
 
@@ -193,6 +311,16 @@ export function attachNavaEyeContextSnapshot(input: {
     input.pendingFollowup && typeof input.pendingFollowup === "object" && !Array.isArray(input.pendingFollowup)
       ? { ...input.pendingFollowup }
       : {};
+  const clearMarker = resolveNavaEyeContextClearMarker({
+    pendingFollowup: pending,
+  });
+  if (clearMarker?.context_cleared_at) {
+    pending.context_cleared_at = clearMarker.context_cleared_at;
+    pending.context_generation = clearMarker.context_generation || 0;
+  }
+  if (!input.snapshot && clearMarker?.context_cleared_at) {
+    return buildClearedPendingFollowup(clearMarker);
+  }
   if (input.snapshot) pending.context_snapshot = input.snapshot;
   return pending;
 }
@@ -204,9 +332,15 @@ export function buildNavaEyeContextSnapshot(input: {
   pendingFollowup?: any;
 }) {
   const context = input.context || {};
+  const companyId = context.company?.id || input.previousSnapshot?.company_id || null;
+  const clearMarker = resolveNavaEyeContextClearMarker({
+    pendingFollowup: input.pendingFollowup,
+    companyId,
+  });
   const previous = sanitizeNavaEyeContextSnapshot(
     input.previousSnapshot,
-    context.company?.id || null
+    companyId,
+    clearMarker
   );
   const now = new Date().toISOString();
   const subject = resolveSnapshotSubject(context, previous, now);
@@ -225,6 +359,16 @@ export function buildNavaEyeContextSnapshot(input: {
     {
       version: "2026-05-30",
       company_id: context.company?.id || previous?.company_id || null,
+      contextGeneration:
+        clearMarker?.context_generation ||
+        previous?.contextGeneration ||
+        Number(input.pendingFollowup?.context_generation || 0) ||
+        0,
+      contextClearedAt:
+        clearMarker?.context_cleared_at ||
+        previous?.contextClearedAt ||
+        input.pendingFollowup?.context_cleared_at ||
+        null,
       activeSubject: subject,
       lastIntent: intent,
       lastPeriod: period,
@@ -249,10 +393,12 @@ export function buildNavaEyeContextSnapshot(input: {
 
 export function sanitizeNavaEyeContextSnapshot(
   value: any,
-  companyId?: string | null
+  companyId?: string | null,
+  clearMarker?: { context_cleared_at?: string | null; context_generation?: number | null } | null
 ): NavaEyeContextSnapshot | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   if (value.company_id && companyId && value.company_id !== companyId) return null;
+  if (isSnapshotBeforeClearMarker(value, clearMarker)) return null;
 
   const now = new Date().toISOString();
   const activeSubject = sanitizeSubject(value.activeSubject, now);
@@ -261,6 +407,13 @@ export function sanitizeNavaEyeContextSnapshot(
   const snapshot: NavaEyeContextSnapshot = {
     version: "2026-05-30",
     company_id: cleanString(value.company_id || companyId, 80) || null,
+    contextGeneration: Number.isFinite(Number(value.contextGeneration ?? value.context_generation))
+      ? Number(value.contextGeneration ?? value.context_generation)
+      : Number(clearMarker?.context_generation || 0) || 0,
+    contextClearedAt: cleanString(
+      value.contextClearedAt || value.context_cleared_at || clearMarker?.context_cleared_at,
+      40
+    ) || null,
     activeSubject,
     lastIntent: sanitizeIntent(value.lastIntent),
     lastPeriod: sanitizePeriod(value.lastPeriod),
@@ -807,6 +960,77 @@ function dedupeSubjects(subjects: SnapshotSubject[]) {
     output.push(subject);
   }
   return output;
+}
+
+function sanitizeContextClearMarker(value: any): NavaEyeContextClearMarker | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const clearedAt = cleanString(
+    value.context_cleared_at || value.contextClearedAt || value.cleared_at,
+    40
+  );
+  if (!clearedAt || !toTimestamp(clearedAt)) return null;
+  const generation = Number(value.context_generation ?? value.contextGeneration ?? 0);
+  return {
+    type: "context_cleared",
+    context_cleared_at: clearedAt,
+    context_generation: Number.isFinite(generation) ? generation : 0,
+  };
+}
+
+function buildClearedPendingFollowup(marker: NavaEyeContextClearMarker) {
+  return {
+    type: "context_cleared",
+    context_cleared_at: marker.context_cleared_at || null,
+    context_generation: marker.context_generation || 0,
+  };
+}
+
+function isSnapshotBeforeClearMarker(
+  value: any,
+  clearMarker?: NavaEyeContextClearMarker | null
+) {
+  if (!clearMarker?.context_cleared_at) return false;
+  const clearAt = toTimestamp(clearMarker.context_cleared_at);
+  if (!clearAt) return false;
+
+  const snapshotGeneration = Number(value?.contextGeneration ?? value?.context_generation ?? 0);
+  const clearGeneration = Number(clearMarker.context_generation || 0);
+  if (clearGeneration > 0 && snapshotGeneration > 0 && snapshotGeneration < clearGeneration) {
+    return true;
+  }
+
+  const snapshotAt = toTimestamp(
+    value?.updatedAt ||
+      value?.updated_at ||
+      value?.lastAnswer?.createdAt ||
+      value?.last_answer?.created_at ||
+      value?.lastAuditTarget?.createdAt ||
+      value?.last_audit_target?.created_at
+  );
+  return !snapshotAt || snapshotAt <= clearAt;
+}
+
+function isMessageBeforeClearMarker(
+  message: any,
+  clearMarker?: NavaEyeContextClearMarker | null
+) {
+  if (!clearMarker?.context_cleared_at) return false;
+  const clearAt = toTimestamp(clearMarker.context_cleared_at);
+  if (!clearAt) return false;
+  const messageAt = toTimestamp(
+    message?.created_at ||
+      message?.createdAt ||
+      message?.metadata?.context_snapshot?.updatedAt ||
+      message?.metadata?.context_snapshot?.updated_at
+  );
+  return !messageAt || messageAt <= clearAt;
+}
+
+function toTimestamp(value: any) {
+  const text = String(value || "").trim();
+  if (!text) return 0;
+  const timestamp = Date.parse(text);
+  return Number.isFinite(timestamp) ? timestamp : 0;
 }
 
 function cleanString(value: any, maxLength: number) {

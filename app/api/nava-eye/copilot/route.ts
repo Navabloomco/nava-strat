@@ -47,7 +47,9 @@ import {
 import {
   applyNavaEyeContextSnapshotToPendingFollowup,
   attachNavaEyeContextSnapshot,
+  buildNavaEyeContextClearMarker,
   buildNavaEyeContextSnapshot,
+  filterNavaEyeMessagesAfterContextClear,
   isNavaEyeClearContextRequest,
   resolveNavaEyeContextSnapshot,
 } from "../../../../lib/intelligence/navaEyeContextSnapshot";
@@ -144,9 +146,19 @@ export async function POST(req: Request) {
       snapshot: storedContextSnapshot,
       companyId: company.id,
     });
+    const scopedRecentConversationMessages = filterNavaEyeMessagesAfterContextClear({
+      pendingFollowup: pendingFollowupForResolution,
+      recentMessages: recentConversationMessages,
+      companyId: company.id,
+    });
 
     if (isNavaEyeClearContextRequest(question)) {
       const clearAnswer = "Context cleared. What should we look at next?";
+      const clearMarker = buildNavaEyeContextClearMarker({
+        pendingFollowup: conversation?.pending_followup,
+        recentMessages: recentConversationMessages,
+        companyId: company.id,
+      });
       if (conversation) {
         await appendConversationMessage({
           conversationId: conversation.id,
@@ -166,14 +178,18 @@ export async function POST(req: Request) {
           role: "assistant",
           content: clearAnswer,
           intent: "clear_context",
-          metadata: { context_cleared: true },
+          metadata: {
+            context_cleared: true,
+            context_cleared_at: clearMarker.context_cleared_at,
+            context_generation: clearMarker.context_generation,
+          },
         });
         await updateConversationAfterAnswer({
           conversation,
           companyId: company.id,
           userId: auth.user.id,
           intent: "clear_context",
-          pendingFollowup: {},
+          pendingFollowup: clearMarker,
           titleQuestion: question,
         });
       }
@@ -304,7 +320,7 @@ export async function POST(req: Request) {
     context.query_understanding = effectiveQueryUnderstanding;
     context.action_plan_context = buildNavaEyeActionPlannerContext({
       pendingFollowup: pendingFollowupForResolution,
-      recentMessages: recentConversationMessages,
+      recentMessages: scopedRecentConversationMessages,
     });
 
     await recordAnalyticsEvent({
@@ -374,7 +390,7 @@ export async function POST(req: Request) {
       ? {
           ...enhancedContext,
           conversation_thread: buildConversationContextForAi(
-            recentConversationMessages,
+            scopedRecentConversationMessages,
             pendingFollowupForResolution,
             pendingFollowupResolution
           ),
@@ -560,14 +576,18 @@ export async function POST(req: Request) {
     }
 
     const nextPendingFollowupBase = buildPendingFollowup(context, answer);
+    const pendingFollowupForSnapshot = {
+      ...pendingFollowupForResolution,
+      ...nextPendingFollowupBase,
+    };
     const nextContextSnapshot = buildNavaEyeContextSnapshot({
       context,
       answer,
       previousSnapshot: storedContextSnapshot,
-      pendingFollowup: nextPendingFollowupBase,
+      pendingFollowup: pendingFollowupForSnapshot,
     });
     const nextPendingFollowup = attachNavaEyeContextSnapshot({
-      pendingFollowup: nextPendingFollowupBase,
+      pendingFollowup: pendingFollowupForSnapshot,
       snapshot: nextContextSnapshot,
     });
     if (conversation) {
