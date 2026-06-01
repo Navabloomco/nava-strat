@@ -8,12 +8,15 @@ import {
   normalizeRole,
   rolesForCompany,
 } from "../../../lib/api/roleAccess";
+import { withExpenseTotalPaid, withExpenseTotals } from "../../../lib/finance/expenseTotals";
 
 export const dynamic = "force-dynamic";
 
 const SAFE_EXPENSE_JOURNEY_FIELDS =
   "id, internal_trip_id, client_name, truck, driver, from_location, to_location, status, created_at";
 const SAFE_EXPENSE_FIELDS =
+  "id, journey_id, truck, expense_type, amount, transaction_cost, vendor, payment_method, reference_number, trip_reference, notes, created_at";
+const LEGACY_SAFE_EXPENSE_FIELDS =
   "id, journey_id, truck, expense_type, amount, vendor, payment_method, reference_number, trip_reference, notes, created_at";
 
 type ResolvedCompany = {
@@ -35,6 +38,39 @@ type ResolveCompanyResult =
       isPlatformOwner?: never;
       roles?: never;
     };
+
+function isMissingTransactionCostError(error: any) {
+  const message = String(error?.message || error?.details || error?.hint || error || "").toLowerCase();
+  return message.includes("transaction_cost") || message.includes("schema cache");
+}
+
+function parseNonNegativeMoney(value: any, fallback = 0) {
+  if (value === undefined || value === null || value === "") return fallback;
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 0) return null;
+  return Math.round(number * 100) / 100;
+}
+
+async function loadExpenseRows(companyId: string) {
+  const result = await supabaseAdmin
+    .from("expenses")
+    .select(SAFE_EXPENSE_FIELDS)
+    .eq("company_id", companyId)
+    .order("created_at", { ascending: false });
+
+  if (!result.error) return withExpenseTotals(result.data || []);
+
+  if (!isMissingTransactionCostError(result.error)) throw result.error;
+
+  const legacyResult = await supabaseAdmin
+    .from("expenses")
+    .select(LEGACY_SAFE_EXPENSE_FIELDS)
+    .eq("company_id", companyId)
+    .order("created_at", { ascending: false });
+
+  if (legacyResult.error) throw legacyResult.error;
+  return withExpenseTotals(legacyResult.data || []);
+}
 
 async function resolveCompany(
   req: Request,
@@ -146,29 +182,24 @@ export async function GET(req: Request) {
       );
     }
 
-    const [journeysResult, expensesResult] = await Promise.all([
+    const [journeysResult, expenseRows] = await Promise.all([
       supabaseAdmin
         .from("journeys")
         .select(SAFE_EXPENSE_JOURNEY_FIELDS)
         .eq("company_id", resolved.company.id)
         .eq("is_demo", false)
         .order("created_at", { ascending: false }),
-      supabaseAdmin
-        .from("expenses")
-        .select(SAFE_EXPENSE_FIELDS)
-        .eq("company_id", resolved.company.id)
-        .order("created_at", { ascending: false }),
+      loadExpenseRows(resolved.company.id),
     ]);
 
     if (journeysResult.error) throw journeysResult.error;
-    if (expensesResult.error) throw expensesResult.error;
 
     return NextResponse.json({
       success: true,
       company: resolved.company,
       is_platform_owner: resolved.isPlatformOwner,
       journeys: journeysResult.data || [],
-      expenses: expensesResult.data || [],
+      expenses: expenseRows,
     });
   } catch (err: any) {
     console.error("Expenses GET error:", err);
@@ -212,7 +243,8 @@ export async function POST(req: Request) {
       }
     }
 
-    const amount = Number(body.amount || 0);
+    const amount = parseNonNegativeMoney(body.amount);
+    const transactionCost = parseNonNegativeMoney(body.transaction_cost, 0);
     const truck =
       typeof body.truck === "string" ? body.truck.trim().toUpperCase() : "";
     const reference =
@@ -220,11 +252,20 @@ export async function POST(req: Request) {
         ? body.reference_number.trim()
         : "";
 
-    if (!truck || !amount || !body.expense_type || !body.payment_method || !reference) {
+    if (
+      !truck ||
+      amount === null ||
+      amount <= 0 ||
+      transactionCost === null ||
+      !body.expense_type ||
+      !body.payment_method ||
+      !reference
+    ) {
       return NextResponse.json(
         {
           success: false,
-          error: "Truck, amount, expense type, payment method, and reference are required",
+          error:
+            "Truck, positive amount, non-negative transaction fee, expense type, payment method, and reference are required",
         },
         { status: 400 }
       );
@@ -238,6 +279,7 @@ export async function POST(req: Request) {
         truck,
         expense_type: body.expense_type,
         amount,
+        transaction_cost: transactionCost,
         vendor:
           typeof body.vendor === "string"
             ? body.vendor.trim().toUpperCase()
@@ -253,12 +295,24 @@ export async function POST(req: Request) {
       .select(SAFE_EXPENSE_FIELDS)
       .single();
 
-    if (error) throw error;
+    if (error) {
+      if (isMissingTransactionCostError(error)) {
+        return NextResponse.json(
+          {
+            success: false,
+            error:
+              "Expense transaction fee setup is not applied yet. Apply the latest database migration before saving expenses with transaction fees.",
+          },
+          { status: 500 }
+        );
+      }
+      throw error;
+    }
 
     return NextResponse.json({
       success: true,
       company: resolved.company,
-      expense,
+      expense: withExpenseTotalPaid(expense || {}),
     });
   } catch (err: any) {
     console.error("Expenses POST error:", err);

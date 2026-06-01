@@ -2179,8 +2179,8 @@ function buildEvidenceReviewAnswer(context: any) {
   if (missing.length) {
     parts.push(
       ...missing.slice(0, 6).map((expense: any) => {
-        const amount = expense.amount_visible && hasNumber(expense.amount)
-          ? ` · ${formatKesPrefix(expense.amount)}`
+        const amount = expense.amount_visible && hasNumber(expense.total_paid ?? expense.amount)
+          ? ` · total paid ${formatKesPrefix(expense.total_paid ?? expense.amount)}`
           : "";
         const vendor = expense.vendor ? ` · ${expense.vendor}` : "";
         return `- ${humanizeInline(expense.expense_type)}${vendor}${amount}: no proof attached.`;
@@ -2193,8 +2193,8 @@ function buildEvidenceReviewAnswer(context: any) {
   parts.push(
     "Evidence files stay private; Nava Eye does not expose storage paths or public URLs."
   );
-  if (!review.finance_values_visible) {
-    parts.push("Expense amounts are hidden because finance values are restricted for this role.");
+  if (!review.expense_values_visible && !review.finance_values_visible) {
+    parts.push("Expense amounts are hidden because expense access is restricted for this role.");
   }
   return parts.join("\n");
 }
@@ -2733,7 +2733,7 @@ function buildTripPerformanceAnswer(context: any) {
     parts.push(
       `Revenue is ${formatKesPrefix(trip.revenue_amount)}. Linked fuel/cost evidence is ${formatKesPrefix(
         trip.linked_fuel_cost
-      )}, with ${trip.extra_expenses_linked ? `${formatKesPrefix(trip.linked_expense_cost)} linked trip expenses` : "no additional trip expenses linked yet"}.`
+      )}, with ${trip.extra_expenses_linked ? `${formatKesPrefix(trip.linked_expense_cost)} linked trip expenses, including transaction fees where recorded` : "no additional trip expenses linked yet"}.`
     );
     parts.push(
       `Review-ready contribution is ${formatKesPrefix(

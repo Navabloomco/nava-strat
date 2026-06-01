@@ -4,6 +4,12 @@ import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import {
+  expenseBaseAmount,
+  expenseTotalPaid,
+  expenseTransactionCost,
+  sumExpenseTotalPaid,
+} from "../../../../lib/finance/expenseTotals";
 import { supabase } from "../../../../lib/supabase";
 import NavaEyePromptLink from "../../../components/NavaEyePromptLink";
 import {
@@ -106,6 +112,7 @@ export default function TripDetailPage() {
 
   const [expenseType, setExpenseType] = useState("");
   const [expenseAmount, setExpenseAmount] = useState("");
+  const [expenseTransactionFee, setExpenseTransactionFee] = useState("");
   const [expenseVendor, setExpenseVendor] = useState("");
   const [expensePaymentMethod, setExpensePaymentMethod] = useState("");
   const [expenseReference, setExpenseReference] = useState("");
@@ -428,6 +435,7 @@ export default function TripDetailPage() {
         truck: data?.journey?.truck || "",
         expense_type: expenseType,
         amount: Number(expenseAmount || 0),
+        transaction_cost: Number(expenseTransactionFee || 0),
         vendor: expenseVendor,
         payment_method: expensePaymentMethod,
         reference_number: expenseReference,
@@ -459,6 +467,7 @@ export default function TripDetailPage() {
 
     setExpenseType("");
     setExpenseAmount("");
+    setExpenseTransactionFee("");
     setExpenseVendor("");
     setExpensePaymentMethod("");
     setExpenseReference("");
@@ -691,10 +700,7 @@ export default function TripDetailPage() {
     () => filterMissingDataForRole(missingData, canViewFinance),
     [missingData, canViewFinance]
   );
-  const expenseTotal = expenses.reduce(
-    (sum: number, expense: any) => sum + Number(expense.amount || 0),
-    0
-  );
+  const expenseTotal = sumExpenseTotalPaid(expenses);
   const displayDriver = journey.driver || driverEvidence.driver_name || "Missing";
   const companyIdParam = currentCompanyId();
   const companyQuery = companyIdParam
@@ -1021,7 +1027,7 @@ export default function TripDetailPage() {
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <SectionTitle
                       title="Contribution review"
-                      subtitle="Linked revenue minus allocated fuel and linked trip expenses. This is review-ready contribution, not final audited profit."
+                    subtitle="Linked revenue minus allocated fuel and linked trip expenses, including recorded transaction fees. This is review-ready contribution, not final audited profit."
                     />
                     <StatusPill tone={readinessTone(readiness.status)}>
                       {readinessLabel(readiness)}
@@ -1428,7 +1434,7 @@ export default function TripDetailPage() {
               <Panel dark className="p-5">
                 <SectionTitle
                   title="Operational expenses & proof"
-                  subtitle="Structured supplier, payment, reference, amount, and date details live on the expense record. Receipts support that record; they do not replace it."
+                  subtitle="Structured supplier, payment, reference, expense amount, transaction fee, and date details live on the expense record. Receipts support that record; they do not replace it."
                 />
 
                 {!canViewTripExpenses ? (
@@ -1448,7 +1454,7 @@ export default function TripDetailPage() {
                           </div>
                         </div>
                         <StatusPill tone="info">
-                          Total KES {formatMoney(expenseTotal)}
+                          Total paid KES {formatMoney(expenseTotal)}
                         </StatusPill>
                       </div>
                       {expenseCategoryTotals.length === 0 ? (
@@ -1482,10 +1488,13 @@ export default function TripDetailPage() {
                               <div className="flex flex-wrap items-start justify-between gap-3">
                                 <div>
                                   <div className="text-sm font-semibold text-white">
-                                    KES {formatMoney(expense.amount)} · {humanize(expense.expense_type)}
+                                    KES {formatMoney(expenseTotalPaid(expense))} total paid · {humanize(expense.expense_type)}
                                   </div>
                                   <div className="mt-1 text-xs leading-5 text-slate-400">
-                                    Supplier/payee: {expense.vendor || "Not captured"}
+                                    Amount KES {formatMoney(expenseBaseAmount(expense))}
+                                    {expenseTransactionCost(expense) > 0
+                                      ? ` + fee KES ${formatMoney(expenseTransactionCost(expense))}`
+                                      : ""} · Supplier/payee: {expense.vendor || "Not captured"}
                                   </div>
                                 </div>
                                 <StatusPill tone="neutral">
@@ -1493,6 +1502,22 @@ export default function TripDetailPage() {
                                 </StatusPill>
                               </div>
                               <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                                <ExpenseFact
+                                  label="Expense amount"
+                                  value={`KES ${formatMoney(expenseBaseAmount(expense))}`}
+                                />
+                                <ExpenseFact
+                                  label="Transaction fee"
+                                  value={
+                                    expenseTransactionCost(expense) > 0
+                                      ? `KES ${formatMoney(expenseTransactionCost(expense))}`
+                                      : "KES 0"
+                                  }
+                                />
+                                <ExpenseFact
+                                  label="Total paid"
+                                  value={`KES ${formatMoney(expenseTotalPaid(expense))}`}
+                                />
                                 <ExpenseFact
                                   label="Supplier / payee"
                                   value={expense.vendor || "Not captured"}
@@ -1671,18 +1696,38 @@ export default function TripDetailPage() {
                                 ))}
                               </select>
                             </FormField>
-                            <FormField label="Amount" dark>
-                              <input
-                                type="number"
-                                min="0"
+                              <FormField label="Expense amount" dark>
+                                <input
+                                  type="number"
+                                  min="0"
                                 step="0.01"
                                 value={expenseAmount}
                                 onChange={(event) => setExpenseAmount(event.target.value)}
                                 className={inputClass}
-                                required
-                              />
-                            </FormField>
-                          </div>
+                                  required
+                                />
+                              </FormField>
+                              <FormField label="Transaction fee optional" dark>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  value={expenseTransactionFee}
+                                  onChange={(event) => setExpenseTransactionFee(event.target.value)}
+                                  placeholder="M-Pesa, bank, or processing fee"
+                                  className={inputClass}
+                                />
+                                <p className="mt-2 text-xs leading-5 text-slate-400">
+                                  Use this for fees shown on the receipt or payment message. If this record is itself a standalone fee, leave this at 0.
+                                </p>
+                              </FormField>
+                            </div>
+                            <div className="rounded-md border border-cyan-200/15 bg-cyan-300/10 p-3 text-sm text-cyan-50">
+                              Total paid: KES{" "}
+                              {formatMoney(
+                                Number(expenseAmount || 0) + Number(expenseTransactionFee || 0)
+                              )}
+                            </div>
                           <div className="grid gap-5 md:grid-cols-2">
                             <FormField label="Payment method" dark>
                               <select
@@ -2190,7 +2235,7 @@ function summarizeExpenseCategories(expenses: any[]) {
   for (const expense of expenses || []) {
     const type = String(expense?.expense_type || "other").trim() || "other";
     const current = totals.get(type) || { type, amount: 0, count: 0 };
-    current.amount += Number(expense?.amount || 0);
+    current.amount += expenseTotalPaid(expense);
     current.count += 1;
     totals.set(type, current);
   }

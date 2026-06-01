@@ -20,6 +20,7 @@ export default function NewExpensePage() {
 
   const [truck, setTruck] = useState("");
   const [amount, setAmount] = useState("");
+  const [transactionCost, setTransactionCost] = useState("");
   const [type, setType] = useState("");
   const [vendor, setVendor] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("");
@@ -82,6 +83,13 @@ export default function NewExpensePage() {
     }
   }
 
+  function formatMoney(value: number) {
+    if (!Number.isFinite(value)) return "0";
+    return value.toLocaleString(undefined, {
+      maximumFractionDigits: value % 1 === 0 ? 0 : 2,
+    });
+  }
+
   async function handleSubmit(e: any) {
     e.preventDefault();
     setMessage("");
@@ -106,6 +114,7 @@ export default function NewExpensePage() {
         truck: truck.trim().toUpperCase(),
         expense_type: type,
         amount: Number(amount),
+        transaction_cost: Number(transactionCost || 0),
         vendor: vendor.trim().toUpperCase(),
         payment_method: paymentMethod,
         reference_number: reference.trim(),
@@ -124,6 +133,7 @@ export default function NewExpensePage() {
 
     setTruck("");
     setAmount("");
+    setTransactionCost("");
     setType("");
     setVendor("");
     setPaymentMethod("");
@@ -140,7 +150,7 @@ export default function NewExpensePage() {
           dark
           eyebrow="Finance control"
           title="Add Expense"
-          body="Capture operational costs and optionally allocate them to an active trip."
+          body="Capture expense amount, transaction fee, payment reference, and optional Trip allocation."
         />
 
         {loading && (
@@ -177,8 +187,11 @@ export default function NewExpensePage() {
                 />
               </FormField>
 
-              <FormField label="Amount" dark>
+              <FormField label="Expense amount" dark>
                 <input
+                  type="number"
+                  min="0"
+                  step="0.01"
                   placeholder="Amount e.g. 3000"
                   value={amount}
                   onChange={(e) => setAmount(e.target.value)}
@@ -186,6 +199,25 @@ export default function NewExpensePage() {
                   required
                 />
               </FormField>
+              <FormField label="Transaction fee optional" dark>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="M-Pesa, bank, or processing fee"
+                  value={transactionCost}
+                  onChange={(e) => setTransactionCost(e.target.value)}
+                  className={inputClass}
+                />
+                <p className="mt-2 text-xs leading-5 text-slate-400">
+                  Use this for M-Pesa, bank, or payment processing fees shown on the receipt. If this record is itself a standalone fee, leave this at 0.
+                </p>
+              </FormField>
+            </div>
+
+            <div className="rounded-md border border-cyan-200/15 bg-cyan-300/10 p-4 text-sm text-cyan-50">
+              Total paid: KES{" "}
+              {formatMoney(Number(amount || 0) + Number(transactionCost || 0))}
             </div>
 
             <div className="grid gap-5 md:grid-cols-2">

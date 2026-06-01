@@ -1,4 +1,5 @@
 import { canViewFinance } from "../api/roleAccess";
+import { expenseTotalPaid } from "../finance/expenseTotals";
 import { readStoredVehicleIdentityContext } from "../providers/vehicleIdentity";
 import { supabaseAdmin } from "../supabaseAdmin";
 import {
@@ -629,12 +630,27 @@ async function fetchExpenses(companyId: string, journeyIds: string[]): Promise<Q
   try {
     const { data, error } = await supabaseAdmin
       .from("expenses")
-      .select("id, journey_id, truck, expense_type, amount, created_at")
+      .select("id, journey_id, truck, expense_type, amount, transaction_cost, created_at")
       .eq("company_id", companyId)
       .in("journey_id", journeyIds)
       .limit(5000);
 
     if (error) {
+      if (isMissingColumnError(error, "transaction_cost")) {
+        const legacyResult = await supabaseAdmin
+          .from("expenses")
+          .select("id, journey_id, truck, expense_type, amount, created_at")
+          .eq("company_id", companyId)
+          .in("journey_id", journeyIds)
+          .limit(5000);
+        if (legacyResult.error) {
+          if (isMissingSchemaError(legacyResult.error)) {
+            return { rows: [], missing: true, error: safeError(legacyResult.error) };
+          }
+          throw legacyResult.error;
+        }
+        return { rows: legacyResult.data || [] };
+      }
       if (isMissingSchemaError(error)) return { rows: [], missing: true, error: safeError(error) };
       throw error;
     }
@@ -1099,7 +1115,7 @@ function buildFinanceEvidence(
   const fuelCost = hasFuelAllocations ? allocatedFuel.allocated_cost : legacyFuelCost;
   const fuelLiters = hasFuelAllocations ? allocatedFuel.allocated_liters : legacyFuelLiters;
   const expenseCost = roundMoney(
-    expenses.reduce((sum, row) => sum + Number(row.amount || 0), 0)
+    expenses.reduce((sum, row) => sum + expenseTotalPaid(row), 0)
   );
   const rateAmount = numericOrNull(latestRevenueEntry?.rate_amount ?? journey.rate_amount);
   const fuelLogIds = uniqueStrings(
@@ -1171,10 +1187,10 @@ function buildFinanceEvidence(
     fuel_cost_source: fuelCostSource,
     fuel_allocation_notes: uniqueStrings(fuelAllocationNotes),
     evidence_label: hasFuelAllocations
-      ? `${latestRevenueEntry ? "latest revenue entry" : "journey revenue snapshot"}, fuel_allocations assigned to this trip, and linked expenses`
+      ? `${latestRevenueEntry ? "latest revenue entry" : "journey revenue snapshot"}, fuel_allocations assigned to this trip, and linked expenses including recorded transaction fees`
       : fuelLogs.length > 0
-        ? `${latestRevenueEntry ? "latest revenue entry" : "journey revenue snapshot"}, legacy fuel_logs.journey_id fallback, and linked expenses`
-        : `${latestRevenueEntry ? "latest revenue entry" : "journey revenue snapshot"} and linked expenses; no fuel allocation evidence`,
+        ? `${latestRevenueEntry ? "latest revenue entry" : "journey revenue snapshot"}, legacy fuel_logs.journey_id fallback, and linked expenses including recorded transaction fees`
+        : `${latestRevenueEntry ? "latest revenue entry" : "journey revenue snapshot"} and linked expenses including recorded transaction fees; no fuel allocation evidence`,
     unlinked_costs_used_for_contribution: false,
   };
 
@@ -1485,7 +1501,7 @@ function buildContributionSummary(
     extra_expenses_linked: Number(finance.linked_expense_count || 0) > 0,
     caveats: buildContributionCaveats(finance, movement, ready),
     wording:
-      "Contribution is linked revenue minus allocated fuel cost and linked trip expenses; it is not final audited profit.",
+      "Contribution is linked revenue minus allocated fuel cost and linked trip expenses, including recorded transaction fees; it is not final audited profit.",
   };
 }
 

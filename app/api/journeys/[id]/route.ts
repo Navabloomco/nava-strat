@@ -22,6 +22,7 @@ import {
   buildTripIntelligenceSummary,
   resolveTripIntelligenceTimeframe,
 } from "../../../../lib/intelligence/tripIntelligence";
+import { withExpenseTotals } from "../../../../lib/finance/expenseTotals";
 import {
   buildAssetAvailabilityLookup,
   fetchActiveAssetAvailabilityEvents,
@@ -40,6 +41,8 @@ const FINANCE_JOURNEY_FIELDS = `${OPERATIONAL_JOURNEY_FIELDS}, loaded_quantity, 
 const SAFE_DRIVER_FIELDS =
   "id, full_name, phone, employee_code, status, created_at";
 const SAFE_EXPENSE_FIELDS =
+  "id, journey_id, truck, expense_type, amount, transaction_cost, vendor, payment_method, reference_number, trip_reference, notes, created_at";
+const LEGACY_SAFE_EXPENSE_FIELDS =
   "id, journey_id, truck, expense_type, amount, vendor, payment_method, reference_number, trip_reference, notes, created_at";
 const SAFE_FUEL_LOG_FIELDS =
   "id, truck_text, liters, price_per_liter, total_cost, vendor, notes, journey_id, allocation_status, fuel_source, created_at";
@@ -74,6 +77,11 @@ function noStoreJson(body: any, init?: ResponseInit) {
       "Cache-Control": "no-store",
     },
   });
+}
+
+function isMissingTransactionCostError(error: any) {
+  const message = String(error?.message || error?.details || error?.hint || error || "").toLowerCase();
+  return message.includes("transaction_cost") || message.includes("schema cache");
 }
 
 async function resolveCompany(
@@ -243,8 +251,18 @@ async function loadExpenses(companyId: string, journeyId: string): Promise<any[]
     .eq("journey_id", journeyId)
     .order("created_at", { ascending: false });
 
-  if (error) throw error;
-  return (data as any[]) || [];
+  if (!error) return withExpenseTotals((data as any[]) || []);
+  if (!isMissingTransactionCostError(error)) throw error;
+
+  const legacyResult = await supabaseAdmin
+    .from("expenses")
+    .select(LEGACY_SAFE_EXPENSE_FIELDS)
+    .eq("company_id", companyId)
+    .eq("journey_id", journeyId)
+    .order("created_at", { ascending: false });
+
+  if (legacyResult.error) throw legacyResult.error;
+  return withExpenseTotals((legacyResult.data as any[]) || []);
 }
 
 async function loadFuelBundle(companyId: string, journey: any, includeFinance: boolean) {

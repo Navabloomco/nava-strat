@@ -220,7 +220,14 @@ export const SURFACE_CONTRACTS: Record<ProductSurfaceId, SurfaceContract> = {
     restrictedDomains: ["finance", "management", "providers"],
     forbiddenDefaultFields: [...FINANCE_AMOUNT_FIELDS, ...COMMON_PRIVATE_FIELDS],
     forbiddenDefaultTerms: [...COMMON_CUSTOMER_FORBIDDEN_TERMS, ...UNSAFE_CLAIM_TERMS],
-    preferredTerms: ["Ops Intelligence", "Trip readiness", "Missing links", "Review status"],
+    preferredTerms: [
+      "Ops Intelligence",
+      "Trip readiness",
+      "Missing links",
+      "Review status",
+      "Expense proof",
+      "Transaction fee",
+    ],
     defaultDetailLevel: "concise",
     advancedDetailAllowed: false,
   },
@@ -232,7 +239,14 @@ export const SURFACE_CONTRACTS: Record<ProductSurfaceId, SurfaceContract> = {
     restrictedDomains: ["providers", "team"],
     forbiddenDefaultFields: [...RAW_LOCATION_FIELDS, ...PROVIDER_SECRET_FIELDS],
     forbiddenDefaultTerms: [...COMMON_CUSTOMER_FORBIDDEN_TERMS, "final profit"],
-    preferredTerms: ["Revenue Review", "Client rates", "Contribution review", "Linked cost evidence"],
+    preferredTerms: [
+      "Revenue Review",
+      "Client rates",
+      "Contribution review",
+      "Linked cost evidence",
+      "Transaction fee",
+      "Total paid",
+    ],
     defaultDetailLevel: "evidence",
     advancedDetailAllowed: true,
   },
@@ -336,20 +350,26 @@ export const SURFACE_CONTRACTS: Record<ProductSurfaceId, SurfaceContract> = {
     restrictedDomains: ["providers", "team"],
     forbiddenDefaultFields: [...PROVIDER_SECRET_FIELDS, "raw_coordinates"],
     forbiddenDefaultTerms: [...COMMON_CUSTOMER_FORBIDDEN_TERMS, "final profit"],
-    preferredTerms: ["Asset availability", "Expense proof", "Contribution review"],
+    preferredTerms: ["Asset availability", "Expense proof", "Transaction fee", "Contribution review"],
     defaultDetailLevel: "evidence",
     advancedDetailAllowed: true,
     navaEyeBehavior: "Trip prompts open Nava Eye with the current Trip context.",
   },
   expenses: {
     id: "expenses",
-    purpose: "Expense and proof capture/review.",
+    purpose: "Expense amount, transaction fee, proof capture, and finance review.",
     primaryUser: "Ops capture, finance review",
     allowedDomains: ["finance", "evidence", "trips"],
     restrictedDomains: ["providers", "team"],
     forbiddenDefaultFields: [...RAW_LOCATION_FIELDS, ...PROVIDER_SECRET_FIELDS],
     forbiddenDefaultTerms: [...COMMON_CUSTOMER_FORBIDDEN_TERMS, "final profit"],
-    preferredTerms: ["Expense proof", "Linked Trip cost", "Review"],
+    preferredTerms: [
+      "Expense proof",
+      "Expense amount",
+      "Transaction fee",
+      "Total paid",
+      "Finance review",
+    ],
     defaultDetailLevel: "evidence",
     advancedDetailAllowed: true,
   },
@@ -528,7 +548,15 @@ export const ROLE_CONTRACTS: Record<ProductRole, RoleContract> = {
   },
   ops: {
     role: "ops",
-    allowedWorkflows: ["live tracking", "Trips", "Ops Intelligence", "proof capture", "availability status"],
+    allowedWorkflows: [
+      "live tracking",
+      "Trips",
+      "Ops Intelligence",
+      "proof capture",
+      "Trip expense amount capture",
+      "transaction fee capture",
+      "availability status",
+    ],
     restrictedWorkflows: ["rates", "revenue amounts", "fuel cost amounts", "contribution amounts", "provider secrets"],
     canSeeFinanceAmounts: false,
     canManageProviders: false,
@@ -540,7 +568,15 @@ export const ROLE_CONTRACTS: Record<ProductRole, RoleContract> = {
   },
   finance: {
     role: "finance",
-    allowedWorkflows: ["Client Rates", "Revenue Review", "Expenses", "Fuel Cost Review", "Contribution Review"],
+    allowedWorkflows: [
+      "Client Rates",
+      "Revenue Review",
+      "Expenses",
+      "expense validation and correction",
+      "transaction fee review",
+      "Fuel Cost Review",
+      "Contribution Review",
+    ],
     restrictedWorkflows: ["provider secret editing", "team management", "raw coordinates"],
     canSeeFinanceAmounts: true,
     canManageProviders: false,
@@ -605,8 +641,16 @@ export const EVIDENCE_CONTRACTS: Record<string, EvidenceContract> = {
   contribution: {
     id: "contribution",
     userFacingLabel: "Contribution review",
-    safeClaim: "Contribution is linked revenue minus linked cost evidence where finance role allows it.",
+    safeClaim:
+      "Contribution is linked revenue minus linked cost evidence, including recorded transaction fees, where finance role allows it.",
     forbiddenClaims: ["final audited profit", "unlinked costs as exact contribution"],
+  },
+  expense_capture: {
+    id: "expense_capture",
+    userFacingLabel: "Expense capture",
+    safeClaim:
+      "Ops and finance may capture expense amount, transaction fee, payment method, reference, Trip/truck context, note, and proof as field evidence.",
+    forbiddenClaims: ["contribution impact for ops-only users", "uncategorized expenses as approved costs"],
   },
   client_dwell: {
     id: "client_dwell",
@@ -705,7 +749,7 @@ export function productBoundaryForSurface(
       canShowFuelCostAmounts: false,
       moneyFieldsHidden: true,
       userFacingSummary:
-        "Operations shows readiness and missing links. Finance amounts stay in Finance and Management surfaces.",
+        "Operations can capture Trip expense amounts and transaction fees as field evidence. Revenue, margin, contribution, and cost-impact analysis stay in Finance and Management surfaces.",
     };
   }
 
@@ -717,7 +761,7 @@ export function productBoundaryForSurface(
       canShowFuelCostAmounts: fuelCostVisible,
       moneyFieldsHidden: !financeVisible,
       userFacingSummary:
-        "Finance owns rates, revenue, costs, fuel cost review, and contribution review.",
+        "Finance owns rates, revenue, expense validation, transaction fee treatment, costs, fuel cost review, and contribution review.",
     };
   }
 

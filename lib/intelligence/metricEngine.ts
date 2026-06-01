@@ -1,4 +1,5 @@
 import { supabaseAdmin } from "../supabaseAdmin";
+import { expenseTotalPaid } from "../finance/expenseTotals";
 import { normalizeVehicleKey } from "./entityResolver";
 import { distanceEvidenceWording } from "../telemetry/distance";
 import {
@@ -563,7 +564,7 @@ export async function calculateFinanceDataReadiness(filters: MetricFilters) {
     fuelRows.reduce((sum: number, fuel: any) => sum + Number(fuel.total_cost || 0), 0)
   );
   const expenseCost = roundMoney(
-    expenseRows.reduce((sum: number, expense: any) => sum + Number(expense.amount || 0), 0)
+    expenseRows.reduce((sum: number, expense: any) => sum + expenseTotalPaid(expense), 0)
   );
   const variableCosts = roundMoney(fuelCost + expenseCost);
   const missing: string[] = [];
@@ -878,6 +879,38 @@ async function fetchFuelLogs(filters: MetricFilters): Promise<QueryResult<any>> 
 }
 
 async function fetchExpenses(filters: MetricFilters): Promise<QueryResult<any>> {
+  try {
+    let query = supabaseAdmin
+      .from("expenses")
+      .select("id, journey_id, truck, amount, transaction_cost, created_at")
+      .eq("company_id", filters.companyId)
+      .order("created_at", { ascending: false })
+      .limit(2000);
+
+    if (filters.timeframe?.day_start_utc) {
+      query = query.gte("created_at", filters.timeframe.day_start_utc);
+    }
+    if (filters.timeframe?.day_end_utc) {
+      query = query.lt("created_at", filters.timeframe.day_end_utc);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      if (isMissingColumnError(error)) return fetchExpensesWithoutTransactionCost(filters);
+      if (!isMissingSchemaError(error)) throw error;
+      return { rows: [], missing: true, error: safeErrorMessage(error) };
+    }
+
+    return { rows: data || [] };
+  } catch (err: any) {
+    if (isMissingSchemaError(err)) {
+      return { rows: [], missing: true, error: safeErrorMessage(err) };
+    }
+    throw err;
+  }
+}
+
+async function fetchExpensesWithoutTransactionCost(filters: MetricFilters): Promise<QueryResult<any>> {
   try {
     let query = supabaseAdmin
       .from("expenses")

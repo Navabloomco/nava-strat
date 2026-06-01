@@ -14,6 +14,7 @@ This playbook may use pilot/testing language because it is an internal validatio
 - [ ] Evidence caveats remain visible but concise: GPS-derived distance estimate, provider distance evidence, stopped-time evidence, tracker idle markers, and engine-on idle not verified.
 - [ ] Ops Intelligence uses concise default labels such as `Low Movement Review`, `tracker/provider idle-marker evidence`, and `Contribution review ready`; longer stopped-context and marker-source mechanics are left to Nava Eye/audit detail.
 - [ ] Product boundaries hold: Operations pages show operational evidence and review status, but do not show revenue amounts, linked cost amounts, contribution amounts, margin, per-km money metrics, fuel cost amounts, or rate details. Finance and Management surfaces own those values.
+- [ ] Expense boundary holds: ops/admin users can capture Trip expense amount, transaction fee, payment method, reference, note, and proof as field evidence; Finance owns validation, correction, allocation, and contribution impact.
 - [ ] Run `npm run check:product-boundaries` before launch builds to catch customer-facing regressions in Ops Intelligence, Operations copy, Client Portal privacy, Team Access copy, public entry copy, and Provider Vault default copy.
 - [ ] Nava Eye answers are concise by default and only show audit details after questions such as `how`, `why`, `show evidence`, or `why should I trust it`.
 - [ ] Reusable UI placeholders do not contain tenant-specific examples, real truck plates, real client names, real trip IDs, or pilot contribution amounts.
@@ -33,6 +34,7 @@ This playbook may use pilot/testing language because it is an internal validatio
 - [ ] Confirm the additive `billing_invoices` SQL has been applied.
 - [ ] Confirm the `client_rate_rules` and `journey_revenue_entries` migrations have been applied before testing Client Rates / Revenue Rules.
 - [ ] Confirm the `company_user_invitations` migration has been applied before testing Team Access email invitations.
+- [ ] Confirm the `expenses.transaction_cost` migration has been applied before testing expense transaction fees and contribution linked-cost totals.
 - [ ] Confirm a test tenant/company exists.
 - [ ] Confirm at least one tracking provider is configured for the test tenant.
 - [ ] Confirm at least one current provider asset or asset-reviewable record exists.
@@ -315,9 +317,10 @@ Confirm workflow behavior:
 - [ ] On Trip Detail, confirm allocated fuel appears as litres/cost allocation evidence and does not claim actual fuel burn, theft, tank balance, or fuel efficiency.
 - [ ] On Trip Detail, allocate part of an existing fuel issue to the Trip only when the role can edit fuel; confirm the fuel issue remaining/carry-forward balance is still shown safely.
 - [ ] On Trip Detail, add a linked expense with a finance/elevated role and confirm it appears as a separate trip expense, not merged into fuel.
-- [ ] Confirm linked expense cards clearly show supplier/vendor/payee, payment method, reference number, amount, and date before attached evidence files.
+- [ ] Confirm linked expense cards clearly show supplier/vendor/payee, payment method, reference number, expense amount, transaction fee, total paid, and date before attached evidence files.
 - [ ] Apply the `evidence_attachments` migration, the forward migration that expands `related_type` to `trip`, `expense`, `fuel_log`, and `fuel_allocation`, the forward migration that adds expense `payment_proof`, and the forward migration that adds `evidence_hash`; confirm the private `trip-evidence` Supabase Storage bucket exists before testing evidence uploads.
 - [ ] On Trip Detail, add a linked trip expense and use the Proof optional fields in the same Add trip expense form to upload a receipt, invoice, payment proof, or M-Pesa proof and/or paste payment/receipt text.
+- [ ] On Trip Detail, add a linked trip expense with amount KES 10,000 and transaction fee KES 150; confirm the Total paid preview shows KES 10,150 and the saved row keeps amount, fee, and total paid separate.
 - [ ] Confirm saving creates the expense first, then attaches the uploaded file and pasted proof text to that new expense.
 - [ ] Confirm pasted M-Pesa or other payment text appears as evidence under the expense and is not parsed into amount/date/name/transaction-code facts yet.
 - [ ] Upload the same proof file to the same expense twice and confirm the second upload is blocked with a safe duplicate-proof message.
@@ -331,14 +334,15 @@ Confirm workflow behavior:
 - [ ] If proof upload fails after expense creation, confirm the expense remains saved and the page says proof can be attached from the expense card.
 - [ ] Attach a receipt, invoice, payment proof, or M-Pesa proof later from an existing expense row's Attach proof flow.
 - [ ] Confirm the proof appears under that exact expense row, not only in the general Trip evidence list.
-- [ ] Add two expenses of the same category, for example `Per diem` KES 6,000 and `Per diem` KES 5,000, and confirm Trip Detail shows `Per diem` total KES 11,000 from 2 records.
+- [ ] Add two expenses of the same category, for example `Per diem` KES 6,000 with KES 100 transaction fee and `Per diem` KES 5,000 with no transaction fee, and confirm Trip Detail shows `Per diem` total KES 11,100 from 2 records.
 - [ ] Confirm each expense keeps its own proof list even when category totals roll up together.
-- [ ] Confirm Trip Intelligence contribution linked expenses include both records in linked expense cost and linked variable cost.
+- [ ] Confirm Trip Intelligence contribution linked expenses include expense amount plus recorded transaction fee in linked expense cost and linked variable cost without double-counting standalone fee records.
 - [ ] On Trip Detail, upload a delivery note, weighbridge ticket, invoice, or other trip-level document in General trip evidence and confirm it stays separate from expense receipts.
 - [ ] Confirm an expense receipt supports the specific expense/vendor/payment record, while general trip evidence supports delivery, movement, cargo, or tonnage and is not treated as supplier-payment proof by itself.
 - [ ] Confirm evidence opens only through a short-lived secure link, does not expose a public file URL or raw storage path, and remains inaccessible to users outside the related record's company.
 - [ ] Confirm M-Pesa proof is stored as evidence only; no M-Pesa text parsing, fuel-burn, theft, or expense inference is claimed yet.
 - [ ] As an ops/clerk-style user with journey edit access but without finance visibility, open Trip Detail and confirm operational entry, expense creation, expense proof, and general trip evidence work without showing revenue, rates, contribution, margin, or management flags.
+- [ ] As an ops/clerk-style user, confirm expense amount/transaction fee capture remains visible as field evidence, but contribution/margin/revenue analysis stays hidden.
 - [ ] As an ops/clerk-style user without finance visibility, confirm fuel allocation costs, linked variable costs, and management finance flags are hidden while fuel litres and operational proof remain usable where the role can view fuel.
 - [ ] As a finance/management/elevated user, open the same Trip Detail and confirm Finance / revenue and Management intelligence sections are visible according to role permissions.
 - [ ] Confirm revenue/rate/FX entry remains finance-controlled. Clerks should not need confidential rates to enter operational expenses or proof.

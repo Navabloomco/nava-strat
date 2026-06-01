@@ -1,5 +1,6 @@
 // lib/intelligence/contextRouter.ts
 import { supabaseAdmin } from "../supabaseAdmin";
+import { expenseTotalPaid } from "../finance/expenseTotals";
 import {
   buildAssetAvailabilityLookup,
   fetchActiveAssetAvailabilityEvents,
@@ -250,7 +251,11 @@ export async function routeContext(
     context.evidence_review = await fetchEvidenceReviewContext(
       companyId,
       queryText,
-      financialsVisible
+      Boolean(
+        roleCapabilities.canViewFinance ||
+          roleCapabilities.canViewExpenses ||
+          roleCapabilities.canViewTripExpenses
+      )
     );
     return context;
   }
@@ -2337,7 +2342,7 @@ async function fetchFleetHealth(companyId: string) {
 async function fetchEvidenceReviewContext(
   companyId: string,
   question: string,
-  financeVisible: boolean
+  expenseValuesVisible: boolean
 ) {
   const journeysResult = await supabaseAdmin
     .from("journeys")
@@ -2359,7 +2364,7 @@ async function fetchEvidenceReviewContext(
   const matchedJourney = matchJourneyFromQuestion(journeys, question);
   let expenseQuery = supabaseAdmin
     .from("expenses")
-    .select("id, journey_id, truck, expense_type, amount, vendor, payment_method, reference_number, trip_reference, notes, created_at")
+    .select("id, journey_id, truck, expense_type, amount, transaction_cost, vendor, payment_method, reference_number, trip_reference, notes, created_at")
     .eq("company_id", companyId)
     .order("created_at", { ascending: false })
     .limit(matchedJourney ? 200 : 100);
@@ -2420,8 +2425,10 @@ async function fetchEvidenceReviewContext(
     vendor: expense.vendor || null,
     payment_method: expense.payment_method || null,
     reference_number: expense.reference_number || null,
-    amount: financeVisible ? Number(expense.amount || 0) : null,
-    amount_visible: financeVisible,
+    amount: expenseValuesVisible ? Number(expense.amount || 0) : null,
+    transaction_cost: expenseValuesVisible ? Number(expense.transaction_cost || 0) : null,
+    total_paid: expenseValuesVisible ? expenseTotalPaid(expense) : null,
+    amount_visible: expenseValuesVisible,
     created_at: expense.created_at || null,
     proof_count: proofCounts.get(String(expense.id)) || 0,
   }));
@@ -2435,7 +2442,8 @@ async function fetchEvidenceReviewContext(
     expenses_with_proof: rows.length - missingProof.length,
     expenses_missing_proof: missingProof.length,
     trip_evidence_count: tripEvidenceCount,
-    finance_values_visible: financeVisible,
+    expense_values_visible: expenseValuesVisible,
+    finance_values_visible: expenseValuesVisible,
     missing_proof_expenses: missingProof.slice(0, 8),
     sample_expenses: rows.slice(0, 8),
   };
@@ -3495,7 +3503,7 @@ async function fetchTruckFinancialSummary(companyId: string, truckId: string) {
       .limit(200),
     supabaseAdmin
       .from("expenses")
-      .select("journey_id, truck, amount, expense_type, created_at")
+      .select("journey_id, truck, amount, transaction_cost, expense_type, created_at")
       .eq("company_id", companyId)
       .order("created_at", { ascending: false })
       .limit(200),
@@ -3529,7 +3537,7 @@ async function fetchTruckFinancialSummary(companyId: string, truckId: string) {
     0
   );
   const expenseCost = expenses.reduce(
-    (sum: number, expense: any) => sum + Number(expense.amount || 0),
+    (sum: number, expense: any) => sum + expenseTotalPaid(expense),
     0
   );
 

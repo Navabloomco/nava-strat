@@ -94,7 +94,13 @@ export const COPY_CONTRACTS: Record<CopyLevel, CopyContract> = {
     level: "operational_evidence",
     tone: "Evidence-safe and practical.",
     allowedDetailLevel: "evidence",
-    allowedTechnicalTerms: ["GPS-derived distance estimate", "stopped-time evidence", "provider current stop"],
+    allowedTechnicalTerms: [
+      "GPS-derived distance estimate",
+      "stopped-time evidence",
+      "provider current stop",
+      "transaction fee",
+      "expense proof",
+    ],
     forbiddenTerms: [...INTERNAL_FORBIDDEN_TERMS, "final profit", ...STOPPED_IDLE_FORBIDDEN_TERMS],
     preferredCtas: ["Ask why stopped", "Ask about distance", "Open Trip"],
     examples: ["GPS-stopped evidence is stationary evidence, not confirmed engine-on idle."],
@@ -103,10 +109,18 @@ export const COPY_CONTRACTS: Record<CopyLevel, CopyContract> = {
     level: "finance_review",
     tone: "Controlled finance review language with clear evidence boundaries.",
     allowedDetailLevel: "evidence",
-    allowedTechnicalTerms: ["linked cost evidence", "configured rate", "manual override"],
+    allowedTechnicalTerms: [
+      "linked cost evidence",
+      "configured rate",
+      "manual override",
+      "transaction fee",
+      "total paid",
+    ],
     forbiddenTerms: ["final profit", "fuel burn", "fuel theft"],
     preferredCtas: ["Open Revenue Review", "Manage Client Rates", "Review contribution"],
-    examples: ["Contribution review uses linked revenue and linked cost evidence."],
+    examples: [
+      "Contribution review uses linked revenue and linked cost evidence, including transaction fees where recorded.",
+    ],
   },
   management_summary: {
     level: "management_summary",
@@ -182,6 +196,8 @@ export const COPY_TERM_REPLACEMENTS: Record<string, string> = {
   "idle time": "stopped-time evidence",
   "driver idle": "tracker/provider idle-marker evidence",
   "raw payload": "advanced diagnostics",
+  "hidden charges": "transaction fee",
+  "total cost": "total paid",
 };
 
 export const SURFACE_COPY_LEVELS: Record<ProductSurfaceId, CopyLevel> = {

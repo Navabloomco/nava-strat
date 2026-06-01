@@ -4,6 +4,12 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { supabase } from "../../lib/supabase";
 import {
+  expenseBaseAmount,
+  expenseTotalPaid,
+  expenseTransactionCost,
+  sumExpenseTotalPaid,
+} from "../../lib/finance/expenseTotals";
+import {
   EmptyState,
   PageHeader,
   Panel,
@@ -17,6 +23,8 @@ type Expense = {
   truck: string | null;
   expense_type: string | null;
   amount: number | null;
+  transaction_cost: number | null;
+  total_paid?: number | null;
   vendor: string | null;
   payment_method: string | null;
   reference_number: string | null;
@@ -114,10 +122,12 @@ export default function ExpensesPage() {
     });
   }, [expenses, search]);
 
-  const totalAmount = expenses.reduce(
-    (sum, expense) => sum + Number(expense.amount || 0),
+  const totalAmount = expenses.reduce((sum, expense) => sum + expenseBaseAmount(expense), 0);
+  const totalTransactionFees = expenses.reduce(
+    (sum, expense) => sum + expenseTransactionCost(expense),
     0
   );
+  const totalPaid = sumExpenseTotalPaid(expenses);
   const linkedCount = expenses.filter((expense) => expense.journey_id).length;
   const unallocatedCount = expenses.length - linkedCount;
 
@@ -128,7 +138,7 @@ export default function ExpensesPage() {
           dark
           eyebrow="Finance control"
           title="Expense Ledger"
-          body="Review operating expenses, payment references, and journey allocation."
+          body="Review operating expenses, transaction fees, payment references, and journey allocation."
           actions={
             <Link href="/expenses/new">
               <PrimaryButton type="button" className="w-full sm:w-auto">
@@ -148,12 +158,14 @@ export default function ExpensesPage() {
           </Panel>
         ) : (
           <>
-            <section className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <section className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-6">
               <SummaryCard
                 label="Expense records"
                 value={expenses.length.toLocaleString()}
               />
-              <SummaryCard label="Total amount" value={formatMoney(totalAmount)} />
+              <SummaryCard label="Expense amount" value={formatMoney(totalAmount)} />
+              <SummaryCard label="Transaction fees" value={formatMoney(totalTransactionFees)} />
+              <SummaryCard label="Total paid" value={formatMoney(totalPaid)} />
               <SummaryCard label="Linked to trips" value={linkedCount.toLocaleString()} />
               <SummaryCard
                 label="Unallocated"
@@ -225,6 +237,8 @@ export default function ExpensesPage() {
                             <th className="px-4 py-3 font-semibold">Truck</th>
                             <th className="px-4 py-3 font-semibold">Type</th>
                             <th className="px-4 py-3 font-semibold">Amount</th>
+                            <th className="px-4 py-3 font-semibold">Transaction fee</th>
+                            <th className="px-4 py-3 font-semibold">Total paid</th>
                             <th className="px-4 py-3 font-semibold">Vendor</th>
                             <th className="px-4 py-3 font-semibold">Payment</th>
                             <th className="px-4 py-3 font-semibold">Reference</th>
@@ -248,7 +262,15 @@ export default function ExpensesPage() {
                                   {labelize(expense.expense_type)}
                                 </td>
                                 <td className="px-4 py-4 font-semibold text-white">
-                                  {formatMoney(expense.amount)}
+                                  {formatMoney(expenseBaseAmount(expense))}
+                                </td>
+                                <td className="px-4 py-4">
+                                  {expenseTransactionCost(expense) > 0
+                                    ? formatMoney(expenseTransactionCost(expense))
+                                    : "—"}
+                                </td>
+                                <td className="px-4 py-4 font-semibold text-cyan-50">
+                                  {formatMoney(expenseTotalPaid(expense))}
                                 </td>
                                 <td className="px-4 py-4">{expense.vendor || "—"}</td>
                                 <td className="px-4 py-4">
@@ -347,7 +369,16 @@ function ExpenseCard({
 
       <div className="mt-4 grid gap-3 text-sm">
         <Detail label="Type" value={labelize(expense.expense_type)} />
-        <Detail label="Amount" value={formatMoney(expense.amount)} strong />
+        <Detail label="Expense amount" value={formatMoney(expenseBaseAmount(expense))} />
+        <Detail
+          label="Transaction fee"
+          value={
+            expenseTransactionCost(expense) > 0
+              ? formatMoney(expenseTransactionCost(expense))
+              : "—"
+          }
+        />
+        <Detail label="Total paid" value={formatMoney(expenseTotalPaid(expense))} strong />
         <Detail label="Vendor" value={expense.vendor || "—"} />
         <Detail label="Payment" value={labelize(expense.payment_method)} />
         <Detail label="Reference" value={expense.reference_number || "—"} />
