@@ -639,7 +639,7 @@ export default function FinanceRateRulesPage() {
           <Panel dark className="mt-8 border-cyan-200/20 bg-cyan-300/10 p-5">
             <h2 className="text-lg font-semibold text-cyan-50">Read-only finance access</h2>
             <p className="mt-2 text-sm leading-6 text-slate-300">
-              You can review client rate rules, but only finance editors, admins, and platform owners can create or change them.
+              You can review client rate rules, but only finance editors and company admins can create or change them.
             </p>
           </Panel>
         )}

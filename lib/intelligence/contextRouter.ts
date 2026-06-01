@@ -454,7 +454,7 @@ export async function routeContext(
     } else {
       context.financial_access_restricted = true;
       context.financial_access_message =
-        "Financial calculations are available to owner, admin, finance, management, and platform owner roles.";
+        "Financial calculations are available to owner, admin, finance, and management roles.";
     }
   }
   if (intent === "profitability") {
@@ -463,7 +463,7 @@ export async function routeContext(
     } else {
       context.financial_access_restricted = true;
       context.financial_access_message =
-        "Financial values are available to owner, admin, finance, management, and platform owner roles.";
+        "Financial values are available to owner, admin, finance, and management roles.";
     }
   }
   if (intent === "trip_performance") {

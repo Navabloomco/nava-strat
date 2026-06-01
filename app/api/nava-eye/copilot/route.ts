@@ -697,7 +697,7 @@ function buildFallbackAnswer(context: any): string {
     return buildProviderCapabilityAnswer(context);
   }
   if (context.financial_access_restricted) {
-    return "Operational context is available for this role, but financial values are restricted. Ask an owner, admin, finance, management, or platform owner user to review contribution and revenue details.";
+    return "Operational context is available for this role, but financial values are restricted. Ask an owner, admin, finance, or management user to review contribution and revenue details.";
   }
   if (context.metric_comparison) {
     return buildMetricComparisonAnswer(context);
